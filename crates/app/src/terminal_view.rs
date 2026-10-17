@@ -8,13 +8,13 @@ use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui_kit::{
     App, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, Modifiers, MouseButton,
+    InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, NoAction, ParentElement, Pixels, Point, Render,
     ScrollDelta, ScrollWheelEvent, Styled, Task, UTF16Selection, Window, div, px, size,
 };
 use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
-use term_core::alacritty_terminal::selection::{Selection, SelectionType};
+use term_core::alacritty_terminal::selection::SelectionType;
 use term_core::alacritty_terminal::term::TermMode;
 use term_core::{EventCallback, LaunchSpec, Palette, Session, SessionEvent, TermDimensions};
 
@@ -49,6 +49,13 @@ pub struct GridGeometry {
     pub cursor_origin: Point<Pixels>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProcessState {
+    Running,
+    /// The child exited, with its exit code when one is available.
+    Exited(Option<i32>),
+}
+
 /// One terminal session and its interaction state.
 pub struct TerminalView {
     pub(crate) session: Session,
@@ -57,7 +64,7 @@ pub struct TerminalView {
     /// IME composition text not yet committed.
     pub(crate) marked_text: Option<String>,
     title: Option<String>,
-    exit: Option<Option<i32>>,
+    process: ProcessState,
     scroll_remainder: f32,
     selecting: bool,
     /// Button whose press was reported to the program; its release and drags are reported too.
@@ -99,7 +106,7 @@ impl TerminalView {
             geometry: None,
             marked_text: None,
             title: None,
-            exit: None,
+            process: ProcessState::Running,
             scroll_remainder: 0.0,
             selecting: false,
             reported_button: None,
@@ -110,10 +117,10 @@ impl TerminalView {
 
     pub fn display_title(&self) -> String {
         let title = self.title.as_deref().unwrap_or("Agent Workspace");
-        match self.exit {
-            None => title.to_string(),
-            Some(Some(code)) => format!("{title} [exited {code}]"),
-            Some(None) => format!("{title} [exited]"),
+        match self.process {
+            ProcessState::Running => title.to_string(),
+            ProcessState::Exited(Some(code)) => format!("{title} [exited {code}]"),
+            ProcessState::Exited(None) => format!("{title} [exited]"),
         }
     }
 
@@ -122,28 +129,25 @@ impl TerminalView {
             SessionEvent::Wakeup => {}
             SessionEvent::TitleChanged(title) => self.title = title,
             SessionEvent::Bell => return,
-            SessionEvent::Exited(code) => self.exit = Some(code),
+            SessionEvent::Exited(code) => self.process = ProcessState::Exited(code),
         }
         cx.notify();
     }
 
     /// Send user input to the program, snapping the view back to the live screen.
     fn send_input(&mut self, bytes: Cow<'static, [u8]>, cx: &mut Context<Self>) {
-        {
-            let mut term = self.session.lock_term();
-            term.scroll_display(Scroll::Bottom);
-            term.selection = None;
-        }
+        self.session.scroll_display(Scroll::Bottom);
+        self.session.clear_selection();
         self.session.write(bytes);
         cx.notify();
     }
 
     fn mode(&self) -> TermMode {
-        *self.session.lock_term().mode()
+        self.session.mode()
     }
 
     fn copy(&mut self, cx: &mut Context<Self>) {
-        let text = self.session.lock_term().selection_to_string();
+        let text = self.session.selection_text();
         if let Some(text) = text.filter(|text| !text.is_empty()) {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
@@ -158,46 +162,58 @@ impl TerminalView {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let keystroke = &event.keystroke;
+        let consumed = self.handle_clipboard_shortcut(&event.keystroke, cx)
+            || self.handle_scrollback_shortcut(&event.keystroke, cx)
+            || self.forward_key(event, cx);
+        if consumed {
+            cx.stop_propagation();
+        }
+    }
+
+    /// Ctrl+Shift+C copies; Ctrl+Shift+V and Shift+Insert paste.
+    fn handle_clipboard_shortcut(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
         let modifiers = &keystroke.modifiers;
-        let key = keystroke.key.as_str();
-
-        if modifiers.control && modifiers.shift && !modifiers.alt {
-            match key {
-                "c" => self.copy(cx),
-                "v" => self.paste(cx.read_from_clipboard().and_then(|item| item.text()), cx),
-                _ => {}
-            }
-            if matches!(key, "c" | "v") {
-                cx.stop_propagation();
-                return;
-            }
+        let control_shift = modifiers.control && modifiers.shift && !modifiers.alt;
+        match keystroke.key.as_str() {
+            "c" if control_shift => self.copy(cx),
+            "v" if control_shift => self.paste_clipboard(cx),
+            "insert" if is_shift_only(modifiers) => self.paste_clipboard(cx),
+            _ => return false,
         }
-        if modifiers.shift && !modifiers.control && !modifiers.alt {
-            let scroll = match key {
-                "insert" => {
-                    self.paste(cx.read_from_clipboard().and_then(|item| item.text()), cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                "pageup" => Some(Scroll::PageUp),
-                "pagedown" => Some(Scroll::PageDown),
-                _ => None,
-            };
-            if let Some(scroll) = scroll {
-                self.session.lock_term().scroll_display(scroll);
-                cx.notify();
-                cx.stop_propagation();
-                return;
-            }
-        }
+        true
+    }
 
+    /// Shift+PageUp and Shift+PageDown move through the scrollback history.
+    fn handle_scrollback_shortcut(
+        &mut self,
+        keystroke: &Keystroke,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !is_shift_only(&keystroke.modifiers) {
+            return false;
+        }
+        let scroll = match keystroke.key.as_str() {
+            "pageup" => Scroll::PageUp,
+            "pagedown" => Scroll::PageDown,
+            _ => return false,
+        };
+        self.session.scroll_display(scroll);
+        cx.notify();
+        true
+    }
+
+    fn forward_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
+        let keystroke = &event.keystroke;
         let Some(bytes) = keys::key_to_bytes(keystroke, event.prefer_character_input, self.mode())
         else {
-            return;
+            return false;
         };
         self.send_input(bytes, cx);
-        cx.stop_propagation();
+        true
+    }
+
+    fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
+        self.paste(cx.read_from_clipboard().and_then(|item| item.text()), cx);
     }
 
     fn on_scroll(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -220,11 +236,7 @@ impl TerminalView {
         };
         match mouse::wheel_action(whole, cell, &event.modifiers, self.mode()) {
             WheelAction::Program(bytes) => self.session.write(bytes),
-            WheelAction::Scrollback(lines) => {
-                self.session
-                    .lock_term()
-                    .scroll_display(Scroll::Delta(lines));
-            }
+            WheelAction::Scrollback(lines) => self.session.scroll_display(Scroll::Delta(lines)),
         }
         cx.notify();
         cx.stop_propagation();
@@ -249,7 +261,7 @@ impl TerminalView {
 
     fn grid_point(&self, position: Point<Pixels>) -> Option<(GridPoint, Side)> {
         let (cell, side) = self.viewport_cell(position)?;
-        let display_offset = self.session.lock_term().grid().display_offset();
+        let display_offset = self.session.display_offset();
         Some((
             GridPoint::new(
                 Line(cell.line as i32 - display_offset as i32),
@@ -290,7 +302,7 @@ impl TerminalView {
         let Some(button) = ReportButton::from_gpui(event.button) else {
             return;
         };
-        if mouse::reporting(self.mode(), &event.modifiers) {
+        if mouse::is_reporting_to_program(self.mode(), &event.modifiers) {
             self.send_mouse_report(button, MouseAction::Press, event.position, &event.modifiers);
             self.reported_button = Some(button);
             return;
@@ -314,13 +326,15 @@ impl TerminalView {
             3.. => SelectionType::Lines,
             _ => SelectionType::Simple,
         };
-        self.session.lock_term().selection = Some(Selection::new(selection_type, point, side));
+        self.session.start_selection(selection_type, point, side);
         self.selecting = true;
         cx.notify();
     }
 
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.reported_button.is_some() || mouse::reporting(self.mode(), &event.modifiers) {
+        if self.reported_button.is_some()
+            || mouse::is_reporting_to_program(self.mode(), &event.modifiers)
+        {
             let button = self.reported_button.unwrap_or(ReportButton::None);
             self.send_mouse_report(
                 button,
@@ -336,9 +350,7 @@ impl TerminalView {
         let Some((point, side)) = self.grid_point(event.position) else {
             return;
         };
-        if let Some(selection) = self.session.lock_term().selection.as_mut() {
-            selection.update(point, side);
-        }
+        self.session.update_selection(point, side);
         cx.notify();
     }
 
@@ -358,13 +370,7 @@ impl TerminalView {
             return;
         }
         self.selecting = false;
-        let text = {
-            let mut term = self.session.lock_term();
-            if term.selection.as_ref().is_some_and(Selection::is_empty) {
-                term.selection = None;
-            }
-            term.selection_to_string()
-        };
+        let text = self.session.finish_selection();
         #[cfg(target_os = "linux")]
         if let Some(text) = text.filter(|text| !text.is_empty()) {
             cx.write_to_primary(ClipboardItem::new_string(text));
@@ -373,6 +379,10 @@ impl TerminalView {
         let _ = text;
         cx.notify();
     }
+}
+
+fn is_shift_only(modifiers: &Modifiers) -> bool {
+    modifiers.shift && !modifiers.control && !modifiers.alt
 }
 
 impl Focusable for TerminalView {

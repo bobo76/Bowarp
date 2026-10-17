@@ -67,6 +67,35 @@ struct BackgroundRect {
     color: Rgb,
 }
 
+/// Cell backgrounds, with adjacent same-colored cells on a line merged into one rect.
+#[derive(Default)]
+struct BackgroundRects(Vec<BackgroundRect>);
+
+impl BackgroundRects {
+    /// Extend the last rect when this cell continues it, or start a new rect.
+    fn push(&mut self, line: usize, column: usize, cells: usize, color: Rgb) {
+        match self.0.last_mut() {
+            Some(rect)
+                if rect.line == line
+                    && rect.column + rect.cells == column
+                    && rect.color == color =>
+            {
+                rect.cells += cells;
+            }
+            _ => self.0.push(BackgroundRect {
+                line,
+                column,
+                cells,
+                color,
+            }),
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &BackgroundRect> {
+        self.0.iter()
+    }
+}
+
 struct CursorCell {
     line: usize,
     column: usize,
@@ -79,7 +108,7 @@ struct GridSnapshot {
     background: Rgb,
     cursor_color: Rgb,
     batches: Vec<TextBatch>,
-    backgrounds: Vec<BackgroundRect>,
+    backgrounds: BackgroundRects,
     cursor: Option<CursorCell>,
 }
 
@@ -192,57 +221,31 @@ impl Element for TerminalElement {
             })
             .collect();
 
+        let shape = |text: String, style: CellStyle| {
+            let run = text_run(&base_font, text.len(), style);
+            text_system.shape_line(text.into(), font_size, &[run], None)
+        };
         let lines = snapshot
             .batches
             .into_iter()
             .map(|batch| {
-                let run = text_run(&base_font, batch.text.len(), batch.style);
-                let shaped = text_system.shape_line(batch.text.into(), font_size, &[run], None);
-                (cell_origin(batch.line, batch.column), shaped)
+                let origin = cell_origin(batch.line, batch.column);
+                (origin, shape(batch.text, batch.style))
             })
             .collect();
 
         let cursor_color = to_hsla(snapshot.cursor_color);
         let cursor = snapshot.cursor.as_ref().and_then(|cursor| {
             let cell = cell_bounds(cursor.line, cursor.column, cursor.cells);
-            let thickness = px(2.);
-            match cursor.shape {
-                // Focused block cursors are drawn by inverting the cell colors in `snapshot`.
-                CursorShape::Block | CursorShape::Hidden => None,
-                CursorShape::HollowBlock => Some(outline(cell, cursor_color, BorderStyle::Solid)),
-                CursorShape::Beam => Some(fill(
-                    Bounds::new(cell.origin, size(thickness, line_height)),
-                    cursor_color,
-                )),
-                CursorShape::Underline => Some(fill(
-                    Bounds::new(
-                        point(cell.origin.x, cell.bottom() - thickness),
-                        size(cell.size.width, thickness),
-                    ),
-                    cursor_color,
-                )),
-            }
+            cursor_quad(cursor.shape, cell, cursor_color)
         });
         let cursor_origin = snapshot.cursor.as_ref().map_or(bounds.origin, |cursor| {
             cell_origin(cursor.line, cursor.column)
         });
 
         let marked_text = marked_text.map(|text| {
-            let style = CellStyle {
-                foreground: session.palette().foreground,
-                bold: false,
-                italic: false,
-                underline: true,
-                undercurl: false,
-                strikeout: false,
-            };
-            let run = text_run(&base_font, text.len(), style);
-            let shaped = text_system.shape_line(text.into(), font_size, &[run], None);
-            let backdrop = fill(
-                Bounds::new(cursor_origin, size(shaped.width, line_height)),
-                to_hsla(snapshot.background),
-            );
-            (backdrop, cursor_origin, shaped)
+            let shaped = shape(text, marked_text_style(session.palette().foreground));
+            marked_text_overlay(shaped, cursor_origin, line_height, snapshot.background)
         });
 
         PrepaintState {
@@ -322,7 +325,7 @@ fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) ->
         background: default_background,
         cursor_color,
         batches: Vec::new(),
-        backgrounds: Vec::new(),
+        backgrounds: BackgroundRects::default(),
         cursor: None,
     };
 
@@ -342,23 +345,15 @@ fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) ->
             1
         };
 
-        let mut foreground = palette.resolve(cell.fg, colors);
-        let mut background = palette.resolve(cell.bg, colors);
-        if cell.flags.contains(Flags::DIM) {
-            foreground = dim(foreground);
-        }
-        if cell.flags.contains(Flags::INVERSE) {
-            std::mem::swap(&mut foreground, &mut background);
-        }
-        if cell.flags.contains(Flags::HIDDEN) {
-            foreground = background;
-        }
-        if content
+        let selected = content
             .selection
-            .is_some_and(|selection| selection.contains(indexed.point))
-        {
-            background = SELECTION_BACKGROUND;
-        }
+            .is_some_and(|selection| selection.contains(indexed.point));
+        let (mut foreground, mut background) = cell_colors(
+            cell.flags,
+            palette.resolve(cell.fg, colors),
+            palette.resolve(cell.bg, colors),
+            selected,
+        );
         if show_cursor && indexed.point == cursor_point {
             if cursor_shape == CursorShape::Block {
                 foreground = background;
@@ -373,21 +368,7 @@ fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) ->
         }
 
         if background != default_background {
-            match snapshot.backgrounds.last_mut() {
-                Some(rect)
-                    if rect.line == line
-                        && rect.column + rect.cells == column
-                        && rect.color == background =>
-                {
-                    rect.cells += cells;
-                }
-                _ => snapshot.backgrounds.push(BackgroundRect {
-                    line,
-                    column,
-                    cells,
-                    color: background,
-                }),
-            }
+            snapshot.backgrounds.push(line, column, cells, background);
         }
 
         let style = CellStyle {
@@ -409,6 +390,79 @@ fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) ->
         );
     }
     snapshot
+}
+
+/// A cell's foreground and background after its DIM, INVERSE and HIDDEN attributes and the
+/// selection are applied.
+fn cell_colors(flags: Flags, foreground: Rgb, background: Rgb, selected: bool) -> (Rgb, Rgb) {
+    let foreground = if flags.contains(Flags::DIM) {
+        dim(foreground)
+    } else {
+        foreground
+    };
+    let (foreground, background) = if flags.contains(Flags::INVERSE) {
+        (background, foreground)
+    } else {
+        (foreground, background)
+    };
+    let foreground = if flags.contains(Flags::HIDDEN) {
+        background
+    } else {
+        foreground
+    };
+    let background = if selected {
+        SELECTION_BACKGROUND
+    } else {
+        background
+    };
+    (foreground, background)
+}
+
+/// The cursor drawn over the cell, or `None` when there is nothing to draw on top.
+fn cursor_quad(shape: CursorShape, cell: Bounds<Pixels>, color: Hsla) -> Option<PaintQuad> {
+    let thickness = px(2.);
+    match shape {
+        // Focused block cursors are drawn by inverting the cell colors in `snapshot`.
+        CursorShape::Block | CursorShape::Hidden => None,
+        CursorShape::HollowBlock => Some(outline(cell, color, BorderStyle::Solid)),
+        CursorShape::Beam => Some(fill(
+            Bounds::new(cell.origin, size(thickness, cell.size.height)),
+            color,
+        )),
+        CursorShape::Underline => Some(fill(
+            Bounds::new(
+                point(cell.origin.x, cell.bottom() - thickness),
+                size(cell.size.width, thickness),
+            ),
+            color,
+        )),
+    }
+}
+
+/// IME composition text is shown underlined in the default foreground.
+fn marked_text_style(foreground: Rgb) -> CellStyle {
+    CellStyle {
+        foreground,
+        bold: false,
+        italic: false,
+        underline: true,
+        undercurl: false,
+        strikeout: false,
+    }
+}
+
+/// Composition text at the cursor, on a backdrop that hides the cells beneath it.
+fn marked_text_overlay(
+    shaped: ShapedLine,
+    origin: Point<Pixels>,
+    line_height: Pixels,
+    background: Rgb,
+) -> (PaintQuad, Point<Pixels>, ShapedLine) {
+    let backdrop = fill(
+        Bounds::new(origin, size(shaped.width, line_height)),
+        to_hsla(background),
+    );
+    (backdrop, origin, shaped)
 }
 
 /// Append a cell to the current batch when it continues it, or start a new batch.
@@ -540,6 +594,75 @@ mod tests {
             .iter()
             .map(|batch| (batch.column, batch.cells, batch.text.as_str()))
             .collect()
+    }
+
+    /// `(line, column, cells)` of each rect.
+    fn rects(backgrounds: &BackgroundRects) -> Vec<(usize, usize, usize)> {
+        backgrounds
+            .iter()
+            .map(|rect| (rect.line, rect.column, rect.cells))
+            .collect()
+    }
+
+    #[test]
+    fn adjacent_backgrounds_with_same_color_merge() {
+        let mut backgrounds = BackgroundRects::default();
+        backgrounds.push(0, 0, 1, RED);
+        backgrounds.push(0, 1, 2, RED);
+        backgrounds.push(0, 3, 1, RED);
+        assert_eq!(rects(&backgrounds), [(0, 0, 4)]);
+    }
+
+    #[test]
+    fn background_color_change_starts_a_new_rect() {
+        let mut backgrounds = BackgroundRects::default();
+        backgrounds.push(0, 0, 1, RED);
+        backgrounds.push(0, 1, 1, BLUE);
+        assert_eq!(rects(&backgrounds), [(0, 0, 1), (0, 1, 1)]);
+    }
+
+    #[test]
+    fn background_gap_or_new_line_starts_a_new_rect() {
+        let mut backgrounds = BackgroundRects::default();
+        backgrounds.push(0, 0, 1, RED);
+        backgrounds.push(0, 2, 1, RED);
+        backgrounds.push(1, 3, 1, RED);
+        assert_eq!(rects(&backgrounds), [(0, 0, 1), (0, 2, 1), (1, 3, 1)]);
+    }
+
+    #[test]
+    fn plain_cell_keeps_its_colors() {
+        assert_eq!(cell_colors(Flags::empty(), RED, BLUE, false), (RED, BLUE));
+    }
+
+    #[test]
+    fn dim_darkens_the_foreground() {
+        assert_eq!(cell_colors(Flags::DIM, RED, BLUE, false), (dim(RED), BLUE));
+    }
+
+    #[test]
+    fn inverse_swaps_after_dim() {
+        assert_eq!(
+            cell_colors(Flags::DIM | Flags::INVERSE, RED, BLUE, false),
+            (BLUE, dim(RED))
+        );
+    }
+
+    #[test]
+    fn hidden_text_takes_the_background_color() {
+        assert_eq!(cell_colors(Flags::HIDDEN, RED, BLUE, false), (BLUE, BLUE));
+        assert_eq!(
+            cell_colors(Flags::HIDDEN | Flags::INVERSE, RED, BLUE, false),
+            (RED, RED)
+        );
+    }
+
+    #[test]
+    fn selection_replaces_the_background() {
+        assert_eq!(
+            cell_colors(Flags::INVERSE, RED, BLUE, true),
+            (BLUE, SELECTION_BACKGROUND)
+        );
     }
 
     #[test]

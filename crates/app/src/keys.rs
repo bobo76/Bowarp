@@ -5,6 +5,11 @@ use std::borrow::Cow;
 use gpui_kit::Keystroke;
 use term_core::alacritty_terminal::term::TermMode;
 
+/// xterm modifier parameter when no modifier is held.
+const NO_MODIFIERS: u8 = 1;
+/// CSI key code that is implied when omitted.
+const DEFAULT_KEY_CODE: u8 = 1;
+
 /// Bytes to send for a keystroke, or `None` when it should arrive as text input instead
 /// (plain characters go through the platform input handler so IME composition works).
 pub fn key_to_bytes(
@@ -21,30 +26,7 @@ pub fn key_to_bytes(
         1 + modifiers.shift as u8 + 2 * modifiers.alt as u8 + 4 * modifiers.control as u8;
     let key = keystroke.key.as_str();
 
-    if let Some(letter) = cursor_key_letter(key) {
-        let sequence = if modifier_code > 1 {
-            format!("\x1b[1;{modifier_code}{letter}")
-        } else if mode.contains(TermMode::APP_CURSOR) {
-            format!("\x1bO{letter}")
-        } else {
-            format!("\x1b[{letter}")
-        };
-        return Some(sequence.into_bytes().into());
-    }
-    if let Some(code) = tilde_key_code(key) {
-        let sequence = if modifier_code > 1 {
-            format!("\x1b[{code};{modifier_code}~")
-        } else {
-            format!("\x1b[{code}~")
-        };
-        return Some(sequence.into_bytes().into());
-    }
-    if let Some(letter) = low_function_key_letter(key) {
-        let sequence = if modifier_code > 1 {
-            format!("\x1b[1;{modifier_code}{letter}")
-        } else {
-            format!("\x1bO{letter}")
-        };
+    if let Some(sequence) = special_key_sequence(key, modifier_code, mode) {
         return Some(sequence.into_bytes().into());
     }
 
@@ -89,6 +71,39 @@ pub fn paste_bytes(text: &str, mode: TermMode) -> Vec<u8> {
         return format!("\x1b[200~{body}\x1b[201~").into_bytes();
     }
     text.replace("\r\n", "\r").replace('\n', "\r").into_bytes()
+}
+
+/// Escape sequence for cursor, editing and function keys.
+fn special_key_sequence(key: &str, modifier_code: u8, mode: TermMode) -> Option<String> {
+    let unmodified = modifier_code == NO_MODIFIERS;
+    if let Some(letter) = cursor_key_letter(key) {
+        if unmodified && mode.contains(TermMode::APP_CURSOR) {
+            return Some(ss3_sequence(letter));
+        }
+        return Some(csi_sequence(DEFAULT_KEY_CODE, letter, modifier_code));
+    }
+    if let Some(code) = tilde_key_code(key) {
+        return Some(csi_sequence(code, '~', modifier_code));
+    }
+    let letter = low_function_key_letter(key)?;
+    if unmodified {
+        return Some(ss3_sequence(letter));
+    }
+    Some(csi_sequence(DEFAULT_KEY_CODE, letter, modifier_code))
+}
+
+/// `CSI code ; modifier final`, dropping the modifier when none is held and the code too when
+/// it is the default.
+fn csi_sequence(code: u8, final_byte: char, modifier_code: u8) -> String {
+    match (code, modifier_code) {
+        (DEFAULT_KEY_CODE, NO_MODIFIERS) => format!("\x1b[{final_byte}"),
+        (_, NO_MODIFIERS) => format!("\x1b[{code}{final_byte}"),
+        _ => format!("\x1b[{code};{modifier_code}{final_byte}"),
+    }
+}
+
+fn ss3_sequence(final_byte: char) -> String {
+    format!("\x1bO{final_byte}")
 }
 
 fn cursor_key_letter(key: &str) -> Option<char> {
@@ -268,6 +283,26 @@ mod tests {
         assert_eq!(
             bytes("f5", Modifiers::default(), TermMode::empty()).unwrap(),
             b"\x1b[15~"
+        );
+    }
+
+    #[test]
+    fn modified_function_and_editing_keys() {
+        assert_eq!(
+            bytes("f1", shift(), TermMode::empty()).unwrap(),
+            b"\x1b[1;2P"
+        );
+        assert_eq!(
+            bytes("home", alt(), TermMode::empty()).unwrap(),
+            b"\x1b[1;3H"
+        );
+        assert_eq!(
+            bytes("end", Modifiers::default(), TermMode::empty()).unwrap(),
+            b"\x1b[F"
+        );
+        assert_eq!(
+            bytes("down", shift(), TermMode::APP_CURSOR).unwrap(),
+            b"\x1b[1;2B"
         );
     }
 

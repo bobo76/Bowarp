@@ -8,10 +8,11 @@ use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg, State};
-use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Column, Line, Point, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{self, Term};
+use alacritty_terminal::term::{self, Term, TermMode};
 use alacritty_terminal::tty;
 use parking_lot::MutexGuard;
 
@@ -229,6 +230,51 @@ impl Session {
     /// thread blocks on it while parsing output.
     pub fn lock_term(&self) -> MutexGuard<'_, Term<SessionListener>> {
         self.term.lock()
+    }
+
+    /// The terminal modes the program has set.
+    pub fn mode(&self) -> TermMode {
+        *self.term.lock().mode()
+    }
+
+    /// Move the visible screen through the scrollback history.
+    pub fn scroll_display(&self, scroll: Scroll) {
+        self.term.lock().scroll_display(scroll);
+    }
+
+    /// How many lines the visible screen is scrolled back into history.
+    pub fn display_offset(&self) -> usize {
+        self.term.lock().grid().display_offset()
+    }
+
+    /// Replace any selection with a new one anchored at `point`.
+    pub fn start_selection(&self, selection_type: SelectionType, point: Point, side: Side) {
+        self.term.lock().selection = Some(Selection::new(selection_type, point, side));
+    }
+
+    /// Extend the current selection to `point`, if there is one.
+    pub fn update_selection(&self, point: Point, side: Side) {
+        if let Some(selection) = self.term.lock().selection.as_mut() {
+            selection.update(point, side);
+        }
+    }
+
+    /// End a selection gesture, dropping the selection if it covers nothing. Returns the
+    /// selected text.
+    pub fn finish_selection(&self) -> Option<String> {
+        let mut term = self.term.lock();
+        if term.selection.as_ref().is_some_and(Selection::is_empty) {
+            term.selection = None;
+        }
+        term.selection_to_string()
+    }
+
+    pub fn selection_text(&self) -> Option<String> {
+        self.term.lock().selection_to_string()
+    }
+
+    pub fn clear_selection(&self) {
+        self.term.lock().selection = None;
     }
 
     /// Re-arm wakeup notifications. Call before reading the terminal so output arriving
