@@ -77,3 +77,6 @@ sessions, distinguish them by name, color, and icon, and collapse the group
 without losing visibility into activity or requests for attention. Reopening
 the application restores the workspace organization without falsely implying
 that previously running processes are still alive.
+
+## In progress
+Add a lap time for the in-progress popup.
