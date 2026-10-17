@@ -14,7 +14,7 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -23,7 +23,14 @@ jobs:
       - name: Build
         run: cargo build --release --workspace --locked
 
-      - name: Test
+      # Branches reuse the release dependencies for speed; main keeps debug
+      # assertions and overflow checks.
+      - name: Test (release)
+        if: github.ref != 'refs/heads/main'
+        run: cargo test --release --workspace --locked
+
+      - name: Test (debug)
+        if: github.ref == 'refs/heads/main'
         run: cargo test --workspace --locked
 
       - name: Package
@@ -34,10 +41,10 @@ jobs:
           Copy-Item target/release/agent-workspace.exe, target/release/agentws-hook.exe $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
-          name: agent-workspace-windows-x64
           path: agent-workspace-windows-x64.zip
+          archive: false
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -46,11 +53,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
-          name: agent-workspace-windows-x64
+          name: agent-workspace-windows-x64.zip
+          skip-decompress: true
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: agent-workspace-windows-x64.zip
           generate_release_notes: true
