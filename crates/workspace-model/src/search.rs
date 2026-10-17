@@ -71,6 +71,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    #[cfg(unix)]
     use crate::GitHead;
 
     #[test]
