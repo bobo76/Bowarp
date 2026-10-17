@@ -23,7 +23,7 @@ use term_core::LaunchSpec;
 use workspace_model::layout::Direction;
 use workspace_model::{
     Attention, DropTarget, GroupId, Layout, SearchedTab, TabColor, TabMeta, TabQuery, lines_added,
-    next_attention, waiting_count,
+    next_attention, until_next_second, waiting_count,
 };
 
 use crate::hooks::ClaudeHooks;
@@ -133,6 +133,8 @@ pub struct WorkspaceView {
     search: Entity<InputState>,
     /// Lines added per tab, fetched when its hover card opens.
     diff_stats: HashMap<u64, DiffStat>,
+    /// The tab whose hover card shows, and the task repainting its lap time each second.
+    card_clock: Option<(u64, Task<()>)>,
     /// Where the tab being dragged would land, from the last drag move over the sidebar.
     drop_hint: Option<DropTarget>,
     /// For shortening folders to `~` in the sidebar.
@@ -181,6 +183,7 @@ impl WorkspaceView {
             renaming: None,
             search,
             diff_stats: HashMap::new(),
+            card_clock: None,
             drop_hint: None,
             home: std::env::home_dir(),
             next_session_id: 1,
@@ -677,6 +680,42 @@ impl WorkspaceView {
     /// How many other tabs than the selected one wait for a permission decision or an answer.
     fn attention_count(&self, cx: &App) -> usize {
         waiting_count(&self.attention(cx), self.current_index())
+    }
+
+    /// Start or stop repainting the lap time in the tab's hover card. While the card shows, the
+    /// window repaints on each whole second of the lap, and only while the agent is working;
+    /// otherwise the task just checks once a second whether it started working. Closing a
+    /// card stops the task, so nothing runs while no card shows.
+    fn set_card_clock(&mut self, id: u64, open: bool, cx: &mut Context<Self>) {
+        if !open {
+            if self
+                .card_clock
+                .as_ref()
+                .is_some_and(|(shown, _)| *shown == id)
+            {
+                self.card_clock = None;
+            }
+            return;
+        }
+        let task = cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(working_for) = this.read_with(cx, |workspace, cx| {
+                    let index = workspace.tab_index(id)?;
+                    workspace.tabs[index]
+                        .view
+                        .read(cx)
+                        .working_for(Instant::now())
+                }) else {
+                    return;
+                };
+                let delay = working_for.map_or(Duration::from_secs(1), until_next_second);
+                cx.background_executor().timer(delay).await;
+                if working_for.is_some() && this.update(cx, |_, cx| cx.notify()).is_err() {
+                    return;
+                }
+            }
+        });
+        self.card_clock = Some((id, task));
     }
 
     /// Run `git diff` for the tab's hover card unless a recent answer for its folder is cached.

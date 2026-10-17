@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::rc::Rc;
+use std::time::Instant;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::hover_card::HoverCard;
@@ -264,8 +265,9 @@ impl WorkspaceView {
     }
 
     /// The tab's details in a card next to the row, after hovering it for a moment. Opening it
-    /// runs `git diff` for the `+N` (cached for a few seconds). No card while a tab is dragged.
-    /// The card is built only while it shows.
+    /// runs `git diff` for the `+N` (cached for a few seconds) and, while it shows, ticks the
+    /// lap time of a working agent. No card while a tab is dragged. The card is built only
+    /// while it shows.
     fn with_hover_card(&self, row: AnyElement, id: u64, cx: &Context<Self>) -> AnyElement {
         if cx.has_active_drag() {
             return row;
@@ -286,10 +288,12 @@ impl WorkspaceView {
                 }
             })
             .on_open_change(move |open, _, cx| {
-                if *open {
-                    let _ =
-                        workspace.update(cx, |workspace, cx| workspace.refresh_diff_stat(id, cx));
-                }
+                let _ = workspace.update(cx, |workspace, cx| {
+                    if *open {
+                        workspace.refresh_diff_stat(id, cx);
+                    }
+                    workspace.set_card_clock(id, *open, cx);
+                });
             })
             .into_any_element()
     }
@@ -302,6 +306,7 @@ impl WorkspaceView {
         Some(TabCard {
             index,
             status: view.tab_status(),
+            working_for: view.working_for(Instant::now()),
             folder: location
                 .map(|location| display_path(&location.dir, self.home.as_deref()).into()),
             branch: location

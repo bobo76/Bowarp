@@ -23,7 +23,7 @@ use term_core::alacritty_terminal::term::TermMode;
 use term_core::{
     EventCallback, LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions,
 };
-use workspace_model::Location;
+use workspace_model::{Lap, Location};
 
 use crate::keys;
 use crate::launcher;
@@ -96,6 +96,8 @@ pub struct TerminalView {
     location: Option<Location>,
     /// Status from Claude Code hooks; `None` for sessions without hooks.
     agent: Option<AgentState>,
+    /// When the hook status last changed, for the hover card's lap time.
+    agent_lap: Lap<AgentStatus>,
     /// Claude Code finished a turn while the tab was hidden; cleared when it is shown.
     finished_unseen: bool,
     /// Hidden views do not paint, so they acknowledge wakeups themselves.
@@ -167,6 +169,7 @@ impl TerminalView {
             launch_cwd: spec.cwd.clone(),
             location: spec.cwd.clone().map(Location::read),
             agent: reports_status.then(AgentState::default),
+            agent_lap: Lap::new(AgentState::default().status(), Instant::now()),
             finished_unseen: false,
             visible: true,
             activity_task: None,
@@ -228,6 +231,13 @@ impl TerminalView {
         }
     }
 
+    /// How long Claude Code has been working on the current turn, or `None` when it is not
+    /// working. Tool calls keep the lap running; waiting for a permission decision ends it.
+    pub fn working_for(&self, now: Instant) -> Option<Duration> {
+        let working = self.agent?.status() == AgentStatus::Working;
+        working.then(|| self.agent_lap.elapsed(now))
+    }
+
     /// Stop painting the view; only the selected tab is painted.
     pub fn hide(&mut self) {
         self.visible = false;
@@ -280,7 +290,7 @@ impl TerminalView {
         let before = agent.status();
         agent.apply(event, at);
         let after = agent.status();
-        if after == before {
+        if !self.agent_lap.set(after, Instant::now()) {
             return;
         }
         self.finished_unseen = finished_unseen(before, after, self.visible);
@@ -306,6 +316,7 @@ impl TerminalView {
                 self.process = ProcessState::Exited(code);
                 if let Some(agent) = self.agent.as_mut() {
                     agent.exit();
+                    self.agent_lap.set(agent.status(), Instant::now());
                 }
                 cx.emit(TabChanged);
             }

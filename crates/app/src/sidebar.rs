@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu};
@@ -9,7 +10,7 @@ use gpui_kit::{
     ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
 use term_core::SessionKind;
-use workspace_model::{Attention, TabColor};
+use workspace_model::{Attention, TabColor, format_lap};
 
 use crate::assets::{AGENT_SPARK_ICON, GIT_BRANCH_ICON, PIN_ICON};
 
@@ -416,6 +417,8 @@ pub fn tab_shortcut(index: usize) -> Option<String> {
 pub struct TabCard {
     pub index: usize,
     pub status: TabStatus,
+    /// How long the agent has been working on the current turn, shown in the status chip.
+    pub working_for: Option<Duration>,
     /// The full folder, with the home folder shortened to `~`.
     pub folder: Option<SharedString>,
     pub branch: Option<SharedString>,
@@ -428,8 +431,9 @@ pub struct TabCard {
     pub lines_added: Option<u64>,
 }
 
-/// The status as a colored chip: mark and label.
-fn status_chip(status: TabStatus) -> impl IntoElement {
+/// The status as a colored chip: mark and label, with the lap time while working
+/// ("Working · 2m 14s").
+fn status_chip(status: TabStatus, working_for: Option<Duration>) -> impl IntoElement {
     let color = status.color();
     let mark = match status {
         TabStatus::Done => Icon::new(IconName::Check).size(px(11.)).into_any_element(),
@@ -454,6 +458,7 @@ fn status_chip(status: TabStatus) -> impl IntoElement {
         .text_color(color)
         .child(mark)
         .child(status.label())
+        .children(working_for.map(|lap| format!("· {}", format_lap(lap))))
 }
 
 pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
@@ -471,7 +476,7 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
                 .items_center()
                 .justify_between()
                 .mb_0p5()
-                .child(status_chip(card.status))
+                .child(status_chip(card.status, card.working_for))
                 .children(
                     tab_shortcut(card.index)
                         .map(|shortcut| div().text_xs().text_color(muted).child(shortcut)),
