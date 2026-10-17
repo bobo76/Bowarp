@@ -265,19 +265,26 @@ impl WorkspaceView {
 
     /// The tab's details in a card next to the row, after hovering it for a moment. Opening it
     /// runs `git diff` for the `+N` (cached for a few seconds). No card while a tab is dragged.
+    /// The card is built only while it shows.
     fn with_hover_card(&self, row: AnyElement, id: u64, cx: &Context<Self>) -> AnyElement {
         if cx.has_active_drag() {
             return row;
         }
-        let Some(card) = self.tab_card(id, cx) else {
-            return row;
-        };
         let workspace = cx.entity().downgrade();
+        let source = workspace.clone();
         HoverCard::new(("tab-card", id as usize))
             .anchor(Anchor::LeftCenter)
             .ml_2()
             .trigger(row)
-            .content(move |_, _, cx| sidebar::tab_card(card.clone(), cx).into_any_element())
+            .content(move |_, _, cx| {
+                let card = source
+                    .upgrade()
+                    .and_then(|workspace| workspace.read(cx).tab_card(id, cx));
+                match card {
+                    Some(card) => sidebar::tab_card(card, cx).into_any_element(),
+                    None => div().into_any_element(),
+                }
+            })
             .on_open_change(move |open, _, cx| {
                 if *open {
                     let _ =
@@ -335,6 +342,7 @@ impl WorkspaceView {
             tab_count: group.tabs().len(),
             summary: GroupSummary::of(statuses),
             holds_selected: group.collapsed
+                && !searching
                 && active_id.is_some_and(|active| group.tabs().contains(&active)),
             name_editor: self.name_editor(RenameTarget::Group(id), cx),
         };

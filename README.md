@@ -62,7 +62,8 @@ launch folder for now).
 
 The badge on the icon shows the status. Hover a row for a moment to see its card: the status,
 the full folder, the branch, the program's title, the session kind and, in a repository, the
-lines added in the working tree (`+N`, from `git diff HEAD`, refreshed at most every 5 s).
+lines added in the working tree (`+N`: changes to tracked files from `git diff HEAD` plus new
+files not yet added and not ignored, refreshed at most every 5 s).
 
 | Badge | Status |
 |---|---|
@@ -84,13 +85,14 @@ put tabs in groups.
 
 The "Search tabs..." field above the list (Ctrl+Shift+S) keeps the tabs whose name, title,
 folder, branch or group name contain every word typed, ignoring case. Groups holding a match
-show expanded while searching. Enter selects the first match and clears the search; Escape
-clears it and returns to the terminal.
+show expanded while searching (their headers do not collapse until the search ends). Enter
+selects the first match and clears the search; Escape clears it and returns to the terminal.
+Selecting a tab the search hides (Ctrl+1..9, Ctrl+Tab, the attention jump) also clears it.
 
-While a tab needs attention, a warning button with the count shows next to the search field.
-It and Ctrl+Shift+A go to the next tab needing attention after the selected one; when no other
-tab needs attention, they go to the next tab that is Done. A tab in a collapsed group is
-revealed.
+While a tab other than the selected one needs attention, a warning button with the number of
+those tabs shows next to the search field. It and Ctrl+Shift+A go to the next tab needing
+attention after the selected one; when no other tab needs attention, they go to the next tab
+that is Done. A tab in a collapsed group is revealed.
 
 ## Groups
 

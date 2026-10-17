@@ -1,6 +1,6 @@
 mod sidebar_rows;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -22,13 +22,13 @@ use gpui_kit::{
 use term_core::LaunchSpec;
 use workspace_model::layout::Direction;
 use workspace_model::{
-    DropTarget, GroupId, Layout, TabColor, TabMeta, TabQuery, display_path, lines_added,
-    next_attention,
+    Attention, DropTarget, GroupId, Layout, SearchedTab, TabColor, TabMeta, TabQuery, lines_added,
+    next_attention, waiting_count,
 };
 
 use crate::hooks::ClaudeHooks;
 use crate::launcher::{Launcher, launch_name};
-use crate::sidebar::{NUMBERED_TABS, TabStatus};
+use crate::sidebar::NUMBERED_TABS;
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::terminal_view::{TabChanged, TerminalView};
 
@@ -62,14 +62,62 @@ struct Rename {
 /// The `+N` shown in a tab's hover card, for the folder it was computed in.
 struct DiffStat {
     dir: PathBuf,
-    checked: Instant,
+    /// When `git diff` last answered for `dir`.
+    checked: Option<Instant>,
+    /// The run whose answer is awaited; an answer from an older run is stale.
+    generation: u64,
+    running: bool,
     /// `None` until `git diff` answers, or when it cannot.
     added: Option<u64>,
 }
 
 impl DiffStat {
-    fn is_fresh(&self, dir: &Path, now: Instant) -> bool {
-        self.dir == dir && now.duration_since(self.checked) < DIFF_STAT_TTL
+    fn new(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            checked: None,
+            generation: 0,
+            running: false,
+            added: None,
+        }
+    }
+
+    /// Whether `git diff` should run for `dir`: not while a run for it is going, nor when one
+    /// answered within [`DIFF_STAT_TTL`].
+    fn needs_run(&self, dir: &Path, now: Instant) -> bool {
+        if self.dir != dir {
+            return true;
+        }
+        let fresh = self
+            .checked
+            .is_some_and(|checked| now.duration_since(checked) < DIFF_STAT_TTL);
+        !self.running && !fresh
+    }
+
+    /// Start a run for `dir` and return its generation. The last answer stays shown while it
+    /// runs, unless the folder changed.
+    fn start(&mut self, dir: &Path) -> u64 {
+        if self.dir != dir {
+            *self = Self {
+                generation: self.generation,
+                ..Self::new(dir.to_path_buf())
+            };
+        }
+        self.generation += 1;
+        self.running = true;
+        self.generation
+    }
+
+    /// Take the answer of run `generation`. Returns false, ignoring it, when a newer run
+    /// started since (the folder changed while it ran).
+    fn finish(&mut self, generation: u64, added: Option<u64>, now: Instant) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.running = false;
+        self.checked = Some(now);
+        self.added = added;
+        true
     }
 }
 
@@ -223,13 +271,20 @@ impl WorkspaceView {
         self.open_tab_or_notify(spec, window, cx);
     }
 
-    /// Select a tab, expanding its group if it is collapsed.
+    /// Select a tab, expanding its group if it is collapsed and ending a search that hides it.
     fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.get(index) else {
             return;
         };
-        let view = tab.view.clone();
-        self.layout.reveal(tab.id);
+        let (id, view) = (tab.id, tab.view.clone());
+        self.layout.reveal(id);
+        if self
+            .search_matches(cx)
+            .is_some_and(|matches| !matches.contains(&id))
+        {
+            self.search
+                .update(cx, |search, cx| search.clean(window, cx));
+        }
         if let Some(previous) = self.active_tab().filter(|_| self.active != index) {
             previous.view.update(cx, |view, _| view.hide());
         }
@@ -435,7 +490,12 @@ impl WorkspaceView {
         }
     }
 
+    /// Collapse or expand a group from its header. Not while searching: groups then show
+    /// expanded whatever their state, so the change would only appear once the search ends.
     fn toggle_group(&mut self, id: GroupId, cx: &mut Context<Self>) {
+        if !self.search_query(cx).is_empty() {
+            return;
+        }
         if let Some(group) = self.layout.group_mut(id) {
             group.collapsed = !group.collapsed;
             cx.notify();
@@ -528,33 +588,24 @@ impl WorkspaceView {
         TabQuery::parse(&self.search.read(cx).value())
     }
 
-    /// Whether the tab shows while searching: the query is looked up in its name, program
-    /// title, folder (as shown, with `~`, so the home folder's path does not match every tab),
-    /// branch and group name.
+    /// Whether the tab shows while searching (see [`TabQuery::matches_tab`]).
     fn tab_matches(&self, tab: &Tab, query: &TabQuery, cx: &App) -> bool {
         let view = tab.view.read(cx);
         let name = Self::tab_name(tab, cx);
-        let location = view.location();
-        let folder = location.map(|location| display_path(&location.dir, self.home.as_deref()));
-        let branch = location.and_then(|location| location.head.as_ref().map(|head| head.name()));
-        let group = self
-            .layout
-            .group_of(tab.id)
-            .map(|group| group.name.as_str());
-        let fields = [
-            Some(name.as_str()),
-            Some(view.name()),
-            folder.as_deref(),
-            branch,
-            group,
-        ]
-        .into_iter()
-        .flatten();
-        query.matches(fields)
+        let searched = SearchedTab {
+            name: &name,
+            title: view.name(),
+            location: view.location(),
+            group: self
+                .layout
+                .group_of(tab.id)
+                .map(|group| group.name.as_str()),
+        };
+        query.matches_tab(&searched, self.home.as_deref())
     }
 
     /// The tabs the search leaves in the sidebar; `None` when there is no search.
-    fn search_matches(&self, cx: &App) -> Option<Vec<u64>> {
+    fn search_matches(&self, cx: &App) -> Option<HashSet<u64>> {
         let query = self.search_query(cx);
         if query.is_empty() {
             return None;
@@ -590,35 +641,42 @@ impl WorkspaceView {
 
     /// Enter in the search field: select the first tab shown and end the search.
     fn select_first_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let first = self
-            .search_matches(cx)
-            .and_then(|matches| matches.first().copied())
-            .and_then(|id| self.tab_index(id));
+        let query = self.search_query(cx);
+        let first = (!query.is_empty())
+            .then(|| {
+                self.tabs
+                    .iter()
+                    .position(|tab| self.tab_matches(tab, &query, cx))
+            })
+            .flatten();
         if let Some(index) = first {
             self.activate(index, window, cx);
         }
         self.end_search(window, cx);
     }
 
-    /// Select the next other tab needing attention; with none, the next one with a finished turn.
-    fn jump_to_attention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let attention: Vec<_> = self
-            .tabs
+    /// Each tab's attention, in sidebar order.
+    fn attention(&self, cx: &App) -> Vec<Option<Attention>> {
+        self.tabs
             .iter()
             .map(|tab| tab.view.read(cx).tab_status().attention())
-            .collect();
-        let current = (self.active < self.tabs.len()).then_some(self.active);
-        if let Some(index) = next_attention(&attention, current) {
+            .collect()
+    }
+
+    fn current_index(&self) -> Option<usize> {
+        (self.active < self.tabs.len()).then_some(self.active)
+    }
+
+    /// Select the next other tab needing attention; with none, the next one with a finished turn.
+    fn jump_to_attention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = next_attention(&self.attention(cx), self.current_index()) {
             self.activate(index, window, cx);
         }
     }
 
-    /// How many tabs wait for a permission decision or an answer.
+    /// How many other tabs than the selected one wait for a permission decision or an answer.
     fn attention_count(&self, cx: &App) -> usize {
-        self.tabs
-            .iter()
-            .filter(|tab| tab.view.read(cx).tab_status() == TabStatus::NeedsAttention)
-            .count()
+        waiting_count(&self.attention(cx), self.current_index())
     }
 
     /// Run `git diff` for the tab's hover card unless a recent answer for its folder is cached.
@@ -631,41 +689,20 @@ impl WorkspaceView {
             return;
         };
         let dir = location.dir.clone();
-        let now = Instant::now();
-        if self
+        let stat = self
             .diff_stats
-            .get(&id)
-            .is_some_and(|stat| stat.is_fresh(&dir, now))
-        {
+            .entry(id)
+            .or_insert_with(|| DiffStat::new(dir.clone()));
+        if !stat.needs_run(&dir, Instant::now()) {
             return;
         }
-        let previous = self
-            .diff_stats
-            .remove(&id)
-            .filter(|stat| stat.dir == dir)
-            .and_then(|stat| stat.added);
-        self.diff_stats.insert(
-            id,
-            DiffStat {
-                dir: dir.clone(),
-                checked: now,
-                added: previous,
-            },
-        );
+        let generation = stat.start(&dir);
         cx.spawn(async move |this, cx| {
-            let added = cx
-                .background_spawn({
-                    let dir = dir.clone();
-                    async move { lines_added(&dir) }
-                })
-                .await;
+            let added = cx.background_spawn(async move { lines_added(&dir) }).await;
             let _ = this.update(cx, |workspace, cx| {
-                if let Some(stat) = workspace
-                    .diff_stats
-                    .get_mut(&id)
-                    .filter(|stat| stat.dir == dir)
+                if let Some(stat) = workspace.diff_stats.get_mut(&id)
+                    && stat.finish(generation, added, Instant::now())
                 {
-                    stat.added = added;
                     cx.notify();
                 }
             });
@@ -826,15 +863,47 @@ mod tests {
 
     #[test]
     fn diff_stat_is_reused_for_the_same_folder_only_briefly() {
-        let checked = Instant::now();
-        let stat = DiffStat {
-            dir: PathBuf::from("/repo"),
-            checked,
-            added: Some(3),
-        };
-        assert!(stat.is_fresh(Path::new("/repo"), checked + Duration::from_secs(1)));
-        assert!(!stat.is_fresh(Path::new("/repo"), checked + DIFF_STAT_TTL));
-        assert!(!stat.is_fresh(Path::new("/other"), checked));
+        let repo = Path::new("/repo");
+        let mut stat = DiffStat::new(repo.to_path_buf());
+        let now = Instant::now();
+        assert!(stat.needs_run(repo, now));
+        let generation = stat.start(repo);
+        assert!(stat.finish(generation, Some(3), now));
+
+        assert!(!stat.needs_run(repo, now + Duration::from_secs(1)));
+        assert!(stat.needs_run(repo, now + DIFF_STAT_TTL));
+        assert!(stat.needs_run(Path::new("/other"), now));
+    }
+
+    #[test]
+    fn diff_stat_runs_once_at_a_time_per_folder() {
+        let repo = Path::new("/repo");
+        let mut stat = DiffStat::new(repo.to_path_buf());
+        let now = Instant::now();
+        let generation = stat.start(repo);
+        // However long git takes, opening the card again does not start another one.
+        assert!(!stat.needs_run(repo, now + DIFF_STAT_TTL * 10));
+        assert!(stat.finish(generation, Some(3), now));
+        // A later run keeps showing the last answer until it has its own.
+        stat.start(repo);
+        assert_eq!(stat.added, Some(3));
+    }
+
+    #[test]
+    fn diff_stat_ignores_an_answer_for_a_folder_left_meanwhile() {
+        let mut stat = DiffStat::new(PathBuf::from("/repo"));
+        let now = Instant::now();
+        let old = stat.start(Path::new("/repo"));
+        let other = Path::new("/other");
+        assert!(stat.needs_run(other, now));
+        let new = stat.start(other);
+        assert_eq!(stat.added, None);
+
+        assert!(!stat.finish(old, Some(3), now));
+        assert_eq!(stat.added, None);
+        assert!(stat.running);
+        assert!(stat.finish(new, Some(7), now));
+        assert_eq!((stat.dir.as_path(), stat.added), (other, Some(7)));
     }
 
     #[test]

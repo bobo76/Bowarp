@@ -4,6 +4,7 @@
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -22,6 +23,9 @@ pub const PIPE_ENV: &str = "AGENTWS_PIPE";
 const MAX_LINE: u64 = 512;
 /// How long a connection may take to send its line; a hook sends it right after connecting.
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
+/// Most connections read at once. A hook sends its line right after connecting, so only a
+/// misbehaving peer keeps one open; past this, new connections are dropped.
+const MAX_READERS: usize = 16;
 
 /// A status-changing hook event for one session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,6 +79,42 @@ fn parse_line(line: &str) -> Option<HookMessage> {
     Some(HookMessage { session, at, event })
 }
 
+/// Whether the peer runs as the same user as this process. On Linux the socket is in the
+/// abstract namespace, which has no file permissions, so any local user could connect and
+/// change a tab's status.
+#[cfg(unix)]
+fn from_same_user(stream: &Stream) -> bool {
+    // SAFETY: `geteuid` has no preconditions and cannot fail.
+    let own = unsafe { libc::geteuid() };
+    stream.peer_creds().ok().and_then(|creds| creds.euid()) == Some(own)
+}
+
+/// Named pipes are created with a security descriptor that lets only the owner (and
+/// administrators) write to them.
+#[cfg(not(unix))]
+fn from_same_user(_stream: &Stream) -> bool {
+    true
+}
+
+/// One of the [`MAX_READERS`] reader slots, given back on drop.
+struct ReaderSlot(Arc<AtomicUsize>);
+
+impl ReaderSlot {
+    fn take(readers: &Arc<AtomicUsize>) -> Option<Self> {
+        if readers.fetch_add(1, Ordering::AcqRel) >= MAX_READERS {
+            readers.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
+        Some(Self(readers.clone()))
+    }
+}
+
+impl Drop for ReaderSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 fn read_message(stream: Stream) -> Option<HookMessage> {
     stream.set_recv_timeout(Some(READ_TIMEOUT)).ok()?;
     let mut line = String::new();
@@ -102,6 +142,7 @@ impl HookServer {
             .name(pipe_name.as_str().to_ns_name::<GenericNamespaced>()?)
             .create_sync()?;
         let on_message = Arc::new(on_message);
+        let readers = Arc::new(AtomicUsize::new(0));
         thread::Builder::new()
             .name("agentws-hooks".into())
             .spawn(move || {
@@ -113,9 +154,18 @@ impl HookServer {
                             continue;
                         }
                     };
+                    if !from_same_user(&stream) {
+                        log::warn!("hook connection from another user refused");
+                        continue;
+                    }
+                    let Some(slot) = ReaderSlot::take(&readers) else {
+                        log::warn!("too many open hook connections, dropping one");
+                        continue;
+                    };
                     // A connection that never sends must not hold up the others.
                     let on_message = on_message.clone();
                     thread::spawn(move || {
+                        let _slot = slot;
                         if let Some(message) = read_message(stream) {
                             on_message(message);
                         }
@@ -199,6 +249,18 @@ mod tests {
                 event: HookEvent::Stopped
             }
         );
+    }
+
+    #[test]
+    fn reader_slots_are_bounded_and_given_back() {
+        let readers = Arc::new(AtomicUsize::new(0));
+        let slots: Vec<_> = (0..MAX_READERS)
+            .map(|_| ReaderSlot::take(&readers).expect("free slot"))
+            .collect();
+        assert!(ReaderSlot::take(&readers).is_none());
+        drop(slots);
+        assert_eq!(readers.load(Ordering::Acquire), 0);
+        assert!(ReaderSlot::take(&readers).is_some());
     }
 
     #[test]

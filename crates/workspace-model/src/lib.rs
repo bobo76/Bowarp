@@ -10,9 +10,9 @@ mod location;
 mod search;
 mod tab;
 
-pub use attention::{Attention, next_attention};
+pub use attention::{Attention, next_attention, waiting_count};
 pub use git::{GitHead, lines_added};
 pub use layout::{DropTarget, Group, GroupId, Item, Layout, TabId};
 pub use location::{Location, display_path};
-pub use search::TabQuery;
+pub use search::{SearchedTab, TabQuery};
 pub use tab::{TabColor, TabMeta};

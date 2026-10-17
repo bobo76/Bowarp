@@ -26,6 +26,18 @@ pub fn next_attention(tabs: &[Option<Attention>], current: Option<usize>) -> Opt
         .map(|(index, _)| index)
 }
 
+/// How many tabs other than the selected one wait for the user ([`Attention::Needed`]): the
+/// count on the "next attention" button. The selected tab is left out as in [`next_attention`],
+/// so the button never offers to jump to the tab already shown.
+pub fn waiting_count(tabs: &[Option<Attention>], current: Option<usize>) -> usize {
+    tabs.iter()
+        .enumerate()
+        .filter(|&(index, attention)| {
+            Some(index) != current && *attention == Some(Attention::Needed)
+        })
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,5 +70,26 @@ mod tests {
         // Already on the only waiting prompt: the finished turn is next.
         assert_eq!(next_attention(&tabs, Some(3)), Some(1));
         assert_eq!(next_attention(&[DONE, None, DONE], Some(0)), Some(2));
+    }
+
+    #[test]
+    fn waiting_count_leaves_out_the_selected_tab() {
+        let tabs = [NEEDED, DONE, NEEDED, None];
+        assert_eq!(waiting_count(&tabs, None), 2);
+        assert_eq!(waiting_count(&tabs, Some(1)), 2);
+        assert_eq!(waiting_count(&tabs, Some(2)), 1);
+        assert_eq!(waiting_count(&[], None), 0);
+    }
+
+    #[test]
+    fn only_the_selected_tab_waiting_counts_nothing() {
+        // The button hides; the jump still goes on to the finished turn.
+        let tabs = [NEEDED, DONE];
+        assert_eq!(waiting_count(&tabs, Some(0)), 0);
+        assert_eq!(next_attention(&tabs, Some(0)), Some(1));
+        // With a waiting prompt elsewhere, the count and the jump agree on it.
+        let tabs = [NEEDED, DONE, NEEDED];
+        assert_eq!(waiting_count(&tabs, Some(0)), 1);
+        assert_eq!(next_attention(&tabs, Some(0)), Some(2));
     }
 }

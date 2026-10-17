@@ -390,11 +390,15 @@ fn kill_child(pid: Option<u32>) {
     let Some(pid) = pid else {
         return;
     };
-    log::warn!("child {pid} ignored SIGHUP, killing it");
-    // SAFETY: `kill` has no memory-safety preconditions. The child is not reaped yet, so the
-    // pid still names it.
+    log::warn!("child {pid} ignored SIGHUP, killing its process group");
+    // SAFETY: `kill` has no memory-safety preconditions. The child is a session leader
+    // (alacritty `setsid`s it), so its pid is also its process group id; signalling the group
+    // also ends the tools it started there. The reaper thread may reap the child between the
+    // grace timeout and this call. The group id cannot be reused while any member lives, so
+    // only once the whole group is gone could a new process group take that id, a narrow
+    // residual race (a pidfd taken at spawn would close it).
     unsafe {
-        libc::kill(pid as i32, libc::SIGKILL);
+        libc::kill(-(pid as i32), libc::SIGKILL);
     }
 }
 

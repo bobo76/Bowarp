@@ -68,7 +68,7 @@ impl TabStatus {
         match self {
             Self::NeedsAttention => Some(Attention::Needed),
             Self::Done => Some(Attention::Done),
-            _ => None,
+            Self::Working | Self::Idle | Self::Active | Self::Quiet | Self::Exited => None,
         }
     }
 }

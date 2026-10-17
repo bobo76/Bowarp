@@ -237,8 +237,10 @@ New work the look needs:
   is its project folder, which `/proc` already gives).
 - **Git branch:** done: read `<repo>/.git/HEAD` (walk up from the cwd, follow `gitdir:` for
   worktrees), no `git` process; detached HEAD shows the short commit.
-- **Diff stat (`+N`):** done: `git diff HEAD --numstat` run off the UI thread only when the
-  hover card opens, cached per tab for 5 s. On Windows the `git` child may need
+- **Diff stat (`+N`):** done: `git diff HEAD --numstat` plus the lines of untracked files
+  (`git ls-files --others --exclude-standard`, files over 1 MiB skipped) run off the UI thread
+  only when the hover card opens, one run per tab at a time, killed after 10 s, cached per tab
+  for 5 s. On Windows the `git` child may need
   `CREATE_NO_WINDOW` (untested).
 - **"Done" status:** done: a Claude tab that goes Working -> Idle while not selected shows Done
   (check badge) until it is selected, then Idle.
