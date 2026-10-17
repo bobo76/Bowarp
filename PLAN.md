@@ -87,7 +87,10 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 **Next steps, in priority order**
 
-1. Windows build and the same check (ConPTY, named pipe, hook command quoting).
+1. Add a lap time for the in-progress popup.
+
+**Deferred (needs a Windows machine):** Windows build and the same check (ConPTY, named pipe,
+hook command quoting).
 
 ## Decisions
 
