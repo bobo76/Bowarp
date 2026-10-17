@@ -29,11 +29,21 @@ impl LaunchSpec {
     }
 
     pub fn claude_code(cwd: Option<PathBuf>) -> Self {
-        Self::new(SessionKind::ClaudeCode, Some("claude".into()), Vec::new(), cwd)
+        Self::new(
+            SessionKind::ClaudeCode,
+            Some("claude".into()),
+            Vec::new(),
+            cwd,
+        )
     }
 
     pub fn copilot_cli(cwd: Option<PathBuf>) -> Self {
-        Self::new(SessionKind::CopilotCli, Some("copilot".into()), Vec::new(), cwd)
+        Self::new(
+            SessionKind::CopilotCli,
+            Some("copilot".into()),
+            Vec::new(),
+            cwd,
+        )
     }
 
     pub fn new(
@@ -42,10 +52,18 @@ impl LaunchSpec {
         args: Vec<String>,
         cwd: Option<PathBuf>,
     ) -> Self {
-        Self { kind, program, args, cwd, env: HashMap::new() }
+        Self {
+            kind,
+            program,
+            args,
+            cwd,
+            env: HashMap::new(),
+        }
     }
 
     pub(crate) fn shell_command(&self) -> Option<Shell> {
-        self.program.as_ref().map(|program| Shell::new(program.clone(), self.args.clone()))
+        self.program
+            .as_ref()
+            .map(|program| Shell::new(program.clone(), self.args.clone()))
     }
 }

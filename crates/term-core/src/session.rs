@@ -16,6 +16,7 @@ use alacritty_terminal::tty;
 use parking_lot::MutexGuard;
 
 use crate::launch::{LaunchSpec, SessionKind};
+use crate::palette::Palette;
 
 /// Notifications delivered from the session's I/O thread.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,7 +45,12 @@ pub struct TermDimensions {
 
 impl TermDimensions {
     pub fn new(columns: u16, lines: u16) -> Self {
-        Self { columns, lines, cell_width: 1, cell_height: 1 }
+        Self {
+            columns,
+            lines,
+            cell_width: 1,
+            cell_height: 1,
+        }
     }
 
     fn window_size(self) -> WindowSize {
@@ -74,6 +80,7 @@ impl Dimensions for TermDimensions {
 /// State shared between the [`Session`] handle and its I/O thread.
 struct Shared {
     callback: EventCallback,
+    palette: Palette,
     sender: OnceLock<EventLoopSender>,
     size: Mutex<TermDimensions>,
     wakeup_pending: AtomicBool,
@@ -97,7 +104,9 @@ impl Shared {
     }
 
     fn write(&self, bytes: Cow<'static, [u8]>) {
-        let Some(sender) = self.sender.get() else { return };
+        let Some(sender) = self.sender.get() else {
+            return;
+        };
         if let Err(err) = sender.send(Msg::Input(bytes)) {
             log::debug!("pty write dropped: {err}");
         }
@@ -115,7 +124,7 @@ impl EventListener for SessionListener {
             Event::Wakeup => {
                 shared.record_output();
                 shared.wake();
-            },
+            }
             Event::Title(title) => (shared.callback)(SessionEvent::TitleChanged(Some(title))),
             Event::ResetTitle => (shared.callback)(SessionEvent::TitleChanged(None)),
             Event::Bell => (shared.callback)(SessionEvent::Bell),
@@ -128,13 +137,19 @@ impl EventListener for SessionListener {
                 shared.exited.store(true, Ordering::Release);
                 let code = *shared.exit_code.lock().unwrap();
                 (shared.callback)(SessionEvent::Exited(code));
-            },
+            }
             Event::PtyWrite(text) => shared.write(Cow::Owned(text.into_bytes())),
             Event::TextAreaSizeRequest(format) => {
                 let size = *shared.size.lock().unwrap();
                 shared.write(Cow::Owned(format(size.window_size()).into_bytes()));
-            },
-            // Clipboard (OSC 52) and color queries are wired up together with the renderer.
+            }
+            // Answered from the palette defaults: this runs under the terminal lock, so runtime
+            // overrides in `Term::colors` cannot be read here.
+            Event::ColorRequest(index, format) => {
+                let color = shared.palette.default_color(index);
+                shared.write(Cow::Owned(format(color).into_bytes()));
+            }
+            // Clipboard (OSC 52) requests are wired up together with the renderer.
             other => log::trace!("unhandled terminal event: {other:?}"),
         }
     }
@@ -154,10 +169,12 @@ impl Session {
         id: u64,
         spec: &LaunchSpec,
         size: TermDimensions,
+        palette: Palette,
         callback: EventCallback,
     ) -> io::Result<Self> {
         let shared = Arc::new(Shared {
             callback,
+            palette,
             sender: OnceLock::new(),
             size: Mutex::new(size),
             wakeup_pending: AtomicBool::new(false),
@@ -187,7 +204,13 @@ impl Session {
         let _ = shared.sender.set(event_loop.channel());
         let io_thread = event_loop.spawn();
 
-        Ok(Self { id, kind: spec.kind, term, shared, io_thread: Some(io_thread) })
+        Ok(Self {
+            id,
+            kind: spec.kind,
+            term,
+            shared,
+            io_thread: Some(io_thread),
+        })
     }
 
     pub fn id(&self) -> u64 {
@@ -196,6 +219,10 @@ impl Session {
 
     pub fn kind(&self) -> SessionKind {
         self.kind
+    }
+
+    pub fn palette(&self) -> &Palette {
+        &self.shared.palette
     }
 
     /// Lock the terminal for reading or modifying its state. Keep the lock short; the I/O
@@ -279,6 +306,10 @@ fn session_env(extra: &HashMap<String, String>) -> HashMap<String, String> {
         ("COLORTERM".to_string(), "truecolor".to_string()),
         ("TERM_PROGRAM".to_string(), "agent-workspace".to_string()),
     ]);
-    env.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone())));
+    env.extend(
+        extra
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone())),
+    );
     env
 }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use term_core::{LaunchSpec, Session, SessionEvent, SessionKind, TermDimensions};
+use term_core::{LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -19,7 +19,7 @@ fn spawn_sh(script: &str, size: TermDimensions) -> (Session, Receiver<SessionEve
     let callback = Arc::new(move |event| {
         let _ = tx.send(event);
     });
-    let session = Session::spawn(1, &spec, size, callback).expect("spawn sh");
+    let session = Session::spawn(1, &spec, size, Palette::default(), callback).expect("spawn sh");
     (session, rx)
 }
 
@@ -29,7 +29,9 @@ fn wait_for_exit(rx: &Receiver<SessionEvent>) -> Vec<SessionEvent> {
     let mut events = Vec::new();
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        let event = rx.recv_timeout(remaining).expect("child did not exit in time");
+        let event = rx
+            .recv_timeout(remaining)
+            .expect("child did not exit in time");
         let exited = matches!(event, SessionEvent::Exited(_));
         events.push(event);
         if exited {
@@ -77,7 +79,10 @@ fn wakeups_are_coalesced_until_acknowledged() {
     let (session, rx) = spawn_sh("seq 1 5000", TermDimensions::new(80, 24));
     let events = wait_for_exit(&rx);
 
-    let wakeups = events.iter().filter(|event| **event == SessionEvent::Wakeup).count();
+    let wakeups = events
+        .iter()
+        .filter(|event| **event == SessionEvent::Wakeup)
+        .count();
     assert_eq!(wakeups, 1, "burst of output must produce a single wakeup");
     drop(session);
 }
@@ -86,7 +91,11 @@ fn wakeups_are_coalesced_until_acknowledged() {
 fn ack_rearms_wakeup() {
     let (session, rx) = spawn_sh("printf a; read _; printf b", TermDimensions::new(80, 24));
     let deadline = Instant::now() + TIMEOUT;
-    while rx.recv_timeout(deadline - Instant::now()).expect("first wakeup") != SessionEvent::Wakeup {}
+    while rx
+        .recv_timeout(deadline - Instant::now())
+        .expect("first wakeup")
+        != SessionEvent::Wakeup
+    {}
 
     session.ack_wakeup();
     session.write(&b"\r"[..]);
@@ -96,8 +105,21 @@ fn ack_rearms_wakeup() {
 }
 
 #[test]
+fn background_color_query_is_answered() {
+    // Raw mode keeps the reply off the screen; `tr` makes ESC and BEL visible.
+    let script = "stty raw -echo; printf '\\033]11;?\\007'; dd bs=1 count=24 2>/dev/null | tr '\\033\\007' 'EB'";
+    let (session, rx) = spawn_sh(script, TermDimensions::new(80, 24));
+    wait_for_exit(&rx);
+
+    assert_eq!(session.visible_text()[0], "E]11;rgb:1e1e/1e1e/1e1eB");
+}
+
+#[test]
 fn title_changes_are_forwarded() {
-    let (_session, rx) = spawn_sh("printf '\\033]0;agent title\\007'", TermDimensions::new(80, 24));
+    let (_session, rx) = spawn_sh(
+        "printf '\\033]0;agent title\\007'",
+        TermDimensions::new(80, 24),
+    );
     let events = wait_for_exit(&rx);
 
     assert!(events.contains(&SessionEvent::TitleChanged(Some("agent title".into()))));

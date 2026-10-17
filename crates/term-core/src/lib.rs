@@ -5,8 +5,10 @@
 //! produces a single [`SessionEvent::Wakeup`] until the renderer calls [`Session::ack_wakeup`].
 
 mod launch;
+mod palette;
 mod session;
 
 pub use alacritty_terminal;
 pub use launch::{LaunchSpec, SessionKind};
+pub use palette::{Palette, dim};
 pub use session::{EventCallback, Session, SessionEvent, SessionListener, TermDimensions};

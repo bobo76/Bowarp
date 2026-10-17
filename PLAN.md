@@ -2,6 +2,39 @@
 
 Feature spec: [FEATURES.md](FEATURES.md)
 
+## Status (2026-10-16)
+
+**Done so far**
+
+- Stack chosen (Rust + GPUI + `alacritty_terminal`), project scaffolded on Ubuntu, git initialized.
+- M1 step 1 - `term-core`: pty sessions, coalesced wakeups, exit after output drain, palette with
+  OSC 10/11 color replies. Committed (`5d39cfa`).
+- M1 step 2 - `app`: GPUI window rendering one session (shell or Claude Code) with keyboard,
+  IME, selection, copy/paste, resize, drawn title bar and window frame. Committed with the
+  scroll fix and palette.
+- Scroll fix: Claude Code (2.1.302) runs on the alternate screen with mouse tracking
+  (`?1049h`, `?1000/1002/1003h`, SGR `?1006h`), so the wheel had no scrollback to move and
+  sent nothing. Wheel, clicks and motion are now forwarded as xterm mouse reports when a
+  program enables tracking; Shift bypasses reporting for local selection (`app/src/mouse.rs`).
+  Verified under X11 (Xvfb): shell scrollback, Claude Code transcript scrolling, and exact
+  report bytes. Scrolling confirmed on Wayland by the user.
+- Tests: 26 passing (`term-core` session + palette, `app` key/paste translation, mouse reports
+  and wheel decision).
+- Verified by driving the app under X11 (screenshots + simulated input). Wayland checked
+  manually by the user.
+
+**Next steps, in priority order**
+
+1. **Scroll bar** (requested by the user): a vertical bar on the terminal's right edge.
+   - Thumb size and position from `grid().history_size()`, `display_offset()` and the
+     screen lines; drag the thumb and click the track to scroll; repaint on output and scroll.
+   - Overlay style (thin, shown while scrolling or hovered) so it costs no terminal column.
+   - Limitation: on the alternate screen (Claude Code, full-screen programs) there is no
+     scrollback; the program scrolls its own content and the terminal cannot know its
+     position, so the bar is hidden there.
+2. M1 step 3 - sidebar with multiple sessions.
+3. M1 step 4 - Claude Code status via hooks.
+
 ## Decisions
 
 - **Stack:** Rust + GPUI + `alacritty_terminal`.
@@ -17,8 +50,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 | Need | Crate | Note |
 |---|---|---|
-| UI | `gpui` = `gpui-pre` 0.3.9 (published from the zed repo) | exact version required by `gpui-component`; no git pin needed |
-| Widgets | `gpui-component` 0.7.3 | tabs, tree, resizable panes, icons |
+| UI + widgets | `gpui-kit` 0.7.3 | one crate: pins GPUI (`gpui-pre` 0.3.9) and re-exports it with `gpui-component` |
 | Terminal emu + pty | `alacritty_terminal` 0.26 | built-in `tty` module (ConPTY on Windows) + `EventLoop` |
 | Hook IPC | `interprocess` 2.4 | named pipe (Windows) / Unix socket (Linux) |
 | Persistence | `serde`, `serde_json`, `directories` | |
@@ -47,11 +79,28 @@ Only `app` depends on GPUI. If GPUI proves too painful, only that crate is repla
      process env and is not thread-safe).
    - `Exited` is reported on alacritty's `Exit` (after the final output drain), preceded by a wakeup.
    - Coalesce wakeups to at most one repaint per frame; no work while idle.
-2. **Terminal rendering (`app`)**
+2. **Terminal rendering (`app`)** - done
    - Custom GPUI element painting the visible grid: cells, colors, cursor, selection.
    - Keyboard input (incl. Ctrl-C, multiline), mouse scrollback, copy/paste.
    - Resize propagated to both the pty and `Term`.
-3. **Sidebar**
+   - Terminal lock held only to copy visible cells; shaping and painting happen after release.
+   - ASCII runs are batched per style; other characters are placed at their own column so wide,
+     fallback-font, and combining glyphs stay on the grid.
+   - IME via `EntityInputHandler`; special keys via `on_key_down` (`keys.rs`, unit-tested).
+   - The window root binds Tab, Shift+Tab, Ctrl+C; the `Terminal` key context overrides them
+     with `NoAction` so they reach the program.
+   - Copy/paste: Ctrl+Shift+C/V, Shift+Insert; Linux primary selection on select + middle click.
+   - Client-side decorations with `gpui-component`'s `TitleBar` (title, min/max/close, drag,
+     double-click to maximize) and window border; GNOME on Wayland has no server-side
+     decorations. The bundled icon assets must be registered for the control buttons to render.
+   - Programs' OSC 10/11 color queries are answered from the palette (`term-core/palette.rs`).
+   - Inherited Claude Code session markers (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, ...) are
+     stripped at startup so sessions are not treated as nested children.
+   - Scroll bar for the scrollback (see Status → Next steps).
+   - Mouse reporting (modes 1000/1002/1003, SGR/UTF-8/legacy encodings): wheel, clicks and
+     motion (once per cell) go to programs that enable tracking; Shift keeps local selection
+     and scrollback. Without tracking, the alternate screen gets arrow keys on wheel.
+3. **Sidebar** - next
    - Flat tab list: session-type icon, name, status dot.
    - New/close tab, Ctrl+Tab and Ctrl+1..9.
 4. **Agent status (Claude Code)**
@@ -89,6 +138,16 @@ and unselected tabs show correct Working / Needs attention / Idle.
 - **M5:** terminal search, close-with-running-process warnings, notifications + configurable sound.
 - **M6:** Copilot CLI status (if it gains a hook mechanism), Windows packaging, Ubuntu polish
   (Wayland/X11, socket paths).
+
+## Backlog (found during M1)
+
+- Draw box-drawing and block characters procedurally; font glyphs leave small gaps between
+  rows for heavy/double verticals (`┃`, `║`).
+- Report drags that leave the terminal area (GPUI only delivers moves while hovered).
+- Answer OSC 52 clipboard requests.
+- Show an "exited" banner in the terminal area (currently only in the title).
+- Tune wheel scroll speed (about 2 lines per notch on X11).
+- Configurable font family and size.
 
 ## Risks
 

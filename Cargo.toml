@@ -11,3 +11,6 @@ publish = false
 alacritty_terminal = "0.26"
 log = "0.4"
 parking_lot = "0.12"
+futures = "0.3"
+gpui-kit = "0.7"
+term-core = { path = "crates/term-core" }
