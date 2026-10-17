@@ -1,6 +1,8 @@
-use std::fs;
-use std::io;
-use std::path::PathBuf;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
 
 use agent_status::{
     HookMessage, HookServer, PIPE_ENV, SESSION_ENV, claude_settings, default_pipe_name,
@@ -31,11 +33,11 @@ impl ClaudeHooks {
         }
         let server = HookServer::start(default_pipe_name(), on_message)?;
         // A file rather than inline JSON: the Windows command line would need JSON quoting.
-        let settings_path = std::env::temp_dir().join(format!(
+        let settings_path = settings_dir().join(format!(
             "agentws-{}-claude-settings.json",
             std::process::id()
         ));
-        fs::write(&settings_path, claude_settings(&hook_program))?;
+        write_private(&settings_path, claude_settings(&hook_program).as_bytes())?;
         Ok(Self {
             server,
             settings_path,
@@ -60,4 +62,23 @@ impl ClaudeHooks {
     pub fn remove_settings(&self) {
         let _ = fs::remove_file(&self.settings_path);
     }
+}
+
+/// The per-user runtime directory when there is one, else the shared temp directory.
+fn settings_dir() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_dir())
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// Write a new file only the user can read. A leftover file from a crashed run with the same pid
+/// is replaced; one owned by another user cannot be removed, so creating the file fails.
+fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
+    let _ = fs::remove_file(path);
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    options.open(path)?.write_all(contents)
 }

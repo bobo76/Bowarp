@@ -14,7 +14,6 @@ pub const HOOK_EVENTS: &[&str] = &[
     "Notification",
     "Stop",
     "StopFailure",
-    "SessionEnd",
 ];
 
 /// Seconds Claude Code waits for the hook; it normally finishes in a few milliseconds.

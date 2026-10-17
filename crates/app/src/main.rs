@@ -109,7 +109,7 @@ fn main() {
                     cx.new(|cx| WorkspaceView::new(launchers, hooks, hook_messages, cx));
                 workspace.update(cx, |workspace, cx| {
                     if let Err(err) = workspace.open_tab(spec.clone(), window, cx) {
-                        let program = spec.program.as_deref().unwrap_or("shell");
+                        let program = launcher::launch_name(&spec);
                         eprintln!("agent-workspace: failed to start {program}: {err}");
                         process::exit(1)
                     }

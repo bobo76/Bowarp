@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::thread::JoinHandle;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
@@ -19,6 +20,9 @@ use parking_lot::MutexGuard;
 
 use crate::launch::{LaunchSpec, SessionKind};
 use crate::palette::Palette;
+
+/// How long a closed session's child has to exit after SIGHUP before it is killed.
+const EXIT_GRACE: Duration = Duration::from_secs(2);
 
 /// Notifications delivered from the session's I/O thread.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -362,11 +366,40 @@ impl Drop for Session {
         if let Some(sender) = self.shared.sender.get() {
             let _ = sender.send(Msg::Shutdown);
         }
-        if let Some(io_thread) = self.io_thread.take() {
-            let _ = io_thread.join();
-        }
+        let Some(io_thread) = self.io_thread.take() else {
+            return;
+        };
+        // Dropping the pty sends SIGHUP and then waits for the child with no time limit, so reap
+        // it off the caller's (UI) thread, and kill a child that ignores the hangup.
+        let (reaped_tx, reaped_rx) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            drop(io_thread.join());
+            drop(reaped_tx);
+        });
+        let child_pid = self.child_pid;
+        thread::spawn(move || {
+            if reaped_rx.recv_timeout(EXIT_GRACE) == Err(RecvTimeoutError::Timeout) {
+                kill_child(child_pid);
+            }
+        });
     }
 }
+
+#[cfg(unix)]
+fn kill_child(pid: Option<u32>) {
+    let Some(pid) = pid else {
+        return;
+    };
+    log::warn!("child {pid} ignored SIGHUP, killing it");
+    // SAFETY: `kill` has no memory-safety preconditions. The child is not reaped yet, so the
+    // pid still names it.
+    unsafe {
+        libc::kill(pid as i32, libc::SIGKILL);
+    }
+}
+
+#[cfg(windows)]
+fn kill_child(_pid: Option<u32>) {}
 
 #[cfg(unix)]
 fn child_pid(pty: &tty::Pty) -> Option<u32> {

@@ -79,21 +79,24 @@ fn default_shell_index(launchers: &[Launcher], default_shell: &Path) -> Option<u
 
 /// Name shown for a session until its program sets a title.
 pub fn default_name(spec: &LaunchSpec) -> String {
-    match spec.kind {
-        SessionKind::ClaudeCode => "Claude Code".into(),
-        SessionKind::CopilotCli => "Copilot CLI".into(),
-        SessionKind::Shell => spec
-            .program
-            .as_deref()
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("SHELL").map(PathBuf::from))
-            .as_deref()
-            .and_then(Path::file_stem)
-            .map_or_else(
-                || "Shell".into(),
-                |name| name.to_string_lossy().into_owned(),
-            ),
+    if let Some(&(_, label, _)) = AGENTS.iter().find(|&&(_, _, kind)| kind == spec.kind) {
+        return label.into();
     }
+    spec.program
+        .as_deref()
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("SHELL").map(PathBuf::from))
+        .as_deref()
+        .and_then(Path::file_stem)
+        .map_or_else(
+            || "Shell".into(),
+            |name| name.to_string_lossy().into_owned(),
+        )
+}
+
+/// The program a launch runs, for error messages.
+pub fn launch_name(spec: &LaunchSpec) -> &str {
+    spec.program.as_deref().unwrap_or("shell")
 }
 
 #[cfg(unix)]

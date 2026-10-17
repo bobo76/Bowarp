@@ -15,6 +15,8 @@ use workspace_model::TabColor;
 use crate::assets::{AGENT_SPARK_ICON, GIT_BRANCH_ICON, PIN_ICON};
 
 pub const SIDEBAR_WIDTH: f32 = 240.;
+/// Tabs selectable with Ctrl+1..9.
+pub const NUMBERED_TABS: usize = 9;
 
 const CLAUDE_ORANGE: u32 = 0xd97757;
 
@@ -312,7 +314,7 @@ pub fn tab_row(
     } else {
         (theme.sidebar, theme.sidebar_foreground, theme.sidebar)
     };
-    let shortcut = (row.index < 9).then(|| format!("Ctrl+{}", row.index + 1));
+    let shortcut = (row.index < NUMBERED_TABS).then(|| format!("Ctrl+{}", row.index + 1));
     let tooltip = match shortcut {
         Some(shortcut) => format!("{} · {}", row.status.label(), shortcut),
         None => row.status.label().to_string(),

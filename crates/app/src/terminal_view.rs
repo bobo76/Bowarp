@@ -228,12 +228,16 @@ impl TerminalView {
         }
     }
 
-    /// Show or hide the view; only the selected tab is painted.
-    pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
-        self.visible = visible;
-        if !visible {
-            return;
-        }
+    /// Stop painting the view; only the selected tab is painted.
+    pub fn hide(&mut self) {
+        self.visible = false;
+        // A wakeup sent before the next paint would never be acknowledged by `prepaint`.
+        self.session.ack_wakeup();
+    }
+
+    /// Paint the view again, clearing a finished turn it showed while hidden.
+    pub fn show(&mut self, cx: &mut Context<Self>) {
+        self.visible = true;
         let was_done = std::mem::take(&mut self.finished_unseen);
         if self.refresh_location() || was_done {
             cx.emit(TabChanged);

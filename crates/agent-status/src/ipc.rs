@@ -5,7 +5,7 @@
 use std::io::{self, BufRead, BufReader, Write};
 use std::sync::Arc;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use interprocess::local_socket::prelude::*;
 use interprocess::local_socket::{GenericNamespaced, ListenerOptions, Stream};
@@ -20,6 +20,8 @@ pub const PIPE_ENV: &str = "AGENTWS_PIPE";
 
 /// Longest line a hook may send; anything longer is not a hook message.
 const MAX_LINE: u64 = 512;
+/// How long a connection may take to send its line; a hook sends it right after connecting.
+const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A status-changing hook event for one session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +45,14 @@ pub fn default_pipe_name() -> String {
 
 /// Forward a hook's JSON input (its stdin) to the server listening on `pipe_name`.
 pub fn forward_hook(pipe_name: &str, session: u64, at: u64, input: &[u8]) -> io::Result<()> {
+    let line = hook_line(session, at, input)?;
+    let mut stream = Stream::connect(pipe_name.to_ns_name::<GenericNamespaced>()?)?;
+    stream.write_all(line.as_bytes())?;
+    stream.flush()
+}
+
+/// The wire line for a hook's JSON input, newline included.
+fn hook_line(session: u64, at: u64, input: &[u8]) -> io::Result<String> {
     let payload: Value = serde_json::from_slice(input)?;
     let field = |name| payload.get(name).and_then(Value::as_str);
     let event_name = field("hook_event_name")
@@ -53,10 +63,7 @@ pub fn forward_hook(pipe_name: &str, session: u64, at: u64, input: &[u8]) -> io:
         line.push_str(kind);
     }
     line.push('\n');
-
-    let mut stream = Stream::connect(pipe_name.to_ns_name::<GenericNamespaced>()?)?;
-    stream.write_all(line.as_bytes())?;
-    stream.flush()
+    Ok(line)
 }
 
 fn parse_line(line: &str) -> Option<HookMessage> {
@@ -69,6 +76,7 @@ fn parse_line(line: &str) -> Option<HookMessage> {
 }
 
 fn read_message(stream: Stream) -> Option<HookMessage> {
+    stream.set_recv_timeout(Some(READ_TIMEOUT)).ok()?;
     let mut line = String::new();
     BufReader::new(io::Read::take(stream, MAX_LINE))
         .read_line(&mut line)
@@ -147,6 +155,25 @@ mod tests {
         assert_eq!(parse_line("x 1000 Stop\n"), None);
         assert_eq!(parse_line("7 Stop\n"), None);
         assert_eq!(parse_line(""), None);
+    }
+
+    #[test]
+    fn builds_hook_lines() {
+        assert_eq!(
+            hook_line(7, 1000, br#"{"hook_event_name":"Stop"}"#).unwrap(),
+            "7 1000 Stop\n"
+        );
+        assert_eq!(
+            hook_line(
+                7,
+                1000,
+                br#"{"hook_event_name":"Notification","notification_type":"idle_prompt"}"#
+            )
+            .unwrap(),
+            "7 1000 Notification idle_prompt\n"
+        );
+        assert!(hook_line(7, 1000, br#"{"session_id":"abc"}"#).is_err());
+        assert!(hook_line(7, 1000, b"not json").is_err());
     }
 
     #[test]

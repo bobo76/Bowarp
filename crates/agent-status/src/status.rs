@@ -17,7 +17,6 @@ pub enum HookEvent {
     InputRequested,
     /// The turn ended, or Claude Code reported it has been waiting for input.
     Stopped,
-    SessionEnded,
 }
 
 /// `notification_type` values that mean the user has to answer before work continues.
@@ -40,7 +39,8 @@ impl HookEvent {
             // `Stop` does not fire when the user interrupts a turn; the idle prompt notification
             // that follows a minute later is what returns such a session to idle.
             "Stop" | "StopFailure" => Some(Self::Stopped),
-            "SessionEnd" => Some(Self::SessionEnded),
+            // `SessionEnd` also fires on `/clear`, when the process keeps running; a real exit is
+            // reported by the terminal session instead.
             "Notification" => match notification_type? {
                 "idle_prompt" => Some(Self::Stopped),
                 kind if ATTENTION_NOTIFICATIONS.contains(&kind) => Some(Self::InputRequested),
@@ -55,7 +55,6 @@ impl HookEvent {
             Self::PromptSubmitted | Self::ToolStarted | Self::ToolFinished => AgentStatus::Working,
             Self::InputRequested => AgentStatus::NeedsAttention,
             Self::Stopped => AgentStatus::Idle,
-            Self::SessionEnded => AgentStatus::Exited,
         }
     }
 }
@@ -93,7 +92,7 @@ impl AgentState {
         self.last_event_at = at;
     }
 
-    /// The process ended, whether or not a `SessionEnd` hook arrived.
+    /// The process ended.
     pub fn exit(&mut self) {
         self.status = AgentStatus::Exited;
     }
@@ -159,11 +158,6 @@ mod tests {
     #[test]
     fn exited_is_final() {
         use HookEvent::*;
-        assert_eq!(
-            run(&[(SessionEnded, 1), (PromptSubmitted, 2)]),
-            AgentStatus::Exited
-        );
-
         let mut state = AgentState::default();
         state.apply(PromptSubmitted, 1);
         state.exit();
@@ -181,7 +175,7 @@ mod tests {
             ("PermissionRequest", None, Some(HookEvent::InputRequested)),
             ("Stop", None, Some(HookEvent::Stopped)),
             ("StopFailure", None, Some(HookEvent::Stopped)),
-            ("SessionEnd", None, Some(HookEvent::SessionEnded)),
+            ("SessionEnd", None, None),
             ("SessionStart", None, None),
         ];
         for (name, kind, expected) in cases {

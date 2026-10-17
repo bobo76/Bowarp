@@ -4,21 +4,22 @@
 //! shaping and painting happen afterwards so the I/O thread is never blocked on rendering.
 
 use core::panic::Location;
+use std::sync::Arc;
 
 use gpui_kit::{
     App, BorderStyle, Bounds, CursorStyle, DispatchPhase, Element, ElementId, ElementInputHandler,
     Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior,
     Hsla, InspectorElementId, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     PaintQuad, Pixels, Point, ShapedLine, StrikethroughStyle, Style, TextAlign, TextRun,
-    UnderlineStyle, Window, fill, font, outline, point, px, relative, size,
+    UnderlineStyle, Window, WindowTextSystem, fill, font, outline, point, px, relative, size,
 };
 use term_core::alacritty_terminal::grid::Dimensions;
 use term_core::alacritty_terminal::term::cell::Flags;
 use term_core::alacritty_terminal::term::{RenderableContent, TermMode};
 use term_core::alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Rgb};
-use term_core::{Palette, TermDimensions, dim};
+use term_core::{Palette, Session, TermDimensions, dim};
 
-use crate::scrollbar::{ScrollMetrics, ScrollbarLayout};
+use crate::scrollbar::{ScrollMetrics, ScrollbarLayout, ScrollbarState};
 use crate::terminal_view::{GridGeometry, TerminalView};
 
 #[cfg(target_os = "windows")]
@@ -179,24 +180,11 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        let base_font = font(FONT_FAMILY);
-        let font_size = px(FONT_SIZE);
-        let text_system = window.text_system().clone();
-        let font_id = text_system.resolve_font(&base_font);
-        let cell_width = text_system
-            .advance(font_id, font_size, 'm')
-            .map(|advance| advance.width)
-            .unwrap_or(px(FONT_SIZE * 0.6));
+        let shaper = TextShaper::new(window);
+        let cell_width = shaper.cell_width();
         let line_height = px((FONT_SIZE * LINE_HEIGHT_FACTOR).round());
-
-        let element_bounds = bounds;
-        let bounds = inset(bounds, px(PADDING_X), px(PADDING_Y));
-        let columns = (f32::from(bounds.size.width) / f32::from(cell_width))
-            .floor()
-            .max(2.0) as u16;
-        let screen_lines = (f32::from(bounds.size.height) / f32::from(line_height))
-            .floor()
-            .max(1.0) as u16;
+        let grid_bounds = inset(bounds, px(PADDING_X), px(PADDING_Y));
+        let (columns, screen_lines) = fit_grid(grid_bounds, cell_width, line_height);
         let focused = self.focus_handle.is_focused(window);
 
         let view = self.view.read(cx);
@@ -207,34 +195,12 @@ impl Element for TerminalElement {
             cell_width: f32::from(cell_width) as u16,
             cell_height: f32::from(line_height) as u16,
         });
-        // Re-arm before reading so output arriving mid-frame schedules another frame.
-        session.ack_wakeup();
-        let (snapshot, scroll_metrics) = {
-            let term = session.lock_term();
-            let grid = term.grid();
-            let scroll_metrics = ScrollMetrics {
-                history: grid.history_size(),
-                display_offset: grid.display_offset(),
-                screen_lines: grid.screen_lines(),
-            };
-            let snapshot = snapshot(term.renderable_content(), session.palette(), focused);
-            (snapshot, scroll_metrics)
-        };
-        let marked_text = view.marked_text.clone();
-        let scrollbar_visible = view.scrollbar.is_visible();
-        let scrollbar_active = view.scrollbar.is_active();
-
-        let cell_origin = |line: usize, column: usize| {
-            point(
-                bounds.origin.x + cell_width * column as f32,
-                bounds.origin.y + line_height * line as f32,
-            )
-        };
-        let cell_bounds = |line: usize, column: usize, cells: usize| {
-            Bounds::new(
-                cell_origin(line, column),
-                size(cell_width * cells as f32, line_height),
-            )
+        let (snapshot, scroll_metrics) = take_snapshot(session, focused);
+        let palette = session.palette();
+        let grid = CellGrid {
+            origin: grid_bounds.origin,
+            cell_width,
+            line_height,
         };
 
         let backgrounds = snapshot
@@ -242,68 +208,36 @@ impl Element for TerminalElement {
             .iter()
             .map(|rect| {
                 fill(
-                    cell_bounds(rect.line, rect.column, rect.cells),
+                    grid.bounds(rect.line, rect.column, rect.cells),
                     to_hsla(rect.color),
                 )
             })
             .collect();
-
-        let shape = |text: String, style: CellStyle| {
-            let run = text_run(&base_font, text.len(), style);
-            text_system.shape_line(text.into(), font_size, &[run], None)
-        };
-        let lines = snapshot
-            .batches
-            .into_iter()
-            .map(|batch| {
-                let origin = cell_origin(batch.line, batch.column);
-                (origin, shape(batch.text, batch.style))
-            })
-            .collect();
-
-        let cursor_color = to_hsla(snapshot.cursor_color);
-        let cursor = snapshot.cursor.as_ref().and_then(|cursor| {
-            let cell = cell_bounds(cursor.line, cursor.column, cursor.cells);
-            cursor_quad(cursor.shape, cell, cursor_color)
-        });
-        let cursor_origin = snapshot.cursor.as_ref().map_or(bounds.origin, |cursor| {
-            cell_origin(cursor.line, cursor.column)
-        });
-
-        let marked_text = marked_text.map(|text| {
-            let shaped = shape(text, marked_text_style(session.palette().foreground));
+        let (cursor, cursor_origin) = prepare_cursor(
+            snapshot.cursor.as_ref(),
+            grid,
+            to_hsla(snapshot.cursor_color),
+        );
+        let marked_text = view.marked_text.clone().map(|text| {
+            let shaped = shaper.shape(text, marked_text_style(palette.foreground));
             marked_text_overlay(shaped, cursor_origin, line_height, snapshot.background)
         });
-
-        let scrollbar_color = to_hsla(session.palette().foreground);
-        let scrollbar = (scroll_metrics.history > 0).then(|| {
-            let layout = ScrollbarLayout {
-                track: Bounds::new(
-                    point(element_bounds.right() - px(PADDING_X), element_bounds.top()),
-                    size(px(PADDING_X), element_bounds.size.height),
-                ),
-                metrics: scroll_metrics,
-            };
-            let quads = if scrollbar_visible {
-                scrollbar_quads(layout, scrollbar_active, scrollbar_color)
-            } else {
-                Vec::new()
-            };
-            PreparedScrollbar {
-                layout,
-                hitbox: window.insert_hitbox(layout.track, HitboxBehavior::Normal),
-                quads,
-            }
-        });
+        let scrollbar = prepare_scrollbar(
+            bounds,
+            scroll_metrics,
+            &view.scrollbar,
+            to_hsla(palette.foreground),
+            window,
+        );
 
         PrepaintState {
             background: to_hsla(snapshot.background),
             backgrounds,
-            lines,
+            lines: shape_lines(snapshot.batches, grid, &shaper),
             cursor,
             marked_text,
             geometry: GridGeometry {
-                origin: bounds.origin,
+                origin: grid.origin,
                 cell_width,
                 line_height,
                 columns: columns as usize,
@@ -399,6 +333,148 @@ impl TerminalElement {
             }
         });
     }
+}
+
+/// Shapes runs of terminal text in the terminal font.
+struct TextShaper {
+    text_system: Arc<WindowTextSystem>,
+    font: Font,
+    font_size: Pixels,
+}
+
+impl TextShaper {
+    fn new(window: &Window) -> Self {
+        Self {
+            text_system: window.text_system().clone(),
+            font: font(FONT_FAMILY),
+            font_size: px(FONT_SIZE),
+        }
+    }
+
+    /// The width of one cell: the advance of a glyph in the monospace font.
+    fn cell_width(&self) -> Pixels {
+        let font_id = self.text_system.resolve_font(&self.font);
+        self.text_system
+            .advance(font_id, self.font_size, 'm')
+            .map(|advance| advance.width)
+            .unwrap_or(px(FONT_SIZE * 0.6))
+    }
+
+    fn shape(&self, text: String, style: CellStyle) -> ShapedLine {
+        let run = text_run(&self.font, text.len(), style);
+        self.text_system
+            .shape_line(text.into(), self.font_size, &[run], None)
+    }
+}
+
+/// Maps grid cells to window positions.
+#[derive(Clone, Copy)]
+struct CellGrid {
+    origin: Point<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+}
+
+impl CellGrid {
+    fn origin(&self, line: usize, column: usize) -> Point<Pixels> {
+        point(
+            self.origin.x + self.cell_width * column as f32,
+            self.origin.y + self.line_height * line as f32,
+        )
+    }
+
+    fn bounds(&self, line: usize, column: usize, cells: usize) -> Bounds<Pixels> {
+        Bounds::new(
+            self.origin(line, column),
+            size(self.cell_width * cells as f32, self.line_height),
+        )
+    }
+}
+
+/// Columns and lines that fit in `bounds`, at least 2 columns and 1 line.
+fn fit_grid(bounds: Bounds<Pixels>, cell_width: Pixels, line_height: Pixels) -> (u16, u16) {
+    let columns = (f32::from(bounds.size.width) / f32::from(cell_width))
+        .floor()
+        .max(2.0) as u16;
+    let lines = (f32::from(bounds.size.height) / f32::from(line_height))
+        .floor()
+        .max(1.0) as u16;
+    (columns, lines)
+}
+
+/// Copy the visible grid and its scroll position, holding the terminal lock only for the copy.
+fn take_snapshot(session: &Session, focused: bool) -> (GridSnapshot, ScrollMetrics) {
+    // Re-arm before reading so output arriving mid-frame schedules another frame.
+    session.ack_wakeup();
+    let term = session.lock_term();
+    let grid = term.grid();
+    let scroll_metrics = ScrollMetrics {
+        history: grid.history_size(),
+        display_offset: grid.display_offset(),
+        screen_lines: grid.screen_lines(),
+    };
+    let snapshot = snapshot(term.renderable_content(), session.palette(), focused);
+    (snapshot, scroll_metrics)
+}
+
+fn shape_lines(
+    batches: Vec<TextBatch>,
+    grid: CellGrid,
+    shaper: &TextShaper,
+) -> Vec<(Point<Pixels>, ShapedLine)> {
+    batches
+        .into_iter()
+        .map(|batch| {
+            let origin = grid.origin(batch.line, batch.column);
+            (origin, shaper.shape(batch.text, batch.style))
+        })
+        .collect()
+}
+
+/// The cursor quad, and the top-left of the cursor cell (the grid origin without a cursor).
+fn prepare_cursor(
+    cursor: Option<&CursorCell>,
+    grid: CellGrid,
+    color: Hsla,
+) -> (Option<PaintQuad>, Point<Pixels>) {
+    let Some(cursor) = cursor else {
+        return (None, grid.origin);
+    };
+    let cell = grid.bounds(cursor.line, cursor.column, cursor.cells);
+    (
+        cursor_quad(cursor.shape, cell, color),
+        grid.origin(cursor.line, cursor.column),
+    )
+}
+
+/// The scroll bar in the right padding of `element_bounds`, when there is history to scroll.
+fn prepare_scrollbar(
+    element_bounds: Bounds<Pixels>,
+    metrics: ScrollMetrics,
+    state: &ScrollbarState,
+    color: Hsla,
+    window: &mut Window,
+) -> Option<PreparedScrollbar> {
+    if metrics.history == 0 {
+        return None;
+    }
+    let layout = ScrollbarLayout {
+        track: Bounds::new(
+            point(element_bounds.right() - px(PADDING_X), element_bounds.top()),
+            size(px(PADDING_X), element_bounds.size.height),
+        ),
+        metrics,
+    };
+    let quads = if state.is_visible() {
+        scrollbar_quads(layout, state.is_active(), color)
+    } else {
+        Vec::new()
+    };
+    Some(PreparedScrollbar {
+        layout,
+        hitbox: window.insert_hitbox(layout.track, HitboxBehavior::Normal),
+        quads,
+    })
 }
 
 /// Track (only while hovered or dragged) and thumb, right-aligned in the track.

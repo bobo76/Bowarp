@@ -183,3 +183,40 @@ fn current_dir_follows_cd() {
     }
     assert_eq!(session.current_dir(), Some(target));
 }
+
+#[test]
+fn dropping_kills_a_child_that_ignores_hangup() {
+    let (session, rx) = spawn_sh(
+        "trap '' HUP; echo $$; exec sleep 30",
+        TermDimensions::new(80, 24),
+    );
+    let deadline = Instant::now() + TIMEOUT;
+    let pid = loop {
+        let _ = rx.recv_timeout(Duration::from_millis(50));
+        session.ack_wakeup();
+        if let Ok(pid) = session.visible_text()[0].parse::<u32>() {
+            break pid;
+        }
+        assert!(Instant::now() < deadline, "child did not print its pid");
+    };
+
+    let started = Instant::now();
+    drop(session);
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "drop blocked on the child"
+    );
+
+    let deadline = Instant::now() + TIMEOUT;
+    while process_exists(pid) {
+        assert!(Instant::now() < deadline, "child {pid} was not killed");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn process_exists(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .is_ok_and(|status| status.success())
+}
