@@ -116,7 +116,12 @@ impl Drop for ReaderSlot {
 }
 
 fn read_message(stream: Stream) -> Option<HookMessage> {
-    stream.set_recv_timeout(Some(READ_TIMEOUT)).ok()?;
+    match stream.set_recv_timeout(Some(READ_TIMEOUT)) {
+        Ok(()) => {}
+        // Named pipes have no I/O timeouts; there a silent peer holds one reader slot.
+        Err(err) if err.kind() == io::ErrorKind::Unsupported => {}
+        Err(_) => return None,
+    }
     let mut line = String::new();
     BufReader::new(io::Read::take(stream, MAX_LINE))
         .read_line(&mut line)
