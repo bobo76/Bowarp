@@ -80,6 +80,22 @@ fn empty_selection_is_dropped_when_finished() {
 }
 
 #[test]
+fn scroll_to_moves_through_history_and_clamps() {
+    let (session, rx) = spawn_sh("seq 1 100", TermDimensions::new(80, 24));
+    wait_for_exit(&rx);
+
+    session.scroll_to(10);
+    assert_eq!(session.display_offset(), 10);
+    session.scroll_to(3);
+    assert_eq!(session.display_offset(), 3);
+    session.scroll_to(10_000);
+    let history = 100 + 1 - 24;
+    assert_eq!(session.display_offset(), history);
+    session.scroll_to(0);
+    assert_eq!(session.display_offset(), 0);
+}
+
+#[test]
 fn exit_code_is_reported() {
     let (session, rx) = spawn_sh("exit 3", TermDimensions::new(80, 24));
     let events = wait_for_exit(&rx);

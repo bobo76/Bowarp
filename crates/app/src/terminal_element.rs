@@ -6,16 +6,19 @@
 use core::panic::Location;
 
 use gpui_kit::{
-    App, BorderStyle, Bounds, Element, ElementId, ElementInputHandler, Entity, FocusHandle, Font,
-    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId,
+    App, BorderStyle, Bounds, CursorStyle, DispatchPhase, Element, ElementId, ElementInputHandler,
+    Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior,
+    Hsla, InspectorElementId, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     PaintQuad, Pixels, Point, ShapedLine, StrikethroughStyle, Style, TextAlign, TextRun,
     UnderlineStyle, Window, fill, font, outline, point, px, relative, size,
 };
+use term_core::alacritty_terminal::grid::Dimensions;
 use term_core::alacritty_terminal::term::cell::Flags;
 use term_core::alacritty_terminal::term::{RenderableContent, TermMode};
 use term_core::alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Rgb};
 use term_core::{Palette, TermDimensions, dim};
 
+use crate::scrollbar::{ScrollMetrics, ScrollbarLayout};
 use crate::terminal_view::{GridGeometry, TerminalView};
 
 #[cfg(target_os = "windows")]
@@ -24,6 +27,11 @@ const FONT_FAMILY: &str = "Cascadia Mono";
 const FONT_FAMILY: &str = "DejaVu Sans Mono";
 const FONT_SIZE: f32 = 14.0;
 const LINE_HEIGHT_FACTOR: f32 = 1.2;
+/// Space around the grid. The scroll bar sits in the right padding.
+const PADDING_X: f32 = 8.0;
+const PADDING_Y: f32 = 4.0;
+const SCROLLBAR_THUMB_WIDTH: f32 = 4.0;
+const SCROLLBAR_ACTIVE_THUMB_WIDTH: f32 = 6.0;
 const SELECTION_BACKGROUND: Rgb = Rgb {
     r: 0x26,
     g: 0x4f,
@@ -119,6 +127,14 @@ pub struct PrepaintState {
     cursor: Option<PaintQuad>,
     marked_text: Option<(PaintQuad, Point<Pixels>, ShapedLine)>,
     geometry: GridGeometry,
+    scrollbar: Option<PreparedScrollbar>,
+}
+
+struct PreparedScrollbar {
+    layout: ScrollbarLayout,
+    hitbox: Hitbox,
+    /// Track and thumb, or nothing while the bar is hidden.
+    quads: Vec<PaintQuad>,
 }
 
 impl IntoElement for TerminalElement {
@@ -173,6 +189,8 @@ impl Element for TerminalElement {
             .unwrap_or(px(FONT_SIZE * 0.6));
         let line_height = px((FONT_SIZE * LINE_HEIGHT_FACTOR).round());
 
+        let element_bounds = bounds;
+        let bounds = inset(bounds, px(PADDING_X), px(PADDING_Y));
         let columns = (f32::from(bounds.size.width) / f32::from(cell_width))
             .floor()
             .max(2.0) as u16;
@@ -191,11 +209,20 @@ impl Element for TerminalElement {
         });
         // Re-arm before reading so output arriving mid-frame schedules another frame.
         session.ack_wakeup();
-        let snapshot = {
+        let (snapshot, scroll_metrics) = {
             let term = session.lock_term();
-            snapshot(term.renderable_content(), session.palette(), focused)
+            let grid = term.grid();
+            let scroll_metrics = ScrollMetrics {
+                history: grid.history_size(),
+                display_offset: grid.display_offset(),
+                screen_lines: grid.screen_lines(),
+            };
+            let snapshot = snapshot(term.renderable_content(), session.palette(), focused);
+            (snapshot, scroll_metrics)
         };
         let marked_text = view.marked_text.clone();
+        let scrollbar_visible = view.scrollbar.is_visible();
+        let scrollbar_active = view.scrollbar.is_active();
 
         let cell_origin = |line: usize, column: usize| {
             point(
@@ -248,6 +275,27 @@ impl Element for TerminalElement {
             marked_text_overlay(shaped, cursor_origin, line_height, snapshot.background)
         });
 
+        let scrollbar_color = to_hsla(session.palette().foreground);
+        let scrollbar = (scroll_metrics.history > 0).then(|| {
+            let layout = ScrollbarLayout {
+                track: Bounds::new(
+                    point(element_bounds.right() - px(PADDING_X), element_bounds.top()),
+                    size(px(PADDING_X), element_bounds.size.height),
+                ),
+                metrics: scroll_metrics,
+            };
+            let quads = if scrollbar_visible {
+                scrollbar_quads(layout, scrollbar_active, scrollbar_color)
+            } else {
+                Vec::new()
+            };
+            PreparedScrollbar {
+                layout,
+                hitbox: window.insert_hitbox(layout.track, HitboxBehavior::Normal),
+                quads,
+            }
+        });
+
         PrepaintState {
             background: to_hsla(snapshot.background),
             backgrounds,
@@ -262,6 +310,7 @@ impl Element for TerminalElement {
                 lines: screen_lines as usize,
                 cursor_origin,
             },
+            scrollbar,
         }
     }
 
@@ -301,10 +350,88 @@ impl Element for TerminalElement {
             }
         }
 
+        let scrollbar = prepaint.scrollbar.take();
+        if let Some(scrollbar) = &scrollbar {
+            for quad in &scrollbar.quads {
+                window.paint_quad(quad.clone());
+            }
+            window.set_cursor_style(CursorStyle::Arrow, &scrollbar.hitbox);
+            self.register_scrollbar_listeners(scrollbar.layout, window);
+        }
+
         let geometry = prepaint.geometry;
-        self.view
-            .update(cx, |view, _| view.geometry = Some(geometry));
+        let scrollable = scrollbar.is_some();
+        self.view.update(cx, |view, cx| {
+            view.geometry = Some(geometry);
+            view.set_scrollable(scrollable, cx);
+        });
     }
+}
+
+impl TerminalElement {
+    /// Window-level listeners so a thumb drag keeps working when the pointer leaves the
+    /// terminal. They run before the terminal's own handlers, which they stop when they act.
+    fn register_scrollbar_listeners(&self, layout: ScrollbarLayout, window: &mut Window) {
+        let view = self.view.clone();
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+            if phase == DispatchPhase::Bubble
+                && view.update(cx, |view, cx| {
+                    view.scrollbar_mouse_down(event, layout, window, cx)
+                })
+            {
+                cx.stop_propagation();
+            }
+        });
+        let view = self.view.clone();
+        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+            if phase == DispatchPhase::Bubble
+                && view.update(cx, |view, cx| view.scrollbar_mouse_move(event, layout, cx))
+            {
+                cx.stop_propagation();
+            }
+        });
+        let view = self.view.clone();
+        window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
+            if phase == DispatchPhase::Bubble
+                && view.update(cx, |view, cx| view.scrollbar_mouse_up(cx))
+            {
+                cx.stop_propagation();
+            }
+        });
+    }
+}
+
+/// Track (only while hovered or dragged) and thumb, right-aligned in the track.
+fn scrollbar_quads(layout: ScrollbarLayout, active: bool, color: Hsla) -> Vec<PaintQuad> {
+    let Some((top, height)) = layout.thumb() else {
+        return Vec::new();
+    };
+    let track = layout.track;
+    let width = px(if active {
+        SCROLLBAR_ACTIVE_THUMB_WIDTH
+    } else {
+        SCROLLBAR_THUMB_WIDTH
+    });
+    let thumb = Bounds::new(
+        point(track.right() - width - px(1.), track.top() + px(top)),
+        size(width, px(height)),
+    );
+    let thumb_color = color.opacity(if active { 0.6 } else { 0.35 });
+    let thumb = fill(thumb, thumb_color).corner_radii(width / 2.);
+    if !active {
+        return vec![thumb];
+    }
+    vec![fill(track, color.opacity(0.08)), thumb]
+}
+
+fn inset(bounds: Bounds<Pixels>, x: Pixels, y: Pixels) -> Bounds<Pixels> {
+    Bounds::new(
+        point(bounds.origin.x + x, bounds.origin.y + y),
+        size(
+            (bounds.size.width - x * 2.).max(px(0.)),
+            (bounds.size.height - y * 2.).max(px(0.)),
+        ),
+    )
 }
 
 /// Copy the visible cells into paint batches. Runs under the terminal lock: no shaping here.

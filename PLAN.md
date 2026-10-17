@@ -18,22 +18,19 @@ Feature spec: [FEATURES.md](FEATURES.md)
   program enables tracking; Shift bypasses reporting for local selection (`app/src/mouse.rs`).
   Verified under X11 (Xvfb): shell scrollback, Claude Code transcript scrolling, and exact
   report bytes. Scrolling confirmed on Wayland by the user.
-- Tests: 26 passing (`term-core` session + palette, `app` key/paste translation, mouse reports
-  and wheel decision).
+- Scroll bar: overlay in the right padding (no column cost), shown while scrolling, hovered or
+  dragged, hidden after 1.2 s and whenever there is no history (alternate screen). Drag the thumb
+  (keeps tracking outside the window), click the track to center the thumb there
+  (`app/src/scrollbar.rs`, `Session::scroll_to`). Verified under X11 (Xvfb).
+- Tests: 54 passing (`term-core` session + palette, `app` key/paste translation, mouse reports,
+  wheel decision, render batching/colors, scroll bar geometry).
 - Verified by driving the app under X11 (screenshots + simulated input). Wayland checked
   manually by the user.
 
 **Next steps, in priority order**
 
-1. **Scroll bar** (requested by the user): a vertical bar on the terminal's right edge.
-   - Thumb size and position from `grid().history_size()`, `display_offset()` and the
-     screen lines; drag the thumb and click the track to scroll; repaint on output and scroll.
-   - Overlay style (thin, shown while scrolling or hovered) so it costs no terminal column.
-   - Limitation: on the alternate screen (Claude Code, full-screen programs) there is no
-     scrollback; the program scrolls its own content and the terminal cannot know its
-     position, so the bar is hidden there.
-2. M1 step 3 - sidebar with multiple sessions.
-3. M1 step 4 - Claude Code status via hooks.
+1. M1 step 3 - sidebar with multiple sessions.
+2. M1 step 4 - Claude Code status via hooks.
 
 ## Decisions
 
@@ -96,7 +93,8 @@ Only `app` depends on GPUI. If GPUI proves too painful, only that crate is repla
    - Programs' OSC 10/11 color queries are answered from the palette (`term-core/palette.rs`).
    - Inherited Claude Code session markers (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, ...) are
      stripped at startup so sessions are not treated as nested children.
-   - Scroll bar for the scrollback (see Status → Next steps).
+   - Overlay scroll bar for the scrollback, hidden on the alternate screen: the program scrolls
+     its own content there and the terminal cannot know its position.
    - Mouse reporting (modes 1000/1002/1003, SGR/UTF-8/legacy encodings): wheel, clicks and
      motion (once per cell) go to programs that enable tracking; Shift keeps local selection
      and scrollback. Without tracking, the alternate screen gets arrow keys on wheel.

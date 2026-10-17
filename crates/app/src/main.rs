@@ -1,5 +1,6 @@
 mod keys;
 mod mouse;
+mod scrollbar;
 mod terminal_element;
 mod terminal_view;
 mod workspace_view;

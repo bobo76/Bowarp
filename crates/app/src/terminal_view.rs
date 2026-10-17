@@ -10,7 +10,7 @@ use gpui_kit::{
     App, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, NoAction, ParentElement, Pixels, Point, Render,
-    ScrollDelta, ScrollWheelEvent, Styled, Task, UTF16Selection, Window, div, px, size,
+    ScrollDelta, ScrollWheelEvent, Styled, Task, UTF16Selection, Window, div, size,
 };
 use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
@@ -20,6 +20,7 @@ use term_core::{EventCallback, LaunchSpec, Palette, Session, SessionEvent, TermD
 
 use crate::keys;
 use crate::mouse::{self, Cell, MouseAction, ReportButton, WheelAction};
+use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
 use crate::terminal_element::{TerminalElement, to_hsla};
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -71,6 +72,7 @@ pub struct TerminalView {
     reported_button: Option<ReportButton>,
     /// Last cell a motion report was sent for, so motion is reported once per cell.
     last_motion_cell: Option<Cell>,
+    pub(crate) scrollbar: ScrollbarState,
     _session_events: Task<()>,
 }
 
@@ -111,6 +113,7 @@ impl TerminalView {
             selecting: false,
             reported_button: None,
             last_motion_cell: None,
+            scrollbar: ScrollbarState::default(),
             _session_events: session_events,
         })
     }
@@ -197,7 +200,98 @@ impl TerminalView {
             "pagedown" => Scroll::PageDown,
             _ => return false,
         };
+        self.scroll_scrollback(scroll, cx);
+        true
+    }
+
+    /// Move through the scrollback on the user's request, showing the scroll bar.
+    fn scroll_scrollback(&mut self, scroll: Scroll, cx: &mut Context<Self>) {
         self.session.scroll_display(scroll);
+        self.reveal_scrollbar(cx);
+        cx.notify();
+    }
+
+    /// Show the scroll bar until it has been left alone for [`scrollbar::LINGER`].
+    fn reveal_scrollbar(&mut self, cx: &mut Context<Self>) {
+        self.scrollbar.revealed = true;
+        self.scrollbar.hide_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(scrollbar::LINGER).await;
+            let _ = this.update(cx, |view, cx| {
+                view.scrollbar.revealed = false;
+                cx.notify();
+            });
+        }));
+    }
+
+    /// Drop hover and drag state once there is no history to scroll (e.g. on the alternate
+    /// screen), since the bar and its listeners are gone.
+    pub(crate) fn set_scrollable(&mut self, scrollable: bool, cx: &mut Context<Self>) {
+        if !scrollable && self.scrollbar.is_active() {
+            self.scrollbar.hovered = false;
+            self.scrollbar.drag_grab = None;
+            cx.notify();
+        }
+    }
+
+    /// A left press on the track starts a thumb drag; off the thumb it first centers the thumb
+    /// on the pointer. Returns whether the press was consumed.
+    pub(crate) fn scrollbar_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        layout: ScrollbarLayout,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if event.button != MouseButton::Left || !layout.track.contains(&event.position) {
+            return false;
+        }
+        let Some((top, height)) = layout.thumb() else {
+            return false;
+        };
+        window.focus(&self.focus_handle, cx);
+        let y = f32::from(event.position.y - layout.track.origin.y);
+        let grab = if (top..top + height).contains(&y) {
+            y - top
+        } else {
+            height / 2.0
+        };
+        self.scrollbar.drag_grab = Some(grab);
+        self.session
+            .scroll_to(layout.offset_for_pointer(event.position.y, grab));
+        cx.notify();
+        true
+    }
+
+    /// Drags the thumb, or tracks hover over the track. Returns whether the move was consumed.
+    pub(crate) fn scrollbar_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        layout: ScrollbarLayout,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if let Some(grab) = self.scrollbar.drag_grab {
+            self.session
+                .scroll_to(layout.offset_for_pointer(event.position.y, grab));
+            cx.notify();
+            return true;
+        }
+        let hovered = layout.track.contains(&event.position);
+        if hovered != self.scrollbar.hovered {
+            self.scrollbar.hovered = hovered;
+            if !hovered {
+                self.reveal_scrollbar(cx);
+            }
+            cx.notify();
+        }
+        false
+    }
+
+    /// Ends a thumb drag. Returns whether the release was consumed.
+    pub(crate) fn scrollbar_mouse_up(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.scrollbar.drag_grab.take().is_none() {
+            return false;
+        }
+        self.reveal_scrollbar(cx);
         cx.notify();
         true
     }
@@ -236,7 +330,7 @@ impl TerminalView {
         };
         match mouse::wheel_action(whole, cell, &event.modifiers, self.mode()) {
             WheelAction::Program(bytes) => self.session.write(bytes),
-            WheelAction::Scrollback(lines) => self.session.scroll_display(Scroll::Delta(lines)),
+            WheelAction::Scrollback(lines) => self.scroll_scrollback(Scroll::Delta(lines), cx),
         }
         cx.notify();
         cx.stop_propagation();
@@ -401,8 +495,6 @@ impl Render for TerminalView {
         let background = self.session.palette().background;
         let view = div()
             .size_full()
-            .px(px(8.))
-            .py(px(4.))
             .bg(to_hsla(background))
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)

@@ -242,6 +242,15 @@ impl Session {
         self.term.lock().scroll_display(scroll);
     }
 
+    /// Scroll the visible screen to `display_offset` lines back, clamped to the history.
+    pub fn scroll_to(&self, display_offset: usize) {
+        let mut term = self.term.lock();
+        let delta = display_offset as i32 - term.grid().display_offset() as i32;
+        if delta != 0 {
+            term.scroll_display(Scroll::Delta(delta));
+        }
+    }
+
     /// How many lines the visible screen is scrolled back into history.
     pub fn display_offset(&self) -> usize {
         self.term.lock().grid().display_offset()
