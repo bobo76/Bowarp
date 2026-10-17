@@ -1,8 +1,10 @@
 mod sidebar_rows;
 
+use std::collections::HashMap;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use agent_status::HookMessage;
 use futures::StreamExt;
@@ -19,15 +21,20 @@ use gpui_kit::{
 };
 use term_core::LaunchSpec;
 use workspace_model::layout::Direction;
-use workspace_model::{DropTarget, GroupId, Layout, TabColor, TabMeta};
+use workspace_model::{
+    DropTarget, GroupId, Layout, TabColor, TabMeta, TabQuery, display_path, lines_added,
+    next_attention,
+};
 
 use crate::hooks::ClaudeHooks;
 use crate::launcher::{Launcher, launch_name};
-use crate::sidebar::NUMBERED_TABS;
+use crate::sidebar::{NUMBERED_TABS, TabStatus};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::terminal_view::{TabChanged, TerminalView};
 
 const NEW_GROUP_NAME: &str = "New group";
+/// How long a hover card's `+N` is reused before `git diff` runs again.
+const DIFF_STAT_TTL: Duration = Duration::from_secs(5);
 
 struct Tab {
     /// The session id, which stays with the tab when tabs move.
@@ -52,6 +59,20 @@ struct Rename {
     _events: Subscription,
 }
 
+/// The `+N` shown in a tab's hover card, for the folder it was computed in.
+struct DiffStat {
+    dir: PathBuf,
+    checked: Instant,
+    /// `None` until `git diff` answers, or when it cannot.
+    added: Option<u64>,
+}
+
+impl DiffStat {
+    fn is_fresh(&self, dir: &Path, now: Instant) -> bool {
+        self.dir == dir && now.duration_since(self.checked) < DIFF_STAT_TTL
+    }
+}
+
 /// Window content: the title bar above the tab sidebar and the selected terminal.
 pub struct WorkspaceView {
     /// In sidebar order (`layout.tabs()`), so indices match Ctrl+1..9.
@@ -60,6 +81,10 @@ pub struct WorkspaceView {
     active: usize,
     sidebar_visible: bool,
     renaming: Option<Rename>,
+    /// The sidebar's "Search tabs..." field.
+    search: Entity<InputState>,
+    /// Lines added per tab, fetched when its hover card opens.
+    diff_stats: HashMap<u64, DiffStat>,
     /// Where the tab being dragged would land, from the last drag move over the sidebar.
     drop_hint: Option<DropTarget>,
     /// For shortening folders to `~` in the sidebar.
@@ -68,6 +93,7 @@ pub struct WorkspaceView {
     launchers: Rc<[Launcher]>,
     hooks: Option<Rc<ClaudeHooks>>,
     _hook_messages: Task<()>,
+    _search_events: Subscription,
 }
 
 impl WorkspaceView {
@@ -75,6 +101,7 @@ impl WorkspaceView {
         launchers: Rc<[Launcher]>,
         hooks: Option<Rc<ClaudeHooks>>,
         mut hook_messages: UnboundedReceiver<HookMessage>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let hook_task = cx.spawn(async move |this, cx| {
@@ -87,18 +114,32 @@ impl WorkspaceView {
                 }
             }
         });
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search tabs..."));
+        let search_events =
+            cx.subscribe_in(
+                &search,
+                window,
+                |workspace, _, event, window, cx| match event {
+                    InputEvent::Change => cx.notify(),
+                    InputEvent::PressEnter { .. } => workspace.select_first_match(window, cx),
+                    _ => {}
+                },
+            );
         Self {
             tabs: Vec::new(),
             layout: Layout::default(),
             active: 0,
             sidebar_visible: true,
             renaming: None,
+            search,
+            diff_stats: HashMap::new(),
             drop_hint: None,
             home: std::env::home_dir(),
             next_session_id: 1,
             launchers,
             hooks,
             _hook_messages: hook_task,
+            _search_events: search_events,
         }
     }
 
@@ -205,6 +246,7 @@ impl WorkspaceView {
         }
         let tab = self.tabs.remove(index);
         self.layout.remove(tab.id);
+        self.diff_stats.remove(&tab.id);
         if self.tabs.is_empty() {
             window.remove_window();
             return;
@@ -482,6 +524,155 @@ impl WorkspaceView {
         Some(editor.into_any_element())
     }
 
+    fn search_query(&self, cx: &App) -> TabQuery {
+        TabQuery::parse(&self.search.read(cx).value())
+    }
+
+    /// Whether the tab shows while searching: the query is looked up in its name, program
+    /// title, folder (as shown, with `~`, so the home folder's path does not match every tab),
+    /// branch and group name.
+    fn tab_matches(&self, tab: &Tab, query: &TabQuery, cx: &App) -> bool {
+        let view = tab.view.read(cx);
+        let name = Self::tab_name(tab, cx);
+        let location = view.location();
+        let folder = location.map(|location| display_path(&location.dir, self.home.as_deref()));
+        let branch = location.and_then(|location| location.head.as_ref().map(|head| head.name()));
+        let group = self
+            .layout
+            .group_of(tab.id)
+            .map(|group| group.name.as_str());
+        let fields = [
+            Some(name.as_str()),
+            Some(view.name()),
+            folder.as_deref(),
+            branch,
+            group,
+        ]
+        .into_iter()
+        .flatten();
+        query.matches(fields)
+    }
+
+    /// The tabs the search leaves in the sidebar; `None` when there is no search.
+    fn search_matches(&self, cx: &App) -> Option<Vec<u64>> {
+        let query = self.search_query(cx);
+        if query.is_empty() {
+            return None;
+        }
+        Some(
+            self.tabs
+                .iter()
+                .filter(|tab| self.tab_matches(tab, &query, cx))
+                .map(|tab| tab.id)
+                .collect(),
+        )
+    }
+
+    /// Put the keyboard in the search field, showing the sidebar if it is hidden.
+    fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_visible = true;
+        self.search.update(cx, |search, cx| {
+            search.select_all(window, cx);
+            search.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Clear the search and give the keyboard back to the selected terminal.
+    fn end_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search
+            .update(cx, |search, cx| search.clean(window, cx));
+        if let Some(tab) = self.active_tab() {
+            window.focus(&tab.view.focus_handle(cx), cx);
+        }
+        cx.notify();
+    }
+
+    /// Enter in the search field: select the first tab shown and end the search.
+    fn select_first_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let first = self
+            .search_matches(cx)
+            .and_then(|matches| matches.first().copied())
+            .and_then(|id| self.tab_index(id));
+        if let Some(index) = first {
+            self.activate(index, window, cx);
+        }
+        self.end_search(window, cx);
+    }
+
+    /// Select the next other tab needing attention; with none, the next one with a finished turn.
+    fn jump_to_attention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let attention: Vec<_> = self
+            .tabs
+            .iter()
+            .map(|tab| tab.view.read(cx).tab_status().attention())
+            .collect();
+        let current = (self.active < self.tabs.len()).then_some(self.active);
+        if let Some(index) = next_attention(&attention, current) {
+            self.activate(index, window, cx);
+        }
+    }
+
+    /// How many tabs wait for a permission decision or an answer.
+    fn attention_count(&self, cx: &App) -> usize {
+        self.tabs
+            .iter()
+            .filter(|tab| tab.view.read(cx).tab_status() == TabStatus::NeedsAttention)
+            .count()
+    }
+
+    /// Run `git diff` for the tab's hover card unless a recent answer for its folder is cached.
+    fn refresh_diff_stat(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(location) = self
+            .tab_index(id)
+            .and_then(|index| self.tabs[index].view.read(cx).location())
+            .filter(|location| location.head.is_some())
+        else {
+            return;
+        };
+        let dir = location.dir.clone();
+        let now = Instant::now();
+        if self
+            .diff_stats
+            .get(&id)
+            .is_some_and(|stat| stat.is_fresh(&dir, now))
+        {
+            return;
+        }
+        let previous = self
+            .diff_stats
+            .remove(&id)
+            .filter(|stat| stat.dir == dir)
+            .and_then(|stat| stat.added);
+        self.diff_stats.insert(
+            id,
+            DiffStat {
+                dir: dir.clone(),
+                checked: now,
+                added: previous,
+            },
+        );
+        cx.spawn(async move |this, cx| {
+            let added = cx
+                .background_spawn({
+                    let dir = dir.clone();
+                    async move { lines_added(&dir) }
+                })
+                .await;
+            let _ = this.update(cx, |workspace, cx| {
+                if let Some(stat) = workspace
+                    .diff_stats
+                    .get_mut(&id)
+                    .filter(|stat| stat.dir == dir)
+                {
+                    stat.added = added;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     fn cycle(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.tabs.len();
         if count == 0 {
@@ -527,7 +718,8 @@ impl WorkspaceView {
 
     /// Ctrl+Tab / Ctrl+Shift+Tab cycle tabs, Ctrl+1..9 select one, Ctrl+Shift+T opens another
     /// tab like the selected one, Ctrl+Shift+W closes it, Ctrl+Shift+B shows or hides the
-    /// sidebar.
+    /// sidebar, Ctrl+Shift+S searches tabs, Ctrl+Shift+A jumps to the next tab needing
+    /// attention.
     fn handle_tab_shortcut(
         &mut self,
         keystroke: &Keystroke,
@@ -543,6 +735,8 @@ impl WorkspaceView {
             ("t", true) => self.duplicate_active(window, cx),
             ("w", true) => self.close_tab(self.active, window, cx),
             ("b", true) => self.toggle_sidebar(cx),
+            ("s", true) => self.focus_search(window, cx),
+            ("a", true) => self.jump_to_attention(window, cx),
             (key, false) => match tab_number(key) {
                 Some(number) => self.activate(number - 1, window, cx),
                 None => return false,
@@ -629,6 +823,19 @@ impl Render for WorkspaceView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diff_stat_is_reused_for_the_same_folder_only_briefly() {
+        let checked = Instant::now();
+        let stat = DiffStat {
+            dir: PathBuf::from("/repo"),
+            checked,
+            added: Some(3),
+        };
+        assert!(stat.is_fresh(Path::new("/repo"), checked + Duration::from_secs(1)));
+        assert!(!stat.is_fresh(Path::new("/repo"), checked + DIFF_STAT_TTL));
+        assert!(!stat.is_fresh(Path::new("/other"), checked));
+    }
 
     #[test]
     fn tab_numbers() {

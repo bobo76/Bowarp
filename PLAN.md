@@ -66,11 +66,28 @@ Feature spec: [FEATURES.md](FEATURES.md)
   rename, drop into a group / an empty group / the end / the pinned block, collapse with
   chips (fake hook events), Ctrl+3 into a collapsed group, group color inheritance, submenu,
   move group up, ungroup. Not driven: "Close tabs in group". 98 tests passing.
+- M2 part E (2026-10-17): search, hover card, jump to next attention. "Search tabs..." field
+  in the sidebar header (Ctrl+Shift+S) filters by name, program title, folder (`~` form),
+  branch and group name; every whitespace-separated word must match, case-insensitive
+  (`workspace_model::TabQuery`). Groups with a match show expanded while searching; Enter
+  selects the first match and clears, Escape clears. Hover card (gpui-component `HoverCard`,
+  0.6 s delay) right of the row: status chip, Ctrl+N, full folder (wrapped), branch, program
+  title, session kind, `+N` from `git --no-optional-locks diff HEAD --numstat` run on the
+  background executor when the card opens, cached per tab and folder for 5 s
+  (`workspace_model::lines_added`). It replaces the status tooltip on the icon. Ctrl+Shift+A
+  and a "⚠ N" button next to the search field go to the next other tab needing attention,
+  else the next Done tab (`workspace_model::next_attention`). Verified under X11 (Xvfb) with a
+  stand-in `claude` script and fake hook events: card with Idle/Done/No recent output and
+  `+25` on a repo with 25 added lines, card for a shell outside a repo (no branch, no `+N`);
+  search by title, group name, folder, two words (`MAIN reload`), no match, Escape (focus back
+  in the terminal), Enter, clear button, Ctrl+Shift+S with the sidebar hidden; jump cycling
+  shell → attention → Done → attention, the button click, jump into a collapsed group
+  (expands it). Not driven: drag & drop while a search is active, a real Claude Code session.
+  109 tests passing.
 
 **Next steps, in priority order**
 
-1. M2 part E: search, hover card, jump to next attention.
-2. Windows build and the same check (ConPTY, named pipe, hook command quoting).
+1. Windows build and the same check (ConPTY, named pipe, hook command quoting).
 
 ## Decisions
 
@@ -191,12 +208,12 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 | Element | Look | Milestone |
 |---|---|---|
 | Title bar | sidebar toggle (collapse/expand the sidebar) - done; settings button once there are settings | M2 |
-| Sidebar header | "Search tabs..." field (filters by title, folder, branch), filter/sort button, `+` | M2 |
+| Sidebar header | "Search tabs..." field (filters by title, folder, branch) - done; next-attention button - done; filter/sort button - not done; `+` | M2 |
 | Tab row, line 1 | session icon in a rounded square, title cut with a trailing ellipsis (as in the screenshot) - done | M2 |
 | Tab row, line 2 | git branch (`⑂ main`) when the folder is a repo, else the folder (`~/.config/...`), dimmed - done | M2 |
 | Status badge | small round badge on the icon's bottom-right corner (replaces the status dot); warning triangle before the title when it needs attention - done | M2 |
 | Selected row | raised background + border, `⋮` menu and `×` close on the selected/hovered row - done | M2 |
-| Hover card | status chip (`✓ Done`), full folder, branch, title, session kind with icon, `+N` (git lines added in the working tree, green) | M2 |
+| Hover card | status chip (`✓ Done`), full folder, branch, title, session kind with icon, `+N` (git lines added in the working tree, green) - done | M2 |
 | Groups | chevron, name, "N tabs" count, indented children; aggregate status when collapsed - done | M2 |
 | Drag & drop | drag a tab row to reorder or to drop it into/out of a group; insertion marker while dragging - done | M2 |
 | Context menu | see below | M2 / M3 / M4 |
@@ -220,8 +237,9 @@ New work the look needs:
   is its project folder, which `/proc` already gives).
 - **Git branch:** done: read `<repo>/.git/HEAD` (walk up from the cwd, follow `gitdir:` for
   worktrees), no `git` process; detached HEAD shows the short commit.
-- **Diff stat (`+N`):** `git diff --numstat` run off the UI thread only when the hover card opens,
-  cached per tab for a few seconds.
+- **Diff stat (`+N`):** done: `git diff HEAD --numstat` run off the UI thread only when the
+  hover card opens, cached per tab for 5 s. On Windows the `git` child may need
+  `CREATE_NO_WINDOW` (untested).
 - **"Done" status:** done: a Claude tab that goes Working -> Idle while not selected shows Done
   (check badge) until it is selected, then Idle.
 - **Tab model:** custom name and color (`TabMeta`); pinned block, groups and order (`Layout`)
@@ -255,6 +273,8 @@ New work the look needs:
   (~60 s); no hook fires on interrupt.
 - New-tab folder picker (currently the selected tab's folder).
 - Drag group headers to reorder groups (the group menu's Move up / down does it for now).
+- Sidebar search: Up/Down to move through the matches from the search field; the filter/sort
+  button from the reference screenshot.
 - Untested on Windows: hook command quoting (`"C:\...\agentws-hook.exe"` run by Claude Code's
   shell) and `.cmd` launchers (`claude.cmd` from npm) under ConPTY.
 

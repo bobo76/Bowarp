@@ -35,6 +35,8 @@ but disabled. New tabs start in the selected tab's folder.
 | Ctrl+Shift+T | New tab running what the selected tab runs, in its folder |
 | Ctrl+Shift+W | Close the selected tab |
 | Ctrl+Shift+B | Hide or show the sidebar (also the title bar button) |
+| Ctrl+Shift+S | Search tabs (shows the sidebar if hidden) |
+| Ctrl+Shift+A | Go to the next tab needing attention; with none, the next one that is Done |
 
 ## Terminal
 
@@ -58,7 +60,9 @@ Each row shows the session icon, the title, and below it the git branch (when th
 repository) or the folder. The folder follows `cd` in a shell (Linux; other platforms show the
 launch folder for now).
 
-The badge on the icon shows the status; hover the icon to see it as text.
+The badge on the icon shows the status. Hover a row for a moment to see its card: the status,
+the full folder, the branch, the program's title, the session kind and, in a repository, the
+lines added in the working tree (`+N`, from `git diff HEAD`, refreshed at most every 5 s).
 
 | Badge | Status |
 |---|---|
@@ -75,6 +79,18 @@ and are spared by "Close other tabs" / "Close tabs below"), copy branch name / p
 directory, rename (Enter keeps, Escape cancels, an empty name goes back to the program's
 title), move up / down, close, and a color marker. "New group with tab" and "Move to group"
 put tabs in groups.
+
+## Search and attention
+
+The "Search tabs..." field above the list (Ctrl+Shift+S) keeps the tabs whose name, title,
+folder, branch or group name contain every word typed, ignoring case. Groups holding a match
+show expanded while searching. Enter selects the first match and clears the search; Escape
+clears it and returns to the terminal.
+
+While a tab needs attention, a warning button with the count shows next to the search field.
+It and Ctrl+Shift+A go to the next tab needing attention after the selected one; when no other
+tab needs attention, they go to the next tab that is Done. A tab in a collapsed group is
+revealed.
 
 ## Groups
 
@@ -117,5 +133,9 @@ Open 3 Claude Code tabs and 1 shell tab, then check:
 8. **Groups:** "New group with tab" on a Claude tab and name it, drag a second tab onto the
    group header's lower half, collapse the group while one of its tabs is working (the header
    shows a working chip), then press that tab's Ctrl+number: the group expands.
+9. **Search and attention:** type part of a folder or branch name in "Search tabs..." and press
+   Enter: that tab is selected. Get a Claude tab to a permission prompt in a collapsed group,
+   select another tab and press Ctrl+Shift+A: the group expands and the tab is selected. Hover
+   a row in a repository with local changes: the card shows `+N`.
 
-Last passed: Ubuntu, Wayland, 2026-10-17 (checks 1–5; checks 6–8 were added later and are not recorded yet).
+Last passed: Ubuntu, Wayland, 2026-10-17 (checks 1–5; checks 6–9 were added later and are not recorded yet).

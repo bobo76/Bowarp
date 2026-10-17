@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 /// Length of the abbreviated commit id shown for a detached HEAD.
 const SHORT_COMMIT_LEN: usize = 7;
@@ -52,6 +53,35 @@ fn find_git_dir(dir: &Path) -> Option<PathBuf> {
         let target = pointer.trim().strip_prefix("gitdir:")?.trim();
         Some(folder.join(target))
     })
+}
+
+/// Lines added in the working tree of the repository containing `dir`, staged or not, compared
+/// with HEAD (`git diff HEAD --numstat`). Runs a `git` process, so call it off the UI thread and
+/// only on demand. `None` when git is missing, `dir` is not in a repository, or HEAD has no
+/// commit yet.
+pub fn lines_added(dir: &Path) -> Option<u64> {
+    let output = Command::new("git")
+        // Do not take the index lock to refresh stat info: a git command the user runs at the
+        // same time must not fail because of us.
+        .args(["--no-optional-locks", "diff", "HEAD", "--numstat"])
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| numstat_added(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// Sum of the added-lines column of `git diff --numstat` output (`<added>\t<removed>\t<path>`).
+/// Binary files show `-` and count as nothing.
+fn numstat_added(numstat: &str) -> u64 {
+    numstat
+        .lines()
+        .filter_map(|line| line.split('\t').next()?.parse::<u64>().ok())
+        .sum()
 }
 
 #[cfg(test)]
@@ -135,6 +165,19 @@ pub(crate) mod tests {
             GitHead::read(&root.0.join("wt")),
             Some(GitHead::Branch("topic".into()))
         );
+    }
+
+    #[test]
+    fn sums_added_lines_skipping_binary_files() {
+        let numstat = "12\t3\tcrates/app/src/sidebar.rs\n-\t-\tdocs/shot.png\n0\t5\tREADME.md\n1\t0\tnew file.txt\n";
+        assert_eq!(numstat_added(numstat), 13);
+        assert_eq!(numstat_added(""), 0);
+    }
+
+    #[test]
+    fn no_diff_stat_outside_a_repository() {
+        let folder = TempDir::new();
+        assert_eq!(lines_added(&folder.0), None);
     }
 
     #[test]

@@ -4,18 +4,22 @@ use std::path::Path;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::hover_card::HoverCard;
+use gpui_kit::component::input::{Escape, Input};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme, IconName, Sizable};
+use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
 use gpui_kit::{
-    AnyElement, App, AppContext, Context, Div, DragMoveEvent, InteractiveElement, IntoElement,
-    ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled, WeakEntity, div, px,
+    Anchor, AnyElement, App, AppContext, Context, Div, DragMoveEvent, InteractiveElement,
+    IntoElement, ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled,
+    WeakEntity, div, px,
 };
 use workspace_model::{DropTarget, Group, GroupId, Item, Location, display_path};
 
 use super::{RenameTarget, WorkspaceView};
+use crate::launcher;
 use crate::sidebar::{
-    self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabDetail,
-    TabRow,
+    self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabCard,
+    TabDetail, TabRow,
 };
 use crate::tab_menu;
 
@@ -23,22 +27,43 @@ impl WorkspaceView {
     pub(super) fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = cx.entity().downgrade();
         let new_tab_button = self.new_tab_button(workspace.clone());
+        // While searching, only matching tabs show, and groups holding one show expanded.
+        let matches = self.search_matches(cx);
+        let shown = |id: &u64| matches.as_ref().is_none_or(|matches| matches.contains(id));
         let mut rows = Vec::new();
-        for &id in self.layout.pinned() {
+        for id in self.layout.pinned().iter().filter(|id| shown(id)) {
             rows.extend(
-                self.render_tab_row(id, cx)
+                self.render_tab_row(*id, cx)
                     .map(IntoElement::into_any_element),
             );
         }
         for (slot, item) in self.layout.items().iter().enumerate() {
             match item {
-                Item::Tab(id) => rows.extend(
+                Item::Tab(id) if shown(id) => rows.extend(
                     self.render_tab_row(*id, cx)
                         .map(IntoElement::into_any_element),
                 ),
-                Item::Group(group) => rows.extend(self.render_group(slot, group, cx)),
+                Item::Tab(_) => {}
+                Item::Group(group) => match &matches {
+                    None => rows.extend(self.render_group(slot, group, None, cx)),
+                    Some(matches) => {
+                        let tabs: Vec<u64> = group
+                            .tabs()
+                            .iter()
+                            .copied()
+                            .filter(|id| matches.contains(id))
+                            .collect();
+                        if !tabs.is_empty() {
+                            rows.extend(self.render_group(slot, group, Some(&tabs), cx));
+                        }
+                    }
+                },
             }
         }
+        if matches.is_some() && rows.is_empty() {
+            rows.push(sidebar::no_matches_hint(cx).into_any_element());
+        }
+        let attention_button = self.attention_button(cx);
         let theme = cx.theme();
         div()
             .id("sidebar")
@@ -54,13 +79,12 @@ impl WorkspaceView {
                 div()
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .h(px(34.))
-                    .pl_3()
+                    .gap_1()
+                    .h(px(40.))
+                    .pl_2()
                     .pr_1()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child("SESSIONS")
+                    .child(self.render_search(cx))
+                    .children(attention_button)
                     .child(new_tab_button),
             )
             .child(
@@ -88,16 +112,64 @@ impl WorkspaceView {
             )
     }
 
-    /// A group's header, then its indented tabs unless it is collapsed.
-    fn render_group(&self, slot: usize, group: &Group, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let mut rows = vec![self.render_group_header(slot, group, cx)];
-        if group.collapsed {
+    /// The "Search tabs..." field: Enter selects the first match, Escape clears it.
+    fn render_search(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .flex_1()
+            .min_w_0()
+            .on_action(
+                cx.listener(|workspace, _: &Escape, window, cx| workspace.end_search(window, cx)),
+            )
+            .child(
+                Input::new(&self.search).small().cleanable(true).prefix(
+                    Icon::new(IconName::Search)
+                        .small()
+                        .text_color(cx.theme().muted_foreground),
+                ),
+            )
+            .into_any_element()
+    }
+
+    /// Shown while a tab needs attention: the count; clicking jumps to the next one.
+    fn attention_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let count = self.attention_count(cx);
+        if count == 0 {
+            return None;
+        }
+        let tooltip = match count {
+            1 => "1 tab needs attention: go to it (Ctrl+Shift+A)".to_string(),
+            count => format!("{count} tabs need attention: go to the next (Ctrl+Shift+A)"),
+        };
+        let button = Button::new("next-attention")
+            .icon(IconName::TriangleAlert)
+            .label(count.to_string())
+            .ghost()
+            .xsmall()
+            .text_color(sidebar::attention_color())
+            .tooltip(tooltip)
+            .on_click(
+                cx.listener(|workspace, _, window, cx| workspace.jump_to_attention(window, cx)),
+            );
+        Some(button.into_any_element())
+    }
+
+    /// A group's header, then its indented tabs unless it is collapsed. While searching,
+    /// `only` lists the matching tabs, shown even when the group is collapsed.
+    fn render_group(
+        &self,
+        slot: usize,
+        group: &Group,
+        only: Option<&[u64]>,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let mut rows = vec![self.render_group_header(slot, group, only.is_some(), cx)];
+        if group.collapsed && only.is_none() {
             return rows;
         }
         if group.tabs().is_empty() {
             rows.push(self.render_empty_group(group.id, cx));
         }
-        for &id in group.tabs() {
+        for &id in only.unwrap_or(group.tabs()) {
             rows.extend(
                 self.render_tab_row(id, cx)
                     .map(|row| row.pl_3().into_any_element()),
@@ -166,6 +238,7 @@ impl WorkspaceView {
             Self::tab_menu_builder(workspace, id),
             cx,
         );
+        let row = self.with_hover_card(row.into_any_element(), id, cx);
         let marker = self.drop_marker(DropTarget::Before(id), cx);
         let dragged = DraggedTab { id, kind, name };
         let slot = sidebar::drop_slot(row, marker, cx)
@@ -190,11 +263,61 @@ impl WorkspaceView {
         Some(slot)
     }
 
-    /// A group header: the upper half drops above the group, the lower half into it.
+    /// The tab's details in a card next to the row, after hovering it for a moment. Opening it
+    /// runs `git diff` for the `+N` (cached for a few seconds). No card while a tab is dragged.
+    fn with_hover_card(&self, row: AnyElement, id: u64, cx: &Context<Self>) -> AnyElement {
+        if cx.has_active_drag() {
+            return row;
+        }
+        let Some(card) = self.tab_card(id, cx) else {
+            return row;
+        };
+        let workspace = cx.entity().downgrade();
+        HoverCard::new(("tab-card", id as usize))
+            .anchor(Anchor::LeftCenter)
+            .ml_2()
+            .trigger(row)
+            .content(move |_, _, cx| sidebar::tab_card(card.clone(), cx).into_any_element())
+            .on_open_change(move |open, _, cx| {
+                if *open {
+                    let _ =
+                        workspace.update(cx, |workspace, cx| workspace.refresh_diff_stat(id, cx));
+                }
+            })
+            .into_any_element()
+    }
+
+    fn tab_card(&self, id: u64, cx: &App) -> Option<TabCard> {
+        let index = self.tab_index(id)?;
+        let tab = &self.tabs[index];
+        let view = tab.view.read(cx);
+        let location = view.location();
+        Some(TabCard {
+            index,
+            status: view.tab_status(),
+            folder: location
+                .map(|location| display_path(&location.dir, self.home.as_deref()).into()),
+            branch: location
+                .and_then(|location| location.head.as_ref())
+                .map(|head| head.name().to_string().into()),
+            title: view.name().to_string().into(),
+            kind: view.kind(),
+            kind_label: launcher::default_name(&tab.spec).into(),
+            lines_added: self
+                .diff_stats
+                .get(&id)
+                .filter(|stat| location.is_some_and(|location| location.dir == stat.dir))
+                .and_then(|stat| stat.added),
+        })
+    }
+
+    /// A group header: the upper half drops above the group, the lower half into it. While
+    /// searching it shows expanded, since its matching tabs are listed below it.
     fn render_group_header(
         &self,
         slot: usize,
         group: &Group,
+        searching: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let workspace = cx.entity().downgrade();
@@ -208,7 +331,7 @@ impl WorkspaceView {
             slot,
             name: group.name.clone().into(),
             color: group.color,
-            collapsed: group.collapsed,
+            collapsed: group.collapsed && !searching,
             tab_count: group.tabs().len(),
             summary: GroupSummary::of(statuses),
             holds_selected: group.collapsed

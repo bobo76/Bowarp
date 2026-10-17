@@ -2,7 +2,6 @@ use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu};
-use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
@@ -10,7 +9,7 @@ use gpui_kit::{
     ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
 use term_core::SessionKind;
-use workspace_model::TabColor;
+use workspace_model::{Attention, TabColor};
 
 use crate::assets::{AGENT_SPARK_ICON, GIT_BRANCH_ICON, PIN_ICON};
 
@@ -19,6 +18,8 @@ pub const SIDEBAR_WIDTH: f32 = 240.;
 pub const NUMBERED_TABS: usize = 9;
 
 const CLAUDE_ORANGE: u32 = 0xd97757;
+/// Added lines in the hover card, as in a diff.
+const ADDED_GREEN: u32 = 0x3fb950;
 
 /// A tab's status, shown as a badge on its icon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +62,20 @@ impl TabStatus {
             Self::Exited => "Exited",
         }
     }
+
+    /// What "jump to the next tab needing attention" makes of this status.
+    pub fn attention(self) -> Option<Attention> {
+        match self {
+            Self::NeedsAttention => Some(Attention::Needed),
+            Self::Done => Some(Attention::Done),
+            _ => None,
+        }
+    }
+}
+
+/// The color of the Needs attention badge, warning triangle and chip.
+pub fn attention_color() -> Hsla {
+    TabStatus::NeedsAttention.color()
 }
 
 pub fn kind_icon(kind: SessionKind) -> Icon {
@@ -314,11 +329,6 @@ pub fn tab_row(
     } else {
         (theme.sidebar, theme.sidebar_foreground, theme.sidebar)
     };
-    let shortcut = (row.index < NUMBERED_TABS).then(|| format!("Ctrl+{}", row.index + 1));
-    let tooltip = match shortcut {
-        Some(shortcut) => format!("{} · {}", row.status.label(), shortcut),
-        None => row.status.label().to_string(),
-    };
     let muted = theme.muted_foreground;
     let row_background = RowBackground {
         normal: background,
@@ -356,12 +366,7 @@ pub fn tab_row(
                     .bg(tab_color(color)),
             )
         })
-        .child(
-            div()
-                .id(("tab-status", row.index))
-                .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
-                .child(session_icon(row.kind, row.status, &row_background, cx)),
-        )
+        .child(session_icon(row.kind, row.status, &row_background, cx))
         .child(
             div()
                 .flex()
@@ -399,6 +404,114 @@ pub fn tab_row(
                 ),
         )
         .context_menu(move |popup, window, cx| context_menu(popup, window, cx))
+}
+
+/// The Ctrl+number shortcut that selects the tab at `index`, if it has one.
+pub fn tab_shortcut(index: usize) -> Option<String> {
+    (index < NUMBERED_TABS).then(|| format!("Ctrl+{}", index + 1))
+}
+
+/// What the hover card next to a tab row shows.
+#[derive(Clone)]
+pub struct TabCard {
+    pub index: usize,
+    pub status: TabStatus,
+    /// The full folder, with the home folder shortened to `~`.
+    pub folder: Option<SharedString>,
+    pub branch: Option<SharedString>,
+    /// The program's title, which a custom tab name hides in the row.
+    pub title: SharedString,
+    pub kind: SessionKind,
+    /// The session kind, or the shell's name.
+    pub kind_label: SharedString,
+    /// Lines added in the working tree, once `git diff` has answered.
+    pub lines_added: Option<u64>,
+}
+
+/// The status as a colored chip: mark and label.
+fn status_chip(status: TabStatus) -> impl IntoElement {
+    let color = status.color();
+    let mark = match status {
+        TabStatus::Done => Icon::new(IconName::Check).size(px(11.)).into_any_element(),
+        TabStatus::NeedsAttention => Icon::new(IconName::TriangleAlert)
+            .size(px(11.))
+            .into_any_element(),
+        _ => div()
+            .size(px(7.))
+            .rounded_full()
+            .bg(color)
+            .into_any_element(),
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .px_1p5()
+        .py_0p5()
+        .rounded_sm()
+        .bg(color.opacity(0.15))
+        .text_xs()
+        .text_color(color)
+        .child(mark)
+        .child(status.label())
+}
+
+pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
+    let theme = cx.theme();
+    let muted = theme.muted_foreground;
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .w(px(280.))
+        .text_sm()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .mb_0p5()
+                .child(status_chip(card.status))
+                .children(
+                    tab_shortcut(card.index)
+                        .map(|shortcut| div().text_xs().text_color(muted).child(shortcut)),
+                ),
+        )
+        // The whole folder, wrapped rather than cut: its end is the part that tells tabs apart.
+        .children(card.folder.map(|folder| div().child(folder)))
+        .children(
+            card.branch
+                .map(|branch| detail_line(TabDetail::Branch(branch), theme.foreground)),
+        )
+        .child(div().text_color(muted).child(single_line(card.title)))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_1p5()
+                .text_xs()
+                .text_color(muted)
+                .child(kind_icon(card.kind).size(px(12.)))
+                .child(single_line(card.kind_label))
+                .children(card.lines_added.filter(|&added| added > 0).map(|added| {
+                    div()
+                        .flex_none()
+                        .text_color(rgb(ADDED_GREEN))
+                        .child(format!("+{added}"))
+                })),
+        )
+}
+
+/// Shown when the sidebar search matches no tab.
+pub fn no_matches_hint(cx: &App) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .h(px(28.))
+        .pl_3()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child("No matching tabs.")
 }
 
 /// What a collapsed group shows about its tabs.

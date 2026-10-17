@@ -106,7 +106,7 @@ fn main() {
             };
             gpui_kit::open_window(options, cx, move |window, cx| {
                 let workspace =
-                    cx.new(|cx| WorkspaceView::new(launchers, hooks, hook_messages, cx));
+                    cx.new(|cx| WorkspaceView::new(launchers, hooks, hook_messages, window, cx));
                 workspace.update(cx, |workspace, cx| {
                     if let Err(err) = workspace.open_tab(spec.clone(), window, cx) {
                         let program = launcher::launch_name(&spec);
