@@ -28,7 +28,10 @@ Feature spec: [FEATURES.md](FEATURES.md)
 - M1 step 4 - Claude Code status via hooks (`agent-status`, `agentws-hook`). Verified under X11
   with Claude Code 2.1.302: Working, Needs attention (permission prompt) and Idle shown on an
   unselected tab; activity dot on a background shell.
-- Tests: 73 passing (`term-core` session + palette, `agent-status` state machine + IPC,
+- Copy/paste on GPUI actions: Ctrl+Insert added for copy; all clipboard keys are now key
+  bindings (ready for a configurable keymap). Verified under X11 (Xvfb): Ctrl+Insert copy,
+  Shift+Insert and Ctrl+Shift+V paste.
+- Tests: 74 passing (`term-core` session + palette, `agent-status` state machine + IPC,
   `agentws-hook` round trip with the real binary, `app` key/paste translation, mouse reports,
   wheel decision, render batching/colors, scroll bar geometry, launcher discovery).
 - Verified by driving the app under X11 (screenshots + simulated input). Wayland checked
@@ -38,6 +41,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 1. M1 "done when" check: 3 Claude Code sessions + 1 shell on Ubuntu (Wayland, by the user).
 2. Windows build and the same check (ConPTY, named pipe, hook command quoting).
+3. M2: the [Target UI](#target-ui) sidebar.
 
 ## Decisions
 
@@ -93,7 +97,10 @@ Only `app` depends on GPUI. If GPUI proves too painful, only that crate is repla
    - IME via `EntityInputHandler`; special keys via `on_key_down` (`keys.rs`, unit-tested).
    - The window root binds Tab, Shift+Tab, Ctrl+C; the `Terminal` key context overrides them
      with `NoAction` so they reach the program.
-   - Copy/paste: Ctrl+Shift+C/V, Shift+Insert; Linux primary selection on select + middle click.
+   - Copy/paste: Ctrl+Shift+C / Ctrl+Insert copy, Ctrl+Shift+V / Shift+Insert paste; Linux
+     primary selection on select + middle click. The keys are GPUI key bindings to `terminal::Copy`
+     / `terminal::Paste` actions in the `Terminal` context (`default_bindings` in
+     `terminal_view.rs`), so a user keymap can replace them later.
    - Client-side decorations with `gpui-component`'s `TitleBar` (title, min/max/close, drag,
      double-click to maximize) and window border; GNOME on Wayland has no server-side
      decorations. The bundled icon assets must be registered for the control buttons to render.
@@ -147,10 +154,51 @@ Only `app` depends on GPUI. If GPUI proves too painful, only that crate is repla
 **Done when:** 3 Claude Code sessions + 1 shell run on Ubuntu (then Windows) with smooth typing and resizing,
 and unselected tabs show correct Working / Needs attention / Idle.
 
+## Target UI
+
+Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-card.png),
+[tab context menu](docs/ui-reference/tab-context-menu.png). Elements and where they land:
+
+| Element | Look | Milestone |
+|---|---|---|
+| Title bar | sidebar toggle (collapse/expand the sidebar), settings button | M2 |
+| Sidebar header | "Search tabs..." field (filters by title, folder, branch), filter/sort button, `+` | M2 |
+| Tab row, line 1 | session icon in a rounded square, title; long titles keep the end (`..local/share/stock-watc...`) | M2 |
+| Tab row, line 2 | git branch (`⑂ main`) when the folder is a repo, else the folder (`~/.config/...`), dimmed | M2 |
+| Status badge | small round badge on the icon's bottom-right corner (replaces the status dot); warning triangle before the title when it needs attention | M2 |
+| Selected row | raised background + border; `⋮` menu and `×` close on the selected/hovered row | M2 |
+| Hover card | status chip (`✓ Done`), full folder, branch, title, session kind with icon, `+N` (git lines added in the working tree, green) | M2 |
+| Groups | chevron, name, "N tabs" count, indented children; aggregate status when collapsed | M2 |
+| Context menu | see below | M2 / M3 / M4 |
+| Clipboard notice | banner above the terminal when a program writes the clipboard (OSC 52), with allow/deny | M5 |
+
+Context menu entries:
+
+- M2: Pin tab, New group with tab, Move to group ›, Copy branch, Copy pane title, Copy working
+  directory, Rename tab, Move Tab Up / Down, Close tab, Close other tabs, Close Tabs Below,
+  color swatches (none + 7 colors).
+- M4: Save as new config (= save as a named workspace).
+
+New work the look needs:
+
+- **Working directory per tab:** OSC 7 from the shell when sent; otherwise the child's cwd
+  (`/proc/<pid>/cwd` on Linux, `NtQueryInformationProcess` PEB read on Windows) sampled on
+  `TabChanged`, never polled. Claude Code hooks also carry `cwd` in their payload.
+- **Git branch:** read `<repo>/.git/HEAD` (walk up from the cwd, follow `gitdir:` for worktrees);
+  no `git` process. Refresh when the cwd changes or the tab is shown.
+- **Diff stat (`+N`):** `git diff --numstat` run off the UI thread only when the hover card opens,
+  cached per tab for a few seconds.
+- **"Done" status:** a Claude tab that goes Working -> Idle while not selected shows Done (check
+  badge) until it is selected, then Idle.
+- **Tab model:** pinned flag, custom name, color, group membership, order - goes in
+  `workspace-model` so M4 can persist it.
+- **Icons:** Claude/Copilot/shell icons as bundled SVG assets.
+
 ## Later Milestones
 
-- **M2:** named collapsible groups, colors with tab inheritance, icon overrides, aggregate status on collapsed
-  groups, "jump to next session needing attention".
+- **M2:** the [Target UI](#target-ui) sidebar: two-line tab rows, status badges, hover card,
+  search, pinning, context menu; named collapsible groups, colors with tab inheritance, icon
+  overrides, aggregate status on collapsed groups, "jump to next session needing attention".
 - **M3:** split panes, adjustable sizes, pane shortcuts, move tabs between groups.
 - **M4:** named workspaces, save/restore layout, offer to relaunch; restored tabs clearly marked "not running".
 - **M5:** terminal search, close-with-running-process warnings, notifications + configurable sound.
@@ -166,6 +214,8 @@ and unselected tabs show correct Working / Needs attention / Idle.
 - Show an "exited" banner in the terminal area (currently only in the title).
 - Tune wheel scroll speed (about 2 lines per notch on X11).
 - Configurable font family and size.
+- Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
+  `cx.build_action`) in place of `default_bindings`.
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
 - New-tab folder picker (currently the selected tab's folder).

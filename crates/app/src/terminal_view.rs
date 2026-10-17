@@ -14,7 +14,7 @@ use gpui_kit::{
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding,
     KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     NoAction, ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Styled, Task,
-    UTF16Selection, Window, div, size,
+    UTF16Selection, Window, actions, div, size,
 };
 use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
@@ -40,12 +40,26 @@ const ACTIVITY_WINDOW: Duration = Duration::from_secs(2);
 /// completion, Shift+Tab for Claude Code's mode cycling, Ctrl+C for interrupt.
 const PASSTHROUGH_KEYS: &[&str] = &["tab", "shift-tab", "ctrl-c"];
 
+actions!(terminal, [Copy, Paste]);
+
 pub fn init(cx: &mut App) {
     cx.bind_keys(
         PASSTHROUGH_KEYS
             .iter()
             .map(|key| KeyBinding::new(key, NoAction, Some(KEY_CONTEXT))),
     );
+    cx.bind_keys(default_bindings());
+}
+
+/// Terminal shortcuts. Bindings match before `on_key_down`, so these keys never reach the
+/// program. Kept as data so a user keymap can replace them later.
+fn default_bindings() -> Vec<KeyBinding> {
+    vec![
+        KeyBinding::new("ctrl-shift-c", Copy, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-insert", Copy, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-shift-v", Paste, Some(KEY_CONTEXT)),
+        KeyBinding::new("shift-insert", Paste, Some(KEY_CONTEXT)),
+    ]
 }
 
 /// Cell geometry from the last paint, used to map pointer positions to grid cells.
@@ -290,7 +304,7 @@ impl TerminalView {
         self.session.mode()
     }
 
-    fn copy(&mut self, cx: &mut Context<Self>) {
+    fn on_copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let text = self.session.selection_text();
         if let Some(text) = text.filter(|text| !text.is_empty()) {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -306,25 +320,11 @@ impl TerminalView {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let consumed = self.handle_clipboard_shortcut(&event.keystroke, cx)
-            || self.handle_scrollback_shortcut(&event.keystroke, cx)
-            || self.forward_key(event, cx);
+        let consumed =
+            self.handle_scrollback_shortcut(&event.keystroke, cx) || self.forward_key(event, cx);
         if consumed {
             cx.stop_propagation();
         }
-    }
-
-    /// Ctrl+Shift+C copies; Ctrl+Shift+V and Shift+Insert paste.
-    fn handle_clipboard_shortcut(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
-        let modifiers = &keystroke.modifiers;
-        let control_shift = modifiers.control && modifiers.shift && !modifiers.alt;
-        match keystroke.key.as_str() {
-            "c" if control_shift => self.copy(cx),
-            "v" if control_shift => self.paste_clipboard(cx),
-            "insert" if is_shift_only(modifiers) => self.paste_clipboard(cx),
-            _ => return false,
-        }
-        true
     }
 
     /// Shift+PageUp and Shift+PageDown move through the scrollback history.
@@ -447,7 +447,7 @@ impl TerminalView {
         true
     }
 
-    fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
+    fn on_paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         self.paste(cx.read_from_clipboard().and_then(|item| item.text()), cx);
     }
 
@@ -637,6 +637,8 @@ impl Render for TerminalView {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .cursor(CursorStyle::IBeam)
+            .on_action(cx.listener(Self::on_copy))
+            .on_action(cx.listener(Self::on_paste))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .on_any_mouse_down(cx.listener(Self::on_mouse_down))
@@ -733,5 +735,15 @@ impl EntityInputHandler for TerminalView {
         _: &mut Context<Self>,
     ) -> Option<usize> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_bindings_parse() {
+        assert_eq!(default_bindings().len(), 4);
     }
 }
