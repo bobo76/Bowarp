@@ -44,12 +44,20 @@ Feature spec: [FEATURES.md](FEATURES.md)
   follows `cd` via `/proc/<pid>/cwd`; branch read from `.git/HEAD` (`workspace-model`).
   Verified under X11 (Xvfb) with fake hook events: Done / Needs attention / Working badges, Done
   clearing on select, `~/.config` folder line, sidebar toggle. 83 tests passing.
+- M2 part C (2026-10-17): tab menu from `⋮` and right-click (`tab_menu.rs`): pin/unpin, copy
+  branch / pane title / working directory, inline rename, move up/down, close / close others /
+  close below, color swatches. Tab model (`TabMeta`: custom name, pinned, color) and ordering
+  rules (`workspace_model::order`: pinned block at the top, moves stay in their block, close
+  others/below spare pinned tabs). Menu actions address tabs by session id, so they hit the
+  right tab after moves. The window title stays the program's title; the custom name is the
+  sidebar's. Verified under X11 (Xvfb): every menu entry, disabled states, Escape cancelling a
+  rename, clipboard contents. 89 tests passing.
 
 **Next steps, in priority order**
 
-1. M2 part C: tab context menu (`⋮` and right-click), with the tab model fields it needs
-   (custom name, pinned, color).
-2. M2 part D: groups. Part E: search, hover card, jump to next attention.
+1. M2 part D: groups (New group with tab, Move to group, collapse, count, aggregate status,
+   color inheritance).
+2. M2 part E: search, hover card, jump to next attention.
 3. Windows build and the same check (ConPTY, named pipe, hook command quoting).
 
 ## Decisions
@@ -175,7 +183,7 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 | Tab row, line 1 | session icon in a rounded square, title cut with a trailing ellipsis (as in the screenshot) - done | M2 |
 | Tab row, line 2 | git branch (`⑂ main`) when the folder is a repo, else the folder (`~/.config/...`), dimmed - done | M2 |
 | Status badge | small round badge on the icon's bottom-right corner (replaces the status dot); warning triangle before the title when it needs attention - done | M2 |
-| Selected row | raised background + border, `×` close on the selected/hovered row - done; `⋮` menu with part C | M2 |
+| Selected row | raised background + border, `⋮` menu and `×` close on the selected/hovered row - done | M2 |
 | Hover card | status chip (`✓ Done`), full folder, branch, title, session kind with icon, `+N` (git lines added in the working tree, green) | M2 |
 | Groups | chevron, name, "N tabs" count, indented children; aggregate status when collapsed | M2 |
 | Context menu | see below | M2 / M3 / M4 |
@@ -185,7 +193,8 @@ Context menu entries:
 
 - M2: Pin tab, New group with tab, Move to group ›, Copy branch, Copy pane title, Copy working
   directory, Rename tab, Move Tab Up / Down, Close tab, Close other tabs, Close Tabs Below,
-  color swatches (none + 7 colors).
+  color swatches (none + 7 colors). All done except the two group entries (part D).
+  "Share session" from the screenshot is not planned.
 - M4: Save as new config (= save as a named workspace).
 
 New work the look needs:
@@ -202,8 +211,8 @@ New work the look needs:
   cached per tab for a few seconds.
 - **"Done" status:** done: a Claude tab that goes Working -> Idle while not selected shows Done
   (check badge) until it is selected, then Idle.
-- **Tab model:** pinned flag, custom name, color, group membership, order - goes in
-  `workspace-model` so M4 can persist it.
+- **Tab model:** pinned flag, custom name, color, order - done (`TabMeta`, `order`); group
+  membership with part D. Persistence (serde) with M4.
 - **Icons:** done: our own Claude spark and Lucide's git-branch bundled (`app/src/assets.rs`);
   Copilot and shells use the library's GitHub and terminal icons.
 

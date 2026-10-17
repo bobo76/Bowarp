@@ -1,14 +1,18 @@
+use std::rc::Rc;
+
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Hsla, InteractiveElement, IntoElement, ParentElement,
+    AnyElement, App, ClickEvent, Context, Hsla, InteractiveElement, IntoElement, ParentElement,
     SharedString, StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
 use term_core::SessionKind;
+use workspace_model::TabColor;
 
-use crate::assets::{AGENT_SPARK_ICON, GIT_BRANCH_ICON};
+use crate::assets::{AGENT_SPARK_ICON, GIT_BRANCH_ICON, PIN_ICON};
 
 pub const SIDEBAR_WIDTH: f32 = 240.;
 
@@ -67,6 +71,22 @@ pub fn kind_icon(kind: SessionKind) -> Icon {
     }
 }
 
+pub fn tab_color(color: TabColor) -> Hsla {
+    match color {
+        TabColor::Red => rgb(0xf87171),
+        TabColor::Orange => rgb(0xfb923c),
+        TabColor::Yellow => rgb(0xfacc15),
+        TabColor::Green => rgb(0x4ade80),
+        TabColor::Blue => rgb(0x60a5fa),
+        TabColor::Pink => rgb(0xf472b6),
+        TabColor::Purple => rgb(0xa78bfa),
+    }
+    .into()
+}
+
+/// Builds the tab menu, shown from the row's `⋮` button and on right-click.
+pub type MenuBuilder = Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>;
+
 /// The second line of a tab row.
 pub enum TabDetail {
     /// The folder is in a git repository: its branch (or abbreviated commit).
@@ -83,6 +103,10 @@ pub struct TabRow {
     pub detail: Option<TabDetail>,
     pub status: TabStatus,
     pub selected: bool,
+    pub pinned: bool,
+    pub color: Option<TabColor>,
+    /// Shown in place of the name while the tab is being renamed.
+    pub name_editor: Option<AnyElement>,
 }
 
 /// The row's background, which the badge ring copies so the badge reads as cut out of the
@@ -180,10 +204,30 @@ fn single_line(text: SharedString) -> impl IntoElement {
         .child(text)
 }
 
+/// The first line: attention triangle, name and pin, or the name editor while renaming.
+fn name_line(row: &mut TabRow, muted: Hsla) -> impl IntoElement {
+    let line = div().flex().items_center().gap_1().min_w_0().text_sm();
+    if let Some(editor) = row.name_editor.take() {
+        return line.child(editor);
+    }
+    line.when(row.status == TabStatus::NeedsAttention, |line| {
+        line.child(
+            Icon::new(IconName::TriangleAlert)
+                .size(px(13.))
+                .text_color(TabStatus::NeedsAttention.color()),
+        )
+    })
+    .child(single_line(row.name.clone()))
+    .when(row.pinned, |line| {
+        line.child(Icon::empty().path(PIN_ICON).size(px(11.)).text_color(muted))
+    })
+}
+
 pub fn tab_row(
-    row: TabRow,
+    mut row: TabRow,
     on_select: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    menu: MenuBuilder,
     cx: &App,
 ) -> impl IntoElement {
     let theme = cx.theme();
@@ -202,7 +246,6 @@ pub fn tab_row(
         Some(shortcut) => format!("{} · {}", row.status.label(), shortcut),
         None => row.status.label().to_string(),
     };
-    let needs_attention = row.status == TabStatus::NeedsAttention;
     let muted = theme.muted_foreground;
     let row_background = RowBackground {
         normal: background,
@@ -210,9 +253,12 @@ pub fn tab_row(
         row_group: group.clone(),
     };
 
+    let context_menu = menu.clone();
+
     div()
         .id(("tab", row.index))
         .group(group.clone())
+        .relative()
         .flex()
         .items_center()
         .gap_2p5()
@@ -225,6 +271,18 @@ pub fn tab_row(
         .text_color(foreground)
         .hover(|style| style.bg(theme.sidebar_accent))
         .on_click(on_select)
+        .when_some(row.color, |tab, color| {
+            tab.child(
+                div()
+                    .absolute()
+                    .left(px(1.))
+                    .top(px(9.))
+                    .bottom(px(9.))
+                    .w(px(3.))
+                    .rounded_full()
+                    .bg(tab_color(color)),
+            )
+        })
         .child(
             div()
                 .id(("tab-status", row.index))
@@ -237,31 +295,27 @@ pub fn tab_row(
                 .flex_col()
                 .flex_1()
                 .min_w_0()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .text_sm()
-                        .when(needs_attention, |line| {
-                            line.child(
-                                Icon::new(IconName::TriangleAlert)
-                                    .size(px(13.))
-                                    .text_color(TabStatus::NeedsAttention.color()),
-                            )
-                        })
-                        .child(single_line(row.name)),
-                )
-                .children(row.detail.map(|detail| detail_line(detail, muted))),
+                .child(name_line(&mut row, muted))
+                .children(row.detail.take().map(|detail| detail_line(detail, muted))),
         )
         .child(
-            // The close button shows on the selected row and on hover.
+            // The menu and close buttons show on the selected row and on hover.
             div()
-                .when(!row.selected, |button| {
-                    button
+                .flex()
+                .items_center()
+                .when(!row.selected, |buttons| {
+                    buttons
                         .invisible()
                         .group_hover(group, |style| style.visible())
                 })
+                .child(
+                    Button::new(("tab-menu", row.index))
+                        .icon(IconName::EllipsisVertical)
+                        .ghost()
+                        .xsmall()
+                        .tooltip("Tab menu")
+                        .dropdown_menu(move |popup, window, cx| menu(popup, window, cx)),
+                )
                 .child(
                     Button::new(("close-tab", row.index))
                         .icon(IconName::Close)
@@ -271,4 +325,5 @@ pub fn tab_row(
                         .on_click(on_close),
                 ),
         )
+        .context_menu(move |popup, window, cx| context_menu(popup, window, cx))
 }

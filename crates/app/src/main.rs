@@ -5,6 +5,7 @@ mod launcher;
 mod mouse;
 mod scrollbar;
 mod sidebar;
+mod tab_menu;
 mod terminal_element;
 mod terminal_view;
 mod workspace_view;

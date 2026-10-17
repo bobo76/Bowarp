@@ -2,8 +2,8 @@ use std::borrow::Cow;
 
 use gpui_kit::{AssetSource, Result, SharedString};
 
-/// Icons bundled with the app: (asset path, SVG). `git-branch.svg` is from Lucide (ISC, see
-/// `assets/icons/LICENSE-LUCIDE`); the spark is our own.
+/// Icons bundled with the app: (asset path, SVG). `git-branch.svg` and `pin.svg` are from Lucide
+/// (ISC, see `assets/icons/LICENSE-LUCIDE`); the spark is our own.
 const ICONS: &[(&str, &[u8])] = &[
     (
         "icons/agentws/git-branch.svg",
@@ -13,10 +13,15 @@ const ICONS: &[(&str, &[u8])] = &[
         "icons/agentws/agent-spark.svg",
         include_bytes!("../assets/icons/agent-spark.svg"),
     ),
+    (
+        "icons/agentws/pin.svg",
+        include_bytes!("../assets/icons/pin.svg"),
+    ),
 ];
 
 pub const GIT_BRANCH_ICON: &str = ICONS[0].0;
 pub const AGENT_SPARK_ICON: &str = ICONS[1].0;
+pub const PIN_ICON: &str = ICONS[2].0;
 
 /// The app's own icons in front of the component library's.
 pub struct Assets;
