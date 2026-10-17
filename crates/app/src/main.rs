@@ -1,20 +1,23 @@
+mod hooks;
 mod keys;
+mod launcher;
 mod mouse;
 mod scrollbar;
+mod sidebar;
 mod terminal_element;
 mod terminal_view;
 mod workspace_view;
 
 use std::path::PathBuf;
 use std::process;
+use std::rc::Rc;
 
+use futures::channel::mpsc;
 use gpui_kit::component::{Theme, ThemeMode, TitleBar};
-use gpui_kit::{
-    AppContext, Bounds, Focusable, WindowBounds, WindowDecorations, WindowOptions, px, size,
-};
+use gpui_kit::{AppContext, Bounds, WindowBounds, WindowDecorations, WindowOptions, px, size};
 use term_core::LaunchSpec;
 
-use crate::terminal_view::TerminalView;
+use crate::hooks::ClaudeHooks;
 use crate::workspace_view::WorkspaceView;
 
 /// Usage: `agent-workspace [shell|claude|copilot] [project-dir]`
@@ -62,14 +65,30 @@ fn main() {
         process::exit(2);
     }
 
+    let launchers: Rc<[launcher::Launcher]> = launcher::discover().into();
+    let (hook_sender, hook_messages) = mpsc::unbounded();
+    let hooks = match ClaudeHooks::start(move |message| {
+        let _ = hook_sender.unbounded_send(message);
+    }) {
+        Ok(hooks) => Some(Rc::new(hooks)),
+        Err(err) => {
+            eprintln!("agent-workspace: Claude Code status disabled: {err}");
+            None
+        }
+    };
+
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
             terminal_view::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);
-            cx.on_window_closed(|cx, _| {
+            let quit_hooks = hooks.clone();
+            cx.on_window_closed(move |cx, _| {
                 if cx.windows().is_empty() {
+                    if let Some(hooks) = &quit_hooks {
+                        hooks.remove_settings();
+                    }
                     cx.quit();
                 }
             })
@@ -84,15 +103,16 @@ fn main() {
                 ..TitleBar::window_options()
             };
             gpui_kit::open_window(options, cx, move |window, cx| {
-                let terminal = cx.new(|cx| {
-                    TerminalView::new(&spec, cx).unwrap_or_else(|err| {
+                let workspace =
+                    cx.new(|cx| WorkspaceView::new(launchers, hooks, hook_messages, cx));
+                workspace.update(cx, |workspace, cx| {
+                    if let Err(err) = workspace.open_tab(spec.clone(), window, cx) {
                         let program = spec.program.as_deref().unwrap_or("shell");
                         eprintln!("agent-workspace: failed to start {program}: {err}");
                         process::exit(1)
-                    })
+                    }
                 });
-                window.focus(&terminal.focus_handle(cx), cx);
-                cx.new(|cx| WorkspaceView::new(terminal, cx))
+                workspace
             })
             .expect("failed to open window");
             cx.activate(true);

@@ -22,15 +22,22 @@ Feature spec: [FEATURES.md](FEATURES.md)
   dragged, hidden after 1.2 s and whenever there is no history (alternate screen). Drag the thumb
   (keeps tracking outside the window), click the track to center the thumb there
   (`app/src/scrollbar.rs`, `Session::scroll_to`). Verified under X11 (Xvfb).
-- Tests: 54 passing (`term-core` session + palette, `app` key/paste translation, mouse reports,
-  wheel decision, render batching/colors, scroll bar geometry).
+- M1 step 3 - sidebar: tab list with session-type icon, name and status dot; `+` menu with the
+  shells found on PATH (default shell first), Claude Code and Copilot CLI; tab shortcuts.
+  Verified under X11 (Xvfb).
+- M1 step 4 - Claude Code status via hooks (`agent-status`, `agentws-hook`). Verified under X11
+  with Claude Code 2.1.302: Working, Needs attention (permission prompt) and Idle shown on an
+  unselected tab; activity dot on a background shell.
+- Tests: 73 passing (`term-core` session + palette, `agent-status` state machine + IPC,
+  `agentws-hook` round trip with the real binary, `app` key/paste translation, mouse reports,
+  wheel decision, render batching/colors, scroll bar geometry, launcher discovery).
 - Verified by driving the app under X11 (screenshots + simulated input). Wayland checked
   manually by the user.
 
 **Next steps, in priority order**
 
-1. M1 step 3 - sidebar with multiple sessions.
-2. M1 step 4 - Claude Code status via hooks.
+1. M1 "done when" check: 3 Claude Code sessions + 1 shell on Ubuntu (Wayland, by the user).
+2. Windows build and the same check (ConPTY, named pipe, hook command quoting).
 
 ## Decisions
 
@@ -60,7 +67,7 @@ agent-workspace/
 ├── crates/
 │   ├── term-core/        # session = pty + alacritty Term + event listener (UI-agnostic, testable)
 │   ├── agent-status/     # status state machine + IPC server for hook events
-│   ├── workspace-model/  # groups/tabs/colors/layout + JSON persistence
+│   ├── workspace-model/  # groups/tabs/colors/layout + JSON persistence (M2+)
 │   ├── agentws-hook/     # tiny binary invoked by Claude Code hooks
 │   └── app/              # GPUI UI: sidebar, terminal element, panes
 ```
@@ -98,26 +105,39 @@ Only `app` depends on GPUI. If GPUI proves too painful, only that crate is repla
    - Mouse reporting (modes 1000/1002/1003, SGR/UTF-8/legacy encodings): wheel, clicks and
      motion (once per cell) go to programs that enable tracking; Shift keeps local selection
      and scrollback. Without tracking, the alternate screen gets arrow keys on wheel.
-3. **Sidebar** - next
-   - Flat tab list: session-type icon, name, status dot.
-   - New/close tab, Ctrl+Tab and Ctrl+1..9.
-4. **Agent status (Claude Code)**
-   - On spawn, set `AGENTWS_SESSION=<uuid>` and `AGENTWS_PIPE=<pipe name>`.
-   - Launch `claude --settings <generated json>` registering `agentws-hook` for
-     `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `SessionEnd`.
-     The user's global `~/.claude/settings.json` is never modified.
-   - `agentws-hook` reads hook JSON from stdin, forwards it with the session id over the pipe, exits.
-     Missing pipe → silent `exit 0`.
-   - State machine:
+3. **Sidebar** - done
+   - Flat tab list: session-type icon, name (program title, else kind/shell name), status dot,
+     close button on the selected or hovered row (`sidebar.rs`).
+   - `+` menu: shells found on PATH (default `$SHELL` first; PowerShell/cmd on Windows), Claude
+     Code, Copilot CLI (shown disabled when not installed). New tabs open in the selected tab's
+     folder (`launcher.rs`).
+   - Ctrl+Tab / Ctrl+Shift+Tab, Ctrl+1..9, Ctrl+Shift+T (another tab like the selected one),
+     Ctrl+Shift+W (close; the last tab closes the window). Handled in the workspace's key
+     capture phase so they never reach the terminal.
+   - Only the selected terminal paints; hidden ones re-arm their own wakeups and emit
+     `TabChanged` only when title/status/activity changes, so background output does not redraw
+     the window.
+4. **Agent status (Claude Code)** - done
+   - Claude Code tabs get `AGENTWS_SESSION=<session id>` and `AGENTWS_PIPE=agentws-<pid>.sock`,
+     and launch as `claude --settings <temp file>` (a file, not inline JSON, to avoid Windows
+     command-line quoting). The file is removed when the last window closes. The user's
+     `~/.claude/settings.json` is never modified; `--settings` hooks merge with the user's.
+   - `agentws-hook` (built next to the app; without it status is disabled with a warning) reads
+     the hook JSON, sends one line `<session> <start µs> <event> [notification_type]` over an
+     `interprocess` local socket (Unix socket / named pipe) and always exits 0 silently.
+   - The state machine (`agent-status`) orders events by hook start time, so a slow hook cannot
+     overwrite a newer status; Exited is final.
 
      | Event | Status |
      |---|---|
-     | `UserPromptSubmit`, `PreToolUse` | Working |
-     | `Notification` | Needs attention |
-     | `Stop` | Idle |
+     | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionDenied` | Working |
+     | `PermissionRequest`, `Notification` (`permission_prompt`, `elicitation_*dialog`, `agent_needs_input`) | Needs attention |
+     | `Stop`, `StopFailure`, `Notification` (`idle_prompt`) | Idle |
      | `SessionEnd`, process exit | Exited |
 
-   - Sessions without hooks show only "recent activity" (output timestamps).
+     `PostToolUse` returns an approved permission prompt to Working. `Stop` does not fire when
+     the user interrupts; the `idle_prompt` notification (about a minute later) returns it to Idle.
+   - Sessions without hooks show "recent output" for 2 s after output, then "quiet".
 5. **Tests**
    - `term-core`: spawn `echo`, assert grid content; resize propagation.
    - `agent-status`: all event sequences, including out-of-order events.
@@ -146,6 +166,11 @@ and unselected tabs show correct Working / Needs attention / Idle.
 - Show an "exited" banner in the terminal area (currently only in the title).
 - Tune wheel scroll speed (about 2 lines per notch on X11).
 - Configurable font family and size.
+- Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
+  (~60 s); no hook fires on interrupt.
+- New-tab folder picker (currently the selected tab's folder).
+- Untested on Windows: hook command quoting (`"C:\...\agentws-hook.exe"` run by Claude Code's
+  shell) and `.cmd` launchers (`claude.cmd` from npm) under ConPTY.
 
 ## Risks
 

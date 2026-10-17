@@ -6,6 +6,7 @@ version.workspace = true
 publish.workspace = true
 
 [dependencies]
+agent-status.workspace = true
 futures.workspace = true
 gpui-kit.workspace = true
 log.workspace = true

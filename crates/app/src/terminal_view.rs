@@ -1,30 +1,40 @@
 use std::borrow::Cow;
 use std::io;
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+
+use agent_status::{AgentState, AgentStatus, HookEvent};
 
 use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui_kit::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NoAction, ParentElement, Pixels, Point, Render,
-    ScrollDelta, ScrollWheelEvent, Styled, Task, UTF16Selection, Window, div, size,
+    App, AppContext, Bounds, ClipboardItem, Context, CursorStyle, Entity, EntityInputHandler,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding,
+    KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    NoAction, ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Styled, Task,
+    UTF16Selection, Window, div, size,
 };
 use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
 use term_core::alacritty_terminal::selection::SelectionType;
 use term_core::alacritty_terminal::term::TermMode;
-use term_core::{EventCallback, LaunchSpec, Palette, Session, SessionEvent, TermDimensions};
+use term_core::{
+    EventCallback, LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions,
+};
 
 use crate::keys;
+use crate::launcher;
 use crate::mouse::{self, Cell, MouseAction, ReportButton, WheelAction};
 use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
+use crate::sidebar::TabStatus;
 use crate::terminal_element::{TerminalElement, to_hsla};
 
-static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 const KEY_CONTEXT: &str = "Terminal";
+
+/// How long after its last output a session without status hooks still counts as active.
+const ACTIVITY_WINDOW: Duration = Duration::from_secs(2);
 
 /// Keys bound by the window root (focus traversal, copy) that terminal programs need: Tab for
 /// completion, Shift+Tab for Claude Code's mode cycling, Ctrl+C for interrupt.
@@ -57,9 +67,21 @@ enum ProcessState {
     Exited(Option<i32>),
 }
 
+/// Emitted when what the sidebar and title bar show changes: title, status or activity.
+pub struct TabChanged;
+
 /// One terminal session and its interaction state.
 pub struct TerminalView {
     pub(crate) session: Session,
+    /// Shown until the program sets a title.
+    name: String,
+    cwd: Option<PathBuf>,
+    /// Status from Claude Code hooks; `None` for sessions without hooks.
+    agent: Option<AgentState>,
+    /// Hidden views do not paint, so they acknowledge wakeups themselves.
+    visible: bool,
+    /// Runs while the session counts as active, to report when it goes quiet.
+    activity_task: Option<Task<()>>,
     pub(crate) focus_handle: FocusHandle,
     pub(crate) geometry: Option<GridGeometry>,
     /// IME composition text not yet committed.
@@ -77,12 +99,18 @@ pub struct TerminalView {
 }
 
 impl TerminalView {
-    pub fn new(spec: &LaunchSpec, cx: &mut Context<Self>) -> io::Result<Self> {
+    /// Start `spec` as session `id`. `reports_status` says whether the session was set up
+    /// with Claude Code status hooks.
+    pub fn spawn(
+        id: u64,
+        spec: &LaunchSpec,
+        reports_status: bool,
+        cx: &mut App,
+    ) -> io::Result<Entity<Self>> {
         let (sender, mut receiver) = mpsc::unbounded();
         let callback: EventCallback = Arc::new(move |event| {
             let _ = sender.unbounded_send(event);
         });
-        let id = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
         let session = Session::spawn(
             id,
             spec,
@@ -91,19 +119,35 @@ impl TerminalView {
             callback,
         )?;
 
-        let session_events = cx.spawn(async move |this, cx| {
-            while let Some(event) = receiver.next().await {
-                if this
-                    .update(cx, |view, cx| view.on_session_event(event, cx))
-                    .is_err()
-                {
-                    break;
+        Ok(cx.new(|cx| {
+            let session_events = cx.spawn(async move |this, cx| {
+                while let Some(event) = receiver.next().await {
+                    if this
+                        .update(cx, |view: &mut Self, cx| view.on_session_event(event, cx))
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
-            }
-        });
+            });
+            Self::new(session, spec, reports_status, session_events, cx)
+        }))
+    }
 
-        Ok(Self {
+    fn new(
+        session: Session,
+        spec: &LaunchSpec,
+        reports_status: bool,
+        session_events: Task<()>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
             session,
+            name: launcher::default_name(spec),
+            cwd: spec.cwd.clone(),
+            agent: reports_status.then(AgentState::default),
+            visible: true,
+            activity_task: None,
             focus_handle: cx.focus_handle(),
             geometry: None,
             marked_text: None,
@@ -115,11 +159,28 @@ impl TerminalView {
             last_motion_cell: None,
             scrollbar: ScrollbarState::default(),
             _session_events: session_events,
-        })
+        }
+    }
+
+    pub fn id(&self) -> u64 {
+        self.session.id()
+    }
+
+    pub fn kind(&self) -> SessionKind {
+        self.session.kind()
+    }
+
+    pub fn cwd(&self) -> Option<&Path> {
+        self.cwd.as_deref()
+    }
+
+    /// The program's title, or the session's default name.
+    pub fn name(&self) -> &str {
+        self.title.as_deref().unwrap_or(&self.name)
     }
 
     pub fn display_title(&self) -> String {
-        let title = self.title.as_deref().unwrap_or("Agent Workspace");
+        let title = self.name();
         match self.process {
             ProcessState::Running => title.to_string(),
             ProcessState::Exited(Some(code)) => format!("{title} [exited {code}]"),
@@ -127,14 +188,94 @@ impl TerminalView {
         }
     }
 
+    pub fn tab_status(&self) -> TabStatus {
+        if let Some(agent) = self.agent {
+            return match agent.status() {
+                AgentStatus::Idle => TabStatus::Idle,
+                AgentStatus::Working => TabStatus::Working,
+                AgentStatus::NeedsAttention => TabStatus::NeedsAttention,
+                AgentStatus::Exited => TabStatus::Exited,
+            };
+        }
+        match self.process {
+            ProcessState::Exited(_) => TabStatus::Exited,
+            ProcessState::Running if self.activity_task.is_some() => TabStatus::Active,
+            ProcessState::Running => TabStatus::Quiet,
+        }
+    }
+
+    /// Show or hide the view; only the selected tab is painted.
+    pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.visible = visible;
+        if visible {
+            cx.notify();
+        }
+    }
+
+    /// Apply a status event from this session's Claude Code hooks.
+    pub fn apply_hook_event(&mut self, event: HookEvent, at: u64, cx: &mut Context<Self>) {
+        let Some(agent) = self.agent.as_mut() else {
+            return;
+        };
+        let before = agent.status();
+        agent.apply(event, at);
+        if agent.status() != before {
+            cx.emit(TabChanged);
+        }
+    }
+
     fn on_session_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
         match event {
-            SessionEvent::Wakeup => {}
-            SessionEvent::TitleChanged(title) => self.title = title,
+            SessionEvent::Wakeup => {
+                self.track_activity(cx);
+                if !self.visible {
+                    // Nothing paints, so re-arm here to keep hearing about output.
+                    self.session.ack_wakeup();
+                    return;
+                }
+            }
+            SessionEvent::TitleChanged(title) => {
+                self.title = title;
+                cx.emit(TabChanged);
+            }
             SessionEvent::Bell => return,
-            SessionEvent::Exited(code) => self.process = ProcessState::Exited(code),
+            SessionEvent::Exited(code) => {
+                self.process = ProcessState::Exited(code);
+                if let Some(agent) = self.agent.as_mut() {
+                    agent.exit();
+                }
+                cx.emit(TabChanged);
+            }
         }
         cx.notify();
+    }
+
+    /// Mark a session without status hooks active on output, and quiet again once no output
+    /// arrived for [`ACTIVITY_WINDOW`].
+    fn track_activity(&mut self, cx: &mut Context<Self>) {
+        if self.agent.is_some() || self.activity_task.is_some() {
+            return;
+        }
+        self.activity_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(Some(last_output)) =
+                    this.read_with(cx, |view, _| view.session.last_output())
+                else {
+                    return;
+                };
+                let quiet_at = last_output + ACTIVITY_WINDOW;
+                let now = Instant::now();
+                if now >= quiet_at {
+                    break;
+                }
+                cx.background_executor().timer(quiet_at - now).await;
+            }
+            let _ = this.update(cx, |view, cx| {
+                view.activity_task = None;
+                cx.emit(TabChanged);
+            });
+        }));
+        cx.emit(TabChanged);
     }
 
     /// Send user input to the program, snapping the view back to the live screen.
@@ -479,6 +620,8 @@ fn is_shift_only(modifiers: &Modifiers) -> bool {
     modifiers.shift && !modifiers.control && !modifiers.alt
 }
 
+impl EventEmitter<TabChanged> for TerminalView {}
+
 impl Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -486,12 +629,7 @@ impl Focusable for TerminalView {
 }
 
 impl Render for TerminalView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let title = self.display_title();
-        if window.window_title() != title {
-            window.set_window_title(&title);
-        }
-
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let background = self.session.palette().background;
         let view = div()
             .size_full()
