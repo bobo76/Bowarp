@@ -102,6 +102,8 @@ fn main() {
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_decorations: Some(WindowDecorations::Client),
+                // Must match the .desktop file name, or GNOME shows a generic icon.
+                app_id: Some("agent-workspace".into()),
                 ..TitleBar::window_options()
             };
             gpui_kit::open_window(options, cx, move |window, cx| {
