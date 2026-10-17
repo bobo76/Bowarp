@@ -39,8 +39,7 @@ impl TabColor {
 pub struct TabMeta {
     /// Replaces the program's title in the sidebar.
     pub custom_name: Option<String>,
-    /// Pinned tabs stay at the top and are spared by "close other tabs" / "close tabs below".
-    pub pinned: bool,
+    /// Wins over the group's color.
     pub color: Option<TabColor>,
 }
 

@@ -22,9 +22,24 @@ repository) or the folder. The folder follows `cd` in a shell (Linux; other plat
 launch folder for now). Ctrl+Shift+B or the title bar button hides the sidebar.
 
 Right-click a row or use its `⋮` button for the tab menu: pin (pinned tabs stay at the top
-and are spared by "Close other tabs" / "Close tabs below"), copy branch / pane title / working
+and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working
 directory, rename (Enter keeps, Escape cancels, an empty name goes back to the program's
-title), move up / down, close, and a color marker.
+title), move up / down, close, and a color marker. "New group with tab" and "Move to group"
+put tabs in groups.
+
+## Groups
+
+Click a group header to collapse or expand it; a collapsed group shows how many of its tabs
+need attention, are working, or are done. Selecting a tab in a collapsed group (Ctrl+1..9,
+Ctrl+Tab) expands it. New tabs join the selected tab's group. A tab without its own color shows
+its group's color. Groups stay when their last tab leaves.
+
+The group menu (right-click the header or its `⋮` button): rename, collapse, move up / down,
+close its tabs, ungroup (the tabs stay, the group goes; "Delete group" when empty), color.
+
+Drag a tab row to move it: the upper or lower half of a row drops above or below it, in that
+row's block (dropping among pinned tabs pins it); the upper half of a group header drops above
+the group, the lower half into it; the space below the last row drops at the end, ungrouped.
 
 The badge on the icon shows the status; hover the icon to see it as text.
 

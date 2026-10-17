@@ -53,12 +53,24 @@ Feature spec: [FEATURES.md](FEATURES.md)
   sidebar's. Verified under X11 (Xvfb): every menu entry, disabled states, Escape cancelling a
   rename, clipboard contents. 89 tests passing.
 
+- M2 part D (2026-10-17): groups and drag & drop. `workspace_model::Layout` (replaces `order`)
+  holds the pinned block, then ungrouped tabs and groups; pinned tabs are never grouped, groups
+  stay when empty, new tabs join the selected tab's group. Tab menu: New group with tab (starts
+  an inline rename), Move to group › (other groups, Remove from group). Group header: chevron,
+  color dot, name, "N tabs", status chips when collapsed (attention / working / done), `⋮`
+  and right-click menu (rename, collapse, move group up/down, close tabs, ungroup / delete,
+  color). Tabs without their own color show the group's. Selecting a hidden tab expands its
+  group. Drag a tab row: the half of a row picks above/below in that row's block, a header's
+  upper half drops above the group and its lower half into it, the space below the list drops
+  ungrouped at the end; a marker line shows the spot. Verified under X11 (Xvfb): new group +
+  rename, drop into a group / an empty group / the end / the pinned block, collapse with
+  chips (fake hook events), Ctrl+3 into a collapsed group, group color inheritance, submenu,
+  move group up, ungroup. Not driven: "Close tabs in group". 98 tests passing.
+
 **Next steps, in priority order**
 
-1. M2 part D: groups (New group with tab, Move to group, collapse, count, aggregate status,
-   color inheritance).
-2. M2 part E: search, hover card, jump to next attention.
-3. Windows build and the same check (ConPTY, named pipe, hook command quoting).
+1. M2 part E: search, hover card, jump to next attention.
+2. Windows build and the same check (ConPTY, named pipe, hook command quoting).
 
 ## Decisions
 
@@ -185,15 +197,16 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 | Status badge | small round badge on the icon's bottom-right corner (replaces the status dot); warning triangle before the title when it needs attention - done | M2 |
 | Selected row | raised background + border, `⋮` menu and `×` close on the selected/hovered row - done | M2 |
 | Hover card | status chip (`✓ Done`), full folder, branch, title, session kind with icon, `+N` (git lines added in the working tree, green) | M2 |
-| Groups | chevron, name, "N tabs" count, indented children; aggregate status when collapsed | M2 |
+| Groups | chevron, name, "N tabs" count, indented children; aggregate status when collapsed - done | M2 |
+| Drag & drop | drag a tab row to reorder or to drop it into/out of a group; insertion marker while dragging - done | M2 |
 | Context menu | see below | M2 / M3 / M4 |
 | Clipboard notice | banner above the terminal when a program writes the clipboard (OSC 52), with allow/deny | M5 |
 
 Context menu entries:
 
-- M2: Pin tab, New group with tab, Move to group ›, Copy branch, Copy pane title, Copy working
+- M2: Pin tab, New group with tab, Move to group ›, Copy branch name, Copy pane title, Copy working
   directory, Rename tab, Move Tab Up / Down, Close tab, Close other tabs, Close Tabs Below,
-  color swatches (none + 7 colors). All done except the two group entries (part D).
+  color swatches (none + 7 colors). All done.
   "Share session" from the screenshot is not planned.
 - M4: Save as new config (= save as a named workspace).
 
@@ -211,17 +224,17 @@ New work the look needs:
   cached per tab for a few seconds.
 - **"Done" status:** done: a Claude tab that goes Working -> Idle while not selected shows Done
   (check badge) until it is selected, then Idle.
-- **Tab model:** pinned flag, custom name, color, order - done (`TabMeta`, `order`); group
-  membership with part D. Persistence (serde) with M4.
+- **Tab model:** custom name and color (`TabMeta`); pinned block, groups and order (`Layout`)
+  - done. Persistence (serde) with M4.
 - **Icons:** done: our own Claude spark and Lucide's git-branch bundled (`app/src/assets.rs`);
   Copilot and shells use the library's GitHub and terminal icons.
 
 ## Later Milestones
 
 - **M2:** the [Target UI](#target-ui) sidebar: two-line tab rows, status badges, hover card,
-  search, pinning, context menu; named collapsible groups, colors with tab inheritance, icon
+  search, pinning, context menu; named collapsible groups, drag & drop of tabs, colors with tab inheritance, icon
   overrides, aggregate status on collapsed groups, "jump to next session needing attention".
-- **M3:** split panes, adjustable sizes, pane shortcuts, move tabs between groups.
+- **M3:** split panes, adjustable sizes, pane shortcuts.
 - **M4:** named workspaces, save/restore layout, offer to relaunch; restored tabs clearly marked "not running".
 - **M5:** terminal search, close-with-running-process warnings, notifications + configurable sound.
 - **M6:** Copilot CLI status (if it gains a hook mechanism), Windows packaging, Ubuntu polish
@@ -241,6 +254,7 @@ New work the look needs:
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
 - New-tab folder picker (currently the selected tab's folder).
+- Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - Untested on Windows: hook command quoting (`"C:\...\agentws-hook.exe"` run by Claude Code's
   shell) and `.cmd` launchers (`claude.cmd` from npm) under ConPTY.
 
