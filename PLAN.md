@@ -36,12 +36,13 @@ Feature spec: [FEATURES.md](FEATURES.md)
   wheel decision, render batching/colors, scroll bar geometry, launcher discovery).
 - Verified by driving the app under X11 (screenshots + simulated input). Wayland checked
   manually by the user.
+- M1 "done when" check passed on Ubuntu (Wayland) on 2026-10-17: 3 Claude Code sessions +
+  1 shell; steps in [README.md](README.md#manual-check).
 
 **Next steps, in priority order**
 
-1. M1 "done when" check: 3 Claude Code sessions + 1 shell on Ubuntu (Wayland, by the user).
-2. Windows build and the same check (ConPTY, named pipe, hook command quoting).
-3. M2: the [Target UI](#target-ui) sidebar.
+1. Windows build and the same check (ConPTY, named pipe, hook command quoting).
+2. M2: the [Target UI](#target-ui) sidebar.
 
 ## Decisions
 
