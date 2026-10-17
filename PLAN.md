@@ -38,11 +38,19 @@ Feature spec: [FEATURES.md](FEATURES.md)
   manually by the user.
 - M1 "done when" check passed on Ubuntu (Wayland) on 2026-10-17: 3 Claude Code sessions +
   1 shell; steps in [README.md](README.md#manual-check).
+- M2 parts A + B (branch `m2-sidebar`, 2026-10-17): two-line tab rows (title; branch or folder),
+  status badge on the session icon, warning triangle on Needs attention, Done status, bundled
+  Claude spark and git-branch icons, sidebar toggle (title bar button, Ctrl+Shift+B). Folder
+  follows `cd` via `/proc/<pid>/cwd`; branch read from `.git/HEAD` (`workspace-model`).
+  Verified under X11 (Xvfb) with fake hook events: Done / Needs attention / Working badges, Done
+  clearing on select, `~/.config` folder line, sidebar toggle. 83 tests passing.
 
 **Next steps, in priority order**
 
-1. Windows build and the same check (ConPTY, named pipe, hook command quoting).
-2. M2: the [Target UI](#target-ui) sidebar.
+1. M2 part C: tab context menu (`⋮` and right-click), with the tab model fields it needs
+   (custom name, pinned, color).
+2. M2 part D: groups. Part E: search, hover card, jump to next attention.
+3. Windows build and the same check (ConPTY, named pipe, hook command quoting).
 
 ## Decisions
 
@@ -72,7 +80,7 @@ agent-workspace/
 ├── crates/
 │   ├── term-core/        # session = pty + alacritty Term + event listener (UI-agnostic, testable)
 │   ├── agent-status/     # status state machine + IPC server for hook events
-│   ├── workspace-model/  # groups/tabs/colors/layout + JSON persistence (M2+)
+│   ├── workspace-model/  # tab location (folder, git HEAD); groups/tabs/colors/layout + JSON persistence (M2+)
 │   ├── agentws-hook/     # tiny binary invoked by Claude Code hooks
 │   └── app/              # GPUI UI: sidebar, terminal element, panes
 ```
@@ -162,12 +170,12 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 
 | Element | Look | Milestone |
 |---|---|---|
-| Title bar | sidebar toggle (collapse/expand the sidebar), settings button | M2 |
+| Title bar | sidebar toggle (collapse/expand the sidebar) - done; settings button once there are settings | M2 |
 | Sidebar header | "Search tabs..." field (filters by title, folder, branch), filter/sort button, `+` | M2 |
-| Tab row, line 1 | session icon in a rounded square, title; long titles keep the end (`..local/share/stock-watc...`) | M2 |
-| Tab row, line 2 | git branch (`⑂ main`) when the folder is a repo, else the folder (`~/.config/...`), dimmed | M2 |
-| Status badge | small round badge on the icon's bottom-right corner (replaces the status dot); warning triangle before the title when it needs attention | M2 |
-| Selected row | raised background + border; `⋮` menu and `×` close on the selected/hovered row | M2 |
+| Tab row, line 1 | session icon in a rounded square, title cut with a trailing ellipsis (as in the screenshot) - done | M2 |
+| Tab row, line 2 | git branch (`⑂ main`) when the folder is a repo, else the folder (`~/.config/...`), dimmed - done | M2 |
+| Status badge | small round badge on the icon's bottom-right corner (replaces the status dot); warning triangle before the title when it needs attention - done | M2 |
+| Selected row | raised background + border, `×` close on the selected/hovered row - done; `⋮` menu with part C | M2 |
 | Hover card | status chip (`✓ Done`), full folder, branch, title, session kind with icon, `+N` (git lines added in the working tree, green) | M2 |
 | Groups | chevron, name, "N tabs" count, indented children; aggregate status when collapsed | M2 |
 | Context menu | see below | M2 / M3 / M4 |
@@ -182,18 +190,22 @@ Context menu entries:
 
 New work the look needs:
 
-- **Working directory per tab:** OSC 7 from the shell when sent; otherwise the child's cwd
-  (`/proc/<pid>/cwd` on Linux, `NtQueryInformationProcess` PEB read on Windows) sampled on
-  `TabChanged`, never polled. Claude Code hooks also carry `cwd` in their payload.
-- **Git branch:** read `<repo>/.git/HEAD` (walk up from the cwd, follow `gitdir:` for worktrees);
-  no `git` process. Refresh when the cwd changes or the tab is shown.
+- **Working directory per tab:** done on Linux: the child's cwd (`/proc/<pid>/cwd`) re-read on
+  `TabChanged` and when the tab is shown, never polled; the last known folder is kept after
+  exit. Windows (`NtQueryInformationProcess` PEB read) shows the launch folder until then.
+  Not done: OSC 7 (`alacritty_terminal` does not parse it; needs a pty reader wrapper, only
+  useful for remote shells) and the `cwd` from Claude Code hook payloads (Claude's process cwd
+  is its project folder, which `/proc` already gives).
+- **Git branch:** done: read `<repo>/.git/HEAD` (walk up from the cwd, follow `gitdir:` for
+  worktrees), no `git` process; detached HEAD shows the short commit.
 - **Diff stat (`+N`):** `git diff --numstat` run off the UI thread only when the hover card opens,
   cached per tab for a few seconds.
-- **"Done" status:** a Claude tab that goes Working -> Idle while not selected shows Done (check
-  badge) until it is selected, then Idle.
+- **"Done" status:** done: a Claude tab that goes Working -> Idle while not selected shows Done
+  (check badge) until it is selected, then Idle.
 - **Tab model:** pinned flag, custom name, color, group membership, order - goes in
   `workspace-model` so M4 can persist it.
-- **Icons:** Claude/Copilot/shell icons as bundled SVG assets.
+- **Icons:** done: our own Claude spark and Lucide's git-branch bundled (`app/src/assets.rs`);
+  Copilot and shells use the library's GitHub and terminal icons.
 
 ## Later Milestones
 

@@ -1,5 +1,5 @@
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use agent_status::HookMessage;
@@ -8,17 +8,19 @@ use futures::channel::mpsc::UnboundedReceiver;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, TitleBar, WindowExt};
+use gpui_kit::component::{ActiveTheme, IconName, Sizable, TitleBar, WindowExt};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     App, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyDownEvent,
-    Keystroke, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task,
-    WeakEntity, Window, div, px,
+    Keystroke, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, Task, WeakEntity, Window, div, px,
 };
 use term_core::LaunchSpec;
+use workspace_model::{Location, display_path};
 
 use crate::hooks::ClaudeHooks;
 use crate::launcher::Launcher;
-use crate::sidebar::{self, SIDEBAR_WIDTH, TabRow};
+use crate::sidebar::{self, SIDEBAR_WIDTH, TabDetail, TabRow};
 use crate::terminal_view::{TabChanged, TerminalView};
 
 struct Tab {
@@ -32,6 +34,9 @@ struct Tab {
 pub struct WorkspaceView {
     tabs: Vec<Tab>,
     active: usize,
+    sidebar_visible: bool,
+    /// For shortening folders to `~` in the sidebar.
+    home: Option<PathBuf>,
     next_session_id: u64,
     launchers: Rc<[Launcher]>,
     hooks: Option<Rc<ClaudeHooks>>,
@@ -58,6 +63,8 @@ impl WorkspaceView {
         Self {
             tabs: Vec::new(),
             active: 0,
+            sidebar_visible: true,
+            home: std::env::home_dir(),
             next_session_id: 1,
             launchers,
             hooks,
@@ -106,11 +113,16 @@ impl WorkspaceView {
         }
     }
 
-    /// Folder for new tabs: the selected tab's, else the app's working directory.
+    /// Folder for new tabs: the selected tab's current one, else the app's working directory.
     fn new_tab_cwd(&self, cx: &App) -> Option<PathBuf> {
         self.tabs
             .get(self.active)
-            .and_then(|tab| tab.view.read(cx).cwd().map(PathBuf::from))
+            .and_then(|tab| {
+                tab.view
+                    .read(cx)
+                    .location()
+                    .map(|location| location.dir.clone())
+            })
             .or_else(|| std::env::current_dir().ok())
     }
 
@@ -200,8 +212,14 @@ impl WorkspaceView {
         }
     }
 
+    fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_visible = !self.sidebar_visible;
+        cx.notify();
+    }
+
     /// Ctrl+Tab / Ctrl+Shift+Tab cycle tabs, Ctrl+1..9 select one, Ctrl+Shift+T opens another
-    /// tab like the selected one, Ctrl+Shift+W closes it.
+    /// tab like the selected one, Ctrl+Shift+W closes it, Ctrl+Shift+B shows or hides the
+    /// sidebar.
     fn handle_tab_shortcut(
         &mut self,
         keystroke: &Keystroke,
@@ -216,6 +234,7 @@ impl WorkspaceView {
             ("tab", shift) => self.cycle(!shift, window, cx),
             ("t", true) => self.duplicate_active(window, cx),
             ("w", true) => self.close_tab(self.active, window, cx),
+            ("b", true) => self.toggle_sidebar(cx),
             (key, false) => match tab_number(key) {
                 Some(number) => self.activate(number - 1, window, cx),
                 None => return false,
@@ -234,6 +253,9 @@ impl WorkspaceView {
                 index,
                 kind: view.kind(),
                 name: view.name().to_string().into(),
+                detail: view
+                    .location()
+                    .map(|location| tab_detail(location, self.home.as_deref())),
                 status: view.tab_status(),
                 selected: index == self.active,
             };
@@ -290,6 +312,20 @@ impl WorkspaceView {
             )
     }
 
+    fn sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let (icon, tooltip) = if self.sidebar_visible {
+            (IconName::PanelLeftClose, "Hide sidebar (Ctrl+Shift+B)")
+        } else {
+            (IconName::PanelLeftOpen, "Show sidebar (Ctrl+Shift+B)")
+        };
+        Button::new("toggle-sidebar")
+            .icon(icon)
+            .ghost()
+            .small()
+            .tooltip(tooltip)
+            .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_sidebar(cx)))
+    }
+
     fn new_tab_button(&self, workspace: WeakEntity<Self>) -> impl IntoElement {
         let launchers = self.launchers.clone();
         Button::new("new-tab")
@@ -309,7 +345,7 @@ impl WorkspaceView {
                     let workspace = workspace.clone();
                     menu = menu.item(
                         PopupMenuItem::new(label)
-                            .icon(Icon::new(sidebar::kind_icon(launcher.kind)))
+                            .icon(sidebar::kind_icon(launcher.kind))
                             .disabled(!available)
                             .on_click(move |_, window, cx| {
                                 let _ = workspace.update(cx, |workspace, cx| {
@@ -320,6 +356,14 @@ impl WorkspaceView {
                 }
                 menu
             })
+    }
+}
+
+/// The branch when the folder is in a repository, else the folder.
+fn tab_detail(location: &Location, home: Option<&Path>) -> TabDetail {
+    match &location.head {
+        Some(head) => TabDetail::Branch(SharedString::from(head.name().to_string())),
+        None => TabDetail::Folder(display_path(&location.dir, home).into()),
     }
 }
 
@@ -357,13 +401,24 @@ impl Render for WorkspaceView {
             .flex()
             .flex_col()
             .capture_key_down(cx.listener(Self::on_key_down_capture))
-            .child(TitleBar::new().child(div().text_sm().child(title)))
+            .child(
+                TitleBar::new().child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(self.sidebar_toggle(cx))
+                        .child(div().text_sm().child(title)),
+                ),
+            )
             .child(
                 div()
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    .child(self.render_sidebar(cx))
+                    .when(self.sidebar_visible, |content| {
+                        content.child(self.render_sidebar(cx))
+                    })
                     .child(div().flex_1().min_w_0().h_full().children(active)),
             )
     }
@@ -371,7 +426,31 @@ impl Render for WorkspaceView {
 
 #[cfg(test)]
 mod tests {
+    use workspace_model::GitHead;
+
     use super::*;
+
+    #[test]
+    fn detail_prefers_the_branch_over_the_folder() {
+        let home = Path::new("/home/user");
+        let in_repo = Location {
+            dir: home.join("dev/app"),
+            head: Some(GitHead::Branch("main".into())),
+        };
+        let plain = Location {
+            dir: home.join(".config"),
+            head: None,
+        };
+
+        assert!(matches!(
+            tab_detail(&in_repo, Some(home)),
+            TabDetail::Branch(branch) if branch == "main"
+        ));
+        assert!(matches!(
+            tab_detail(&plain, Some(home)),
+            TabDetail::Folder(folder) if folder == format!("~{}.config", std::path::MAIN_SEPARATOR)
+        ));
+    }
 
     #[test]
     fn tab_numbers() {

@@ -11,3 +11,4 @@ futures.workspace = true
 gpui-kit.workspace = true
 log.workspace = true
 term-core.workspace = true
+workspace-model.workspace = true

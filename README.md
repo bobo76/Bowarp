@@ -15,17 +15,22 @@ cargo run -p agent-workspace
 
 Ubuntu build dependencies are listed in [PLAN.md](PLAN.md#ubuntu-prerequisites).
 
-## Status dots
+## Tab rows
 
-Hover a tab row to see the status as text.
+Each row shows the session icon, the title, and below it the git branch (when the folder is a
+repository) or the folder. The folder follows `cd` in a shell (Linux; other platforms show the
+launch folder for now). Ctrl+Shift+B or the title bar button hides the sidebar.
 
-| Dot | Status |
+The badge on the icon shows the status; hover the icon to see it as text.
+
+| Badge | Status |
 |---|---|
 | blue | Working |
-| orange | Needs attention |
+| orange, plus a warning triangle before the title | Needs attention |
+| green with a check | Done: finished while you were on another tab (until you select it) |
 | green | Idle |
 | light grey | Recent output (shell or Copilot) |
-| dark grey | No recent output |
+| none | No recent output |
 | hollow ring | Exited |
 
 ## Manual check
@@ -33,19 +38,22 @@ Hover a tab row to see the status as text.
 Open 3 Claude Code tabs and 1 shell tab, then check:
 
 1. **Typing and resizing** are smooth in every tab.
-2. **Working:** give a Claude tab a prompt and switch to another tab. Its dot turns blue.
+2. **Working:** give a Claude tab a prompt and switch to another tab. Its badge turns blue.
 3. **Needs attention:** ask a Claude tab for something that needs a permission prompt and switch
-   away. Its dot turns orange.
-4. **Idle:** give a Claude tab a short prompt (`say hi in one word`) and switch away right away.
-   The dot goes blue, then green when the reply finishes. Let it finish: after Esc the tab
-   stays blue for about a minute, because Claude Code fires no hook on interrupt.
+   away. Its badge turns orange and a warning triangle shows before the title.
+4. **Done / Idle:** give a Claude tab a short prompt (`say hi in one word`) and switch away right
+   away. The badge goes blue, then green with a check when the reply finishes; selecting the
+   tab turns it into a plain green Idle badge. Let it finish: after Esc the tab stays blue for
+   about a minute, because Claude Code fires no hook on interrupt.
 5. **Activity dot:** in the shell tab run
 
    ```
    sleep 5; for i in $(seq 1 10); do echo tick $i; sleep 1; done
    ```
 
-   and switch to another tab within 5 s. The shell's dot is light grey while ticks print and
-   turns dark grey about 2 s after the last one.
+   and switch to another tab within 5 s. The shell's badge is light grey while ticks print and
+   disappears about 2 s after the last one.
+6. **Folder and branch:** in a shell tab inside a repository the second line shows the branch;
+   `cd /tmp` changes it to `/tmp` once the prompt returns.
 
 Last passed: Ubuntu, Wayland, 2026-10-17 (all five checks).

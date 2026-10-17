@@ -168,3 +168,18 @@ fn title_changes_are_forwarded() {
 
     assert!(events.contains(&SessionEvent::TitleChanged(Some("agent title".into()))));
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn current_dir_follows_cd() {
+    let target = std::env::temp_dir().canonicalize().unwrap();
+    let script = format!("cd '{}' && printf ready && sleep 10", target.display());
+    let (session, rx) = spawn_sh(&script, TermDimensions::new(80, 24));
+
+    let deadline = Instant::now() + TIMEOUT;
+    while session.visible_text()[0] != "ready" {
+        assert!(Instant::now() < deadline, "shell did not print in time");
+        let _ = rx.recv_timeout(Duration::from_millis(50));
+    }
+    assert_eq!(session.current_dir(), Some(target));
+}

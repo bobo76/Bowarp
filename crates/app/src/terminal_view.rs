@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::io;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,7 @@ use term_core::alacritty_terminal::term::TermMode;
 use term_core::{
     EventCallback, LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions,
 };
+use workspace_model::Location;
 
 use crate::keys;
 use crate::launcher;
@@ -81,7 +82,8 @@ enum ProcessState {
     Exited(Option<i32>),
 }
 
-/// Emitted when what the sidebar and title bar show changes: title, status or activity.
+/// Emitted when what the sidebar and title bar show changes: title, status, activity, folder
+/// or branch.
 pub struct TabChanged;
 
 /// One terminal session and its interaction state.
@@ -89,9 +91,13 @@ pub struct TerminalView {
     pub(crate) session: Session,
     /// Shown until the program sets a title.
     name: String,
-    cwd: Option<PathBuf>,
+    /// Folder the session was started in, used while the child's own cannot be read.
+    launch_cwd: Option<PathBuf>,
+    location: Option<Location>,
     /// Status from Claude Code hooks; `None` for sessions without hooks.
     agent: Option<AgentState>,
+    /// Claude Code finished a turn while the tab was hidden; cleared when it is shown.
+    finished_unseen: bool,
     /// Hidden views do not paint, so they acknowledge wakeups themselves.
     visible: bool,
     /// Runs while the session counts as active, to report when it goes quiet.
@@ -158,8 +164,10 @@ impl TerminalView {
         Self {
             session,
             name: launcher::default_name(spec),
-            cwd: spec.cwd.clone(),
+            launch_cwd: spec.cwd.clone(),
+            location: spec.cwd.clone().map(Location::read),
             agent: reports_status.then(AgentState::default),
+            finished_unseen: false,
             visible: true,
             activity_task: None,
             focus_handle: cx.focus_handle(),
@@ -184,8 +192,9 @@ impl TerminalView {
         self.session.kind()
     }
 
-    pub fn cwd(&self) -> Option<&Path> {
-        self.cwd.as_deref()
+    /// Where the session works now, as of the last tab change.
+    pub fn location(&self) -> Option<&Location> {
+        self.location.as_ref()
     }
 
     /// The program's title, or the session's default name.
@@ -205,6 +214,7 @@ impl TerminalView {
     pub fn tab_status(&self) -> TabStatus {
         if let Some(agent) = self.agent {
             return match agent.status() {
+                AgentStatus::Idle if self.finished_unseen => TabStatus::Done,
                 AgentStatus::Idle => TabStatus::Idle,
                 AgentStatus::Working => TabStatus::Working,
                 AgentStatus::NeedsAttention => TabStatus::NeedsAttention,
@@ -221,9 +231,41 @@ impl TerminalView {
     /// Show or hide the view; only the selected tab is painted.
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         self.visible = visible;
-        if visible {
-            cx.notify();
+        if !visible {
+            return;
         }
+        let was_done = std::mem::take(&mut self.finished_unseen);
+        if self.refresh_location() || was_done {
+            cx.emit(TabChanged);
+        }
+        cx.notify();
+    }
+
+    /// Re-read the child's folder and its git branch. Returns whether either changed. When the
+    /// folder cannot be read (exited child, unsupported platform) the last known one is kept.
+    fn refresh_location(&mut self) -> bool {
+        let Some(dir) = self
+            .session
+            .current_dir()
+            .or_else(|| self.location.as_ref().map(|location| location.dir.clone()))
+            .or_else(|| self.launch_cwd.clone())
+        else {
+            return false;
+        };
+        let location = Some(Location::read(dir));
+        if location == self.location {
+            return false;
+        }
+        self.location = location;
+        true
+    }
+
+    /// Tell the sidebar something changed, refreshing the folder and branch first: a shell's
+    /// title changes and output bursts end around `cd` and `git checkout`, and hook events
+    /// follow Claude Code's commands, so the location is read then instead of polled.
+    fn emit_tab_changed(&mut self, cx: &mut Context<Self>) {
+        self.refresh_location();
+        cx.emit(TabChanged);
     }
 
     /// Apply a status event from this session's Claude Code hooks.
@@ -233,9 +275,12 @@ impl TerminalView {
         };
         let before = agent.status();
         agent.apply(event, at);
-        if agent.status() != before {
-            cx.emit(TabChanged);
+        let after = agent.status();
+        if after == before {
+            return;
         }
+        self.finished_unseen = finished_unseen(before, after, self.visible);
+        self.emit_tab_changed(cx);
     }
 
     fn on_session_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
@@ -250,7 +295,7 @@ impl TerminalView {
             }
             SessionEvent::TitleChanged(title) => {
                 self.title = title;
-                cx.emit(TabChanged);
+                self.emit_tab_changed(cx);
             }
             SessionEvent::Bell => return,
             SessionEvent::Exited(code) => {
@@ -286,7 +331,7 @@ impl TerminalView {
             }
             let _ = this.update(cx, |view, cx| {
                 view.activity_task = None;
-                cx.emit(TabChanged);
+                view.emit_tab_changed(cx);
             });
         }));
         cx.emit(TabChanged);
@@ -738,9 +783,25 @@ impl EntityInputHandler for TerminalView {
     }
 }
 
+/// Whether a status change is a turn ending (Working -> Idle) on a tab the user is not looking
+/// at, which the sidebar shows as Done until the tab is selected.
+fn finished_unseen(before: AgentStatus, after: AgentStatus, visible: bool) -> bool {
+    !visible && before == AgentStatus::Working && after == AgentStatus::Idle
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_hidden_finished_turn_is_done() {
+        use AgentStatus::*;
+        assert!(finished_unseen(Working, Idle, false));
+        assert!(!finished_unseen(Working, Idle, true));
+        assert!(!finished_unseen(NeedsAttention, Idle, false));
+        assert!(!finished_unseen(Working, NeedsAttention, false));
+        assert!(!finished_unseen(Working, Exited, false));
+    }
 
     #[test]
     fn default_bindings_parse() {

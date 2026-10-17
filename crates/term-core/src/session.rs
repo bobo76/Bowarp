@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
@@ -160,6 +161,8 @@ impl EventListener for SessionListener {
 pub struct Session {
     id: u64,
     kind: SessionKind,
+    /// Process id of the program started in the pty, when the platform reports one.
+    child_pid: Option<u32>,
     term: Arc<FairMutex<Term<SessionListener>>>,
     shared: Arc<Shared>,
     io_thread: Option<JoinHandle<(EventLoop<tty::Pty, SessionListener>, State)>>,
@@ -201,6 +204,7 @@ impl Session {
             ..Default::default()
         };
         let pty = tty::new(&options, size.window_size(), id)?;
+        let child_pid = child_pid(&pty);
         let event_loop = EventLoop::new(term.clone(), listener, pty, options.drain_on_exit, false)?;
         let _ = shared.sender.set(event_loop.channel());
         let io_thread = event_loop.spawn();
@@ -208,6 +212,7 @@ impl Session {
         Ok(Self {
             id,
             kind: spec.kind,
+            child_pid,
             term,
             shared,
             io_thread: Some(io_thread),
@@ -220,6 +225,16 @@ impl Session {
 
     pub fn kind(&self) -> SessionKind {
         self.kind
+    }
+
+    /// The child's current working directory, which follows `cd` in a shell. `None` when it
+    /// cannot be read: the child exited, or the platform is not supported yet (only Linux).
+    pub fn current_dir(&self) -> Option<PathBuf> {
+        let pid = self.child_pid?;
+        if cfg!(target_os = "linux") {
+            return std::fs::read_link(format!("/proc/{pid}/cwd")).ok();
+        }
+        None
     }
 
     pub fn palette(&self) -> &Palette {
@@ -351,6 +366,16 @@ impl Drop for Session {
             let _ = io_thread.join();
         }
     }
+}
+
+#[cfg(unix)]
+fn child_pid(pty: &tty::Pty) -> Option<u32> {
+    Some(pty.child().id())
+}
+
+#[cfg(windows)]
+fn child_pid(pty: &tty::Pty) -> Option<u32> {
+    pty.child_watcher().pid().map(|pid| pid.get())
 }
 
 /// Environment for every child: advertise a capable terminal without mutating our own

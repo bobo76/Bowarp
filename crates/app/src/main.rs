@@ -1,3 +1,4 @@
+mod assets;
 mod hooks;
 mod keys;
 mod launcher;
@@ -78,7 +79,7 @@ fn main() {
     };
 
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
             terminal_view::init(cx);

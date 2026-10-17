@@ -18,3 +18,4 @@ interprocess = "2.4"
 serde_json = "1"
 agent-status = { path = "crates/agent-status" }
 term-core = { path = "crates/term-core" }
+workspace-model = { path = "crates/workspace-model" }
