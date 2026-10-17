@@ -3,15 +3,17 @@
 //! The terminal lock is held only while copying the visible cells into plain batches; text
 //! shaping and painting happen afterwards so the I/O thread is never blocked on rendering.
 
+use core::panic::Location;
+
 use gpui_kit::{
     App, BorderStyle, Bounds, Element, ElementId, ElementInputHandler, Entity, FocusHandle, Font,
     FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId,
-    PaintQuad, Pixels, ShapedLine, StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle,
-    Window, fill, font, outline, point, px, relative, size,
+    PaintQuad, Pixels, Point, ShapedLine, StrikethroughStyle, Style, TextAlign, TextRun,
+    UnderlineStyle, Window, fill, font, outline, point, px, relative, size,
 };
 use term_core::alacritty_terminal::term::cell::Flags;
 use term_core::alacritty_terminal::term::{RenderableContent, TermMode};
-use term_core::alacritty_terminal::vte::ansi::{CursorShape, Rgb};
+use term_core::alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Rgb};
 use term_core::{Palette, TermDimensions, dim};
 
 use crate::terminal_view::{GridGeometry, TerminalView};
@@ -84,9 +86,9 @@ struct GridSnapshot {
 pub struct PrepaintState {
     background: Hsla,
     backgrounds: Vec<PaintQuad>,
-    lines: Vec<(gpui_kit::Point<Pixels>, ShapedLine)>,
+    lines: Vec<(Point<Pixels>, ShapedLine)>,
     cursor: Option<PaintQuad>,
-    marked_text: Option<(PaintQuad, gpui_kit::Point<Pixels>, ShapedLine)>,
+    marked_text: Option<(PaintQuad, Point<Pixels>, ShapedLine)>,
     geometry: GridGeometry,
 }
 
@@ -106,7 +108,7 @@ impl Element for TerminalElement {
         None
     }
 
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+    fn source_location(&self) -> Option<&'static Location<'static>> {
         None
     }
 
@@ -192,11 +194,10 @@ impl Element for TerminalElement {
 
         let lines = snapshot
             .batches
-            .iter()
+            .into_iter()
             .map(|batch| {
                 let run = text_run(&base_font, batch.text.len(), batch.style);
-                let shaped =
-                    text_system.shape_line(batch.text.clone().into(), font_size, &[run], None);
+                let shaped = text_system.shape_line(batch.text.into(), font_size, &[run], None);
                 (cell_origin(batch.line, batch.column), shaped)
             })
             .collect();
@@ -292,7 +293,9 @@ impl Element for TerminalElement {
         }
         if let Some((backdrop, origin, line)) = prepaint.marked_text.take() {
             window.paint_quad(backdrop);
-            let _ = line.paint(origin, line_height, TextAlign::Left, None, window, cx);
+            if let Err(err) = line.paint(origin, line_height, TextAlign::Left, None, window, cx) {
+                log::warn!("failed to paint marked text: {err}");
+            }
         }
 
         let geometry = prepaint.geometry;
@@ -305,14 +308,8 @@ impl Element for TerminalElement {
 fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) -> GridSnapshot {
     let colors = content.colors;
     let display_offset = content.display_offset as i32;
-    let default_background = palette.resolve_index(
-        term_core::alacritty_terminal::vte::ansi::NamedColor::Background as usize,
-        colors,
-    );
-    let cursor_color = palette.resolve_index(
-        term_core::alacritty_terminal::vte::ansi::NamedColor::Cursor as usize,
-        colors,
-    );
+    let default_background = palette.resolve_index(NamedColor::Background as usize, colors);
+    let cursor_color = palette.resolve_index(NamedColor::Cursor as usize, colors);
     let cursor_point = content.cursor.point;
     let show_cursor =
         content.mode.contains(TermMode::SHOW_CURSOR) && content.cursor.shape != CursorShape::Hidden;
@@ -491,6 +488,123 @@ fn text_run(base: &Font, len: usize, style: CellStyle) -> TextRun {
     }
 }
 
-fn to_hsla(color: Rgb) -> Hsla {
+pub(crate) fn to_hsla(color: Rgb) -> Hsla {
     gpui_kit::rgb(((color.r as u32) << 16) | ((color.g as u32) << 8) | color.b as u32).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RED: Rgb = Rgb {
+        r: 0xff,
+        g: 0,
+        b: 0,
+    };
+    const BLUE: Rgb = Rgb {
+        r: 0,
+        g: 0,
+        b: 0xff,
+    };
+
+    fn plain(foreground: Rgb) -> CellStyle {
+        CellStyle {
+            foreground,
+            bold: false,
+            italic: false,
+            underline: false,
+            undercurl: false,
+            strikeout: false,
+        }
+    }
+
+    fn underlined(foreground: Rgb) -> CellStyle {
+        CellStyle {
+            underline: true,
+            ..plain(foreground)
+        }
+    }
+
+    /// Push single-width cells on line 0 starting at column 0.
+    fn push_line(cells: &[(char, CellStyle)]) -> Vec<TextBatch> {
+        let mut batches = Vec::new();
+        for (column, &(character, style)) in cells.iter().enumerate() {
+            push_cell(&mut batches, 0, column, 1, character, None, style);
+        }
+        batches
+    }
+
+    /// `(column, cells, text)` of each batch.
+    fn layout(batches: &[TextBatch]) -> Vec<(usize, usize, &str)> {
+        batches
+            .iter()
+            .map(|batch| (batch.column, batch.cells, batch.text.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn adjacent_ascii_with_same_style_merges() {
+        let batches = push_line(&[('a', plain(RED)), ('b', plain(RED)), ('c', plain(RED))]);
+        assert_eq!(layout(&batches), [(0, 3, "abc")]);
+    }
+
+    #[test]
+    fn style_change_starts_a_new_batch() {
+        let batches = push_line(&[('a', plain(RED)), ('b', plain(BLUE))]);
+        assert_eq!(layout(&batches), [(0, 1, "a"), (1, 1, "b")]);
+    }
+
+    #[test]
+    fn leading_undecorated_blanks_are_skipped() {
+        let batches = push_line(&[(' ', plain(RED)), ('\t', plain(RED)), ('a', plain(RED))]);
+        assert_eq!(layout(&batches), [(2, 1, "a")]);
+    }
+
+    #[test]
+    fn decorated_blank_starts_a_batch() {
+        let batches = push_line(&[(' ', underlined(RED))]);
+        assert_eq!(layout(&batches), [(0, 1, " ")]);
+    }
+
+    #[test]
+    fn blank_between_styles_joins_the_earlier_batch() {
+        let batches = push_line(&[('a', plain(RED)), ('\t', plain(BLUE)), ('b', plain(BLUE))]);
+        assert_eq!(layout(&batches), [(0, 2, "a "), (2, 1, "b")]);
+    }
+
+    #[test]
+    fn undecorated_blank_does_not_join_a_decorated_batch() {
+        let batches = push_line(&[('a', underlined(RED)), (' ', plain(RED))]);
+        assert_eq!(layout(&batches), [(0, 1, "a")]);
+    }
+
+    #[test]
+    fn gap_in_columns_starts_a_new_batch() {
+        let mut batches = Vec::new();
+        push_cell(&mut batches, 0, 0, 1, 'a', None, plain(RED));
+        push_cell(&mut batches, 0, 2, 1, 'b', None, plain(RED));
+        push_cell(&mut batches, 1, 3, 1, 'c', None, plain(RED));
+        assert_eq!(layout(&batches), [(0, 1, "a"), (2, 1, "b"), (3, 1, "c")]);
+    }
+
+    #[test]
+    fn wide_char_gets_its_own_batch() {
+        let mut batches = Vec::new();
+        push_cell(&mut batches, 0, 0, 1, 'a', None, plain(RED));
+        push_cell(&mut batches, 0, 1, 2, '中', None, plain(RED));
+        push_cell(&mut batches, 0, 3, 1, 'b', None, plain(RED));
+        assert_eq!(layout(&batches), [(0, 1, "a"), (1, 2, "中"), (3, 1, "b")]);
+    }
+
+    #[test]
+    fn ascii_with_combining_mark_does_not_merge() {
+        let mut batches = Vec::new();
+        push_cell(&mut batches, 0, 0, 1, 'a', None, plain(RED));
+        push_cell(&mut batches, 0, 1, 1, 'e', Some(&['\u{301}']), plain(RED));
+        push_cell(&mut batches, 0, 2, 1, 'b', None, plain(RED));
+        assert_eq!(
+            layout(&batches),
+            [(0, 1, "a"), (1, 1, "e\u{301}"), (2, 1, "b")]
+        );
+    }
 }

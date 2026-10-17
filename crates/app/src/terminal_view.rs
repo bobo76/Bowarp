@@ -20,7 +20,7 @@ use term_core::{EventCallback, LaunchSpec, Palette, Session, SessionEvent, TermD
 
 use crate::keys;
 use crate::mouse::{self, Cell, MouseAction, ReportButton, WheelAction};
-use crate::terminal_element::TerminalElement;
+use crate::terminal_element::{TerminalElement, to_hsla};
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 const KEY_CONTEXT: &str = "Terminal";
@@ -393,9 +393,7 @@ impl Render for TerminalView {
             .size_full()
             .px(px(8.))
             .py(px(4.))
-            .bg(gpui_kit::rgb(
-                ((background.r as u32) << 16) | ((background.g as u32) << 8) | background.b as u32,
-            ))
+            .bg(to_hsla(background))
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .cursor(CursorStyle::IBeam)

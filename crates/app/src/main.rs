@@ -5,6 +5,7 @@ mod terminal_view;
 mod workspace_view;
 
 use std::path::PathBuf;
+use std::process;
 
 use gpui_kit::component::{Theme, ThemeMode, TitleBar};
 use gpui_kit::{
@@ -55,6 +56,10 @@ fn main() {
         unsafe { std::env::remove_var(name) };
     }
     let spec = launch_spec_from_args();
+    if let Some(cwd) = spec.cwd.as_ref().filter(|cwd| !cwd.is_dir()) {
+        eprintln!("agent-workspace: not a directory: {}", cwd.display());
+        process::exit(2);
+    }
 
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
@@ -78,8 +83,13 @@ fn main() {
                 ..TitleBar::window_options()
             };
             gpui_kit::open_window(options, cx, move |window, cx| {
-                let terminal =
-                    cx.new(|cx| TerminalView::new(&spec, cx).expect("failed to start session"));
+                let terminal = cx.new(|cx| {
+                    TerminalView::new(&spec, cx).unwrap_or_else(|err| {
+                        let program = spec.program.as_deref().unwrap_or("shell");
+                        eprintln!("agent-workspace: failed to start {program}: {err}");
+                        process::exit(1)
+                    })
+                });
                 window.focus(&terminal.focus_handle(cx), cx);
                 cx.new(|cx| WorkspaceView::new(terminal, cx))
             })
