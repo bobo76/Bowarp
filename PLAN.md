@@ -85,6 +85,17 @@ Feature spec: [FEATURES.md](FEATURES.md)
   (expands it). Not driven: drag & drop while a search is active, a real Claude Code session.
   109 tests passing.
 
+**Bugs to fix**
+
+- Windows: the title bar's sidebar toggle button does nothing when clicked; Ctrl+Shift+B
+  works. Cause: gpui-component's `TitleBar` marks its whole child area
+  `WindowControlArea::Drag`, and GPUI's hit test lists every hitbox under the cursor, so
+  `WM_NCHITTEST` answers `HTCAPTION` over our button too. The mouse-down reaches GPUI as a
+  non-client event, `Button` does not stop it, so `DefWindowProc` starts the window-move loop,
+  which eats the mouse-up: no click. Fix: wrap the title bar buttons in a `div().occlude()`
+  (hitbox `BlockMouse` stops the hit test before the drag area, so they get `HTCLIENT` and
+  normal clicks); the explorer button goes in the same wrapper.
+
 **Next steps, in priority order**
 
 1. Add a lap time for the in-progress popup.
@@ -95,7 +106,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
    (`Layout` + `TabMeta` to serde), and the selected tab. Each tab is relaunched in its last
    folder. This brings forward the save/restore part of M4 for the single window; named
    workspaces stay in M4.
-4. `+` menu look (reference: Windows Terminal's new-tab menu): an icon per entry (PowerShell,
+4. `+` menu look ([reference](docs/ui-reference/new-tab-menu.png)): an icon per entry (PowerShell,
    Windows PowerShell, Command Prompt, Git Bash, each WSL distro, Claude, Copilot) instead of
    the shared terminal icon, a "Terminal" entry with its `Ctrl+Shift+T` hint, and separators
    between shells and agents.
@@ -113,6 +124,47 @@ Feature spec: [FEATURES.md](FEATURES.md)
    and the default entry in the `+` menu shows `Ctrl+Shift+T` on its right. Duplicating the
    selected tab moves to Ctrl+Shift+D, also in the tab menu as "Duplicate tab" with its
    shortcut shown.
+7. Taller tab rows with separators ([reference](docs/ui-reference/tab-row-spacing.png)): more vertical
+   padding per row (about 56 px instead of the current tight two lines), a larger session
+   icon, and a thin full-width divider line (`sidebar_border` color) between rows instead of
+   the 2 px gap. The selected/hovered background still fills the whole row; group headers and
+   indented group children keep the same rhythm.
+8. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
+   between the sidebar and the terminal, shown/hidden by a title bar button next to the
+   sidebar toggle and by Ctrl+Shift+| (bound as the key that produces `|`, so check it on
+   non-US layouts), closed with its `×`. Root is the selected tab's folder and
+   follows tab switches and `cd`. Tree with chevrons, folders first then files, sorted by
+   name, dotfiles shown; folder and file-type icons (Markdown, image, ...). Folders are read
+   only when expanded (no recursive scan); expanded state is kept per root. Header row with
+   the files view icon; the reference's comments and search views are out of scope for now.
+   Open questions: what clicking a file does (insert its path in the terminal, open in the
+   default app), and refreshing on file changes (`notify` watcher on expanded folders only).
+9. Command history in shell tabs (both need shell integration, below):
+   - **Inline autocomplete** ([reference](docs/ui-reference/history-autocomplete.png)): while
+     typing at the prompt, the most recent history entry starting with the typed text is drawn
+     dimmed after the cursor (ghost text, not sent to the shell); Right arrow / End at the end
+     of the line accepts it by sending the remaining characters.
+   - **History popup** ([reference](docs/ui-reference/history-popup.png)): "HISTORY" panel
+     above the prompt listing past commands that contain the prompt's current text, most
+     recent at the bottom next to the prompt, with the folder chip; Up/Down to move, Enter to
+     put the command on the prompt (replacing the typed text), Esc to dismiss.
+   - **History store:** commands executed in any shell tab of the app, with folder and time,
+     de-duplicated (latest wins), capped (e.g. 10 000), persisted in the config folder. Not
+     the shell's own history file.
+   - **Shell integration:** the app must know where the prompt's command line starts and when
+     a command runs: OSC 133 (A prompt start, B command start, C executed, D finished) emitted
+     by small scripts injected at launch for bash / zsh / pwsh (`--rcfile` / `ZDOTDIR` /
+     `-NoExit -Command`), sourcing the user's own config first. `alacritty_terminal` does not
+     parse OSC 133, so this needs the pty reader wrapper also planned for OSC 7. The command
+     text is read from the grid between the B mark and the cursor. Disabled on the alternate
+     screen and in Claude Code / Copilot tabs; cmd.exe and WSL shells without the script get
+     neither feature.
+   - **Opening the popup:** Up arrow at the prompt always opens it and is no longer sent to
+     the shell (the shell's own Up history is dropped where integration is active): all
+     history on an empty prompt, filtered by the typed text otherwise. The list has a max
+     height (about 10 rows) and scrolls, starting at the bottom with the most recent command
+     selected. Up still goes to programs (alternate screen, Claude Code, `less`, ...) and to
+     shells without integration.
 
 **Deferred (needs a Windows machine):** Windows build and the same check (ConPTY, named pipe,
 hook command quoting).
