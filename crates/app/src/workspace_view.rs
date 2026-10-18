@@ -35,6 +35,10 @@ use crate::terminal_view::{TabChanged, TerminalView};
 use crate::window_bounds;
 
 const NEW_GROUP_NAME: &str = "New group";
+
+/// Key of the Ctrl+Shift+T shortcut, shared by `handle_tab_shortcut` and the `+` menu hint.
+const NEW_TAB_KEY: &str = "t";
+
 /// How long a hover card's `+N` is reused before `git diff` runs again.
 const DIFF_STAT_TTL: Duration = Duration::from_secs(5);
 
@@ -926,7 +930,7 @@ impl WorkspaceView {
         }
         match (keystroke.key.as_str(), modifiers.shift) {
             ("tab", shift) => self.cycle(!shift, window, cx),
-            ("t", true) => self.duplicate_active(window, cx),
+            (NEW_TAB_KEY, true) => self.duplicate_active(window, cx),
             ("w", true) => self.close_tab(self.active, window, cx),
             ("b", true) => self.toggle_sidebar(cx),
             ("s", true) => self.focus_search(window, cx),

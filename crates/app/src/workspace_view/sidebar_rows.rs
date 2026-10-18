@@ -15,10 +15,9 @@ use gpui_kit::{
     InteractiveElement, IntoElement, Keystroke, Modifiers, ParentElement, SharedString, Stateful,
     StatefulInteractiveElement, Styled, WeakEntity, Window, div, px, transparent_white,
 };
-use term_core::SessionKind;
 use workspace_model::{DropTarget, Group, GroupId, Item, LauncherIcon, Location, display_path};
 
-use super::{RenameTarget, WorkspaceView};
+use super::{NEW_TAB_KEY, RenameTarget, WorkspaceView};
 use crate::launcher::{self, Launcher};
 use crate::sidebar::{
     self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabCard,
@@ -422,10 +421,13 @@ impl WorkspaceView {
                         });
                     }
                 };
-                if let Some(default) = launcher::default_shell(&launchers) {
+                let (default, shells, agents) = launcher::menu_sections(&launchers);
+                if let Some(default) = default {
                     menu = menu.item(
                         PopupMenuItem::element(|_, _| {
                             div()
+                                .id("new-tab-terminal")
+                                .aria_label(TERMINAL_LABEL)
                                 .flex()
                                 .items_center()
                                 .w_full()
@@ -438,9 +440,6 @@ impl WorkspaceView {
                         .on_click(open(default)),
                     );
                 }
-                let (shells, agents): (Vec<&Launcher>, Vec<&Launcher>) = launchers
-                    .iter()
-                    .partition(|launcher| launcher.kind == SessionKind::Shell);
                 for (index, group) in [shells, agents].into_iter().enumerate() {
                     if index > 0 {
                         menu = menu.separator();
@@ -547,7 +546,6 @@ impl WorkspaceView {
     }
 }
 
-/// The branch when the folder is in a repository, else the folder.
 const TERMINAL_LABEL: &str = "Terminal";
 
 /// Ctrl+Shift+T, shown like the hints gpui-component's menu draws for bound actions.
@@ -558,7 +556,7 @@ fn new_tab_shortcut() -> Kbd {
             shift: true,
             ..Modifiers::default()
         },
-        key: "t".into(),
+        key: NEW_TAB_KEY.into(),
         key_char: None,
     };
     Kbd::new(keystroke)
@@ -568,6 +566,7 @@ fn new_tab_shortcut() -> Kbd {
         .bg(transparent_white())
 }
 
+/// The branch when the folder is in a repository, else the folder.
 fn tab_detail(location: &Location, home: Option<&Path>) -> TabDetail {
     match &location.head {
         Some(head) => TabDetail::Branch(SharedString::from(head.name().to_string())),

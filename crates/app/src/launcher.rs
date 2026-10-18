@@ -105,12 +105,34 @@ pub fn discover() -> Vec<Launcher> {
     launchers
 }
 
-/// The launcher the menu's "Terminal" entry opens: the first installed shell, which is the
-/// user's default shell when `discover` found it.
+/// The launcher the menu's "Terminal" entry (and later Ctrl+Shift+T) opens: Git Bash on
+/// Windows, else the first installed shell, which is `$SHELL` when `discover` found it.
 pub fn default_shell(launchers: &[Launcher]) -> Option<&Launcher> {
-    launchers
+    preferred_shell(launchers, cfg!(windows))
+}
+
+fn preferred_shell(launchers: &[Launcher], prefer_git_bash: bool) -> Option<&Launcher> {
+    let mut installed = launchers
         .iter()
-        .find(|launcher| launcher.kind == SessionKind::Shell && launcher.program.is_some())
+        .filter(|launcher| launcher.kind == SessionKind::Shell && launcher.program.is_some());
+    let first = installed.clone().next();
+    if prefer_git_bash {
+        return installed
+            .find(|launcher| launcher.icon == LauncherIcon::GitBash)
+            .or(first);
+    }
+    first
+}
+
+/// The `+` menu's entries: the default shell (shown as "Terminal"), then the shells, then the
+/// agents.
+pub fn menu_sections(
+    launchers: &[Launcher],
+) -> (Option<&Launcher>, Vec<&Launcher>, Vec<&Launcher>) {
+    let (shells, agents) = launchers
+        .iter()
+        .partition(|launcher| launcher.kind == SessionKind::Shell);
+    (default_shell(launchers), shells, agents)
 }
 
 fn default_shell_index(launchers: &[Launcher], default_shell: &Path) -> Option<usize> {
@@ -383,6 +405,48 @@ mod tests {
             Some(Path::new("/usr/bin/bash"))
         );
         assert_eq!(default_shell(&launchers[..2]), None);
+    }
+
+    #[test]
+    fn windows_terminal_entry_prefers_git_bash() {
+        let launchers = [
+            shell("/usr/bin/pwsh"),
+            git_bash_launcher("/git/bin/bash.exe".into()),
+        ];
+        let program =
+            |prefer| preferred_shell(&launchers, prefer).and_then(|shell| shell.program.as_deref());
+        assert_eq!(program(true), Some(Path::new("/git/bin/bash.exe")));
+        assert_eq!(program(false), Some(Path::new("/usr/bin/pwsh")));
+        assert_eq!(
+            preferred_shell(&launchers[..1], true).and_then(|shell| shell.program.as_deref()),
+            Some(Path::new("/usr/bin/pwsh"))
+        );
+    }
+
+    #[test]
+    fn menu_lists_shells_then_agents() {
+        let mut claude = shell("/usr/bin/claude");
+        claude.kind = SessionKind::ClaudeCode;
+        let launchers = [shell("/usr/bin/zsh"), claude, shell("/usr/bin/bash")];
+        let (default, shells, agents) = menu_sections(&launchers);
+        let programs = |group: Vec<&Launcher>| {
+            group
+                .into_iter()
+                .map(|launcher| launcher.program.clone().unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            default.and_then(|shell| shell.program.as_deref()),
+            Some(Path::new("/usr/bin/zsh"))
+        );
+        assert_eq!(
+            programs(shells),
+            [
+                PathBuf::from("/usr/bin/zsh"),
+                PathBuf::from("/usr/bin/bash")
+            ]
+        );
+        assert_eq!(programs(agents), [PathBuf::from("/usr/bin/claude")]);
     }
 
     #[test]

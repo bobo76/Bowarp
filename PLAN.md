@@ -168,9 +168,10 @@ Feature spec: [FEATURES.md](FEATURES.md)
    `HKCU\...\Lxss`, so no `wsl.exe` runs at startup; `docker-desktop*` hidden) is its own entry
    launching `wsl.exe -d <name>`, and its tab is named after the distro.
 2. Ctrl+Shift+T opens a new tab with the default launcher (in the selected tab's folder)
-   instead of duplicating the selected tab. The default is Bash for now: Git Bash on Windows,
-   `bash` on Linux; falls back to the first shell found. A configurable default comes with
-   settings. The `+` button's hover tooltip shows the shortcut ("New tab (Ctrl+Shift+T)"),
+   instead of duplicating the selected tab. The default is the default shell: `$SHELL` on
+   Linux, Git Bash on Windows, else the first shell found; Ctrl+Shift+T and the `+` menu's
+   "Terminal" entry share it (`launcher::default_shell`). A configurable default comes with
+   settings (see Later). The `+` button's hover tooltip shows the shortcut ("New tab (Ctrl+Shift+T)"),
    and the default entry in the `+` menu shows `Ctrl+Shift+T` on its right. Duplicating the
    selected tab moves to Ctrl+Shift+D, also in the tab menu as "Duplicate tab" with its
    shortcut shown.
@@ -401,6 +402,8 @@ New work the look needs:
 - Show an "exited" banner in the terminal area (currently only in the title).
 - Tune wheel scroll speed (about 2 lines per notch on X11).
 - Configurable font family and size.
+- Configurable default shell for the Terminal entry and Ctrl+Shift+T, saved in the settings
+  file (overrides the $SHELL / Git Bash default).
 - Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
   `cx.build_action`) in place of `default_bindings`.
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
