@@ -127,6 +127,13 @@ Feature spec: [FEATURES.md](FEATURES.md)
   selection still lands on the right tab), tabs closed one by one, damaged file, command-line
   tab after restore. Not driven: the title bar `×` (no window controls without a window
   manager), Windows, a real Claude Code session. 146 tests passing.
+  Review fixes: only the first running instance reopens and saves the tabs (`tabs.lock` with
+  its pid in the config folder; a lock whose process is gone is taken over, on Linux only, and
+  it is removed at exit); a later instance opens just the requested tab or a shell. The tab
+  named on the command line goes at the end of the top level, not into the selected tab's
+  group. A folder that is not UTF-8 is not saved (launch folder instead). Verified under Xvfb:
+  stale lock taken over, second instance opened only its tab, the first one's save won.
+  154 tests passing.
 
 **Bugs to fix**
 

@@ -234,6 +234,10 @@ impl Session {
     /// The child's current working directory, which follows `cd` in a shell. `None` when it
     /// cannot be read: the child exited, or the platform is not supported yet (only Linux).
     pub fn current_dir(&self) -> Option<PathBuf> {
+        // The pid of an exited child may already belong to another process.
+        if self.has_exited() {
+            return None;
+        }
         let pid = self.child_pid?;
         if cfg!(target_os = "linux") {
             return std::fs::read_link(format!("/proc/{pid}/cwd")).ok();

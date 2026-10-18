@@ -141,6 +141,8 @@ pub struct WorkspaceView {
     drop_hint: Option<DropTarget>,
     /// For shortening folders to `~` in the sidebar.
     home: Option<PathBuf>,
+    /// Whether this instance reopens and saves the tabs (it holds the instance lock).
+    owns_tabs: bool,
     next_session_id: u64,
     launchers: Rc<[Launcher]>,
     hooks: Option<Rc<ClaudeHooks>>,
@@ -153,6 +155,7 @@ impl WorkspaceView {
         launchers: Rc<[Launcher]>,
         hooks: Option<Rc<ClaudeHooks>>,
         mut hook_messages: UnboundedReceiver<HookMessage>,
+        owns_tabs: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -188,6 +191,7 @@ impl WorkspaceView {
             card_clock: None,
             drop_hint: None,
             home: std::env::home_dir(),
+            owns_tabs,
             next_session_id: 1,
             launchers,
             hooks,
@@ -207,6 +211,17 @@ impl WorkspaceView {
             .active_tab()
             .and_then(|tab| self.layout.group_of(tab.id))
             .map(|group| group.id);
+        self.open_tab_in(spec, group, window, cx)
+    }
+
+    /// Start `spec` in a new tab at the end of `group` (`None`: of the top level) and select it.
+    fn open_tab_in(
+        &mut self,
+        spec: LaunchSpec,
+        group: Option<GroupId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> io::Result<()> {
         let id = self.spawn_tab(spec, TabMeta::default(), cx)?;
         self.layout.add(id, group);
         self.sync_order(cx);
@@ -251,20 +266,11 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let mut index = 0;
-        let mut selected = None;
         let mut failures = Vec::new();
-        let layout = state.layout.filter_map(|saved| {
-            let this_index = index;
-            index += 1;
+        let (layout, selected) = state.layout.filter_map_selected(state.selected, |saved| {
             let spec = tabs_file::launch_spec(&saved);
             match self.spawn_tab(spec.clone(), saved.meta, cx) {
-                Ok(id) => {
-                    if state.selected == Some(this_index) {
-                        selected = Some(id);
-                    }
-                    Some(id)
-                }
+                Ok(id) => Some(id),
                 Err(err) => {
                     failures.push(format!("{}: {err}", launch_name(&spec)));
                     None
@@ -294,17 +300,15 @@ impl WorkspaceView {
         true
     }
 
-    /// The tabs as they are now, for reopening them at the next start.
+    /// The tabs as they are now, for reopening them at the next start. Nothing is saved when
+    /// another instance owns the tabs (`instance_lock`).
     pub fn save_tabs(&self, cx: &App) {
+        if !self.owns_tabs {
+            return;
+        }
         let active = self.active_tab().map(|tab| tab.id);
-        let mut index = 0;
-        let mut selected = None;
-        let layout = self.layout.save(|id| {
+        let (layout, selected) = self.layout.save_selected(active, |id| {
             let tab = self.tabs.iter().find(|tab| tab.id == id)?;
-            if Some(id) == active {
-                selected = Some(index);
-            }
-            index += 1;
             let folder = tab.view.read(cx).current_folder();
             Some(tabs_file::saved_tab(&tab.spec, folder, tab.meta.clone()))
         });
@@ -324,8 +328,33 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let group = self
+            .active_tab()
+            .and_then(|tab| self.layout.group_of(tab.id))
+            .map(|group| group.id);
+        self.open_tab_in_or_notify(spec, group, window, cx);
+    }
+
+    /// Open the tab named on the command line after the restored ones: at the end of the top
+    /// level, since the command line names a folder, not a group.
+    pub fn open_requested_tab(
+        &mut self,
+        spec: LaunchSpec,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_tab_in_or_notify(spec, None, window, cx);
+    }
+
+    fn open_tab_in_or_notify(
+        &mut self,
+        spec: LaunchSpec,
+        group: Option<GroupId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let program = launch_name(&spec).to_string();
-        if let Err(err) = self.open_tab(spec, window, cx) {
+        if let Err(err) = self.open_tab_in(spec, group, window, cx) {
             log::error!("failed to start {program}: {err}");
             window.push_notification(
                 Notification::error(format!("Failed to start {program}: {err}")),

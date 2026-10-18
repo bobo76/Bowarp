@@ -39,10 +39,18 @@ pub struct SavedTab {
 
 impl SavedTab {
     /// The folder to reopen the tab in: the saved one, else its nearest parent that still
-    /// exists. `None` (start in the app's folder) when there is none.
+    /// exists. `None` (start in the app's folder) when there is none. Linux names a deleted
+    /// folder `"<path> (deleted)"`; when no folder has that name, `<path>` is tried instead.
     pub fn launch_folder(&self) -> Option<PathBuf> {
-        self.folder
-            .as_deref()?
+        let folder = self.folder.as_deref()?;
+        let folder = match folder
+            .to_str()
+            .and_then(|text| text.strip_suffix(" (deleted)"))
+        {
+            Some(path) if !folder.is_dir() => Path::new(path),
+            _ => folder,
+        };
+        folder
             .ancestors()
             .find(|dir| dir.is_dir())
             .map(Path::to_path_buf)
@@ -189,6 +197,21 @@ mod tests {
         assert_eq!(saved.launch_folder(), None);
         saved.folder = None;
         assert_eq!(saved.launch_folder(), None);
+    }
+
+    #[test]
+    fn launch_folder_reads_past_the_deleted_marker() {
+        let root = TempDir::new();
+        let recreated = root.0.join("project");
+        fs::create_dir_all(&recreated).unwrap();
+        let mut saved = tab(SavedKind::Shell, "/");
+        saved.folder = Some(root.0.join("project (deleted)"));
+        assert_eq!(saved.launch_folder(), Some(recreated));
+        // A folder really named so is kept.
+        let named = root.0.join("old (deleted)");
+        fs::create_dir_all(&named).unwrap();
+        saved.folder = Some(named.clone());
+        assert_eq!(saved.launch_folder(), Some(named));
     }
 
     #[test]

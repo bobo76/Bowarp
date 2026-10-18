@@ -3,6 +3,7 @@
 
 mod assets;
 mod hooks;
+mod instance_lock;
 mod keys;
 mod launcher;
 mod mouse;
@@ -25,6 +26,7 @@ use gpui_kit::{AppContext, WindowDecorations, WindowOptions};
 use term_core::LaunchSpec;
 
 use crate::hooks::ClaudeHooks;
+use crate::instance_lock::InstanceLock;
 use crate::workspace_view::WorkspaceView;
 
 /// Usage: `agent-workspace [shell|claude|copilot] [project-dir]`. `None` without arguments.
@@ -88,6 +90,11 @@ fn main() {
         }
     };
 
+    // Only the first running instance reopens and saves the tabs; a later one opens just the
+    // requested tab (or a shell), so it neither duplicates the sessions nor overwrites the save.
+    let lock = InstanceLock::acquire();
+    let owns_tabs = lock.is_some();
+
     gpui_kit::application()
         .with_assets(assets::Assets)
         .run(move |cx| {
@@ -99,6 +106,9 @@ fn main() {
                 if cx.windows().is_empty() {
                     if let Some(hooks) = &quit_hooks {
                         hooks.remove_settings();
+                    }
+                    if let Some(lock) = &lock {
+                        lock.release();
                     }
                     cx.quit();
                 }
@@ -115,16 +125,19 @@ fn main() {
                 ..TitleBar::window_options()
             };
             gpui_kit::open_window(options, cx, move |window, cx| {
-                let workspace =
-                    cx.new(|cx| WorkspaceView::new(launchers, hooks, hook_messages, window, cx));
+                let workspace = cx.new(|cx| {
+                    WorkspaceView::new(launchers, hooks, hook_messages, owns_tabs, window, cx)
+                });
                 // The tabs open at the last close come back; a tab named on the command line
-                // opens after them. Without either, a shell opens in the current folder.
+                // opens after them, at the top level. Without either, a shell opens in the
+                // current folder.
                 workspace.update(cx, |workspace, cx| {
-                    let restored =
-                        tabs_file::load().is_some_and(|state| workspace.restore(state, window, cx));
+                    let restored = owns_tabs
+                        && tabs_file::load()
+                            .is_some_and(|state| workspace.restore(state, window, cx));
                     if restored {
                         if let Some(spec) = requested.clone() {
-                            workspace.open_tab_or_notify(spec, window, cx);
+                            workspace.open_requested_tab(spec, window, cx);
                         }
                         return;
                     }

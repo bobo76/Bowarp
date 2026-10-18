@@ -33,13 +33,18 @@ pub fn save(state: &TabsState) {
     }
 }
 
-/// The saved form of a tab started from `spec`, now in `folder`.
+/// The saved form of a tab started from `spec`, now in `folder`. JSON holds only UTF-8 paths:
+/// a folder that isn't one is replaced by the launch folder, else left out (the tab then
+/// reopens in the app's folder).
 pub fn saved_tab(spec: &LaunchSpec, folder: Option<PathBuf>, meta: TabMeta) -> SavedTab {
+    let utf8 = |folder: &PathBuf| folder.to_str().is_some();
     SavedTab {
         kind: saved_kind(spec.kind),
         program: spec.program.clone(),
         args: spec.args.clone(),
-        folder: folder.or_else(|| spec.cwd.clone()),
+        folder: folder
+            .filter(utf8)
+            .or_else(|| spec.cwd.clone().filter(utf8)),
         meta,
     }
 }
@@ -109,5 +114,36 @@ mod tests {
         let spec = LaunchSpec::shell(Some("/".into()));
         let saved = saved_tab(&spec, None, TabMeta::default());
         assert_eq!(saved.folder, Some("/".into()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_folders_are_not_saved() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        use workspace_model::SavedLayout;
+
+        let bad = PathBuf::from(OsStr::from_bytes(b"/tmp/\xff"));
+        let current = saved_tab(
+            &LaunchSpec::shell(Some("/".into())),
+            Some(bad.clone()),
+            TabMeta::default(),
+        );
+        assert_eq!(current.folder, Some("/".into()));
+        let both = saved_tab(
+            &LaunchSpec::shell(Some(bad.clone())),
+            Some(bad),
+            TabMeta::default(),
+        );
+        assert_eq!(both.folder, None);
+        let state = TabsState {
+            layout: SavedLayout {
+                pinned: vec![current, both],
+                items: Vec::new(),
+            },
+            selected: Some(0),
+        };
+        assert_eq!(TabsState::from_json(&state.to_json()), Some(state));
     }
 }

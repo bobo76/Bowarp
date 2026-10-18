@@ -138,6 +138,27 @@ impl<T> SavedLayout<T> {
             .collect();
         SavedLayout { pinned, items }
     }
+
+    /// Like `filter_map`, plus the new value of the tab at index `selected` in `tabs()`, when
+    /// it was kept.
+    pub fn filter_map_selected<U: Clone>(
+        self,
+        selected: Option<usize>,
+        mut f: impl FnMut(T) -> Option<U>,
+    ) -> (SavedLayout<U>, Option<U>) {
+        let mut index = 0;
+        let mut picked = None;
+        let layout = self.filter_map(|tab| {
+            let this_index = index;
+            index += 1;
+            let new = f(tab)?;
+            if selected == Some(this_index) {
+                picked = Some(new.clone());
+            }
+            Some(new)
+        });
+        (layout, picked)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -417,6 +438,26 @@ impl Layout {
         }
     }
 
+    /// Like `save`, plus the index of `selected` in the saved layout's `tabs()`, when it was
+    /// kept. Tabs left out are not counted.
+    pub fn save_selected<T>(
+        &self,
+        selected: Option<TabId>,
+        mut f: impl FnMut(TabId) -> Option<T>,
+    ) -> (SavedLayout<T>, Option<usize>) {
+        let mut kept = 0;
+        let mut index = None;
+        let layout = self.save(|id| {
+            let saved = f(id)?;
+            if selected == Some(id) {
+                index = Some(kept);
+            }
+            kept += 1;
+            Some(saved)
+        });
+        (layout, index)
+    }
+
     /// The layout of a saved one whose tabs were reopened as `TabId`s. A tab listed twice is
     /// kept only where it first appears.
     pub fn restore(saved: SavedLayout<TabId>) -> Self {
@@ -531,6 +572,45 @@ mod tests {
         layout.move_to_group(4, a);
         let b = layout.new_group_with(6, "B").unwrap();
         (layout, a, b)
+    }
+
+    #[test]
+    fn selection_survives_save_and_restore() {
+        let (layout, _, _) = sample();
+        // Pinned (1), loose (2, 5), in a group (3, 4, 6).
+        for selected in 1..=6 {
+            let (saved, index) = layout.save_selected(Some(selected), |id| Some(id * 10));
+            assert_eq!(
+                index,
+                saved.tabs().iter().position(|&&id| id == selected * 10)
+            );
+            let (restored, picked) = saved.filter_map_selected(index, |id| Some(id / 10));
+            assert_eq!(picked, Some(selected));
+            assert_eq!(Layout::restore(restored).tabs(), layout.tabs());
+        }
+    }
+
+    #[test]
+    fn dropped_tabs_before_the_selection_are_not_counted() {
+        let (layout, _, _) = sample();
+        // Saving drops 1 (pinned) and 3 (grouped), both before 4.
+        let (saved, index) = layout.save_selected(Some(4), |id| (id != 1 && id != 3).then_some(id));
+        assert_eq!(saved.tabs(), vec![&2, &4, &5, &6]);
+        assert_eq!(index, Some(1));
+        // Reopening drops 2, before the selected one.
+        let (_, picked) = saved.filter_map_selected(index, |id| (id != 2).then_some(id));
+        assert_eq!(picked, Some(4));
+    }
+
+    #[test]
+    fn a_dropped_selected_tab_gives_no_selection() {
+        let (layout, _, _) = sample();
+        let (saved, index) = layout.save_selected(Some(3), |id| (id != 3).then_some(id));
+        assert_eq!(index, None);
+        let (_, picked) = saved.filter_map_selected(Some(1), |id| (id != 2).then_some(id));
+        assert_eq!(picked, None);
+        let (_, picked) = layout.save(Some).filter_map_selected(None, Some);
+        assert_eq!(picked, None);
     }
 
     #[test]
