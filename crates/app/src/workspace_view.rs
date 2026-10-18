@@ -31,6 +31,7 @@ use crate::launcher::{Launcher, launch_name};
 use crate::sidebar::NUMBERED_TABS;
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::terminal_view::{TabChanged, TerminalView};
+use crate::window_bounds;
 
 const NEW_GROUP_NAME: &str = "New group";
 /// How long a hover card's `+N` is reused before `git diff` runs again.
@@ -306,7 +307,7 @@ impl WorkspaceView {
         self.layout.remove(tab.id);
         self.diff_stats.remove(&tab.id);
         if self.tabs.is_empty() {
-            window.remove_window();
+            window_bounds::close(window);
             return;
         }
         if index < self.active || self.active == self.tabs.len() {
@@ -874,14 +875,16 @@ impl Render for WorkspaceView {
             .flex_col()
             .capture_key_down(cx.listener(Self::on_key_down_capture))
             .child(
-                TitleBar::new().child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(self.sidebar_toggle(cx))
-                        .child(div().text_sm().child(title)),
-                ),
+                TitleBar::new()
+                    .on_close_window(|_, window, _| window_bounds::close(window))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(self.sidebar_toggle(cx))
+                            .child(div().text_sm().child(title)),
+                    ),
             )
             .child(
                 div()

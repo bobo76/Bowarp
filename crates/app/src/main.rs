@@ -11,6 +11,7 @@ mod sidebar;
 mod tab_menu;
 mod terminal_element;
 mod terminal_view;
+mod window_bounds;
 mod workspace_view;
 
 use std::path::PathBuf;
@@ -19,7 +20,7 @@ use std::rc::Rc;
 
 use futures::channel::mpsc;
 use gpui_kit::component::{Theme, ThemeMode, TitleBar};
-use gpui_kit::{AppContext, Bounds, WindowBounds, WindowDecorations, WindowOptions, px, size};
+use gpui_kit::{AppContext, WindowDecorations, WindowOptions};
 use term_core::LaunchSpec;
 
 use crate::hooks::ClaudeHooks;
@@ -99,11 +100,10 @@ fn main() {
             })
             .detach();
 
-            let bounds = Bounds::centered(None, size(px(1000.), px(650.)), cx);
             // The app draws its own title bar and frame: GNOME on Wayland offers no server-side
             // decorations, and a drawn title bar looks the same on every platform.
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_bounds: Some(window_bounds::initial(cx)),
                 window_decorations: Some(WindowDecorations::Client),
                 // Must match the .desktop file name, or GNOME shows a generic icon.
                 app_id: Some("agent-workspace".into()),
@@ -118,6 +118,12 @@ fn main() {
                         eprintln!("agent-workspace: failed to start {program}: {err}");
                         process::exit(1)
                     }
+                });
+                // Closed by the window manager (its close button, Alt+F4). The app's own ways
+                // to close go through `window_bounds::close`.
+                window.on_window_should_close(cx, |window, _| {
+                    window_bounds::save(window.window_bounds());
+                    true
                 });
                 workspace
             })

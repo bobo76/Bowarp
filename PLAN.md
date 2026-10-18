@@ -92,6 +92,23 @@ Feature spec: [FEATURES.md](FEATURES.md)
   task. Verified under X11 (Xvfb) with fake hook events: the chip ticks with the card open
   (1s -> 4s), `PostToolUse` keeps it running, `Stop` shows plain Idle, a new prompt restarts
   at 0s. 123 tests passing.
+- Window bounds restore (2026-10-17): the window reopens with the size, position and
+  maximized/fullscreen state it closed with, saved as `window.json` in the config folder
+  (`directories`: `~/.config/agent-workspace`, `%APPDATA%\agent-workspace\config`). Saved
+  just before the window closes, from every close path: last tab closed, title bar `×`, the
+  window manager's close (`on_window_should_close`). Ignored (default 1000x650 centered) when
+  the file is missing, not valid JSON, smaller than 100 px or less than 48x48 px of it lies
+  on any connected display (`workspace_model::WindowState`). A maximized window saves the
+  bounds GPUI reports (on X11 the maximized size, so un-maximizing after a restart keeps that
+  size). Verified under X11 (Xvfb, no window manager, separate `XDG_CONFIG_HOME`): resize +
+  move then close via the last tab and via `WM_DELETE_WINDOW` save the new bounds and the
+  relaunch opens there; off-display, partly-visible and corrupt files; an unwritable config
+  folder only prints an error. GPUI's X11 backend opens new windows 2 px right of the
+  requested x, so a restored window can creep 2 px right per restart under a window manager
+  that reports the real position. Not driven: maximize (no window manager under Xvfb: the
+  saved mode is not detected and `zoom` has no effect), the title bar `×` (no window controls
+  without a window manager), Wayland (position is up to the compositor), Windows. 130 tests
+  passing.
 
 **Bugs to fix**
 
@@ -106,37 +123,34 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 **Next steps, in priority order**
 
-1. Reopen the window with the same size and position (and maximized state) as when it was
-   closed. Saved on close in the config folder (`directories`); ignored when the saved
-   bounds are off every connected display.
-2. Reopen with the same tabs: kind, program, folder, custom name, color, pin, groups and order
+1. Reopen with the same tabs: kind, program, folder, custom name, color, pin, groups and order
    (`Layout` + `TabMeta` to serde), and the selected tab. Each tab is relaunched in its last
    folder. This brings forward the save/restore part of M4 for the single window; named
    workspaces stay in M4.
-3. `+` menu look ([reference](docs/ui-reference/new-tab-menu.png)): an icon per entry (PowerShell,
+2. `+` menu look ([reference](docs/ui-reference/new-tab-menu.png)): an icon per entry (PowerShell,
    Windows PowerShell, Command Prompt, Git Bash, each WSL distro, Claude, Copilot) instead of
    the shared terminal icon, a "Terminal" entry with its `Ctrl+Shift+T` hint, and separators
    between shells and agents.
-4. Windows: "Bash" opened Ubuntu. `bash` on `PATH` resolves to `C:\Windows\System32\bash.exe`,
+3. Windows: "Bash" opened Ubuntu. `bash` on `PATH` resolves to `C:\Windows\System32\bash.exe`,
    the WSL launcher, which starts the default distro; Git Bash is not on `PATH` (only
    `Git\cmd` is). Code done in `launcher.rs`, not yet built or run on Windows: `bash` is no
    longer looked up on `PATH`; "Git Bash" is `Git\bin\bash.exe -i -l` found from `git.exe` on
    `PATH`, else `%ProgramFiles%\Git` / `%LOCALAPPDATA%\Programs\Git`; each WSL distro (from
    `HKCU\...\Lxss`, so no `wsl.exe` runs at startup; `docker-desktop*` hidden) is its own entry
    launching `wsl.exe -d <name>`, and its tab is named after the distro.
-5. Ctrl+Shift+T opens a new tab with the default launcher (in the selected tab's folder)
+4. Ctrl+Shift+T opens a new tab with the default launcher (in the selected tab's folder)
    instead of duplicating the selected tab. The default is Bash for now: Git Bash on Windows,
    `bash` on Linux; falls back to the first shell found. A configurable default comes with
    settings. The `+` button's hover tooltip shows the shortcut ("New tab (Ctrl+Shift+T)"),
    and the default entry in the `+` menu shows `Ctrl+Shift+T` on its right. Duplicating the
    selected tab moves to Ctrl+Shift+D, also in the tab menu as "Duplicate tab" with its
    shortcut shown.
-6. Taller tab rows with separators ([reference](docs/ui-reference/tab-row-spacing.png)): more vertical
+5. Taller tab rows with separators ([reference](docs/ui-reference/tab-row-spacing.png)): more vertical
    padding per row (about 56 px instead of the current tight two lines), a larger session
    icon, and a thin full-width divider line (`sidebar_border` color) between rows instead of
    the 2 px gap. The selected/hovered background still fills the whole row; group headers and
    indented group children keep the same rhythm.
-7. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
+6. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
    between the sidebar and the terminal, shown/hidden by a title bar button next to the
    sidebar toggle and by Ctrl+Shift+| (bound as the key that produces `|`, so check it on
    non-US layouts), closed with its `×`. Root is the selected tab's folder and
@@ -146,7 +160,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
    the files view icon; the reference's comments and search views are out of scope for now.
    Open questions: what clicking a file does (insert its path in the terminal, open in the
    default app), and refreshing on file changes (`notify` watcher on expanded folders only).
-8. Command history in shell tabs (both need shell integration, below):
+7. Command history in shell tabs (both need shell integration, below):
    - **Inline autocomplete** ([reference](docs/ui-reference/history-autocomplete.png)): while
      typing at the prompt, the most recent history entry starting with the typed text is drawn
      dimmed after the cursor (ghost text, not sent to the shell); Right arrow / End at the end
@@ -172,8 +186,8 @@ Feature spec: [FEATURES.md](FEATURES.md)
      height (about 10 rows) and scrolls, starting at the bottom with the most recent command
      selected. Up still goes to programs (alternate screen, Claude Code, `less`, ...) and to
      shells without integration.
-9. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
-10. M3: split panes, adjustable sizes, pane shortcuts.
+8. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
+9. M3: split panes, adjustable sizes, pane shortcuts.
 
 **Deferred (needs a Windows machine):** Windows build and the same check (ConPTY, named pipe,
 hook command quoting).
