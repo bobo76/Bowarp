@@ -374,12 +374,7 @@ impl WorkspaceView {
     fn tab_cwd(&self, index: usize, cx: &App) -> Option<PathBuf> {
         self.tabs
             .get(index)
-            .and_then(|tab| {
-                tab.view
-                    .read(cx)
-                    .location()
-                    .map(|location| location.dir.clone())
-            })
+            .and_then(|tab| tab.view.read(cx).current_folder())
             .or_else(|| std::env::current_dir().ok())
     }
 
@@ -392,12 +387,11 @@ impl WorkspaceView {
 
     /// Open the default shell (the `+` menu's "Terminal") in the selected tab's folder.
     fn open_default_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let launchers = self.launchers.clone();
-        let Some(shell) = launcher::default_shell(&launchers) else {
+        let Some(shell) = launcher::default_shell(&self.launchers).cloned() else {
             window.push_notification(Notification::error("No shell found"), cx);
             return;
         };
-        self.open_launcher(shell, window, cx);
+        self.open_launcher(&shell, window, cx);
     }
 
     /// Open another tab running what the tab runs, in its current folder and group.
@@ -931,9 +925,9 @@ impl WorkspaceView {
     }
 
     /// Ctrl+Tab / Ctrl+Shift+Tab cycle tabs, Ctrl+1..9 select one, Ctrl+Shift+T opens the
-    /// default shell, Ctrl+Shift+D another tab like the selected one, Ctrl+Shift+W closes it, Ctrl+Shift+B shows or hides the
-    /// sidebar, Ctrl+Shift+S searches tabs, Ctrl+Shift+A jumps to the next tab needing
-    /// attention.
+    /// default shell, Ctrl+Shift+D another tab like the selected one, Ctrl+Shift+W closes it,
+    /// Ctrl+Shift+B shows or hides the sidebar, Ctrl+Shift+S searches tabs, Ctrl+Shift+A jumps
+    /// to the next tab needing attention.
     fn handle_tab_shortcut(
         &mut self,
         keystroke: &Keystroke,
