@@ -1,0 +1,53 @@
+name: Ubuntu build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install GPUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libvulkan-dev libwayland-dev \
+            libxkbcommon-x11-dev libx11-xcb-dev libxcb1-dev libfontconfig-dev libfreetype-dev \
+            libssl-dev clang cmake
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --workspace --locked
+
+      # Branches reuse the release dependencies for speed; main keeps debug
+      # assertions and overflow checks.
+      - name: Test (release)
+        if: github.ref != 'refs/heads/main'
+        run: cargo test --release --workspace --locked
+
+      - name: Test (debug)
+        if: github.ref == 'refs/heads/main'
+        run: cargo test --workspace --locked
+
+      - name: Package
+        run: |
+          name=agent-workspace-linux-x64
+          mkdir "$name"
+          cp target/release/agent-workspace target/release/agentws-hook "$name"
+          tar -czf "$name.tar.gz" "$name"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: agent-workspace-linux-x64.tar.gz
+          archive: false
