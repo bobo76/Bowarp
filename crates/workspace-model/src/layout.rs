@@ -2,6 +2,10 @@
 //! user's order. Pinned tabs are never in a group; groups stay when their last tab leaves.
 //! Tabs are addressed by session id, so callers never track indices across moves.
 
+use std::collections::HashSet;
+
+use serde::{Deserialize, Serialize};
+
 use crate::TabColor;
 
 pub type TabId = u64;
@@ -59,6 +63,81 @@ pub enum DropTarget {
     IntoGroup(GroupId),
     /// Ungrouped, at the end of the list.
     End,
+}
+
+/// A layout as saved to disk, with each tab's saved data (`T`) in its place instead of an id,
+/// so a saved file cannot point at a tab it doesn't hold. Group ids are not saved.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(bound(deserialize = "T: Deserialize<'de>"))]
+pub struct SavedLayout<T> {
+    #[serde(default)]
+    pub pinned: Vec<T>,
+    #[serde(default)]
+    pub items: Vec<SavedItem<T>>,
+}
+
+// Not derived: the derive would require `T: Default`.
+impl<T> Default for SavedLayout<T> {
+    fn default() -> Self {
+        Self {
+            pinned: Vec::new(),
+            items: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[serde(bound(deserialize = "T: Deserialize<'de>"))]
+pub enum SavedItem<T> {
+    Tab(T),
+    Group(SavedGroup<T>),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(bound(deserialize = "T: Deserialize<'de>"))]
+pub struct SavedGroup<T> {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<TabColor>,
+    #[serde(default)]
+    pub collapsed: bool,
+    #[serde(default)]
+    pub tabs: Vec<T>,
+}
+
+impl<T> SavedLayout<T> {
+    /// Every tab, top to bottom (the order of `Layout::tabs`).
+    pub fn tabs(&self) -> Vec<&T> {
+        let mut tabs: Vec<&T> = self.pinned.iter().collect();
+        for item in &self.items {
+            match item {
+                SavedItem::Tab(tab) => tabs.push(tab),
+                SavedItem::Group(group) => tabs.extend(&group.tabs),
+            }
+        }
+        tabs
+    }
+
+    /// Replace each tab by `f(tab)`, top to bottom; tabs it maps to `None` are left out. Groups
+    /// stay, even when left empty.
+    pub fn filter_map<U>(self, mut f: impl FnMut(T) -> Option<U>) -> SavedLayout<U> {
+        let pinned = self.pinned.into_iter().filter_map(&mut f).collect();
+        let items = self
+            .items
+            .into_iter()
+            .filter_map(|item| match item {
+                SavedItem::Tab(tab) => f(tab).map(SavedItem::Tab),
+                SavedItem::Group(group) => Some(SavedItem::Group(SavedGroup {
+                    name: group.name,
+                    color: group.color,
+                    collapsed: group.collapsed,
+                    tabs: group.tabs.into_iter().filter_map(&mut f).collect(),
+                })),
+            })
+            .collect();
+        SavedLayout { pinned, items }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -317,6 +396,56 @@ impl Layout {
             .collect()
     }
 
+    /// The layout to save, with `f(id)` in each tab's place; tabs it maps to `None` are left
+    /// out.
+    pub fn save<T>(&self, mut f: impl FnMut(TabId) -> Option<T>) -> SavedLayout<T> {
+        SavedLayout {
+            pinned: self.pinned.iter().filter_map(|&id| f(id)).collect(),
+            items: self
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    Item::Tab(id) => f(*id).map(SavedItem::Tab),
+                    Item::Group(group) => Some(SavedItem::Group(SavedGroup {
+                        name: group.name.clone(),
+                        color: group.color,
+                        collapsed: group.collapsed,
+                        tabs: group.tabs.iter().filter_map(|&id| f(id)).collect(),
+                    })),
+                })
+                .collect(),
+        }
+    }
+
+    /// The layout of a saved one whose tabs were reopened as `TabId`s. A tab listed twice is
+    /// kept only where it first appears.
+    pub fn restore(saved: SavedLayout<TabId>) -> Self {
+        let mut seen = HashSet::new();
+        let saved = saved.filter_map(|id| seen.insert(id).then_some(id));
+        let mut layout = Self {
+            pinned: saved.pinned,
+            ..Self::default()
+        };
+        for item in saved.items {
+            let item = match item {
+                SavedItem::Tab(id) => Item::Tab(id),
+                SavedItem::Group(group) => {
+                    let id = GroupId(layout.next_group_id);
+                    layout.next_group_id += 1;
+                    Item::Group(Group {
+                        id,
+                        name: group.name,
+                        color: group.color,
+                        collapsed: group.collapsed,
+                        tabs: group.tabs,
+                    })
+                }
+            };
+            layout.items.push(item);
+        }
+        layout
+    }
+
     fn place(&self, id: TabId) -> Option<Place> {
         if let Some(index) = self.pinned.iter().position(|&tab| tab == id) {
             return Some(Place::Pinned(index));
@@ -402,6 +531,83 @@ mod tests {
         layout.move_to_group(4, a);
         let b = layout.new_group_with(6, "B").unwrap();
         (layout, a, b)
+    }
+
+    #[test]
+    fn save_then_restore_keeps_pins_groups_and_order() {
+        let (mut layout, a, _) = sample();
+        {
+            let group = layout.group_mut(a).unwrap();
+            group.color = Some(TabColor::Green);
+            group.collapsed = true;
+        }
+        let empty = layout.new_group_with(5, "Empty").unwrap();
+        layout.remove_from_group(5);
+        assert!(layout.group(empty).unwrap().tabs().is_empty());
+
+        // Through JSON, with ids standing in for the saved tab data and renumbered on reopen.
+        let json = serde_json::to_string(&layout.save(|id| Some(id * 10))).unwrap();
+        let saved: SavedLayout<TabId> = serde_json::from_str(&json).unwrap();
+        let restored = Layout::restore(saved.filter_map(|id| Some(id / 10)));
+
+        assert_eq!(restored.tabs(), layout.tabs());
+        assert_eq!(restored.pinned(), layout.pinned());
+        let groups = |layout: &Layout| -> Vec<(String, Option<TabColor>, bool, Vec<TabId>)> {
+            layout
+                .groups()
+                .map(|group| {
+                    let tabs = group.tabs().to_vec();
+                    (group.name.clone(), group.color, group.collapsed, tabs)
+                })
+                .collect()
+        };
+        assert_eq!(groups(&restored), groups(&layout));
+        assert_eq!(restored.save(Some), layout.save(Some));
+    }
+
+    #[test]
+    fn restored_groups_get_distinct_ids_and_new_groups_dont_clash() {
+        let (layout, _, _) = sample();
+        let mut restored = Layout::restore(layout.save(Some));
+        let ids: Vec<GroupId> = restored.groups().map(|group| group.id).collect();
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1]);
+        let new = restored.new_group_with(2, "C").unwrap();
+        assert!(!ids.contains(&new));
+    }
+
+    #[test]
+    fn save_and_filter_map_leave_out_dropped_tabs_but_keep_groups() {
+        let (layout, _, _) = sample();
+        let saved = layout.save(|id| (id % 2 == 0).then_some(id));
+        assert_eq!(saved.tabs(), vec![&2, &4, &6]);
+        let restored = Layout::restore(saved.filter_map(|id| (id != 6).then_some(id)));
+        assert_eq!(restored.tabs(), vec![2, 4]);
+        assert_eq!(restored.groups().count(), 2);
+        assert!(
+            restored
+                .groups()
+                .any(|group| group.name == "B" && group.tabs().is_empty())
+        );
+    }
+
+    #[test]
+    fn restore_keeps_a_duplicated_tab_only_once() {
+        let saved = SavedLayout {
+            pinned: vec![1],
+            items: vec![
+                SavedItem::Tab(1),
+                SavedItem::Group(SavedGroup {
+                    name: "G".into(),
+                    color: None,
+                    collapsed: false,
+                    tabs: vec![2, 2],
+                }),
+            ],
+        };
+        let layout = Layout::restore(saved);
+        assert_eq!(layout.tabs(), vec![1, 2]);
+        assert!(layout.is_pinned(1));
     }
 
     #[test]

@@ -14,11 +14,15 @@ use workspace_model::{Rect, WindowMode, WindowState};
 /// Size of the window when nothing usable was saved.
 const DEFAULT_SIZE: (f32, f32) = (1000., 650.);
 
-/// `window.json` in the app's config folder (`~/.config/agent-workspace` on Linux,
+/// `name` in the app's config folder (`~/.config/agent-workspace` on Linux,
 /// `%APPDATA%\agent-workspace\config` on Windows); `None` without a home folder.
-fn state_path() -> Option<PathBuf> {
+pub fn config_file(name: &str) -> Option<PathBuf> {
     let dirs = ProjectDirs::from("", "", "agent-workspace")?;
-    Some(dirs.config_dir().join("window.json"))
+    Some(dirs.config_dir().join(name))
+}
+
+fn state_path() -> Option<PathBuf> {
+    config_file("window.json")
 }
 
 /// The saved bounds when they are usable and on a connected display, else the default size
@@ -55,8 +59,8 @@ pub fn save(bounds: WindowBounds) {
     }
 }
 
-/// Close the window from inside the app (closing the last tab, or the title bar button on
-/// Linux), saving its bounds first.
+/// Close the window from inside the app, saving its bounds first. Callers save the tabs first
+/// (`WorkspaceView::close_window`).
 pub fn close(window: &mut Window) {
     save(window.window_bounds());
     window.remove_window();

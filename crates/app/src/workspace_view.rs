@@ -22,14 +22,15 @@ use gpui_kit::{
 use term_core::LaunchSpec;
 use workspace_model::layout::Direction;
 use workspace_model::{
-    Attention, DropTarget, GroupId, Layout, SearchedTab, TabColor, TabMeta, TabQuery, lines_added,
-    next_attention, until_next_second, waiting_count,
+    Attention, DropTarget, GroupId, Layout, SearchedTab, TabColor, TabMeta, TabQuery, TabsState,
+    lines_added, next_attention, until_next_second, waiting_count,
 };
 
 use crate::hooks::ClaudeHooks;
 use crate::launcher::{Launcher, launch_name};
 use crate::sidebar::NUMBERED_TABS;
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
+use crate::tabs_file;
 use crate::terminal_view::{TabChanged, TerminalView};
 use crate::window_bounds;
 
@@ -202,6 +203,26 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> io::Result<()> {
+        let group = self
+            .active_tab()
+            .and_then(|tab| self.layout.group_of(tab.id))
+            .map(|group| group.id);
+        let id = self.spawn_tab(spec, TabMeta::default(), cx)?;
+        self.layout.add(id, group);
+        self.sync_order(cx);
+        if let Some(index) = self.tab_index(id) {
+            self.activate(index, window, cx);
+        }
+        Ok(())
+    }
+
+    /// Start `spec` in a new tab that is not in the layout yet. Returns its session id.
+    fn spawn_tab(
+        &mut self,
+        spec: LaunchSpec,
+        meta: TabMeta,
+        cx: &mut Context<Self>,
+    ) -> io::Result<u64> {
         let id = self.next_session_id;
         let mut launch = spec.clone();
         let reports_status = self
@@ -211,26 +232,93 @@ impl WorkspaceView {
         let view = TerminalView::spawn(id, &launch, reports_status, cx)?;
         self.next_session_id += 1;
         let changed = cx.subscribe(&view, |_, _, _: &TabChanged, cx| cx.notify());
-        let group = self
-            .active_tab()
-            .and_then(|tab| self.layout.group_of(tab.id))
-            .map(|group| group.id);
         self.tabs.push(Tab {
             id,
             view,
             spec,
-            meta: TabMeta::default(),
+            meta,
             _changed: changed,
         });
-        self.layout.add(id, group);
-        self.sync_order(cx);
-        if let Some(index) = self.tab_index(id) {
-            self.activate(index, window, cx);
-        }
-        Ok(())
+        Ok(id)
     }
 
-    fn open_tab_or_notify(
+    /// Reopen the tabs saved when the window last closed, each in its last folder, with the
+    /// same layout and selection. A tab that fails to start is left out and reported. Returns
+    /// whether any tab opened.
+    pub fn restore(
+        &mut self,
+        state: TabsState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mut index = 0;
+        let mut selected = None;
+        let mut failures = Vec::new();
+        let layout = state.layout.filter_map(|saved| {
+            let this_index = index;
+            index += 1;
+            let spec = tabs_file::launch_spec(&saved);
+            match self.spawn_tab(spec.clone(), saved.meta, cx) {
+                Ok(id) => {
+                    if state.selected == Some(this_index) {
+                        selected = Some(id);
+                    }
+                    Some(id)
+                }
+                Err(err) => {
+                    failures.push(format!("{}: {err}", launch_name(&spec)));
+                    None
+                }
+            }
+        });
+        if !failures.is_empty() {
+            let message = format!("Could not reopen {}", failures.join("; "));
+            log::error!("{message}");
+            // The notification layer is set up once the window's root view exists.
+            cx.defer_in(window, move |_, window, cx| {
+                window.push_notification(Notification::error(message), cx);
+            });
+        }
+        if self.tabs.is_empty() {
+            return false;
+        }
+        self.layout = Layout::restore(layout);
+        self.sync_order(cx);
+        let selected = selected.or_else(|| self.tabs.first().map(|tab| tab.id));
+        for tab in self.tabs.iter().filter(|tab| Some(tab.id) != selected) {
+            tab.view.update(cx, |view, _| view.hide());
+        }
+        if let Some(index) = selected.and_then(|id| self.tab_index(id)) {
+            self.activate(index, window, cx);
+        }
+        true
+    }
+
+    /// The tabs as they are now, for reopening them at the next start.
+    pub fn save_tabs(&self, cx: &App) {
+        let active = self.active_tab().map(|tab| tab.id);
+        let mut index = 0;
+        let mut selected = None;
+        let layout = self.layout.save(|id| {
+            let tab = self.tabs.iter().find(|tab| tab.id == id)?;
+            if Some(id) == active {
+                selected = Some(index);
+            }
+            index += 1;
+            let folder = tab.view.read(cx).current_folder();
+            Some(tabs_file::saved_tab(&tab.spec, folder, tab.meta.clone()))
+        });
+        tabs_file::save(&TabsState { layout, selected });
+    }
+
+    /// Close the window from inside the app (closing the last tab, or the title bar button on
+    /// Linux), saving the tabs and the window bounds first.
+    fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_tabs(cx);
+        window_bounds::close(window);
+    }
+
+    pub fn open_tab_or_notify(
         &mut self,
         spec: LaunchSpec,
         window: &mut Window,
@@ -307,7 +395,7 @@ impl WorkspaceView {
         self.layout.remove(tab.id);
         self.diff_stats.remove(&tab.id);
         if self.tabs.is_empty() {
-            window_bounds::close(window);
+            self.close_window(window, cx);
             return;
         }
         if index < self.active || self.active == self.tabs.len() {
@@ -876,7 +964,9 @@ impl Render for WorkspaceView {
             .capture_key_down(cx.listener(Self::on_key_down_capture))
             .child(
                 TitleBar::new()
-                    .on_close_window(|_, window, _| window_bounds::close(window))
+                    .on_close_window(
+                        cx.listener(|workspace, _, window, cx| workspace.close_window(window, cx)),
+                    )
                     .child(
                         div()
                             .flex()

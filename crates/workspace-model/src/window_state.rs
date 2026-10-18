@@ -71,16 +71,9 @@ impl WindowState {
         Self::from_json(&fs::read_to_string(path).ok()?)
     }
 
-    /// Write the state to `path`, creating its folder. Goes through a temporary file next to
-    /// it, so a crash mid-write never leaves a truncated file.
+    /// Write the state to `path`, creating its folder (see `write_atomic`).
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        // One temporary file per process, so two instances closing at once don't clash.
-        let temp = temp_path(path);
-        fs::write(&temp, self.to_json())?;
-        fs::rename(&temp, path)
+        write_atomic(path, &self.to_json())
     }
 
     pub fn to_json(&self) -> String {
@@ -125,7 +118,19 @@ impl WindowState {
     }
 }
 
-fn temp_path(path: &Path) -> std::path::PathBuf {
+/// Write `text` to `path`, creating its folder, through a temporary file next to it so a crash
+/// mid-write never leaves a truncated file.
+pub(crate) fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    // One temporary file per process, so two instances closing at once don't clash.
+    let temp = temp_path(path);
+    fs::write(&temp, text)?;
+    fs::rename(&temp, path)
+}
+
+pub(crate) fn temp_path(path: &Path) -> std::path::PathBuf {
     path.with_extension(format!("json.{}.tmp", std::process::id()))
 }
 

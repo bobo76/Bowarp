@@ -110,6 +110,23 @@ Feature spec: [FEATURES.md](FEATURES.md)
   saved mode is not detected and `zoom` has no effect), the title bar `×` (no window controls
   without a window manager), Wayland (position is up to the compositor), Windows. 134 tests
   passing.
+- Tab restore (2026-10-18): the window reopens with the tabs it closed with: kind, program and
+  arguments, each tab's last folder (read from the child at close), custom name, color, pin,
+  groups (name, color, collapsed, empty ones too) and order, and the selected tab. Saved as
+  `tabs.json` in the config folder from every close path, next to `window.json`
+  (`workspace_model::TabsState`, `SavedLayout`; `app/src/tabs_file.rs`). Sessions start fresh:
+  a Claude Code tab starts a new conversation in its folder. A folder that no longer exists
+  falls back to its nearest existing parent; a tab whose program fails to start is left out
+  and named in an error notification. Closing the last tab saves no tabs, so the next start
+  opens one shell in the current folder; a missing or damaged file does the same. A tab named
+  on the command line (`agent-workspace claude DIR`) opens after the restored ones, selected.
+  Verified under X11 (Xvfb, separate `XDG_CONFIG_HOME`): bash, Claude Code (stand-in) and zsh
+  tabs `cd`'d to three folders, renamed + pink, moved up, pinned, grouped in a blue collapsed
+  group, zsh selected; `WM_DELETE_WINDOW` then relaunch from another folder brought all of it
+  back (`pwd` in each tab); deleted folder (parent used), missing program (notification, the
+  selection still lands on the right tab), tabs closed one by one, damaged file, command-line
+  tab after restore. Not driven: the title bar `×` (no window controls without a window
+  manager), Windows, a real Claude Code session. 146 tests passing.
 
 **Bugs to fix**
 
@@ -124,34 +141,30 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 **Next steps, in priority order**
 
-1. Reopen with the same tabs: kind, program, folder, custom name, color, pin, groups and order
-   (`Layout` + `TabMeta` to serde), and the selected tab. Each tab is relaunched in its last
-   folder. This brings forward the save/restore part of M4 for the single window; named
-   workspaces stay in M4.
-2. `+` menu look ([reference](docs/ui-reference/new-tab-menu.png)): an icon per entry (PowerShell,
+1. `+` menu look ([reference](docs/ui-reference/new-tab-menu.png)): an icon per entry (PowerShell,
    Windows PowerShell, Command Prompt, Git Bash, each WSL distro, Claude, Copilot) instead of
    the shared terminal icon, a "Terminal" entry with its `Ctrl+Shift+T` hint, and separators
    between shells and agents.
-3. Windows: "Bash" opened Ubuntu. `bash` on `PATH` resolves to `C:\Windows\System32\bash.exe`,
+2. Windows: "Bash" opened Ubuntu. `bash` on `PATH` resolves to `C:\Windows\System32\bash.exe`,
    the WSL launcher, which starts the default distro; Git Bash is not on `PATH` (only
    `Git\cmd` is). Code done in `launcher.rs`, not yet built or run on Windows: `bash` is no
    longer looked up on `PATH`; "Git Bash" is `Git\bin\bash.exe -i -l` found from `git.exe` on
    `PATH`, else `%ProgramFiles%\Git` / `%LOCALAPPDATA%\Programs\Git`; each WSL distro (from
    `HKCU\...\Lxss`, so no `wsl.exe` runs at startup; `docker-desktop*` hidden) is its own entry
    launching `wsl.exe -d <name>`, and its tab is named after the distro.
-4. Ctrl+Shift+T opens a new tab with the default launcher (in the selected tab's folder)
+3. Ctrl+Shift+T opens a new tab with the default launcher (in the selected tab's folder)
    instead of duplicating the selected tab. The default is Bash for now: Git Bash on Windows,
    `bash` on Linux; falls back to the first shell found. A configurable default comes with
    settings. The `+` button's hover tooltip shows the shortcut ("New tab (Ctrl+Shift+T)"),
    and the default entry in the `+` menu shows `Ctrl+Shift+T` on its right. Duplicating the
    selected tab moves to Ctrl+Shift+D, also in the tab menu as "Duplicate tab" with its
    shortcut shown.
-5. Taller tab rows with separators ([reference](docs/ui-reference/tab-row-spacing.png)): more vertical
+4. Taller tab rows with separators ([reference](docs/ui-reference/tab-row-spacing.png)): more vertical
    padding per row (about 56 px instead of the current tight two lines), a larger session
    icon, and a thin full-width divider line (`sidebar_border` color) between rows instead of
    the 2 px gap. The selected/hovered background still fills the whole row; group headers and
    indented group children keep the same rhythm.
-6. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
+5. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
    between the sidebar and the terminal, shown/hidden by a title bar button next to the
    sidebar toggle and by Ctrl+Shift+| (bound as the key that produces `|`, so check it on
    non-US layouts), closed with its `×`. Root is the selected tab's folder and
@@ -161,7 +174,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
    the files view icon; the reference's comments and search views are out of scope for now.
    Open questions: what clicking a file does (insert its path in the terminal, open in the
    default app), and refreshing on file changes (`notify` watcher on expanded folders only).
-7. Command history in shell tabs (both need shell integration, below):
+6. Command history in shell tabs (both need shell integration, below):
    - **Inline autocomplete** ([reference](docs/ui-reference/history-autocomplete.png)): while
      typing at the prompt, the most recent history entry starting with the typed text is drawn
      dimmed after the cursor (ghost text, not sent to the shell); Right arrow / End at the end
@@ -187,8 +200,8 @@ Feature spec: [FEATURES.md](FEATURES.md)
      height (about 10 rows) and scrolls, starting at the bottom with the most recent command
      selected. Up still goes to programs (alternate screen, Claude Code, `less`, ...) and to
      shells without integration.
-8. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
-9. M3: split panes, adjustable sizes, pane shortcuts.
+7. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
+8. M3: split panes, adjustable sizes, pane shortcuts.
 
 **Deferred (needs a Windows machine):** Windows build and the same check (ConPTY, named pipe,
 hook command quoting).
@@ -349,7 +362,7 @@ New work the look needs:
 - **"Done" status:** done: a Claude tab that goes Working -> Idle while not selected shows Done
   (check badge) until it is selected, then Idle.
 - **Tab model:** custom name and color (`TabMeta`); pinned block, groups and order (`Layout`)
-  - done. Persistence (serde) with M4.
+  - done. Saved and restored with the window (`tabs.json`); named workspaces with M4.
 - **Icons:** done: our own Claude spark and Lucide's git-branch bundled (`app/src/assets.rs`);
   Copilot and shells use the library's GitHub and terminal icons.
 
@@ -359,7 +372,7 @@ New work the look needs:
   search, pinning, context menu; named collapsible groups, drag & drop of tabs, colors with tab inheritance, icon
   overrides, aggregate status on collapsed groups, "jump to next session needing attention".
 - **M3:** split panes, adjustable sizes, pane shortcuts.
-- **M4:** named workspaces, save/restore layout, offer to relaunch; restored tabs clearly marked "not running".
+- **M4:** named workspaces (the single window's tabs are already restored), offer to relaunch; restored tabs clearly marked "not running".
 - **M5:** terminal search, close-with-running-process warnings, notifications + configurable sound.
 - **M6:** Copilot CLI status (if it gains a hook mechanism), Windows packaging, Ubuntu polish
   (Wayland/X11, socket paths).

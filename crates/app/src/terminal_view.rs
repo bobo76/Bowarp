@@ -200,6 +200,14 @@ impl TerminalView {
         self.location.as_ref()
     }
 
+    /// The child's folder now, else the last one known, else the one it started in.
+    pub fn current_folder(&self) -> Option<PathBuf> {
+        self.session
+            .current_dir()
+            .or_else(|| self.location.as_ref().map(|location| location.dir.clone()))
+            .or_else(|| self.launch_cwd.clone())
+    }
+
     /// The program's title, or the session's default name.
     pub fn name(&self) -> &str {
         self.title.as_deref().unwrap_or(&self.name)
@@ -258,12 +266,7 @@ impl TerminalView {
     /// Re-read the child's folder and its git branch. Returns whether either changed. When the
     /// folder cannot be read (exited child, unsupported platform) the last known one is kept.
     fn refresh_location(&mut self) -> bool {
-        let Some(dir) = self
-            .session
-            .current_dir()
-            .or_else(|| self.location.as_ref().map(|location| location.dir.clone()))
-            .or_else(|| self.launch_cwd.clone())
-        else {
+        let Some(dir) = self.current_folder() else {
             return false;
         };
         let location = Some(Location::read(dir));
