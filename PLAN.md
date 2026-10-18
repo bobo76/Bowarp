@@ -248,14 +248,13 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 **Next steps, in priority order**
 
-1. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
-2. About dialog: an `info` button in the title bar's occluded button group (after the
+1. About dialog: an `info` button in the title bar's occluded button group (after the
    explorer toggle) opens a small modal with the app icon, name, version
    (`env!("CARGO_PKG_VERSION")`, from the workspace `version` in `Cargo.toml`), the short
    git commit when built from a checkout (set by a `build.rs`, omitted otherwise), the
    license and a link to the repository. Escape or a Close button dismisses it; the version
    text can be selected or copied for bug reports.
-3. M3: split panes, adjustable sizes, pane shortcuts.
+2. M3: split panes, adjustable sizes, pane shortcuts.
 
 **Not doable yet**
 
@@ -455,6 +454,8 @@ New work the look needs:
 - Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - Sidebar search: Up/Down to move through the matches from the search field; the filter/sort
   button from the reference screenshot.
+- Icon overrides per tab (tab menu); what can be picked (bundled icons, emoji, letters) is
+  still to decide.
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
   the window; Delete already runs in the background.
