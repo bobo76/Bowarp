@@ -10,10 +10,14 @@ directly to model APIs.
 ## Terminal Sessions
 
 - Run multiple interactive terminal sessions simultaneously.
-- Launch Copilot CLI, Claude Code, or a regular shell in a selected project folder.
+- Launch Copilot CLI, Claude Code, or a regular shell in a selected project folder,
+  from a new-tab menu listing the installed shells (default shell first) and agents, each
+  with its own icon.
 - Support normal interactive CLI behavior, including permission prompts,
   cancellation, multiline input, colors, and terminal resizing.
 - Provide copy/paste, text selection, scrollback, and terminal search.
+- Pass mouse wheel, clicks and motion to programs that ask for them (scrolling a Claude Code
+  transcript), with a modifier to keep local selection.
 - Shell command history shared by all shell tabs (with folder and time): an inline
   suggestion from history while typing and a history popup above the prompt (Up).
 - Support split panes, adjustable pane sizes, and quick switching between sessions.
@@ -23,7 +27,14 @@ directly to model APIs.
 
 - Organize terminal tabs into named, collapsible groups, such as projects or tasks.
 - Collapse a group without interrupting its sessions.
-- Create, rename, reorder, and move tabs between groups.
+- Create, rename, reorder (menu or drag and drop), duplicate, and move tabs between groups.
+- Pin tabs to the top of the list.
+- Show each tab's git branch, or its current folder outside a repository, under its name.
+- Show a tab's details on hover: status, full folder, branch, program title, session
+  kind, and lines added in the working tree.
+- Search tabs by name, title, folder, branch, or group.
+- Copy a tab's branch, title, or working directory; close other tabs or the tabs below.
+- Hide and show the sidebar.
 - Assign colors to individual tabs and groups, with tabs optionally inheriting
   their group's color.
 - Display an icon identifying the session type, with manual icon overrides.
@@ -46,6 +57,8 @@ directly to model APIs.
   or has exited, when reliable status information is available.
 - Show status on individual tabs, including tabs that are not currently selected.
 - Show how long an agent has been working on its current turn.
+- Mark an agent that finished while its tab was not selected as done until it is viewed.
+- Read agent status from the CLI's own hooks without changing the user's CLI settings.
 - Show aggregate status on collapsed groups, such as the number of working
   sessions and sessions needing attention.
 - Make sessions needing attention easy to locate and select.
@@ -57,6 +70,8 @@ directly to model APIs.
 
 ## Workspace Persistence
 
+- Reopen the window with its last size, position, and tabs (programs, folders, names,
+  colors, pins, groups, order, and selection), starting fresh sessions.
 - Save named workspaces with their groups, tab names, colors, icons, project
   folders, launch commands, and pane layouts.
 - Restore saved organization and offer to relaunch sessions when reopening a
@@ -72,6 +87,7 @@ directly to model APIs.
 - Minimize startup time, idle CPU usage, and memory overhead.
 - Avoid unnecessary background polling and expensive output processing.
 - Keep the interface focused on terminals, organization, and session visibility.
+- Show the version and build in an About dialog.
 - Do not require an application account or a separate AI subscription beyond
   whatever the chosen CLI tools require.
 
