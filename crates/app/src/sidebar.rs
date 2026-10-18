@@ -10,9 +10,12 @@ use gpui_kit::{
     ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
 use term_core::SessionKind;
-use workspace_model::{Attention, TabColor, format_lap};
+use workspace_model::{Attention, LauncherIcon, TabColor, format_lap};
 
-use crate::assets::{AGENT_SPARK_ICON, GIT_BRANCH_ICON, PIN_ICON};
+use crate::assets::{
+    AGENT_SPARK_ICON, BASH_ICON, COPILOT_ICON, DEBIAN_ICON, FISH_ICON, GIT_BRANCH_ICON, GIT_ICON,
+    LINUX_ICON, PIN_ICON, POWERSHELL_ICON, PROMPT_ICON, UBUNTU_ICON, ZSH_ICON,
+};
 
 pub const SIDEBAR_WIDTH: f32 = 240.;
 /// Tabs selectable with Ctrl+1..9.
@@ -85,8 +88,27 @@ pub fn kind_icon(kind: SessionKind) -> Icon {
         SessionKind::ClaudeCode => Icon::empty()
             .path(AGENT_SPARK_ICON)
             .text_color(rgb(CLAUDE_ORANGE)),
-        SessionKind::CopilotCli => Icon::new(IconName::Github),
+        SessionKind::CopilotCli => Icon::empty().path(COPILOT_ICON),
     }
+}
+
+/// Icon of a new-tab menu entry.
+pub fn launcher_icon(icon: LauncherIcon) -> Icon {
+    let path = match icon {
+        LauncherIcon::Terminal => return Icon::new(IconName::SquareTerminal),
+        LauncherIcon::Claude => return kind_icon(SessionKind::ClaudeCode),
+        LauncherIcon::Copilot => return kind_icon(SessionKind::CopilotCli),
+        LauncherIcon::Shell | LauncherIcon::CommandPrompt => PROMPT_ICON,
+        LauncherIcon::PowerShell => POWERSHELL_ICON,
+        LauncherIcon::GitBash => GIT_ICON,
+        LauncherIcon::Bash => BASH_ICON,
+        LauncherIcon::Zsh => ZSH_ICON,
+        LauncherIcon::Fish => FISH_ICON,
+        LauncherIcon::Ubuntu => UBUNTU_ICON,
+        LauncherIcon::Debian => DEBIAN_ICON,
+        LauncherIcon::Linux => LINUX_ICON,
+    };
+    Icon::empty().path(path)
 }
 
 pub fn tab_color(color: TabColor) -> Hsla {

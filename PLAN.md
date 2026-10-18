@@ -134,6 +134,18 @@ Feature spec: [FEATURES.md](FEATURES.md)
   group. A folder that is not UTF-8 is not saved (launch folder instead). Verified under Xvfb:
   stale lock taken over, second instance opened only its tab, the first one's save won.
   154 tests passing.
+- `+` menu look (2026-10-18): each entry has its own icon: PowerShell and Windows PowerShell a
+  prompt-in-a-square, Command Prompt and unknown shells (`sh`, `dash`) a `>_` prompt, Git Bash
+  the Git logo, Bash/Zsh/Fish their logos, WSL distros the Ubuntu or Debian logo else Tux,
+  Claude Code the orange spark, Copilot CLI the Copilot logo (also its sidebar tab icon).
+  A "Terminal" entry on top opens the default shell (the first installed one, `$SHELL` first)
+  and shows `Ctrl+Shift+T` on its right; a separator splits the shells from the agents. The
+  launcher-to-icon mapping is `workspace_model::{shell_icon, distro_icon}`; Git Bash sets its
+  icon itself. Icons: Lucide (ISC) and Simple Icons 15.0.0 (CC0) in `app/assets/icons`.
+  Ctrl+Shift+T itself still duplicates the selected tab until next step 2. Verified under Xvfb:
+  menu screenshot (Terminal with hint, Bash, Zsh, separator, Claude Code, Copilot CLI not
+  installed), Terminal opened a bash tab, Claude Code opened the stand-in. Not seen on screen:
+  the Windows entries (mapping covered by tests). 159 tests passing.
 
 **Bugs to fix**
 
@@ -148,30 +160,26 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 **Next steps, in priority order**
 
-1. `+` menu look ([reference](docs/ui-reference/new-tab-menu.png)): an icon per entry (PowerShell,
-   Windows PowerShell, Command Prompt, Git Bash, each WSL distro, Claude, Copilot) instead of
-   the shared terminal icon, a "Terminal" entry with its `Ctrl+Shift+T` hint, and separators
-   between shells and agents.
-2. Windows: "Bash" opened Ubuntu. `bash` on `PATH` resolves to `C:\Windows\System32\bash.exe`,
+1. Windows: "Bash" opened Ubuntu. `bash` on `PATH` resolves to `C:\Windows\System32\bash.exe`,
    the WSL launcher, which starts the default distro; Git Bash is not on `PATH` (only
    `Git\cmd` is). Code done in `launcher.rs`, not yet built or run on Windows: `bash` is no
    longer looked up on `PATH`; "Git Bash" is `Git\bin\bash.exe -i -l` found from `git.exe` on
    `PATH`, else `%ProgramFiles%\Git` / `%LOCALAPPDATA%\Programs\Git`; each WSL distro (from
    `HKCU\...\Lxss`, so no `wsl.exe` runs at startup; `docker-desktop*` hidden) is its own entry
    launching `wsl.exe -d <name>`, and its tab is named after the distro.
-3. Ctrl+Shift+T opens a new tab with the default launcher (in the selected tab's folder)
+2. Ctrl+Shift+T opens a new tab with the default launcher (in the selected tab's folder)
    instead of duplicating the selected tab. The default is Bash for now: Git Bash on Windows,
    `bash` on Linux; falls back to the first shell found. A configurable default comes with
    settings. The `+` button's hover tooltip shows the shortcut ("New tab (Ctrl+Shift+T)"),
    and the default entry in the `+` menu shows `Ctrl+Shift+T` on its right. Duplicating the
    selected tab moves to Ctrl+Shift+D, also in the tab menu as "Duplicate tab" with its
    shortcut shown.
-4. Taller tab rows with separators ([reference](docs/ui-reference/tab-row-spacing.png)): more vertical
+3. Taller tab rows with separators ([reference](docs/ui-reference/tab-row-spacing.png)): more vertical
    padding per row (about 56 px instead of the current tight two lines), a larger session
    icon, and a thin full-width divider line (`sidebar_border` color) between rows instead of
    the 2 px gap. The selected/hovered background still fills the whole row; group headers and
    indented group children keep the same rhythm.
-5. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
+4. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
    between the sidebar and the terminal, shown/hidden by a title bar button next to the
    sidebar toggle and by Ctrl+Shift+| (bound as the key that produces `|`, so check it on
    non-US layouts), closed with its `×`. Root is the selected tab's folder and
@@ -181,7 +189,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
    the files view icon; the reference's comments and search views are out of scope for now.
    Open questions: what clicking a file does (insert its path in the terminal, open in the
    default app), and refreshing on file changes (`notify` watcher on expanded folders only).
-6. Command history in shell tabs (both need shell integration, below):
+5. Command history in shell tabs (both need shell integration, below):
    - **Inline autocomplete** ([reference](docs/ui-reference/history-autocomplete.png)): while
      typing at the prompt, the most recent history entry starting with the typed text is drawn
      dimmed after the cursor (ghost text, not sent to the shell); Right arrow / End at the end
@@ -207,8 +215,8 @@ Feature spec: [FEATURES.md](FEATURES.md)
      height (about 10 rows) and scrolls, starting at the bottom with the most recent command
      selected. Up still goes to programs (alternate screen, Claude Code, `less`, ...) and to
      shells without integration.
-7. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
-8. M3: split panes, adjustable sizes, pane shortcuts.
+6. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
+7. M3: split panes, adjustable sizes, pane shortcuts.
 
 **Deferred (needs a Windows machine):** Windows build and the same check (ConPTY, named pipe,
 hook command quoting).

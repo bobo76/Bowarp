@@ -7,17 +7,19 @@ use std::time::Instant;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::input::{Escape, Input};
+use gpui_kit::component::kbd::Kbd;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
 use gpui_kit::{
-    Anchor, AnyElement, App, AppContext, Context, Div, DragMoveEvent, InteractiveElement,
-    IntoElement, ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled,
-    WeakEntity, div, px,
+    Anchor, AnyElement, App, AppContext, ClickEvent, Context, Div, DragMoveEvent,
+    InteractiveElement, IntoElement, Keystroke, Modifiers, ParentElement, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, WeakEntity, Window, div, px, transparent_white,
 };
-use workspace_model::{DropTarget, Group, GroupId, Item, Location, display_path};
+use term_core::SessionKind;
+use workspace_model::{DropTarget, Group, GroupId, Item, LauncherIcon, Location, display_path};
 
 use super::{RenameTarget, WorkspaceView};
-use crate::launcher;
+use crate::launcher::{self, Launcher};
 use crate::sidebar::{
     self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabCard,
     TabDetail, TabRow,
@@ -401,6 +403,8 @@ impl WorkspaceView {
             .into_any_element()
     }
 
+    /// The `+` menu: "Terminal" (the default shell, with its shortcut), the shells, then the
+    /// agent CLIs.
     fn new_tab_button(&self, workspace: WeakEntity<Self>) -> impl IntoElement {
         let launchers = self.launchers.clone();
         Button::new("new-tab")
@@ -409,25 +413,51 @@ impl WorkspaceView {
             .xsmall()
             .tooltip("New tab")
             .dropdown_menu(move |mut menu, _, _| {
-                for launcher in launchers.iter() {
-                    let available = launcher.program.is_some();
-                    let label = if available {
-                        launcher.label.clone()
-                    } else {
-                        format!("{} (not installed)", launcher.label)
-                    };
+                let open = |launcher: &Launcher| {
                     let launcher = launcher.clone();
                     let workspace = workspace.clone();
+                    move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                        let _ = workspace.update(cx, |workspace, cx| {
+                            workspace.open_launcher(&launcher, window, cx)
+                        });
+                    }
+                };
+                if let Some(default) = launcher::default_shell(&launchers) {
                     menu = menu.item(
-                        PopupMenuItem::new(label)
-                            .icon(sidebar::kind_icon(launcher.kind))
-                            .disabled(!available)
-                            .on_click(move |_, window, cx| {
-                                let _ = workspace.update(cx, |workspace, cx| {
-                                    workspace.open_launcher(&launcher, window, cx)
-                                });
-                            }),
+                        PopupMenuItem::element(|_, _| {
+                            div()
+                                .flex()
+                                .items_center()
+                                .w_full()
+                                .gap_3()
+                                .justify_between()
+                                .child(TERMINAL_LABEL)
+                                .child(new_tab_shortcut())
+                        })
+                        .icon(sidebar::launcher_icon(LauncherIcon::Terminal))
+                        .on_click(open(default)),
                     );
+                }
+                let (shells, agents): (Vec<&Launcher>, Vec<&Launcher>) = launchers
+                    .iter()
+                    .partition(|launcher| launcher.kind == SessionKind::Shell);
+                for (index, group) in [shells, agents].into_iter().enumerate() {
+                    if index > 0 {
+                        menu = menu.separator();
+                    }
+                    for launcher in group {
+                        let label = if launcher.program.is_some() {
+                            launcher.label.clone()
+                        } else {
+                            format!("{} (not installed)", launcher.label)
+                        };
+                        menu = menu.item(
+                            PopupMenuItem::new(label)
+                                .icon(sidebar::launcher_icon(launcher.icon))
+                                .disabled(launcher.program.is_none())
+                                .on_click(open(launcher)),
+                        );
+                    }
                 }
                 menu
             })
@@ -518,6 +548,26 @@ impl WorkspaceView {
 }
 
 /// The branch when the folder is in a repository, else the folder.
+const TERMINAL_LABEL: &str = "Terminal";
+
+/// Ctrl+Shift+T, shown like the hints gpui-component's menu draws for bound actions.
+fn new_tab_shortcut() -> Kbd {
+    let keystroke = Keystroke {
+        modifiers: Modifiers {
+            control: true,
+            shift: true,
+            ..Modifiers::default()
+        },
+        key: "t".into(),
+        key_char: None,
+    };
+    Kbd::new(keystroke)
+        .p_0()
+        .flex_nowrap()
+        .border_0()
+        .bg(transparent_white())
+}
+
 fn tab_detail(location: &Location, home: Option<&Path>) -> TabDetail {
     match &location.head {
         Some(head) => TabDetail::Branch(SharedString::from(head.name().to_string())),

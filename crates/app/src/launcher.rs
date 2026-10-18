@@ -2,6 +2,9 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use term_core::{LaunchSpec, SessionKind};
+#[cfg(any(windows, test))]
+use workspace_model::distro_icon;
+use workspace_model::{LauncherIcon, shell_icon};
 
 /// A program the new-tab menu offers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -11,6 +14,7 @@ pub struct Launcher {
     /// Resolved path, or `None` when the program is not on `PATH`.
     pub program: Option<PathBuf>,
     pub args: Vec<String>,
+    pub icon: LauncherIcon,
 }
 
 impl Launcher {
@@ -45,9 +49,24 @@ const SHELLS: &[(&str, &str)] = &[
 const HIDDEN_DISTROS: &[&str] = &["docker-desktop", "docker-desktop-data"];
 const WSL_DISTRO_FLAG: &str = "-d";
 
-const AGENTS: &[(&str, &str, SessionKind)] = &[
-    ("claude", "Claude Code", SessionKind::ClaudeCode),
-    ("copilot", "Copilot CLI", SessionKind::CopilotCli),
+/// Interactive login shell, as Git's own "Git Bash" shortcut starts it.
+#[cfg(any(windows, test))]
+const GIT_BASH_ARGS: &[&str] = &["-i", "-l"];
+
+/// Agent CLIs: (program, label, kind, icon).
+const AGENTS: &[(&str, &str, SessionKind, LauncherIcon)] = &[
+    (
+        "claude",
+        "Claude Code",
+        SessionKind::ClaudeCode,
+        LauncherIcon::Claude,
+    ),
+    (
+        "copilot",
+        "Copilot CLI",
+        SessionKind::CopilotCli,
+        LauncherIcon::Copilot,
+    ),
 ];
 
 /// Installed shells, the default shell first, followed by the agent CLIs (listed even when
@@ -64,6 +83,7 @@ pub fn discover() -> Vec<Launcher> {
                 kind: SessionKind::Shell,
                 program: Some(program),
                 args: Vec::new(),
+                icon: shell_icon(name),
             })
         })
         .collect();
@@ -75,13 +95,22 @@ pub fn discover() -> Vec<Launcher> {
     {
         launchers[..=index].rotate_right(1);
     }
-    launchers.extend(AGENTS.iter().map(|&(name, label, kind)| Launcher {
+    launchers.extend(AGENTS.iter().map(|&(name, label, kind, icon)| Launcher {
         label: label.into(),
         kind,
         program: find_program(name, &path),
         args: Vec::new(),
+        icon,
     }));
     launchers
+}
+
+/// The launcher the menu's "Terminal" entry opens: the first installed shell, which is the
+/// user's default shell when `discover` found it.
+pub fn default_shell(launchers: &[Launcher]) -> Option<&Launcher> {
+    launchers
+        .iter()
+        .find(|launcher| launcher.kind == SessionKind::Shell && launcher.program.is_some())
 }
 
 fn default_shell_index(launchers: &[Launcher], default_shell: &Path) -> Option<usize> {
@@ -93,7 +122,7 @@ fn default_shell_index(launchers: &[Launcher], default_shell: &Path) -> Option<u
 
 /// Name shown for a session until its program sets a title.
 pub fn default_name(spec: &LaunchSpec) -> String {
-    if let Some(&(_, label, _)) = AGENTS.iter().find(|&&(_, _, kind)| kind == spec.kind) {
+    if let Some(&(_, label, ..)) = AGENTS.iter().find(|&&(_, _, kind, _)| kind == spec.kind) {
         return label.into();
     }
     if let Some(distro) = wsl_distro(spec) {
@@ -128,6 +157,18 @@ fn wsl_launcher(wsl: &Path, distro: &str) -> Launcher {
         kind: SessionKind::Shell,
         program: Some(wsl.into()),
         args: vec![WSL_DISTRO_FLAG.into(), distro.into()],
+        icon: distro_icon(distro),
+    }
+}
+
+#[cfg(any(windows, test))]
+fn git_bash_launcher(program: PathBuf) -> Launcher {
+    Launcher {
+        label: "Git Bash".into(),
+        kind: SessionKind::Shell,
+        program: Some(program),
+        args: GIT_BASH_ARGS.iter().map(|&arg| arg.into()).collect(),
+        icon: LauncherIcon::GitBash,
     }
 }
 
@@ -178,26 +219,14 @@ mod windows {
     use std::ffi::OsStr;
     use std::path::{Path, PathBuf};
 
-    use term_core::SessionKind;
-
-    use super::{Launcher, find_program, shows_distro, wsl_launcher};
+    use super::{Launcher, find_program, git_bash_launcher, shows_distro, wsl_launcher};
 
     const GIT_BASH: &str = r"bin\bash.exe";
-    /// Interactive login shell, as Git's own "Git Bash" shortcut starts it.
-    const GIT_BASH_ARGS: &[&str] = &["-i", "-l"];
     const LXSS_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Lxss";
     const DISTRIBUTION_NAME: &str = "DistributionName";
 
     pub(super) fn extra_shells(path: &OsStr) -> Vec<Launcher> {
-        let mut shells: Vec<Launcher> = git_bash(path)
-            .map(|program| Launcher {
-                label: "Git Bash".into(),
-                kind: SessionKind::Shell,
-                program: Some(program),
-                args: GIT_BASH_ARGS.iter().map(|&arg| arg.into()).collect(),
-            })
-            .into_iter()
-            .collect();
+        let mut shells: Vec<Launcher> = git_bash(path).map(git_bash_launcher).into_iter().collect();
         if let Some(wsl) = find_program("wsl", path) {
             shells.extend(
                 wsl_distros()
@@ -257,6 +286,17 @@ mod wsl_tests {
         let spec = launcher.spec(None).unwrap();
         assert_eq!(spec.args, ["-d", "Ubuntu"]);
         assert_eq!(default_name(&spec), "Ubuntu");
+        assert_eq!(launcher.icon, LauncherIcon::Ubuntu);
+        let vpnkit = wsl_launcher(Path::new("wsl.exe"), "wsl-vpnkit");
+        assert_eq!(vpnkit.icon, LauncherIcon::Linux);
+    }
+
+    #[test]
+    fn git_bash_has_the_git_icon() {
+        let launcher = git_bash_launcher(PathBuf::from(r"C:\Program Files\Git\bin\bash.exe"));
+        assert_eq!(launcher.label, "Git Bash");
+        assert_eq!(launcher.args, ["-i", "-l"]);
+        assert_eq!(launcher.icon, LauncherIcon::GitBash);
     }
 
     #[test]
@@ -327,7 +367,22 @@ mod tests {
             kind: SessionKind::Shell,
             program: Some(path.into()),
             args: Vec::new(),
+            icon: shell_icon(path),
         }
+    }
+
+    #[test]
+    fn terminal_entry_opens_first_installed_shell() {
+        let mut missing = shell("/usr/bin/zsh");
+        missing.program = None;
+        let mut claude = shell("/usr/bin/claude");
+        claude.kind = SessionKind::ClaudeCode;
+        let launchers = [claude, missing, shell("/usr/bin/bash")];
+        assert_eq!(
+            default_shell(&launchers).and_then(|shell| shell.program.as_deref()),
+            Some(Path::new("/usr/bin/bash"))
+        );
+        assert_eq!(default_shell(&launchers[..2]), None);
     }
 
     #[test]
