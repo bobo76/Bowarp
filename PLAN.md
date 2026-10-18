@@ -84,6 +84,14 @@ Feature spec: [FEATURES.md](FEATURES.md)
   shell → attention → Done → attention, the button click, jump into a collapsed group
   (expands it). Not driven: drag & drop while a search is active, a real Claude Code session.
   109 tests passing.
+- In-progress lap time (2026-10-17): the hover card's status chip shows how long a Claude Code
+  session has been working on the current turn (`Working · 2m 14s`; `45s`, `1h 05m`). Tool
+  events keep the lap running; any other status (Needs attention, Idle, Exited) ends it and the
+  next Working starts from 0 (`workspace_model::Lap`, `format_lap`). While a card is open a task
+  repaints on each whole second of the lap, only while working; closing the card drops the
+  task. Verified under X11 (Xvfb) with fake hook events: the chip ticks with the card open
+  (1s -> 4s), `PostToolUse` keeps it running, `Stop` shows plain Idle, a new prompt restarts
+  at 0s. 123 tests passing.
 
 **Bugs to fix**
 
@@ -98,38 +106,37 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 **Next steps, in priority order**
 
-1. Add a lap time for the in-progress popup.
-2. Reopen the window with the same size and position (and maximized state) as when it was
+1. Reopen the window with the same size and position (and maximized state) as when it was
    closed. Saved on close in the config folder (`directories`); ignored when the saved
    bounds are off every connected display.
-3. Reopen with the same tabs: kind, program, folder, custom name, color, pin, groups and order
+2. Reopen with the same tabs: kind, program, folder, custom name, color, pin, groups and order
    (`Layout` + `TabMeta` to serde), and the selected tab. Each tab is relaunched in its last
    folder. This brings forward the save/restore part of M4 for the single window; named
    workspaces stay in M4.
-4. `+` menu look ([reference](docs/ui-reference/new-tab-menu.png)): an icon per entry (PowerShell,
+3. `+` menu look ([reference](docs/ui-reference/new-tab-menu.png)): an icon per entry (PowerShell,
    Windows PowerShell, Command Prompt, Git Bash, each WSL distro, Claude, Copilot) instead of
    the shared terminal icon, a "Terminal" entry with its `Ctrl+Shift+T` hint, and separators
    between shells and agents.
-5. Windows: "Bash" opened Ubuntu. `bash` on `PATH` resolves to `C:\Windows\System32\bash.exe`,
+4. Windows: "Bash" opened Ubuntu. `bash` on `PATH` resolves to `C:\Windows\System32\bash.exe`,
    the WSL launcher, which starts the default distro; Git Bash is not on `PATH` (only
    `Git\cmd` is). Code done in `launcher.rs`, not yet built or run on Windows: `bash` is no
    longer looked up on `PATH`; "Git Bash" is `Git\bin\bash.exe -i -l` found from `git.exe` on
    `PATH`, else `%ProgramFiles%\Git` / `%LOCALAPPDATA%\Programs\Git`; each WSL distro (from
    `HKCU\...\Lxss`, so no `wsl.exe` runs at startup; `docker-desktop*` hidden) is its own entry
    launching `wsl.exe -d <name>`, and its tab is named after the distro.
-6. Ctrl+Shift+T opens a new tab with the default launcher (in the selected tab's folder)
+5. Ctrl+Shift+T opens a new tab with the default launcher (in the selected tab's folder)
    instead of duplicating the selected tab. The default is Bash for now: Git Bash on Windows,
    `bash` on Linux; falls back to the first shell found. A configurable default comes with
    settings. The `+` button's hover tooltip shows the shortcut ("New tab (Ctrl+Shift+T)"),
    and the default entry in the `+` menu shows `Ctrl+Shift+T` on its right. Duplicating the
    selected tab moves to Ctrl+Shift+D, also in the tab menu as "Duplicate tab" with its
    shortcut shown.
-7. Taller tab rows with separators ([reference](docs/ui-reference/tab-row-spacing.png)): more vertical
+6. Taller tab rows with separators ([reference](docs/ui-reference/tab-row-spacing.png)): more vertical
    padding per row (about 56 px instead of the current tight two lines), a larger session
    icon, and a thin full-width divider line (`sidebar_border` color) between rows instead of
    the 2 px gap. The selected/hovered background still fills the whole row; group headers and
    indented group children keep the same rhythm.
-8. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
+7. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
    between the sidebar and the terminal, shown/hidden by a title bar button next to the
    sidebar toggle and by Ctrl+Shift+| (bound as the key that produces `|`, so check it on
    non-US layouts), closed with its `×`. Root is the selected tab's folder and
@@ -139,7 +146,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
    the files view icon; the reference's comments and search views are out of scope for now.
    Open questions: what clicking a file does (insert its path in the terminal, open in the
    default app), and refreshing on file changes (`notify` watcher on expanded folders only).
-9. Command history in shell tabs (both need shell integration, below):
+8. Command history in shell tabs (both need shell integration, below):
    - **Inline autocomplete** ([reference](docs/ui-reference/history-autocomplete.png)): while
      typing at the prompt, the most recent history entry starting with the typed text is drawn
      dimmed after the cursor (ghost text, not sent to the shell); Right arrow / End at the end
@@ -165,6 +172,8 @@ Feature spec: [FEATURES.md](FEATURES.md)
      height (about 10 rows) and scrolls, starting at the bottom with the most recent command
      selected. Up still goes to programs (alternate screen, Claude Code, `less`, ...) and to
      shells without integration.
+9. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
+10. M3: split panes, adjustable sizes, pane shortcuts.
 
 **Deferred (needs a Windows machine):** Windows build and the same check (ConPTY, named pipe,
 hook command quoting).
@@ -293,7 +302,7 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 | Tab row, line 2 | git branch (`⑂ main`) when the folder is a repo, else the folder (`~/.config/...`), dimmed - done | M2 |
 | Status badge | small round badge on the icon's bottom-right corner (replaces the status dot); warning triangle before the title when it needs attention - done | M2 |
 | Selected row | raised background + border, `⋮` menu and `×` close on the selected/hovered row - done | M2 |
-| Hover card | status chip (`✓ Done`), full folder, branch, title, session kind with icon, `+N` (git lines added in the working tree, green) - done | M2 |
+| Hover card | status chip (`✓ Done`, `Working · 2m 14s`), full folder, branch, title, session kind with icon, `+N` (git lines added in the working tree, green) - done | M2 |
 | Groups | chevron, name, "N tabs" count, indented children; aggregate status when collapsed - done | M2 |
 | Drag & drop | drag a tab row to reorder or to drop it into/out of a group; insertion marker while dragging - done | M2 |
 | Context menu | see below | M2 / M3 / M4 |

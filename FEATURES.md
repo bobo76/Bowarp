@@ -33,6 +33,7 @@ directly to model APIs.
 - Indicate when an agent is working, idle, waiting for user input or permission,
   or has exited, when reliable status information is available.
 - Show status on individual tabs, including tabs that are not currently selected.
+- Show how long an agent has been working on its current turn.
 - Show aggregate status on collapsed groups, such as the number of working
   sessions and sessions needing attention.
 - Make sessions needing attention easy to locate and select.
@@ -77,6 +78,3 @@ sessions, distinguish them by name, color, and icon, and collapse the group
 without losing visibility into activity or requests for attention. Reopening
 the application restores the workspace organization without falsely implying
 that previously running processes are still alive.
-
-## In progress
-Add a lap time for the in-progress popup.
