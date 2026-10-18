@@ -160,14 +160,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 **Next steps, in priority order**
 
-1. Windows: "Bash" opened Ubuntu. `bash` on `PATH` resolves to `C:\Windows\System32\bash.exe`,
-   the WSL launcher, which starts the default distro; Git Bash is not on `PATH` (only
-   `Git\cmd` is). Code done in `launcher.rs`, not yet built or run on Windows: `bash` is no
-   longer looked up on `PATH`; "Git Bash" is `Git\bin\bash.exe -i -l` found from `git.exe` on
-   `PATH`, else `%ProgramFiles%\Git` / `%LOCALAPPDATA%\Programs\Git`; each WSL distro (from
-   `HKCU\...\Lxss`, so no `wsl.exe` runs at startup; `docker-desktop*` hidden) is its own entry
-   launching `wsl.exe -d <name>`, and its tab is named after the distro.
-2. Ctrl+Shift+T opens a new tab with the default launcher (in the selected tab's folder)
+1. Ctrl+Shift+T opens a new tab with the default launcher (in the selected tab's folder)
    instead of duplicating the selected tab. The default is the default shell: `$SHELL` on
    Linux, Git Bash on Windows, else the first shell found; Ctrl+Shift+T and the `+` menu's
    "Terminal" entry share it (`launcher::default_shell`). A configurable default comes with
@@ -175,12 +168,12 @@ Feature spec: [FEATURES.md](FEATURES.md)
    and the default entry in the `+` menu shows `Ctrl+Shift+T` on its right. Duplicating the
    selected tab moves to Ctrl+Shift+D, also in the tab menu as "Duplicate tab" with its
    shortcut shown.
-3. Taller tab rows with separators ([reference](docs/ui-reference/tab-row-spacing.png)): more vertical
+2. Taller tab rows with separators ([reference](docs/ui-reference/tab-row-spacing.png)): more vertical
    padding per row (about 56 px instead of the current tight two lines), a larger session
    icon, and a thin full-width divider line (`sidebar_border` color) between rows instead of
    the 2 px gap. The selected/hovered background still fills the whole row; group headers and
    indented group children keep the same rhythm.
-4. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
+3. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
    between the sidebar and the terminal, shown/hidden by a title bar button next to the
    sidebar toggle and by Ctrl+Shift+| (bound as the key that produces `|`, so check it on
    non-US layouts), closed with its `×`. Root is the selected tab's folder and
@@ -190,7 +183,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
    the files view icon; the reference's comments and search views are out of scope for now.
    Open questions: what clicking a file does (insert its path in the terminal, open in the
    default app), and refreshing on file changes (`notify` watcher on expanded folders only).
-5. Command history in shell tabs (both need shell integration, below):
+4. Command history in shell tabs (both need shell integration, below):
    - **Inline autocomplete** ([reference](docs/ui-reference/history-autocomplete.png)): while
      typing at the prompt, the most recent history entry starting with the typed text is drawn
      dimmed after the cursor (ghost text, not sent to the shell); Right arrow / End at the end
@@ -216,8 +209,12 @@ Feature spec: [FEATURES.md](FEATURES.md)
      height (about 10 rows) and scrolls, starting at the bottom with the most recent command
      selected. Up still goes to programs (alternate screen, Claude Code, `less`, ...) and to
      shells without integration.
-6. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
-7. M3: split panes, adjustable sizes, pane shortcuts.
+5. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
+6. M3: split panes, adjustable sizes, pane shortcuts.
+
+**Not doable yet**
+
+- Windows: "Bash" opened Ubuntu (Git Bash / WSL distro launchers): code done in `launcher.rs`, needs a Windows machine to build and run (this machine is Linux).
 
 **Deferred (needs a Windows machine):** Windows build and the same check (ConPTY, named pipe,
 hook command quoting).
