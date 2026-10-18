@@ -2,10 +2,11 @@
 //! works, which git branch that folder is on, what the user set on each tab (name, color), and
 //! how tabs are laid out (pinned, groups, order), which tabs a sidebar search matches and which
 //! tab wants attention next, how long a session has been in its status, and where the window
-//! and its tabs were when it closed, which running instance owns that save, and which icon each
-//! new-tab launcher shows. No UI dependency.
+//! and its tabs were when it closed, which running instance owns that save, which icon each
+//! new-tab launcher shows, and the file explorer's tree. No UI dependency.
 
 mod attention;
+pub mod file_tree;
 mod git;
 mod instance_lock;
 mod lap;

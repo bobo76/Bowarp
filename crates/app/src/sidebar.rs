@@ -230,7 +230,7 @@ pub fn drop_slot(row: impl IntoElement, marker: Option<DropMarker>, cx: &App) ->
 
 /// A hovered row's background: weaker than the selected row's accent so the two stay apart.
 /// Opaque, because the badge ring copies it.
-fn hover_background(cx: &App) -> Hsla {
+pub fn hover_background(cx: &App) -> Hsla {
     let theme = cx.theme();
     theme.sidebar.blend(theme.sidebar_accent.opacity(0.5))
 }

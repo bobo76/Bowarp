@@ -37,6 +37,7 @@ but disabled. New tabs start in the selected tab's folder.
 | Ctrl+Shift+W | Close the selected tab |
 | Ctrl+Shift+B | Hide or show the sidebar (also the title bar button) |
 | Ctrl+Shift+S | Search tabs (shows the sidebar if hidden) |
+| Ctrl+Shift+\| | Hide or show the file explorer (also the title bar button; the key that types `\|`) |
 | Ctrl+Shift+A | Go to the next tab needing attention; with none, the next one that is Done |
 
 ## Terminal
@@ -108,6 +109,21 @@ close its tabs, ungroup (the tabs stay, the group goes; "Delete group" when empt
 Drag a tab row to move it: the upper or lower half of a row drops above or below it, in that
 row's block (dropping among pinned tabs pins it); the upper half of a group header drops above
 the group, the lower half into it; the space below the last row drops at the end, ungrouped.
+
+## File explorer
+
+The file explorer (Ctrl+Shift+|, the title bar button next to the sidebar toggle, closed with
+its `×`) sits between the sidebar and the terminal and shows the selected tab's folder; it
+follows tab switches and `cd`. Folders come first, then files, sorted by name, dotfiles
+included. Click a folder to expand or collapse it (each root keeps its own expanded folders);
+clicking a file only selects it. Expanded folders refresh when their content changes.
+
+Right-click an entry for its menu: New file (in the entry's folder; Enter or clicking elsewhere
+creates it, Escape cancels), cd to directory (shell tabs), Open in new tab (the default shell),
+Reveal in file manager, Rename, Delete (asks first; deletes for good, not to the trash), Attach
+as context (types the path at the selected tab's prompt without Enter: `@path` in Claude Code,
+the shell-quoted path elsewhere), Copy path, Copy relative path (from the explorer's root).
+cd and Open in new tab use the folder itself, or a file's parent folder.
 
 ## Manual check
 

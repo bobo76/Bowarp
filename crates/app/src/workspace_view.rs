@@ -12,23 +12,26 @@ use futures::channel::mpsc::UnboundedReceiver;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{IconName, Sizable, TitleBar, WindowExt};
+use gpui_kit::component::{Icon, IconName, Selectable, Sizable, TitleBar, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, App, AppContext, ClipboardItem, Context, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, Keystroke, MouseButton, ParentElement, Render,
     Styled, Subscription, Task, Window, div,
 };
-use term_core::LaunchSpec;
+use term_core::{LaunchSpec, SessionKind};
+use workspace_model::file_tree::{cd_command, context_reference};
 use workspace_model::layout::Direction;
 use workspace_model::{
     Attention, DropTarget, GroupId, Layout, SearchedTab, TabColor, TabMeta, TabQuery, TabsState,
     lines_added, next_attention, until_next_second, waiting_count,
 };
 
+use crate::assets::FILES_ICON;
+use crate::file_explorer::{ExplorerEvent, FileExplorer};
 use crate::hooks::ClaudeHooks;
 use crate::launcher::{self, Launcher, launch_name};
-use crate::shortcuts::{DUPLICATE_TAB_KEY, NEW_TAB_KEY};
+use crate::shortcuts::{self, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY};
 use crate::sidebar::NUMBERED_TABS;
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
@@ -132,6 +135,8 @@ pub struct WorkspaceView {
     layout: Layout,
     active: usize,
     sidebar_visible: bool,
+    explorer: Entity<FileExplorer>,
+    explorer_visible: bool,
     renaming: Option<Rename>,
     /// The sidebar's "Search tabs..." field.
     search: Entity<InputState>,
@@ -150,6 +155,7 @@ pub struct WorkspaceView {
     hooks: Option<Rc<ClaudeHooks>>,
     _hook_messages: Task<()>,
     _search_events: Subscription,
+    _explorer_events: Subscription,
 }
 
 impl WorkspaceView {
@@ -182,11 +188,15 @@ impl WorkspaceView {
                     _ => {}
                 },
             );
+        let explorer = cx.new(FileExplorer::new);
+        let explorer_events = cx.subscribe_in(&explorer, window, Self::on_explorer_event);
         Self {
             tabs: Vec::new(),
             layout: Layout::default(),
             active: 0,
             sidebar_visible: true,
+            explorer,
+            explorer_visible: false,
             renaming: None,
             search,
             diff_stats: HashMap::new(),
@@ -199,6 +209,7 @@ impl WorkspaceView {
             hooks,
             _hook_messages: hook_task,
             _search_events: search_events,
+            _explorer_events: explorer_events,
         }
     }
 
@@ -248,7 +259,10 @@ impl WorkspaceView {
             .is_some_and(|hooks| hooks.attach(id, &mut launch));
         let view = TerminalView::spawn(id, &launch, reports_status, cx)?;
         self.next_session_id += 1;
-        let changed = cx.subscribe(&view, |_, _, _: &TabChanged, cx| cx.notify());
+        let changed = cx.subscribe(&view, |workspace, _, _: &TabChanged, cx| {
+            workspace.sync_explorer(cx);
+            cx.notify();
+        });
         self.tabs.push(Tab {
             id,
             view,
@@ -425,6 +439,7 @@ impl WorkspaceView {
         self.active = index;
         view.update(cx, |view, cx| view.show(cx));
         window.focus(&view.focus_handle(cx), cx);
+        self.sync_explorer(cx);
         cx.notify();
     }
 
@@ -924,10 +939,98 @@ impl WorkspaceView {
         cx.notify();
     }
 
+    fn toggle_explorer(&mut self, cx: &mut Context<Self>) {
+        self.explorer_visible = !self.explorer_visible;
+        if self.explorer_visible {
+            self.sync_explorer(cx);
+        } else {
+            // Drop the watches while hidden; showing it again reads the folders afresh.
+            self.explorer
+                .update(cx, |explorer, cx| explorer.set_root(None, false, cx));
+        }
+        cx.notify();
+    }
+
+    /// Point the explorer at the selected tab's folder, as of its last tab change (switch,
+    /// title change, end of an output burst: around `cd`), while it shows.
+    fn sync_explorer(&mut self, cx: &mut Context<Self>) {
+        if !self.explorer_visible {
+            return;
+        }
+        let (root, can_cd) = match self.active_tab() {
+            Some(tab) => {
+                let view = tab.view.read(cx);
+                let root = view
+                    .location()
+                    .map(|location| location.dir.clone())
+                    .or_else(|| view.current_folder());
+                (root, view.kind() == SessionKind::Shell)
+            }
+            None => (None, false),
+        };
+        self.explorer
+            .update(cx, |explorer, cx| explorer.set_root(root, can_cd, cx));
+    }
+
+    fn on_explorer_event(
+        &mut self,
+        _: &Entity<FileExplorer>,
+        event: &ExplorerEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ExplorerEvent::Close => self.toggle_explorer(cx),
+            ExplorerEvent::CdTo(folder) => {
+                if let Some(tab) = self.active_tab() {
+                    let shell = tab.view.read(cx).shell();
+                    match cd_command(folder, shell) {
+                        Ok(command) => tab.view.update(cx, |view, cx| view.type_text(command, cx)),
+                        Err(err) => {
+                            window.push_notification(Notification::error(err.to_string()), cx);
+                            return;
+                        }
+                    }
+                }
+                self.focus_active(window, cx);
+            }
+            ExplorerEvent::OpenTab(folder) => {
+                let Some(shell) = launcher::default_shell(&self.launchers).cloned() else {
+                    window.push_notification(Notification::error("No shell found"), cx);
+                    return;
+                };
+                if let Some(spec) = shell.spec(Some(folder.clone())) {
+                    self.open_tab_or_notify(spec, window, cx);
+                }
+            }
+            ExplorerEvent::Attach(path) => {
+                if let Some(tab) = self.active_tab() {
+                    let view = tab.view.read(cx);
+                    let mention = view.kind() == SessionKind::ClaudeCode;
+                    match context_reference(path, view.shell(), mention) {
+                        Ok(text) => tab.view.update(cx, |view, cx| view.type_text(text, cx)),
+                        Err(err) => {
+                            window.push_notification(Notification::error(err.to_string()), cx);
+                            return;
+                        }
+                    }
+                }
+                self.focus_active(window, cx);
+            }
+            ExplorerEvent::EditEnded => self.focus_active(window, cx),
+        }
+    }
+
+    fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.active_tab() {
+            window.focus(&tab.view.focus_handle(cx), cx);
+        }
+    }
+
     /// Ctrl+Tab / Ctrl+Shift+Tab cycle tabs, Ctrl+1..9 select one, Ctrl+Shift+T opens the
     /// default shell, Ctrl+Shift+D another tab like the selected one, Ctrl+Shift+W closes it,
     /// Ctrl+Shift+B shows or hides the sidebar, Ctrl+Shift+S searches tabs, Ctrl+Shift+A jumps
-    /// to the next tab needing attention.
+    /// to the next tab needing attention, Ctrl+Shift+| shows or hides the file explorer.
     fn handle_tab_shortcut(
         &mut self,
         keystroke: &Keystroke,
@@ -944,6 +1047,8 @@ impl WorkspaceView {
             (DUPLICATE_TAB_KEY, true) => self.duplicate_tab(self.active, window, cx),
             ("w", true) => self.close_tab(self.active, window, cx),
             ("b", true) => self.toggle_sidebar(cx),
+            // GPUI drops Shift from a shifted symbol: Ctrl+Shift+\ arrives as Ctrl+|.
+            (EXPLORER_KEY, _) => self.toggle_explorer(cx),
             ("s", true) => self.focus_search(window, cx),
             ("a", true) => self.jump_to_attention(window, cx),
             (key, false) => match tab_number(key) {
@@ -967,6 +1072,21 @@ impl WorkspaceView {
             .small()
             .tooltip(tooltip)
             .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_sidebar(cx)))
+    }
+
+    fn explorer_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let label = if self.explorer_visible {
+            "Hide explorer"
+        } else {
+            "Show explorer"
+        };
+        Button::new("toggle-explorer")
+            .icon(Icon::empty().path(FILES_ICON))
+            .ghost()
+            .small()
+            .selected(self.explorer_visible)
+            .tooltip(shortcuts::with_shortcut(label, EXPLORER_KEY))
+            .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_explorer(cx)))
     }
 }
 
@@ -1016,7 +1136,17 @@ impl Render for WorkspaceView {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(self.sidebar_toggle(cx))
+                            .child(
+                                // Occluding keeps the title bar's drag area from taking the
+                                // buttons' clicks (Windows answers HTCAPTION over them).
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .occlude()
+                                    .child(self.sidebar_toggle(cx))
+                                    .child(self.explorer_toggle(cx)),
+                            )
                             .child(div().text_sm().child(title)),
                     ),
             )
@@ -1027,6 +1157,9 @@ impl Render for WorkspaceView {
                     .min_h_0()
                     .when(self.sidebar_visible, |content| {
                         content.child(self.render_sidebar(cx))
+                    })
+                    .when(self.explorer_visible, |content| {
+                        content.child(self.explorer.clone())
                     })
                     .child(div().flex_1().min_w_0().h_full().children(active)),
             )

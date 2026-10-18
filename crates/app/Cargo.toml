@@ -11,6 +11,7 @@ directories.workspace = true
 futures.workspace = true
 gpui-kit.workspace = true
 log.workspace = true
+notify.workspace = true
 term-core.workspace = true
 workspace-model.workspace = true
 

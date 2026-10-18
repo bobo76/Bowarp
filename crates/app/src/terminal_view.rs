@@ -23,6 +23,7 @@ use term_core::alacritty_terminal::term::TermMode;
 use term_core::{
     EventCallback, LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions,
 };
+use workspace_model::file_tree::ShellSyntax;
 use workspace_model::{Lap, Location};
 
 use crate::keys;
@@ -94,6 +95,8 @@ pub struct TerminalView {
     /// Folder the session was started in, used while the child's own cannot be read.
     launch_cwd: Option<PathBuf>,
     location: Option<Location>,
+    /// How the program parses typed paths.
+    shell: ShellSyntax,
     /// Status from Claude Code hooks; `None` for sessions without hooks.
     agent: Option<AgentState>,
     /// When the hook status last changed, for the hover card's lap time.
@@ -168,6 +171,7 @@ impl TerminalView {
             name: launcher::default_name(spec),
             launch_cwd: spec.cwd.clone(),
             location: spec.cwd.clone().map(Location::read),
+            shell: launcher::shell_syntax(spec),
             agent: reports_status.then(AgentState::default),
             agent_lap: Lap::new(AgentState::default().status(), Instant::now()),
             finished_unseen: false,
@@ -193,6 +197,11 @@ impl TerminalView {
 
     pub fn kind(&self) -> SessionKind {
         self.session.kind()
+    }
+
+    /// How the program parses typed paths.
+    pub fn shell(&self) -> ShellSyntax {
+        self.shell
     }
 
     /// Where the session works now, as of the last tab change.
@@ -353,6 +362,11 @@ impl TerminalView {
             });
         }));
         cx.emit(TabChanged);
+    }
+
+    /// Type `text` into the program as if the user had.
+    pub fn type_text(&mut self, text: String, cx: &mut Context<Self>) {
+        self.send_input(Cow::Owned(text.into_bytes()), cx);
     }
 
     /// Send user input to the program, snapping the view back to the live screen.

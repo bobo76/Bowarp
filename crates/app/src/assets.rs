@@ -15,11 +15,18 @@ pub const UBUNTU_ICON: &str = "icons/agentws/ubuntu.svg";
 pub const DEBIAN_ICON: &str = "icons/agentws/debian.svg";
 pub const LINUX_ICON: &str = "icons/agentws/linux.svg";
 pub const COPILOT_ICON: &str = "icons/agentws/githubcopilot.svg";
+pub const FILES_ICON: &str = "icons/agentws/files.svg";
+pub const FILE_IMAGE_ICON: &str = "icons/agentws/file-image.svg";
+pub const FILE_CODE_ICON: &str = "icons/agentws/file-code.svg";
+pub const FILE_DATA_ICON: &str = "icons/agentws/file-braces.svg";
+pub const FILE_ARCHIVE_ICON: &str = "icons/agentws/file-archive.svg";
+pub const MARKDOWN_ICON: &str = "icons/agentws/markdown.svg";
 
-/// Icons bundled with the app: (asset path, SVG). `git-branch`, `pin`, `terminal` and
-/// `square-chevron-right` are from Lucide (ISC, see `assets/icons/LICENSE-LUCIDE`); `git`,
-/// `gnubash`, `zsh`, `fishshell`, `ubuntu`, `debian`, `linux` and `githubcopilot` are from
-/// Simple Icons 15.0.0 (CC0, see `assets/icons/LICENSE-SIMPLE-ICONS`); the spark is our own.
+/// Icons bundled with the app: (asset path, SVG). `git-branch`, `pin`, `terminal`,
+/// `square-chevron-right`, `files` and the `file-*` icons are from Lucide (ISC, see
+/// `assets/icons/LICENSE-LUCIDE`); `git`, `gnubash`, `zsh`, `fishshell`, `ubuntu`, `debian`,
+/// `linux`, `githubcopilot` and `markdown` are from Simple Icons 15.0.0 (CC0, see
+/// `assets/icons/LICENSE-SIMPLE-ICONS`); the spark is our own.
 const ICONS: &[(&str, &[u8])] = &[
     (
         GIT_BRANCH_ICON,
@@ -45,6 +52,27 @@ const ICONS: &[(&str, &[u8])] = &[
     (
         COPILOT_ICON,
         include_bytes!("../assets/icons/githubcopilot.svg"),
+    ),
+    (FILES_ICON, include_bytes!("../assets/icons/files.svg")),
+    (
+        FILE_IMAGE_ICON,
+        include_bytes!("../assets/icons/file-image.svg"),
+    ),
+    (
+        FILE_CODE_ICON,
+        include_bytes!("../assets/icons/file-code.svg"),
+    ),
+    (
+        FILE_DATA_ICON,
+        include_bytes!("../assets/icons/file-braces.svg"),
+    ),
+    (
+        FILE_ARCHIVE_ICON,
+        include_bytes!("../assets/icons/file-archive.svg"),
+    ),
+    (
+        MARKDOWN_ICON,
+        include_bytes!("../assets/icons/markdown.svg"),
     ),
 ];
 

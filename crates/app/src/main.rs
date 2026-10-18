@@ -2,6 +2,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod assets;
+mod file_explorer;
 mod hooks;
 mod instance_lock;
 mod keys;

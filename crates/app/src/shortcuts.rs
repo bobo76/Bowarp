@@ -11,6 +11,9 @@ use gpui_kit::{
 pub const NEW_TAB_KEY: &str = "t";
 /// Ctrl+Shift+D: another tab like the selected one.
 pub const DUPLICATE_TAB_KEY: &str = "d";
+/// Ctrl+Shift+|: show or hide the file explorer. Bound as the key that produces `|`, whatever
+/// the layout; GPUI reports it without Shift (Ctrl+|).
+pub const EXPLORER_KEY: &str = "|";
 
 /// Ctrl+Shift+`key`.
 pub fn tab_shortcut(key: &str) -> Keystroke {

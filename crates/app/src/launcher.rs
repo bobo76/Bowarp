@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use term_core::{LaunchSpec, SessionKind};
 #[cfg(any(windows, test))]
 use workspace_model::distro_icon;
+use workspace_model::file_tree::ShellSyntax;
 use workspace_model::{LauncherIcon, shell_icon};
 
 /// A program the new-tab menu offers.
@@ -140,6 +141,24 @@ fn default_shell_index(launchers: &[Launcher], default_shell: &Path) -> Option<u
     launchers
         .iter()
         .position(|launcher| launcher.program.as_deref().and_then(Path::file_stem) == Some(name))
+}
+
+/// How the program `spec` starts parses typed paths. With no program, that is the user's
+/// shell (`$SHELL`), or PowerShell on Windows (alacritty's default).
+pub fn shell_syntax(spec: &LaunchSpec) -> ShellSyntax {
+    let default = || {
+        if cfg!(windows) {
+            Some("powershell".to_string())
+        } else {
+            std::env::var("SHELL").ok()
+        }
+    };
+    spec.program
+        .clone()
+        .or_else(default)
+        .map_or(ShellSyntax::Posix, |program| {
+            ShellSyntax::of_program(&program)
+        })
 }
 
 /// Name shown for a session until its program sets a title.

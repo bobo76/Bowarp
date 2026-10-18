@@ -28,6 +28,13 @@ directly to model APIs.
 - Keep session identity, custom colors, and activity status visually distinct.
 - Provide keyboard shortcuts for opening, closing, and switching tabs and panes.
 
+## Project Files
+
+- Browse the selected session's folder in a collapsible file tree that follows the
+  session's current folder and refreshes when files change.
+- Act on files and folders from the tree: create, rename, delete, open a session or `cd`
+  there, copy paths, and hand a file's path to the agent as context.
+
 ## Agent Activity and Attention
 
 - Indicate when an agent is working, idle, waiting for user input or permission,

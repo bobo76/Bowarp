@@ -167,6 +167,31 @@ Feature spec: [FEATURES.md](FEATURES.md)
   after `geom:0,0,1200,800` with no groups: 102, 159, 216, ... (57 px pitch). Verified under
   Xvfb: four tabs, a group with two children, selected and hovered rows, drag above the first
   row and into a group. 162 tests passing.
+- File explorer (2026-10-18): `app/src/file_explorer.rs`, a 300 px panel between the sidebar
+  and the terminal, hidden at start, toggled by a title bar button (Lucide `files` icon, next
+  to the sidebar toggle, in the same `occlude()` wrapper) and by Ctrl+Shift+| (`EXPLORER_KEY`
+  = `|`: GPUI drops Shift from shifted symbols, so it matches the key that types `|` whatever
+  the layout), closed by its `×`. Root: the selected tab's `location().dir`, else its
+  `current_folder()`, re-synced on tab switch and every `TabChanged` (so after `cd`). Pure
+  logic in `workspace_model::file_tree` (sorting, file kinds, expanded folders per root,
+  visible rows, relative path, entry folder, shell quoting, name validation, the "Attach as
+  context" text). Folders are read on expand; a `notify` `RecommendedWatcher` watches exactly
+  the expanded folders (non-recursive, by canonical path so a symlink and its target share a
+  watch; access events ignored), changes batched over 100 ms re-read the folder. Context menu
+  as specified; "cd to directory" only in shell tabs, Rename/Delete disabled on the root, New
+  file and Rename edit the name inline (Enter or blur applies, Escape cancels, empty new name
+  cancels, existing names refused), Delete confirms in an alert dialog and deletes for good
+  (`remove_dir_all` for folders, symlinks themselves). "Open in new tab" opens the default
+  shell; "Attach as context" types the absolute path plus a space (`@path`, `@"path"` with a
+  space or quote, in Claude Code; shell-quoted otherwise) and focuses the terminal. Verified
+  under Xvfb: shortcut and button show/hide, `×` closes, expand/collapse and expanded state
+  kept across hide/show, `touch` from the terminal shows the new files in expanded folders,
+  root follows `cd` and tab switch, menu, New file, Rename, Delete with confirmation, cd to
+  directory, Open in new tab, Attach as context in a shell and a (stand-in) Claude Code tab,
+  Copy path / Copy relative path read back with `xclip`, and Ctrl+AltGr+< on a German layout
+  (`setxkbmap de`). Not driven: Reveal in file manager (no file manager), Windows / macOS
+  (AltGr may arrive as Ctrl+Alt on Windows, which the shortcut handler refuses), real Claude
+  Code's handling of the typed `@path`. 174 tests passing.
 
 **Bugs to fix**
 
@@ -177,21 +202,12 @@ Feature spec: [FEATURES.md](FEATURES.md)
   non-client event, `Button` does not stop it, so `DefWindowProc` starts the window-move loop,
   which eats the mouse-up: no click. Fix: wrap the title bar buttons in a `div().occlude()`
   (hitbox `BlockMouse` stops the hit test before the drag area, so they get `HTCLIENT` and
-  normal clicks); the explorer button goes in the same wrapper.
+  normal clicks); the explorer button goes in the same wrapper. The wrapper landed with the
+  file explorer; still to be checked on Windows.
 
 **Next steps, in priority order**
 
-1. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
-   between the sidebar and the terminal, shown/hidden by a title bar button next to the
-   sidebar toggle and by Ctrl+Shift+| (bound as the key that produces `|`, so check it on
-   non-US layouts), closed with its `×`. Root is the selected tab's folder and
-   follows tab switches and `cd`. Tree with chevrons, folders first then files, sorted by
-   name, dotfiles shown; folder and file-type icons (Markdown, image, ...). Folders are read
-   only when expanded (no recursive scan); expanded state is kept per root. Header row with
-   the files view icon; the reference's comments and search views are out of scope for now.
-   Open questions: what clicking a file does (insert its path in the terminal, open in the
-   default app), and refreshing on file changes (`notify` watcher on expanded folders only).
-2. Command history in shell tabs (both need shell integration, below):
+1. Command history in shell tabs (both need shell integration, below):
    - **Inline autocomplete** ([reference](docs/ui-reference/history-autocomplete.png)): while
      typing at the prompt, the most recent history entry starting with the typed text is drawn
      dimmed after the cursor (ghost text, not sent to the shell); Right arrow / End at the end
@@ -217,8 +233,8 @@ Feature spec: [FEATURES.md](FEATURES.md)
      height (about 10 rows) and scrolls, starting at the bottom with the most recent command
      selected. Up still goes to programs (alternate screen, Claude Code, `less`, ...) and to
      shells without integration.
-3. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
-4. M3: split panes, adjustable sizes, pane shortcuts.
+2. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
+3. M3: split panes, adjustable sizes, pane shortcuts.
 
 **Not doable yet**
 
@@ -417,6 +433,9 @@ New work the look needs:
 - Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - Sidebar search: Up/Down to move through the matches from the search field; the filter/sort
   button from the reference screenshot.
+- File explorer: read folders off the UI thread (a "Loading..." row, results applied per
+  root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
+  the window; Delete already runs in the background.
 - Untested on Windows: hook command quoting (`"C:\...\agentws-hook.exe"` run by Claude Code's
   shell) and `.cmd` launchers (`claude.cmd` from npm) under ConPTY.
 
