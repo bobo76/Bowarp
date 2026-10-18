@@ -18,6 +18,9 @@ use crate::assets::{
 };
 
 pub const SIDEBAR_WIDTH: f32 = 240.;
+/// Tab rows are tall enough for the name, the detail line and a large session icon.
+const TAB_ROW_HEIGHT: f32 = 56.;
+const GROUP_ROW_HEIGHT: f32 = 40.;
 /// Tabs selectable with Ctrl+1..9.
 pub const NUMBERED_TABS: usize = 9;
 
@@ -190,10 +193,15 @@ impl Render for DraggedTab {
     }
 }
 
+/// The thin line between two sidebar rows, the full width of the sidebar.
+pub fn row_divider(cx: &App) -> impl IntoElement {
+    div().flex_none().h(px(1.)).bg(cx.theme().sidebar_border)
+}
+
 /// Wraps a sidebar row so it can show where a dragged tab would land.
 pub fn drop_slot(row: impl IntoElement, marker: Option<DropMarker>, cx: &App) -> Div {
     let theme = cx.theme();
-    // The line sits in the 2px gap between rows.
+    // The line sits centered on the 1px divider between rows.
     let line = || {
         div()
             .absolute()
@@ -206,8 +214,8 @@ pub fn drop_slot(row: impl IntoElement, marker: Option<DropMarker>, cx: &App) ->
     let slot = div().relative().child(row);
     match marker {
         None => slot,
-        Some(DropMarker::Above) => slot.child(line().top(px(-2.))),
-        Some(DropMarker::Below) => slot.child(line().bottom(px(-2.))),
+        Some(DropMarker::Above) => slot.child(line().top(px(-1.5))),
+        Some(DropMarker::Below) => slot.child(line().bottom(px(-1.5))),
         Some(DropMarker::Inside) => slot.child(
             div()
                 .absolute()
@@ -281,10 +289,10 @@ fn session_icon(
         .flex_none()
         .items_center()
         .justify_center()
-        .size(px(28.))
+        .size(px(32.))
         .rounded_md()
         .bg(theme.secondary)
-        .child(kind_icon(kind).small())
+        .child(kind_icon(kind).size(px(18.)))
         .children(status_badge(status, background))
 }
 
@@ -343,14 +351,10 @@ pub fn tab_row(
 ) -> impl IntoElement {
     let theme = cx.theme();
     let group = SharedString::from(format!("tab-{}", row.index));
-    let (background, foreground, border) = if row.selected {
-        (
-            theme.sidebar_accent,
-            theme.sidebar_accent_foreground,
-            theme.sidebar_border,
-        )
+    let (background, foreground) = if row.selected {
+        (theme.sidebar_accent, theme.sidebar_accent_foreground)
     } else {
-        (theme.sidebar, theme.sidebar_foreground, theme.sidebar)
+        (theme.sidebar, theme.sidebar_foreground)
     };
     let muted = theme.muted_foreground;
     let row_background = RowBackground {
@@ -367,12 +371,10 @@ pub fn tab_row(
         .relative()
         .flex()
         .items_center()
-        .gap_2p5()
-        .h(px(46.))
-        .px_2()
-        .rounded_md()
-        .border_1()
-        .border_color(border)
+        .gap_3()
+        .h(px(TAB_ROW_HEIGHT))
+        .pl_3()
+        .pr_2()
         .bg(background)
         .text_color(foreground)
         .hover(|style| style.bg(theme.sidebar_accent))
@@ -381,9 +383,9 @@ pub fn tab_row(
             tab.child(
                 div()
                     .absolute()
-                    .left(px(1.))
-                    .top(px(9.))
-                    .bottom(px(9.))
+                    .left(px(2.))
+                    .top(px(12.))
+                    .bottom(px(12.))
                     .w(px(3.))
                     .rounded_full()
                     .bg(tab_color(color)),
@@ -623,10 +625,10 @@ pub fn group_header(
     let theme = cx.theme();
     let group = SharedString::from(format!("group-{}", row.slot));
     let muted = theme.muted_foreground;
-    let (background, border) = if row.holds_selected {
-        (theme.sidebar_accent, theme.sidebar_border)
+    let background = if row.holds_selected {
+        theme.sidebar_accent
     } else {
-        (theme.sidebar, theme.sidebar)
+        theme.sidebar
     };
     let chevron = if row.collapsed {
         IconName::ChevronRight
@@ -658,12 +660,9 @@ pub fn group_header(
         .flex()
         .items_center()
         .gap_1()
-        .h(px(30.))
-        .pl_1()
+        .h(px(GROUP_ROW_HEIGHT))
+        .pl_2()
         .pr_2()
-        .rounded_md()
-        .border_1()
-        .border_color(border)
         .bg(background)
         .text_sm()
         .text_color(theme.sidebar_foreground)

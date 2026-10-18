@@ -158,6 +158,15 @@ Feature spec: [FEATURES.md](FEATURES.md)
   "Duplicate tab" on the unselected Claude Code tab opened Claude Code in its folder; both
   menus show their hints. Not driven: Windows (Git Bash default), no-shell notification.
   162 tests passing.
+- Taller tab rows (2026-10-18): tab rows are 56 px with a 32 px session icon (18 px glyph),
+  group headers 40 px; a 1 px full-width `sidebar_border` divider (`sidebar::row_divider`)
+  follows every row, the last one included, instead of the 2 px gap. Rows lost their rounded
+  corners, side margin and selected outline, so the selected/hovered background spans the
+  sidebar (indented group children from their indent). The drop marker sits centered on the
+  divider. Drag hit-testing uses each row's bounds, so no constants changed. Tab row y centers
+  after `geom:0,0,1200,800` with no groups: 102, 159, 216, ... (57 px pitch). Verified under
+  Xvfb: four tabs, a group with two children, selected and hovered rows, drag above the first
+  row and into a group. 162 tests passing.
 
 **Bugs to fix**
 
@@ -172,12 +181,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 **Next steps, in priority order**
 
-1. Taller tab rows with separators ([reference](docs/ui-reference/tab-row-spacing.png)): more vertical
-   padding per row (about 56 px instead of the current tight two lines), a larger session
-   icon, and a thin full-width divider line (`sidebar_border` color) between rows instead of
-   the 2 px gap. The selected/hovered background still fills the whole row; group headers and
-   indented group children keep the same rhythm.
-2. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
+1. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
    between the sidebar and the terminal, shown/hidden by a title bar button next to the
    sidebar toggle and by Ctrl+Shift+| (bound as the key that produces `|`, so check it on
    non-US layouts), closed with its `×`. Root is the selected tab's folder and
@@ -187,7 +191,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
    the files view icon; the reference's comments and search views are out of scope for now.
    Open questions: what clicking a file does (insert its path in the terminal, open in the
    default app), and refreshing on file changes (`notify` watcher on expanded folders only).
-3. Command history in shell tabs (both need shell integration, below):
+2. Command history in shell tabs (both need shell integration, below):
    - **Inline autocomplete** ([reference](docs/ui-reference/history-autocomplete.png)): while
      typing at the prompt, the most recent history entry starting with the typed text is drawn
      dimmed after the cursor (ghost text, not sent to the shell); Right arrow / End at the end
@@ -213,8 +217,8 @@ Feature spec: [FEATURES.md](FEATURES.md)
      height (about 10 rows) and scrolls, starting at the bottom with the most recent command
      selected. Up still goes to programs (alternate screen, Claude Code, `less`, ...) and to
      shells without integration.
-4. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
-5. M3: split panes, adjustable sizes, pane shortcuts.
+3. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
+4. M3: split panes, adjustable sizes, pane shortcuts.
 
 **Not doable yet**
 

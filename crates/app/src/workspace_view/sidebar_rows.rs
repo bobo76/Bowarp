@@ -94,8 +94,6 @@ impl WorkspaceView {
                     .id("tabs")
                     .flex()
                     .flex_col()
-                    .gap_0p5()
-                    .px_1()
                     .flex_1()
                     .overflow_y_scroll()
                     // Leaving the list hides the marker; a drop applies the last marker shown.
@@ -109,7 +107,11 @@ impl WorkspaceView {
                     .on_drop(cx.listener(|workspace, dragged: &DraggedTab, _, cx| {
                         workspace.drop_dragged(dragged.id, cx)
                     }))
-                    .children(rows)
+                    // A divider under every row, the last one included.
+                    .children(
+                        rows.into_iter()
+                            .flat_map(|row| [row, sidebar::row_divider(cx).into_any_element()]),
+                    )
                     .child(self.render_end_drop_zone(cx)),
             )
     }
