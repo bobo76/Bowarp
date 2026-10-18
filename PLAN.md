@@ -98,16 +98,17 @@ Feature spec: [FEATURES.md](FEATURES.md)
   just before the window closes, from every close path: last tab closed, title bar `×`, the
   window manager's close (`on_window_should_close`). Ignored (default 1000x650 centered) when
   the file is missing, not valid JSON, smaller than 100 px or less than 48x48 px of it lies
-  on any connected display (`workspace_model::WindowState`). A maximized window saves the
-  bounds GPUI reports (on X11 the maximized size, so un-maximizing after a restart keeps that
-  size). Verified under X11 (Xvfb, no window manager, separate `XDG_CONFIG_HOME`): resize +
+  on any connected display (`workspace_model::WindowState`). A maximized or fullscreen close
+  keeps the bounds already saved and updates only the mode (GPUI on X11 reports the maximized
+  size; the reported bounds are used only when nothing usable is saved yet). Sizes over
+  16384 px are ignored like damaged files. Verified under X11 (Xvfb, no window manager, separate `XDG_CONFIG_HOME`): resize +
   move then close via the last tab and via `WM_DELETE_WINDOW` save the new bounds and the
   relaunch opens there; off-display, partly-visible and corrupt files; an unwritable config
   folder only prints an error. GPUI's X11 backend opens new windows 2 px right of the
   requested x, so a restored window can creep 2 px right per restart under a window manager
   that reports the real position. Not driven: maximize (no window manager under Xvfb: the
   saved mode is not detected and `zoom` has no effect), the title bar `×` (no window controls
-  without a window manager), Wayland (position is up to the compositor), Windows. 130 tests
+  without a window manager), Wayland (position is up to the compositor), Windows. 134 tests
   passing.
 
 **Bugs to fix**

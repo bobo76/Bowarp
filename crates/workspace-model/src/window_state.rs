@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 /// damaged file.
 const MIN_SIZE: f32 = 100.;
 
+/// Widest and tallest saved window size taken as real; anything larger is treated as a damaged
+/// file (a window that big can fail to get a drawing surface at every start).
+const MAX_SIZE: f32 = 16384.;
+
 /// How much of the window (in logical pixels, each way) must lie on a display for the saved
 /// position to be used.
 const MIN_VISIBLE: f32 = 48.;
@@ -51,8 +55,8 @@ pub enum WindowMode {
     Fullscreen,
 }
 
-/// The window's bounds and mode. For a maximized or fullscreen window the bounds are what the
-/// platform reports for it (the restore size where it knows one, else the maximized size).
+/// The window's bounds and mode. For a maximized or fullscreen window the bounds are the size
+/// to restore to (see `keeping_saved_bounds`).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WindowState {
     pub bounds: Rect,
@@ -73,7 +77,8 @@ impl WindowState {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
-        let temp = path.with_extension("json.tmp");
+        // One temporary file per process, so two instances closing at once don't clash.
+        let temp = temp_path(path);
         fs::write(&temp, self.to_json())?;
         fs::rename(&temp, path)
     }
@@ -91,7 +96,23 @@ impl WindowState {
             height,
         } = state.bounds;
         let finite = [x, y, width, height].iter().all(|value| value.is_finite());
-        (finite && width >= MIN_SIZE && height >= MIN_SIZE).then_some(state)
+        let usable = |side: f32| (MIN_SIZE..=MAX_SIZE).contains(&side);
+        (finite && usable(width) && usable(height)).then_some(state)
+    }
+
+    /// The state to save over `saved` (what the file holds now). A maximized or fullscreen
+    /// window keeps the saved bounds and changes only the mode: some platforms (X11) report the
+    /// maximized size for it, which would leave a screen-sized window after un-maximizing at
+    /// the next start. A maximized window can't move, so the saved restore bounds are still
+    /// the right ones. Without saved bounds, the reported ones are used.
+    pub fn keeping_saved_bounds(self, saved: Option<WindowState>) -> Self {
+        match (self.mode, saved) {
+            (WindowMode::Windowed, _) | (_, None) => self,
+            (mode, Some(saved)) => Self {
+                bounds: saved.bounds,
+                mode,
+            },
+        }
     }
 
     /// Whether at least `MIN_VISIBLE` pixels each way of the window lie on one of `displays`,
@@ -102,6 +123,10 @@ impl WindowState {
             width >= MIN_VISIBLE && height >= MIN_VISIBLE
         })
     }
+}
+
+fn temp_path(path: &Path) -> std::path::PathBuf {
+    path.with_extension(format!("json.{}.tmp", std::process::id()))
 }
 
 #[cfg(test)]
@@ -148,6 +173,12 @@ mod tests {
         assert_eq!(WindowState::from_json("[1, 2]"), None);
         let tiny = r#"{"bounds":{"x":0,"y":0,"width":20,"height":600}}"#;
         assert_eq!(WindowState::from_json(tiny), None);
+        let huge = r#"{"bounds":{"x":0,"y":0,"width":1e9,"height":600}}"#;
+        assert_eq!(WindowState::from_json(huge), None);
+        let tallest = r#"{"bounds":{"x":0,"y":0,"width":800,"height":16384}}"#;
+        assert!(WindowState::from_json(tallest).is_some());
+        let too_tall = r#"{"bounds":{"x":0,"y":0,"width":800,"height":16385}}"#;
+        assert_eq!(WindowState::from_json(too_tall), None);
         let unknown_mode = r#"{"bounds":{"x":0,"y":0,"width":800,"height":600},"mode":"tiled"}"#;
         assert_eq!(WindowState::from_json(unknown_mode), None);
     }
@@ -170,13 +201,54 @@ mod tests {
     }
 
     #[test]
+    fn on_display_limit_is_exactly_min_visible() {
+        let display = [rect(0., 0., 1920., 1080.)];
+        // 48 px of the window's width on screen counts, 47.9 px does not.
+        assert!(windowed(rect(1872., 100., 800., 600.)).is_on_any_display(&display));
+        assert!(!windowed(rect(1872.1, 100., 800., 600.)).is_on_any_display(&display));
+        // Same for the height, off the bottom edge.
+        assert!(windowed(rect(100., 1032., 800., 600.)).is_on_any_display(&display));
+        assert!(!windowed(rect(100., 1032.1, 800., 600.)).is_on_any_display(&display));
+    }
+
+    #[test]
+    fn maximized_keeps_the_saved_bounds() {
+        let saved = windowed(rect(30., 40., 900., 700.));
+        let screen = rect(0., 0., 1920., 1080.);
+        for mode in [WindowMode::Maximized, WindowMode::Fullscreen] {
+            let closing = WindowState {
+                bounds: screen,
+                mode,
+            };
+            let expected = WindowState {
+                bounds: saved.bounds,
+                mode,
+            };
+            assert_eq!(closing.keeping_saved_bounds(Some(saved)), expected);
+            // Nothing saved yet: what the platform reports is all there is.
+            assert_eq!(closing.keeping_saved_bounds(None), closing);
+        }
+    }
+
+    #[test]
+    fn windowed_replaces_the_saved_bounds() {
+        let saved = WindowState {
+            bounds: rect(30., 40., 900., 700.),
+            mode: WindowMode::Maximized,
+        };
+        let closing = windowed(rect(200., 100., 1200., 800.));
+        assert_eq!(closing.keeping_saved_bounds(Some(saved)), closing);
+        assert_eq!(closing.keeping_saved_bounds(None), closing);
+    }
+
+    #[test]
     fn save_then_load() {
         let dir = std::env::temp_dir().join(format!("agentws-window-{}", std::process::id()));
         let path = dir.join("nested").join("window.json");
         let state = windowed(rect(30., 40., 900., 700.));
         state.save(&path).unwrap();
         assert_eq!(WindowState::load(&path), Some(state));
-        assert!(!path.with_extension("json.tmp").exists());
+        assert!(!temp_path(&path).exists());
         fs::write(&path, "not json").unwrap();
         assert_eq!(WindowState::load(&path), None);
         assert_eq!(WindowState::load(&dir.join("missing.json")), None);

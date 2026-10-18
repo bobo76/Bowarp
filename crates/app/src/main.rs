@@ -119,8 +119,9 @@ fn main() {
                         process::exit(1)
                     }
                 });
-                // Closed by the window manager (its close button, Alt+F4). The app's own ways
-                // to close go through `window_bounds::close`.
+                // Closed by the window manager (its close button, Alt+F4) or, on Windows and
+                // macOS, by the title bar's close button. Closing the last tab and the Linux
+                // title bar button go through `window_bounds::close`.
                 window.on_window_should_close(cx, |window, _| {
                     window_bounds::save(window.window_bounds());
                     true

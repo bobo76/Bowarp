@@ -39,13 +39,15 @@ pub fn initial(cx: &App) -> WindowBounds {
         })
 }
 
-/// Save `bounds` for the next start. A failure is only reported: it costs the user nothing
-/// but the default window position next time.
+/// Save `bounds` for the next start. A maximized or fullscreen window keeps the bounds already
+/// saved and updates only the mode (see `WindowState::keeping_saved_bounds`). A failure is only
+/// reported: it costs the user nothing but the default window position next time.
 pub fn save(bounds: WindowBounds) {
     let Some(path) = state_path() else {
         return;
     };
-    if let Err(err) = to_state(bounds).save(&path) {
+    let state = to_state(bounds).keeping_saved_bounds(WindowState::load(&path));
+    if let Err(err) = state.save(&path) {
         eprintln!(
             "agent-workspace: failed to save window bounds to {}: {err}",
             path.display()
@@ -53,8 +55,8 @@ pub fn save(bounds: WindowBounds) {
     }
 }
 
-/// Close the window from inside the app (title bar button, closing the last tab), saving its
-/// bounds first.
+/// Close the window from inside the app (closing the last tab, or the title bar button on
+/// Linux), saving its bounds first.
 pub fn close(window: &mut Window) {
     save(window.window_bounds());
     window.remove_window();
@@ -94,5 +96,33 @@ fn to_window_bounds(state: WindowState) -> WindowBounds {
         WindowMode::Windowed => WindowBounds::Windowed(bounds),
         WindowMode::Maximized => WindowBounds::Maximized(bounds),
         WindowMode::Fullscreen => WindowBounds::Fullscreen(bounds),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_round_trip_keeps_mode_and_bounds() {
+        let bounds = Bounds::new(point(px(-1200.), px(40.5)), size(px(1000.), px(650.)));
+        for window_bounds in [
+            WindowBounds::Windowed(bounds),
+            WindowBounds::Maximized(bounds),
+            WindowBounds::Fullscreen(bounds),
+        ] {
+            assert_eq!(to_window_bounds(to_state(window_bounds)), window_bounds);
+        }
+        let state = to_state(WindowBounds::Maximized(bounds));
+        assert_eq!(state.mode, WindowMode::Maximized);
+        assert_eq!(
+            state.bounds,
+            Rect {
+                x: -1200.,
+                y: 40.5,
+                width: 1000.,
+                height: 650.
+            }
+        );
     }
 }
