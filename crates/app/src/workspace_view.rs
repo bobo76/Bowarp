@@ -27,6 +27,7 @@ use workspace_model::{
     lines_added, next_attention, until_next_second, waiting_count,
 };
 
+use crate::about;
 use crate::assets::FILES_ICON;
 use crate::file_explorer::{ExplorerEvent, FileExplorer};
 use crate::hooks::ClaudeHooks;
@@ -1147,7 +1148,8 @@ impl Render for WorkspaceView {
                                     .gap_1()
                                     .occlude()
                                     .child(self.sidebar_toggle(cx))
-                                    .child(self.explorer_toggle(cx)),
+                                    .child(self.explorer_toggle(cx))
+                                    .child(about::about_button()),
                             )
                             .child(div().text_sm().child(title)),
                     ),

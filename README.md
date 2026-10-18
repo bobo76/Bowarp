@@ -153,6 +153,13 @@ as context (types the path at the selected tab's prompt without Enter: `@path` i
 the shell-quoted path elsewhere), Copy path, Copy relative path (from the explorer's root).
 cd and Open in new tab use the folder itself, or a file's parent folder.
 
+## About
+
+The `i` button in the title bar (after the explorer button) shows the version, with the git
+commit it was built from when built from a checkout, and a link to the repository. Copy version
+copies the whole line for a bug report (or select part of it and press Ctrl+C); Escape or Close
+dismisses it.
+
 ## Manual check
 
 Open 3 Claude Code tabs and 1 shell tab, then check:

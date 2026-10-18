@@ -233,6 +233,21 @@ Feature spec: [FEATURES.md](FEATURES.md)
   `.zcompdump` in the integration folder, and no entry planted by `cat`ing fake marks. Not
   driven: PowerShell (not installed; script unverified), Windows (`MarkedPty` passes output
   through there), vi-mode line editing. 222 tests passing.
+- About dialog (2026-10-18): an `info` button after the explorer toggle in the title bar's
+  occluded button group opens a gpui-component dialog (`app/src/about.rs`, `open_dialog`): the
+  app icon (`assets/app-icon/agent-workspace.svg`, served as `icons/agentws/app-icon.svg`), the
+  name, the version line `agent-workspace 0.1.0 (abc1234)`
+  (`workspace_model::version_line`; `CARGO_PKG_VERSION` plus `AGENTWS_GIT_COMMIT`, set by
+  `app/build.rs` from `git rev-parse --short HEAD` only when the workspace root has a `.git`,
+  rerun when `.git/HEAD` or the branch ref / `packed-refs` changes), selectable (a markdown
+  `TextView`, Ctrl+C copies the selection), and a link to the repository
+  (`CARGO_PKG_REPOSITORY`, workspace `repository` in `Cargo.toml`; `Link` calls
+  `cx.open_url`). Footer: Copy version (whole line to the clipboard) and Close; Escape and the
+  dialog's `×` close it too. No license line until a license is chosen. Verified under Xvfb:
+  button opens it, Escape / Close / `×` close it and typing reaches the terminal again, Copy
+  version and a drag selection + Ctrl+C read back with `xclip`, the link runs `xdg-open
+  https://github.com/bobo76/Bowarp` (a logging stand-in on `PATH`). Not driven: a real
+  browser, a build without `.git` (code path only), Windows / macOS. 223 tests passing.
 
 **Bugs to fix**
 
@@ -248,13 +263,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 **Next steps, in priority order**
 
-1. About dialog: an `info` button in the title bar's occluded button group (after the
-   explorer toggle) opens a small modal with the app icon, name, version
-   (`env!("CARGO_PKG_VERSION")`, from the workspace `version` in `Cargo.toml`), the short
-   git commit when built from a checkout (set by a `build.rs`, omitted otherwise), the
-   license and a link to the repository. Escape or a Close button dismisses it; the version
-   text can be selected or copied for bug reports.
-2. M3: split panes, adjustable sizes, pane shortcuts.
+1. M3: split panes, adjustable sizes, pane shortcuts.
 
 **Not doable yet**
 

@@ -4,8 +4,10 @@
 //! tab wants attention next, how long a session has been in its status, and where the window
 //! and its tabs were when it closed, which running instance owns that save, which icon each
 //! new-tab launcher shows, the file explorer's tree, the shell commands run in the app
-//! (history) and the shell integration marks (OSC 133) in a shell's output. No UI dependency.
+//! (history), the shell integration marks (OSC 133) in a shell's output and the About dialog's
+//! version line. No UI dependency.
 
+mod about;
 mod attention;
 pub mod file_tree;
 mod git;
@@ -21,6 +23,7 @@ mod tab;
 mod tabs_state;
 mod window_state;
 
+pub use about::version_line;
 pub use attention::{Attention, next_attention, waiting_count};
 pub use git::{GitHead, lines_added};
 pub use history::{
