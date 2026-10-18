@@ -6,9 +6,11 @@
 
 mod launch;
 mod palette;
+mod prompt;
 mod session;
 
 pub use alacritty_terminal;
 pub use launch::{LaunchSpec, SessionKind};
 pub use palette::{Palette, dim};
+pub use prompt::{ExecutedCommand, PromptInput};
 pub use session::{EventCallback, Session, SessionEvent, SessionListener, TermDimensions};

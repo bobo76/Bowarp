@@ -192,6 +192,47 @@ Feature spec: [FEATURES.md](FEATURES.md)
   (`setxkbmap de`). Not driven: Reveal in file manager (no file manager), Windows / macOS
   (AltGr may arrive as Ctrl+Alt on Windows, which the shortcut handler refuses), real Claude
   Code's handling of the typed `@path`. 174 tests passing.
+- Command history (2026-10-18): bash, zsh and PowerShell tabs start with an injected script
+  (`app/shell-integration/`, written to `shell-integration/` in the config folder;
+  `bash --rcfile` (bash 4.4+), `ZDOTDIR` with a `.zshenv` that restores the user's `ZDOTDIR` and
+  sources their `.zshenv`, so zsh reads their other startup files itself and sets up the hooks
+  from a one-shot precmd on the first prompt (kitty's approach), `pwsh -NoExit -Command` with
+  PSReadLine, not on Windows) that prints OSC 133 marks: A + B around PS1 (re-wrapped each
+  prompt, after prompt themes; zsh's precmd moves itself last and zle-line-init re-wraps the
+  first prompt), C from PS0 / preexec / Enter with the command line hex-encoded (bash: only
+  when it went into bash's history, checked against `HISTCMD`), D from PROMPT_COMMAND /
+  precmd, and in zsh L from zle `line-init` / `line-pre-redraw` with `$BUFFER`, `$CURSOR` and
+  whether zsh-autosuggestions shows text. Every mark carries a random per-session token
+  (`AGENTWS_MARK_TOKEN`, unset by the script once read); marks without it (a `cat`ed file, a
+  remote shell over ssh) are ignored. Launches with their own arguments (Git Bash), fish, cmd
+  and WSL run unchanged, and Claude / Copilot tabs read their output unwrapped.
+  `term-core/src/prompt.rs` wraps the pty (`MarkedPty`): an A or B mark ends the bytes handed
+  to the parser, followed by a tagged DECRQM query whose answer (intercepted in the listener)
+  says the mark was parsed; further output is held (`WouldBlock`, plus a socket under the
+  pty's poll key so held output is read again) until the cursor position is recorded, by the
+  I/O thread or the UI, whichever takes the terminal lock first. Marks inside a synchronized
+  update (`CSI ? 2026 h`...`l`) pass through untracked. The command line is the shell's report
+  (zsh) or read from the grid from the B mark to the cursor (bash: it has no redraw hook).
+  `workspace_model::{Osc133Scanner, CommandHistory, HistorySelection}`: dedup (latest wins),
+  cap 10 000, JSON lines appended to `history.jsonl` (0600, compacted at load past 15 000
+  lines unless another instance appended meanwhile; non-UTF-8 and torn lines skipped),
+  prefix suggestion, case-insensitive substring filter, popup scrolling. Not recorded:
+  commands starting with a space, multi-line commands, bash commands bash left out of its
+  history. UI (`app/src/history_popup.rs`): ghost text drawn dimmed after the cursor when it
+  is at the end of the line (not while zsh-autosuggestions shows its own), Right/End type the
+  rest (not while typed keys are not echoed yet); Up at the prompt opens the "HISTORY" popup
+  above the prompt (below when fewer than 3 rows fit), max 10 rows, newest at the bottom and
+  selected, a folder chip per row, Up/Down/PageUp/PageDown, Enter puts the command on the
+  prompt (Ctrl+E, one Backspace per typed character, then the text), Esc closes, a click on a
+  row picks it, typing and Backspace go to the shell and refilter. Verified under Xvfb
+  (separate `XDG_CONFIG_HOME`): bash and zsh ghost text + Right/End, popup on an empty and a
+  typed prompt, Up/Down/Enter/Esc, row click, dedup, 10-row scrolling, history shared between
+  bash and zsh and kept across a restart, folders recorded per command, Up reaching `less` and
+  the Claude Code stand-in; after the review fixes: `git ` + Up + Enter, refiltering while
+  typing, the popup filtering on the typed text while zsh-autosuggestions shows more, no
+  `.zcompdump` in the integration folder, and no entry planted by `cat`ing fake marks. Not
+  driven: PowerShell (not installed; script unverified), Windows (`MarkedPty` passes output
+  through there), vi-mode line editing. 222 tests passing.
 
 **Bugs to fix**
 
@@ -207,33 +248,13 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 **Next steps, in priority order**
 
-1. Command history in shell tabs (both need shell integration, below):
-   - **Inline autocomplete** ([reference](docs/ui-reference/history-autocomplete.png)): while
-     typing at the prompt, the most recent history entry starting with the typed text is drawn
-     dimmed after the cursor (ghost text, not sent to the shell); Right arrow / End at the end
-     of the line accepts it by sending the remaining characters.
-   - **History popup** ([reference](docs/ui-reference/history-popup.png)): "HISTORY" panel
-     above the prompt listing past commands that contain the prompt's current text, most
-     recent at the bottom next to the prompt, with the folder chip; Up/Down to move, Enter to
-     put the command on the prompt (replacing the typed text), Esc to dismiss.
-   - **History store:** commands executed in any shell tab of the app, with folder and time,
-     de-duplicated (latest wins), capped (e.g. 10 000), persisted in the config folder. Not
-     the shell's own history file.
-   - **Shell integration:** the app must know where the prompt's command line starts and when
-     a command runs: OSC 133 (A prompt start, B command start, C executed, D finished) emitted
-     by small scripts injected at launch for bash / zsh / pwsh (`--rcfile` / `ZDOTDIR` /
-     `-NoExit -Command`), sourcing the user's own config first. `alacritty_terminal` does not
-     parse OSC 133, so this needs the pty reader wrapper also planned for OSC 7. The command
-     text is read from the grid between the B mark and the cursor. Disabled on the alternate
-     screen and in Claude Code / Copilot tabs; cmd.exe and WSL shells without the script get
-     neither feature.
-   - **Opening the popup:** Up arrow at the prompt always opens it and is no longer sent to
-     the shell (the shell's own Up history is dropped where integration is active): all
-     history on an empty prompt, filtered by the typed text otherwise. The list has a max
-     height (about 10 rows) and scrolls, starting at the bottom with the most recent command
-     selected. Up still goes to programs (alternate screen, Claude Code, `less`, ...) and to
-     shells without integration.
-2. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
+1. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
+2. About dialog: an `info` button in the title bar's occluded button group (after the
+   explorer toggle) opens a small modal with the app icon, name, version
+   (`env!("CARGO_PKG_VERSION")`, from the workspace `version` in `Cargo.toml`), the short
+   git commit when built from a checkout (set by a `build.rs`, omitted otherwise), the
+   license and a link to the repository. Escape or a Close button dismisses it; the version
+   text can be selected or copied for bug reports.
 3. M3: split panes, adjustable sizes, pane shortcuts.
 
 **Not doable yet**
@@ -386,8 +407,9 @@ New work the look needs:
 - **Working directory per tab:** done on Linux: the child's cwd (`/proc/<pid>/cwd`) re-read on
   `TabChanged` and when the tab is shown, never polled; the last known folder is kept after
   exit. Windows (`NtQueryInformationProcess` PEB read) shows the launch folder until then.
-  Not done: OSC 7 (`alacritty_terminal` does not parse it; needs a pty reader wrapper, only
-  useful for remote shells) and the `cwd` from Claude Code hook payloads (Claude's process cwd
+  Not done: OSC 7 (`alacritty_terminal` does not parse it; the pty reader wrapper now exists
+  for OSC 133 (`term-core/src/prompt.rs`) and could find it too; only useful for remote shells)
+  and the `cwd` from Claude Code hook payloads (Claude's process cwd
   is its project folder, which `/proc` already gives).
 - **Git branch:** done: read `<repo>/.git/HEAD` (walk up from the cwd, follow `gitdir:` for
   worktrees), no `git` process; detached HEAD shows the short commit.

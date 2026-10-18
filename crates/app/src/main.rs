@@ -3,12 +3,15 @@
 
 mod assets;
 mod file_explorer;
+mod history;
+mod history_popup;
 mod hooks;
 mod instance_lock;
 mod keys;
 mod launcher;
 mod mouse;
 mod scrollbar;
+mod shell_integration;
 mod shortcuts;
 mod sidebar;
 mod tab_menu;
@@ -102,6 +105,7 @@ fn main() {
         .run(move |cx| {
             gpui_kit::init(cx);
             terminal_view::init(cx);
+            history::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);
             let quit_hooks = hooks.clone();
             cx.on_window_closed(move |cx, _| {

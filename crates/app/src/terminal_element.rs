@@ -18,14 +18,15 @@ use term_core::alacritty_terminal::term::cell::Flags;
 use term_core::alacritty_terminal::term::{RenderableContent, TermMode};
 use term_core::alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Rgb};
 use term_core::{Palette, Session, TermDimensions, dim};
+use unicode_width::UnicodeWidthChar;
 
 use crate::scrollbar::{ScrollMetrics, ScrollbarLayout, ScrollbarState};
 use crate::terminal_view::{GridGeometry, TerminalView};
 
 #[cfg(target_os = "windows")]
-const FONT_FAMILY: &str = "Cascadia Mono";
+pub(crate) const FONT_FAMILY: &str = "Cascadia Mono";
 #[cfg(not(target_os = "windows"))]
-const FONT_FAMILY: &str = "DejaVu Sans Mono";
+pub(crate) const FONT_FAMILY: &str = "DejaVu Sans Mono";
 const FONT_SIZE: f32 = 14.0;
 const LINE_HEIGHT_FACTOR: f32 = 1.2;
 /// Space around the grid. The scroll bar sits in the right padding.
@@ -127,6 +128,7 @@ pub struct PrepaintState {
     lines: Vec<(Point<Pixels>, ShapedLine)>,
     cursor: Option<PaintQuad>,
     marked_text: Option<(PaintQuad, Point<Pixels>, ShapedLine)>,
+    ghost_text: Option<(Point<Pixels>, ShapedLine)>,
     geometry: GridGeometry,
     scrollbar: Option<PreparedScrollbar>,
 }
@@ -218,6 +220,13 @@ impl Element for TerminalElement {
             grid,
             to_hsla(snapshot.cursor_color),
         );
+        // Only next to a visible cursor, cut at the line's end.
+        let ghost_text = snapshot.cursor.as_ref().and_then(|cursor| {
+            let room = (columns as usize).saturating_sub(cursor.column);
+            let text = fit_columns(view.ghost_text.as_deref()?, room);
+            let style = ghost_text_style(palette.foreground, snapshot.background);
+            (!text.is_empty()).then(|| (cursor_origin, shaper.shape(text, style)))
+        });
         let marked_text = view.marked_text.clone().map(|text| {
             let shaped = shaper.shape(text, marked_text_style(palette.foreground));
             marked_text_overlay(shaped, cursor_origin, line_height, snapshot.background)
@@ -236,6 +245,7 @@ impl Element for TerminalElement {
             lines: shape_lines(snapshot.batches, grid, &shaper),
             cursor,
             marked_text,
+            ghost_text,
             geometry: GridGeometry {
                 origin: grid.origin,
                 cell_width,
@@ -273,6 +283,11 @@ impl Element for TerminalElement {
             if let Err(err) = line.paint(*origin, line_height, TextAlign::Left, None, window, cx) {
                 log::warn!("failed to paint terminal line: {err}");
             }
+        }
+        if let Some((origin, line)) = prepaint.ghost_text.take()
+            && let Err(err) = line.paint(origin, line_height, TextAlign::Left, None, window, cx)
+        {
+            log::warn!("failed to paint the history suggestion: {err}");
         }
         if let Some(cursor) = prepaint.cursor.take() {
             window.paint_quad(cursor);
@@ -654,6 +669,23 @@ fn marked_text_style(foreground: Rgb) -> CellStyle {
     }
 }
 
+/// The history suggestion after the cursor: the foreground halfway to the background.
+fn ghost_text_style(foreground: Rgb, background: Rgb) -> CellStyle {
+    let mix = |a: u8, b: u8| ((u16::from(a) + u16::from(b)) / 2) as u8;
+    CellStyle {
+        foreground: Rgb {
+            r: mix(foreground.r, background.r),
+            g: mix(foreground.g, background.g),
+            b: mix(foreground.b, background.b),
+        },
+        bold: false,
+        italic: false,
+        underline: false,
+        undercurl: false,
+        strikeout: false,
+    }
+}
+
 /// Composition text at the cursor, on a backdrop that hides the cells beneath it.
 fn marked_text_overlay(
     shaped: ShapedLine,
@@ -747,6 +779,17 @@ fn text_run(base: &Font, len: usize, style: CellStyle) -> TextRun {
 
 pub(crate) fn to_hsla(color: Rgb) -> Hsla {
     gpui_kit::rgb(((color.r as u32) << 16) | ((color.g as u32) << 8) | color.b as u32).into()
+}
+
+/// The start of `text` that fits in `columns` cells (wide characters take two).
+fn fit_columns(text: &str, columns: usize) -> String {
+    let mut used = 0;
+    text.chars()
+        .take_while(|&c| {
+            used += c.width().unwrap_or(0);
+            used <= columns
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -932,5 +975,13 @@ mod tests {
             layout(&batches),
             [(0, 1, "a"), (1, 1, "e\u{301}"), (2, 1, "b")]
         );
+    }
+
+    #[test]
+    fn ghost_text_is_cut_by_cell_width() {
+        assert_eq!(fit_columns("status", 3), "sta");
+        assert_eq!(fit_columns("\u{4f60}\u{597d}x", 3), "\u{4f60}");
+        assert_eq!(fit_columns("\u{4f60}\u{597d}x", 5), "\u{4f60}\u{597d}x");
+        assert_eq!(fit_columns("ab", 0), "");
     }
 }

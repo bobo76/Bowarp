@@ -31,6 +31,7 @@ use crate::assets::FILES_ICON;
 use crate::file_explorer::{ExplorerEvent, FileExplorer};
 use crate::hooks::ClaudeHooks;
 use crate::launcher::{self, Launcher, launch_name};
+use crate::shell_integration;
 use crate::shortcuts::{self, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY};
 use crate::sidebar::NUMBERED_TABS;
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
@@ -257,6 +258,7 @@ impl WorkspaceView {
             .hooks
             .as_ref()
             .is_some_and(|hooks| hooks.attach(id, &mut launch));
+        shell_integration::attach(&mut launch);
         let view = TerminalView::spawn(id, &launch, reports_status, cx)?;
         self.next_session_id += 1;
         let changed = cx.subscribe(&view, |workspace, _, _: &TabChanged, cx| {

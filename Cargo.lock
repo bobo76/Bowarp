@@ -130,6 +130,7 @@ dependencies = [
  "log",
  "notify",
  "term-core",
+ "unicode-width",
  "windows-registry 0.6.1",
  "winresource",
  "workspace-model",
@@ -6332,6 +6333,8 @@ dependencies = [
  "libc",
  "log",
  "parking_lot",
+ "polling",
+ "workspace-model",
 ]
 
 [[package]]

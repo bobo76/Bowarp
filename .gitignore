@@ -2,3 +2,5 @@ target/
 ARCHITECTURE.md
 REVIEW.md
 pipeline/
+# zsh writes its completion cache next to the startup files it reads.
+crates/app/shell-integration/zsh/.zcompdump*

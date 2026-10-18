@@ -26,6 +26,8 @@ use term_core::{
 use workspace_model::file_tree::ShellSyntax;
 use workspace_model::{Lap, Location};
 
+use crate::history;
+use crate::history_popup::HistoryPopup;
 use crate::keys;
 use crate::launcher;
 use crate::mouse::{self, Cell, MouseAction, ReportButton, WheelAction};
@@ -111,6 +113,9 @@ pub struct TerminalView {
     pub(crate) geometry: Option<GridGeometry>,
     /// IME composition text not yet committed.
     pub(crate) marked_text: Option<String>,
+    /// The rest of a history command matching the typed text, drawn dimmed after the cursor.
+    pub(crate) ghost_text: Option<String>,
+    pub(crate) history_popup: Option<HistoryPopup>,
     title: Option<String>,
     process: ProcessState,
     scroll_remainder: f32,
@@ -180,6 +185,8 @@ impl TerminalView {
             focus_handle: cx.focus_handle(),
             geometry: None,
             marked_text: None,
+            ghost_text: None,
+            history_popup: None,
             title: None,
             process: ProcessState::Running,
             scroll_remainder: 0.0,
@@ -258,6 +265,7 @@ impl TerminalView {
     /// Stop painting the view; only the selected tab is painted.
     pub fn hide(&mut self) {
         self.visible = false;
+        self.history_popup = None;
         // A wakeup sent before the next paint would never be acknowledged by `prepaint`.
         self.session.ack_wakeup();
     }
@@ -324,6 +332,10 @@ impl TerminalView {
                 self.emit_tab_changed(cx);
             }
             SessionEvent::Bell => return,
+            SessionEvent::CommandExecuted(command) => {
+                self.history_popup = None;
+                history::record(command, cx);
+            }
             SessionEvent::Exited(code) => {
                 self.process = ProcessState::Exited(code);
                 if let Some(agent) = self.agent.as_mut() {
@@ -397,8 +409,9 @@ impl TerminalView {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let consumed =
-            self.handle_scrollback_shortcut(&event.keystroke, cx) || self.forward_key(event, cx);
+        let consumed = self.handle_history_key(&event.keystroke, cx)
+            || self.handle_scrollback_shortcut(&event.keystroke, cx)
+            || self.forward_key(event, cx);
         if consumed {
             cx.stop_propagation();
         }
@@ -611,6 +624,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus_handle, cx);
+        self.close_history_popup(cx);
         let Some(button) = ReportButton::from_gpui(event.button) else {
             return;
         };
@@ -727,7 +741,9 @@ impl Render for TerminalView {
             .on_mouse_up_out(MouseButton::Middle, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Right, cx.listener(Self::on_mouse_up));
 
+        let history_popup = self.update_history(cx);
         view.child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
+            .children(history_popup)
     }
 }
 

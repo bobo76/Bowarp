@@ -14,6 +14,8 @@ directly to model APIs.
 - Support normal interactive CLI behavior, including permission prompts,
   cancellation, multiline input, colors, and terminal resizing.
 - Provide copy/paste, text selection, scrollback, and terminal search.
+- Shell command history shared by all shell tabs (with folder and time): an inline
+  suggestion from history while typing and a history popup above the prompt (Up).
 - Support split panes, adjustable pane sizes, and quick switching between sessions.
 - Warn before closing a session or workspace with running processes.
 

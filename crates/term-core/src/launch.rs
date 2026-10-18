@@ -21,6 +21,9 @@ pub struct LaunchSpec {
     pub cwd: Option<PathBuf>,
     /// Extra environment variables, layered over the defaults set by [`crate::Session`].
     pub env: HashMap<String, String>,
+    /// The token the injected shell integration script puts in its OSC 133 marks; `None`
+    /// (no integration) reads the output unchanged.
+    pub mark_token: Option<String>,
 }
 
 impl LaunchSpec {
@@ -58,6 +61,7 @@ impl LaunchSpec {
             args,
             cwd,
             env: HashMap::new(),
+            mark_token: None,
         }
     }
 

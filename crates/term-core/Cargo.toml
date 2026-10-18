@@ -9,6 +9,8 @@ publish.workspace = true
 alacritty_terminal.workspace = true
 log.workspace = true
 parking_lot.workspace = true
+polling.workspace = true
+workspace-model.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
