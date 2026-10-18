@@ -128,6 +128,7 @@ dependencies = [
  "gpui-kit",
  "log",
  "term-core",
+ "windows-registry 0.6.1",
  "winresource",
  "workspace-model",
 ]

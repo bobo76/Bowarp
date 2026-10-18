@@ -88,6 +88,31 @@ Feature spec: [FEATURES.md](FEATURES.md)
 **Next steps, in priority order**
 
 1. Add a lap time for the in-progress popup.
+2. Reopen the window with the same size and position (and maximized state) as when it was
+   closed. Saved on close in the config folder (`directories`); ignored when the saved
+   bounds are off every connected display.
+3. Reopen with the same tabs: kind, program, folder, custom name, color, pin, groups and order
+   (`Layout` + `TabMeta` to serde), and the selected tab. Each tab is relaunched in its last
+   folder. This brings forward the save/restore part of M4 for the single window; named
+   workspaces stay in M4.
+4. `+` menu look (reference: Windows Terminal's new-tab menu): an icon per entry (PowerShell,
+   Windows PowerShell, Command Prompt, Git Bash, each WSL distro, Claude, Copilot) instead of
+   the shared terminal icon, a "Terminal" entry with its `Ctrl+Shift+T` hint, and separators
+   between shells and agents.
+5. Windows: "Bash" opened Ubuntu. `bash` on `PATH` resolves to `C:\Windows\System32\bash.exe`,
+   the WSL launcher, which starts the default distro; Git Bash is not on `PATH` (only
+   `Git\cmd` is). Code done in `launcher.rs`, not yet built or run on Windows: `bash` is no
+   longer looked up on `PATH`; "Git Bash" is `Git\bin\bash.exe -i -l` found from `git.exe` on
+   `PATH`, else `%ProgramFiles%\Git` / `%LOCALAPPDATA%\Programs\Git`; each WSL distro (from
+   `HKCU\...\Lxss`, so no `wsl.exe` runs at startup; `docker-desktop*` hidden) is its own entry
+   launching `wsl.exe -d <name>`, and its tab is named after the distro.
+6. Ctrl+Shift+T opens a new tab with the default launcher (in the selected tab's folder)
+   instead of duplicating the selected tab. The default is Bash for now: Git Bash on Windows,
+   `bash` on Linux; falls back to the first shell found. A configurable default comes with
+   settings. The `+` button's hover tooltip shows the shortcut ("New tab (Ctrl+Shift+T)"),
+   and the default entry in the `+` menu shows `Ctrl+Shift+T` on its right. Duplicating the
+   selected tab moves to Ctrl+Shift+D, also in the tab menu as "Duplicate tab" with its
+   shortcut shown.
 
 **Deferred (needs a Windows machine):** Windows build and the same check (ConPTY, named pipe,
 hook command quoting).
