@@ -1,0 +1,352 @@
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+/// Length of the abbreviated commit id shown for a detached HEAD.
+const SHORT_COMMIT_LEN: usize = 7;
+/// How long [`lines_added`] waits for its `git` processes in all.
+const GIT_TIMEOUT: Duration = Duration::from_secs(10);
+/// How often a running `git` is checked for exit.
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
+/// Untracked files larger than this are not read, and count as nothing.
+const MAX_UNTRACKED_FILE_BYTES: u64 = 1 << 20;
+/// At most this many untracked files are read.
+const MAX_UNTRACKED_FILES: usize = 1000;
+/// Variables that would point every `git` at one repository, whatever folder it runs in.
+const REPO_ENV: [&str; 4] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+];
+
+/// What a repository's HEAD points at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GitHead {
+    Branch(String),
+    /// A checked-out commit, abbreviated.
+    Detached(String),
+}
+
+impl GitHead {
+    /// HEAD of the repository containing `dir`, read from the files under `.git` (no `git`
+    /// process). `None` when `dir` is not inside a repository or HEAD cannot be read.
+    pub fn read(dir: &Path) -> Option<Self> {
+        let git_dir = find_git_dir(dir)?;
+        let head = fs::read_to_string(git_dir.join("HEAD")).ok()?;
+        Self::parse(&head)
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Branch(name) | Self::Detached(name) => name,
+        }
+    }
+
+    fn parse(head: &str) -> Option<Self> {
+        let head = head.trim();
+        if let Some(reference) = head.strip_prefix("ref:") {
+            let reference = reference.trim();
+            let branch = reference.strip_prefix("refs/heads/").unwrap_or(reference);
+            return Some(Self::Branch(branch.to_string()));
+        }
+        let is_commit =
+            head.len() > SHORT_COMMIT_LEN && head.bytes().all(|b| b.is_ascii_hexdigit());
+        is_commit.then(|| Self::Detached(head[..SHORT_COMMIT_LEN].to_string()))
+    }
+}
+
+/// The git directory for `dir`: the nearest `.git` folder walking up, or the folder a `.git`
+/// file points to (`gitdir: ...`, used by worktrees and submodules).
+fn find_git_dir(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors().find_map(|folder| {
+        let dot_git = folder.join(".git");
+        if dot_git.is_dir() {
+            return Some(dot_git);
+        }
+        let pointer = fs::read_to_string(&dot_git).ok()?;
+        let target = pointer.trim().strip_prefix("gitdir:")?.trim();
+        Some(folder.join(target))
+    })
+}
+
+/// Lines added in the working tree of the repository containing `dir`: changes to tracked
+/// files, staged or not, compared with HEAD (`git diff HEAD --numstat`), plus the lines of
+/// untracked files that are not ignored. Runs `git` processes, so call it off the UI thread and
+/// only on demand; gives up after [`GIT_TIMEOUT`]. `None` when git is missing or too slow, `dir`
+/// is not in a repository, or HEAD has no commit yet.
+pub fn lines_added(dir: &Path) -> Option<u64> {
+    let deadline = Instant::now() + GIT_TIMEOUT;
+    let tracked = run_git(
+        dir,
+        &[
+            "diff",
+            "HEAD",
+            "--numstat",
+            "--no-ext-diff",
+            "--no-textconv",
+        ],
+        deadline,
+    )?;
+    // `:/` lists the whole repository, not only `dir`, as the diff does; paths stay relative
+    // to `dir`.
+    let untracked = run_git(
+        dir,
+        &[
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            ":/",
+        ],
+        deadline,
+    )
+    .unwrap_or_default();
+    Some(numstat_added(&tracked) + untracked_lines(dir, &untracked))
+}
+
+/// The stdout of `git <args>` run in `dir`, or `None` when it fails or is still running at
+/// `deadline` (it is then killed).
+fn run_git(dir: &Path, args: &[&str], deadline: Instant) -> Option<String> {
+    let mut command = Command::new("git");
+    command
+        // Hovering a tab must not run commands a repository's config names (`core.fsmonitor`).
+        // Do not take the index lock to refresh stat info: a git command the user runs at the
+        // same time must not fail because of us.
+        .args(["-c", "core.fsmonitor=false", "--no-optional-locks"])
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    for name in REPO_ENV {
+        command.env_remove(name);
+    }
+    let mut child = command.spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    // Read while waiting, so a large output cannot fill the pipe and stall git.
+    let reader = thread::spawn(move || {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).map(|_| output)
+    });
+    let Some(status) = wait_until(&mut child, deadline) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    };
+    let output = reader.join().ok()?.ok()?;
+    status
+        .success()
+        .then(|| String::from_utf8_lossy(&output).into_owned())
+}
+
+/// The child's exit status, or `None` when it has not exited by `deadline`.
+fn wait_until(child: &mut Child, deadline: Instant) -> Option<ExitStatus> {
+    loop {
+        if let Some(status) = child.try_wait().ok()? {
+            return Some(status);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// Lines in the untracked files of `git ls-files -z` output, relative to `dir`. Like
+/// `--numstat`, binary files count as nothing; so do files too large to read.
+fn untracked_lines(dir: &Path, listing: &str) -> u64 {
+    listing
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .take(MAX_UNTRACKED_FILES)
+        .map(|path| file_lines(&dir.join(path)))
+        .sum()
+}
+
+fn file_lines(path: &Path) -> u64 {
+    let readable = fs::symlink_metadata(path)
+        .is_ok_and(|meta| meta.is_file() && meta.len() <= MAX_UNTRACKED_FILE_BYTES);
+    if !readable {
+        return 0;
+    }
+    fs::read(path).map_or(0, |content| count_lines(&content))
+}
+
+/// Lines in a text file, counting a last line without a newline; `0` for binary content (a NUL
+/// byte, as git decides).
+fn count_lines(content: &[u8]) -> u64 {
+    if content.contains(&0) {
+        return 0;
+    }
+    let newlines = content.iter().filter(|&&byte| byte == b'\n').count() as u64;
+    newlines + u64::from(content.last().is_some_and(|&byte| byte != b'\n'))
+}
+
+/// Sum of the added-lines column of `git diff --numstat` output (`<added>\t<removed>\t<path>`).
+/// Binary files show `-` and count as nothing.
+fn numstat_added(numstat: &str) -> u64 {
+    numstat
+        .lines()
+        .filter_map(|line| line.split('\t').next()?.parse::<u64>().ok())
+        .sum()
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    /// A fresh empty folder under the system temp dir, removed on drop.
+    pub struct TempDir(pub PathBuf);
+
+    impl TempDir {
+        pub fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let name = format!(
+                "workspace-model-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            );
+            let path = std::env::temp_dir().join(name);
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write(path: &Path, content: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn parses_branch_and_detached_heads() {
+        assert_eq!(
+            GitHead::parse("ref: refs/heads/main\n"),
+            Some(GitHead::Branch("main".into()))
+        );
+        assert_eq!(
+            GitHead::parse("ref: refs/heads/feature/sidebar"),
+            Some(GitHead::Branch("feature/sidebar".into()))
+        );
+        assert_eq!(
+            GitHead::parse("d608fd1c0ffee0000000000000000000000000ab\n"),
+            Some(GitHead::Detached("d608fd1".into()))
+        );
+        assert_eq!(GitHead::parse("garbage"), None);
+        assert_eq!(GitHead::parse(""), None);
+    }
+
+    #[test]
+    fn reads_head_from_a_subfolder() {
+        let repo = TempDir::new();
+        write(&repo.0.join(".git/HEAD"), "ref: refs/heads/m2-sidebar\n");
+        let nested = repo.0.join("crates/app/src");
+        fs::create_dir_all(&nested).unwrap();
+
+        assert_eq!(
+            GitHead::read(&nested),
+            Some(GitHead::Branch("m2-sidebar".into()))
+        );
+    }
+
+    #[test]
+    fn follows_a_worktree_gitdir_file() {
+        let root = TempDir::new();
+        write(
+            &root.0.join("main/.git/worktrees/wt/HEAD"),
+            "ref: refs/heads/topic\n",
+        );
+        write(
+            &root.0.join("wt/.git"),
+            "gitdir: ../main/.git/worktrees/wt\n",
+        );
+
+        assert_eq!(
+            GitHead::read(&root.0.join("wt")),
+            Some(GitHead::Branch("topic".into()))
+        );
+    }
+
+    #[test]
+    fn sums_added_lines_skipping_binary_files() {
+        let numstat = "12\t3\tcrates/app/src/sidebar.rs\n-\t-\tdocs/shot.png\n0\t5\tREADME.md\n1\t0\tnew file.txt\n";
+        assert_eq!(numstat_added(numstat), 13);
+        assert_eq!(numstat_added(""), 0);
+    }
+
+    #[test]
+    fn counts_lines_of_text_files_only() {
+        assert_eq!(count_lines(b""), 0);
+        assert_eq!(count_lines(b"one\ntwo\n"), 2);
+        assert_eq!(count_lines(b"one\ntwo"), 2);
+        assert_eq!(count_lines(b"\n"), 1);
+        assert_eq!(count_lines(b"text\0with a nul\n"), 0);
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> bool {
+        Command::new("git")
+            .args(["-c", "user.name=test", "-c", "user.email=test@example.com"])
+            .args([
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+            ])
+            .args(args)
+            .current_dir(dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    #[test]
+    fn counts_tracked_changes_and_untracked_files() {
+        let repo = TempDir::new();
+        if !git(&repo.0, &["init", "-q"]) {
+            eprintln!("git not available, skipping");
+            return;
+        }
+        write(&repo.0.join("tracked.txt"), "one\n");
+        write(&repo.0.join(".gitignore"), "ignored.txt\n");
+        assert!(git(&repo.0, &["add", "."]));
+        assert!(git(&repo.0, &["commit", "-q", "-m", "initial"]));
+        let nested = repo.0.join("src");
+        fs::create_dir_all(&nested).unwrap();
+        assert_eq!(lines_added(&nested), Some(0));
+
+        write(&repo.0.join("tracked.txt"), "one\ntwo\nthree\n");
+        write(&repo.0.join("new.txt"), "a\nb\nc");
+        write(&nested.join("new.rs"), "fn main() {}\n");
+        write(&repo.0.join("ignored.txt"), "not counted\n");
+        fs::write(repo.0.join("blob.bin"), b"\0\x01\n").unwrap();
+
+        // 2 added to tracked.txt, 3 in new.txt, 1 in src/new.rs; from any folder of the repo.
+        assert_eq!(lines_added(&nested), Some(6));
+        assert_eq!(lines_added(&repo.0), Some(6));
+    }
+
+    #[test]
+    fn no_diff_stat_outside_a_repository() {
+        let folder = TempDir::new();
+        assert_eq!(lines_added(&folder.0), None);
+    }
+
+    #[test]
+    fn no_head_outside_a_repository() {
+        let folder = TempDir::new();
+        assert_eq!(GitHead::read(&folder.0), None);
+    }
+}

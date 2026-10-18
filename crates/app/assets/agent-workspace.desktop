@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Agent Workspace
+Comment=Terminal workspace for Claude Code, Copilot CLI and shell sessions
+Exec=agent-workspace
+Icon=agent-workspace
+Terminal=false
+Categories=Development;TerminalEmulator;
+StartupWMClass=agent-workspace

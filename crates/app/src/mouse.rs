@@ -4,6 +4,22 @@
 use gpui_kit::{Modifiers, MouseButton};
 use term_core::alacritty_terminal::term::TermMode;
 
+/// Added to the button code when the event is motion rather than a press or release.
+const MOTION_FLAG: u8 = 32;
+const SHIFT_FLAG: u8 = 4;
+const ALT_FLAG: u8 = 8;
+const CONTROL_FLAG: u8 = 16;
+/// The low bits of a button code that select the button.
+const BUTTON_BITS: u8 = 0b11;
+/// Legacy button value for "some button was released".
+const LEGACY_RELEASE: u8 = 3;
+/// Legacy values are offset so they stay printable.
+const LEGACY_OFFSET: usize = 32;
+/// First value UTF-8 mouse mode encodes as more than one byte.
+const UTF8_TWO_BYTE_START: usize = 0x80;
+/// UTF-8 mouse mode only allows values encoded in at most two bytes.
+const UTF8_MOUSE_LIMIT: usize = 0x800;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReportButton {
     Left,
@@ -53,7 +69,7 @@ pub struct Cell {
 
 /// Whether pointer events go to the program instead of driving selection and scrollback.
 /// Holding Shift keeps local selection available, as in other terminals.
-pub fn reporting(mode: TermMode, modifiers: &Modifiers) -> bool {
+pub fn is_reporting_to_program(mode: TermMode, modifiers: &Modifiers) -> bool {
     mode.intersects(TermMode::MOUSE_MODE) && !modifiers.shift
 }
 
@@ -66,39 +82,68 @@ pub fn report(
     modifiers: &Modifiers,
     mode: TermMode,
 ) -> Option<Vec<u8>> {
-    let wanted = match (action, button) {
+    if !is_wanted(button, action, mode) {
+        return None;
+    }
+    let code = button_code(button, action, modifiers);
+    if mode.contains(TermMode::SGR_MOUSE) {
+        return Some(encode_sgr(code, action, cell));
+    }
+    encode_legacy(
+        code,
+        button,
+        action,
+        cell,
+        mode.contains(TermMode::UTF8_MOUSE),
+    )
+}
+
+fn is_wanted(button: ReportButton, action: MouseAction, mode: TermMode) -> bool {
+    match (action, button) {
         (MouseAction::Motion, ReportButton::None) => mode.contains(TermMode::MOUSE_MOTION),
         (MouseAction::Motion, _) => mode.intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION),
         _ => mode.intersects(TermMode::MOUSE_MODE),
+    }
+}
+
+fn button_code(button: ReportButton, action: MouseAction, modifiers: &Modifiers) -> u8 {
+    let motion = if action == MouseAction::Motion {
+        MOTION_FLAG
+    } else {
+        0
     };
-    if !wanted {
-        return None;
-    }
+    button.code()
+        + motion
+        + SHIFT_FLAG * modifiers.shift as u8
+        + ALT_FLAG * modifiers.alt as u8
+        + CONTROL_FLAG * modifiers.control as u8
+}
 
-    let mut code = button.code();
-    if action == MouseAction::Motion {
-        code += 32;
-    }
-    code += 4 * modifiers.shift as u8 + 8 * modifiers.alt as u8 + 16 * modifiers.control as u8;
+fn encode_sgr(code: u8, action: MouseAction, cell: Cell) -> Vec<u8> {
+    let suffix = if action == MouseAction::Release {
+        'm'
+    } else {
+        'M'
+    };
+    let (column, line) = (cell.column + 1, cell.line + 1);
+    format!("\x1b[<{code};{column};{line}{suffix}").into_bytes()
+}
 
-    if mode.contains(TermMode::SGR_MOUSE) {
-        let suffix = if action == MouseAction::Release {
-            'm'
-        } else {
-            'M'
-        };
-        let (column, line) = (cell.column + 1, cell.line + 1);
-        return Some(format!("\x1b[<{code};{column};{line}{suffix}").into_bytes());
-    }
-
+fn encode_legacy(
+    code: u8,
+    button: ReportButton,
+    action: MouseAction,
+    cell: Cell,
+    utf8: bool,
+) -> Option<Vec<u8>> {
+    let mut code = code;
     // The legacy encoding cannot say which button was released.
     if action == MouseAction::Release {
         if matches!(button, ReportButton::WheelUp | ReportButton::WheelDown) {
             return None;
         }
-        code = (code & !0b11) | 3;
+        code = (code & !BUTTON_BITS) | LEGACY_RELEASE;
     }
-    let utf8 = mode.contains(TermMode::UTF8_MOUSE);
     let mut bytes = b"\x1b[M".to_vec();
     push_legacy_value(&mut bytes, code as usize, false)?;
     push_legacy_value(&mut bytes, cell.column + 1, utf8)?;
@@ -108,9 +153,9 @@ pub fn report(
 
 /// Legacy values are offset by 32; plain bytes stop at 255, UTF-8 (mode 1005) at 2047.
 fn push_legacy_value(bytes: &mut Vec<u8>, value: usize, utf8: bool) -> Option<()> {
-    let value = value + 32;
-    if utf8 && value >= 0x80 {
-        let ch = char::from_u32(u32::try_from(value).ok()?).filter(|_| value < 0x800)?;
+    let value = value + LEGACY_OFFSET;
+    if utf8 && value >= UTF8_TWO_BYTE_START {
+        let ch = char::from_u32(u32::try_from(value).ok()?).filter(|_| value < UTF8_MOUSE_LIMIT)?;
         bytes.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
     } else {
         bytes.push(u8::try_from(value).ok()?);
@@ -129,7 +174,7 @@ pub enum WheelAction {
 /// What a wheel movement of `lines` (positive = up) over `cell` does.
 pub fn wheel_action(lines: i32, cell: Cell, modifiers: &Modifiers, mode: TermMode) -> WheelAction {
     let count = lines.unsigned_abs() as usize;
-    if reporting(mode, modifiers) {
+    if is_reporting_to_program(mode, modifiers) {
         let button = if lines > 0 {
             ReportButton::WheelUp
         } else {

@@ -1,19 +1,29 @@
+// No console window behind the app on Windows release builds.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+mod assets;
+mod hooks;
 mod keys;
+mod launcher;
 mod mouse;
+mod scrollbar;
+mod sidebar;
+mod tab_menu;
 mod terminal_element;
 mod terminal_view;
+mod window_bounds;
 mod workspace_view;
 
 use std::path::PathBuf;
 use std::process;
+use std::rc::Rc;
 
+use futures::channel::mpsc;
 use gpui_kit::component::{Theme, ThemeMode, TitleBar};
-use gpui_kit::{
-    AppContext, Bounds, Focusable, WindowBounds, WindowDecorations, WindowOptions, px, size,
-};
+use gpui_kit::{AppContext, WindowDecorations, WindowOptions};
 use term_core::LaunchSpec;
 
-use crate::terminal_view::TerminalView;
+use crate::hooks::ClaudeHooks;
 use crate::workspace_view::WorkspaceView;
 
 /// Usage: `agent-workspace [shell|claude|copilot] [project-dir]`
@@ -61,37 +71,62 @@ fn main() {
         process::exit(2);
     }
 
+    let launchers: Rc<[launcher::Launcher]> = launcher::discover().into();
+    let (hook_sender, hook_messages) = mpsc::unbounded();
+    let hooks = match ClaudeHooks::start(move |message| {
+        let _ = hook_sender.unbounded_send(message);
+    }) {
+        Ok(hooks) => Some(Rc::new(hooks)),
+        Err(err) => {
+            eprintln!("agent-workspace: Claude Code status disabled: {err}");
+            None
+        }
+    };
+
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
             terminal_view::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);
-            cx.on_window_closed(|cx, _| {
+            let quit_hooks = hooks.clone();
+            cx.on_window_closed(move |cx, _| {
                 if cx.windows().is_empty() {
+                    if let Some(hooks) = &quit_hooks {
+                        hooks.remove_settings();
+                    }
                     cx.quit();
                 }
             })
             .detach();
 
-            let bounds = Bounds::centered(None, size(px(1000.), px(650.)), cx);
             // The app draws its own title bar and frame: GNOME on Wayland offers no server-side
             // decorations, and a drawn title bar looks the same on every platform.
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_bounds: Some(window_bounds::initial(cx)),
                 window_decorations: Some(WindowDecorations::Client),
+                // Must match the .desktop file name, or GNOME shows a generic icon.
+                app_id: Some("agent-workspace".into()),
                 ..TitleBar::window_options()
             };
             gpui_kit::open_window(options, cx, move |window, cx| {
-                let terminal = cx.new(|cx| {
-                    TerminalView::new(&spec, cx).unwrap_or_else(|err| {
-                        let program = spec.program.as_deref().unwrap_or("shell");
+                let workspace =
+                    cx.new(|cx| WorkspaceView::new(launchers, hooks, hook_messages, window, cx));
+                workspace.update(cx, |workspace, cx| {
+                    if let Err(err) = workspace.open_tab(spec.clone(), window, cx) {
+                        let program = launcher::launch_name(&spec);
                         eprintln!("agent-workspace: failed to start {program}: {err}");
                         process::exit(1)
-                    })
+                    }
                 });
-                window.focus(&terminal.focus_handle(cx), cx);
-                cx.new(|cx| WorkspaceView::new(terminal, cx))
+                // Closed by the window manager (its close button, Alt+F4) or, on Windows and
+                // macOS, by the title bar's close button. Closing the last tab and the Linux
+                // title bar button go through `window_bounds::close`.
+                window.on_window_should_close(cx, |window, _| {
+                    window_bounds::save(window.window_bounds());
+                    true
+                });
+                workspace
             })
             .expect("failed to open window");
             cx.activate(true);

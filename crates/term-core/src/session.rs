@@ -1,22 +1,28 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::thread::JoinHandle;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg, State};
-use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Column, Line, Point, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{self, Term};
+use alacritty_terminal::term::{self, Term, TermMode};
 use alacritty_terminal::tty;
 use parking_lot::MutexGuard;
 
 use crate::launch::{LaunchSpec, SessionKind};
 use crate::palette::Palette;
+
+/// How long a closed session's child has to exit after SIGHUP before it is killed.
+const EXIT_GRACE: Duration = Duration::from_secs(2);
 
 /// Notifications delivered from the session's I/O thread.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -159,6 +165,8 @@ impl EventListener for SessionListener {
 pub struct Session {
     id: u64,
     kind: SessionKind,
+    /// Process id of the program started in the pty, when the platform reports one.
+    child_pid: Option<u32>,
     term: Arc<FairMutex<Term<SessionListener>>>,
     shared: Arc<Shared>,
     io_thread: Option<JoinHandle<(EventLoop<tty::Pty, SessionListener>, State)>>,
@@ -200,6 +208,7 @@ impl Session {
             ..Default::default()
         };
         let pty = tty::new(&options, size.window_size(), id)?;
+        let child_pid = child_pid(&pty);
         let event_loop = EventLoop::new(term.clone(), listener, pty, options.drain_on_exit, false)?;
         let _ = shared.sender.set(event_loop.channel());
         let io_thread = event_loop.spawn();
@@ -207,6 +216,7 @@ impl Session {
         Ok(Self {
             id,
             kind: spec.kind,
+            child_pid,
             term,
             shared,
             io_thread: Some(io_thread),
@@ -221,6 +231,16 @@ impl Session {
         self.kind
     }
 
+    /// The child's current working directory, which follows `cd` in a shell. `None` when it
+    /// cannot be read: the child exited, or the platform is not supported yet (only Linux).
+    pub fn current_dir(&self) -> Option<PathBuf> {
+        let pid = self.child_pid?;
+        if cfg!(target_os = "linux") {
+            return std::fs::read_link(format!("/proc/{pid}/cwd")).ok();
+        }
+        None
+    }
+
     pub fn palette(&self) -> &Palette {
         &self.shared.palette
     }
@@ -229,6 +249,60 @@ impl Session {
     /// thread blocks on it while parsing output.
     pub fn lock_term(&self) -> MutexGuard<'_, Term<SessionListener>> {
         self.term.lock()
+    }
+
+    /// The terminal modes the program has set.
+    pub fn mode(&self) -> TermMode {
+        *self.term.lock().mode()
+    }
+
+    /// Move the visible screen through the scrollback history.
+    pub fn scroll_display(&self, scroll: Scroll) {
+        self.term.lock().scroll_display(scroll);
+    }
+
+    /// Scroll the visible screen to `display_offset` lines back, clamped to the history.
+    pub fn scroll_to(&self, display_offset: usize) {
+        let mut term = self.term.lock();
+        let delta = display_offset as i32 - term.grid().display_offset() as i32;
+        if delta != 0 {
+            term.scroll_display(Scroll::Delta(delta));
+        }
+    }
+
+    /// How many lines the visible screen is scrolled back into history.
+    pub fn display_offset(&self) -> usize {
+        self.term.lock().grid().display_offset()
+    }
+
+    /// Replace any selection with a new one anchored at `point`.
+    pub fn start_selection(&self, selection_type: SelectionType, point: Point, side: Side) {
+        self.term.lock().selection = Some(Selection::new(selection_type, point, side));
+    }
+
+    /// Extend the current selection to `point`, if there is one.
+    pub fn update_selection(&self, point: Point, side: Side) {
+        if let Some(selection) = self.term.lock().selection.as_mut() {
+            selection.update(point, side);
+        }
+    }
+
+    /// End a selection gesture, dropping the selection if it covers nothing. Returns the
+    /// selected text.
+    pub fn finish_selection(&self) -> Option<String> {
+        let mut term = self.term.lock();
+        if term.selection.as_ref().is_some_and(Selection::is_empty) {
+            term.selection = None;
+        }
+        term.selection_to_string()
+    }
+
+    pub fn selection_text(&self) -> Option<String> {
+        self.term.lock().selection_to_string()
+    }
+
+    pub fn clear_selection(&self) {
+        self.term.lock().selection = None;
     }
 
     /// Re-arm wakeup notifications. Call before reading the terminal so output arriving
@@ -292,10 +366,53 @@ impl Drop for Session {
         if let Some(sender) = self.shared.sender.get() {
             let _ = sender.send(Msg::Shutdown);
         }
-        if let Some(io_thread) = self.io_thread.take() {
-            let _ = io_thread.join();
-        }
+        let Some(io_thread) = self.io_thread.take() else {
+            return;
+        };
+        // Dropping the pty sends SIGHUP and then waits for the child with no time limit, so reap
+        // it off the caller's (UI) thread, and kill a child that ignores the hangup.
+        let (reaped_tx, reaped_rx) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            drop(io_thread.join());
+            drop(reaped_tx);
+        });
+        let child_pid = self.child_pid;
+        thread::spawn(move || {
+            if reaped_rx.recv_timeout(EXIT_GRACE) == Err(RecvTimeoutError::Timeout) {
+                kill_child(child_pid);
+            }
+        });
     }
+}
+
+#[cfg(unix)]
+fn kill_child(pid: Option<u32>) {
+    let Some(pid) = pid else {
+        return;
+    };
+    log::warn!("child {pid} ignored SIGHUP, killing its process group");
+    // SAFETY: `kill` has no memory-safety preconditions. The child is a session leader
+    // (alacritty `setsid`s it), so its pid is also its process group id; signalling the group
+    // also ends the tools it started there. The reaper thread may reap the child between the
+    // grace timeout and this call. The group id cannot be reused while any member lives, so
+    // only once the whole group is gone could a new process group take that id, a narrow
+    // residual race (a pidfd taken at spawn would close it).
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGKILL);
+    }
+}
+
+#[cfg(windows)]
+fn kill_child(_pid: Option<u32>) {}
+
+#[cfg(unix)]
+fn child_pid(pty: &tty::Pty) -> Option<u32> {
+    Some(pty.child().id())
+}
+
+#[cfg(windows)]
+fn child_pid(pty: &tty::Pty) -> Option<u32> {
+    pty.child_watcher().pid().map(|pid| pid.get())
 }
 
 /// Environment for every child: advertise a capable terminal without mutating our own

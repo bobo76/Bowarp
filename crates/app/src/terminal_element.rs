@@ -4,18 +4,22 @@
 //! shaping and painting happen afterwards so the I/O thread is never blocked on rendering.
 
 use core::panic::Location;
+use std::sync::Arc;
 
 use gpui_kit::{
-    App, BorderStyle, Bounds, Element, ElementId, ElementInputHandler, Entity, FocusHandle, Font,
-    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId,
+    App, BorderStyle, Bounds, CursorStyle, DispatchPhase, Element, ElementId, ElementInputHandler,
+    Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior,
+    Hsla, InspectorElementId, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     PaintQuad, Pixels, Point, ShapedLine, StrikethroughStyle, Style, TextAlign, TextRun,
-    UnderlineStyle, Window, fill, font, outline, point, px, relative, size,
+    UnderlineStyle, Window, WindowTextSystem, fill, font, outline, point, px, relative, size,
 };
+use term_core::alacritty_terminal::grid::Dimensions;
 use term_core::alacritty_terminal::term::cell::Flags;
 use term_core::alacritty_terminal::term::{RenderableContent, TermMode};
 use term_core::alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Rgb};
-use term_core::{Palette, TermDimensions, dim};
+use term_core::{Palette, Session, TermDimensions, dim};
 
+use crate::scrollbar::{ScrollMetrics, ScrollbarLayout, ScrollbarState};
 use crate::terminal_view::{GridGeometry, TerminalView};
 
 #[cfg(target_os = "windows")]
@@ -24,6 +28,11 @@ const FONT_FAMILY: &str = "Cascadia Mono";
 const FONT_FAMILY: &str = "DejaVu Sans Mono";
 const FONT_SIZE: f32 = 14.0;
 const LINE_HEIGHT_FACTOR: f32 = 1.2;
+/// Space around the grid. The scroll bar sits in the right padding.
+const PADDING_X: f32 = 8.0;
+const PADDING_Y: f32 = 4.0;
+const SCROLLBAR_THUMB_WIDTH: f32 = 4.0;
+const SCROLLBAR_ACTIVE_THUMB_WIDTH: f32 = 6.0;
 const SELECTION_BACKGROUND: Rgb = Rgb {
     r: 0x26,
     g: 0x4f,
@@ -67,6 +76,35 @@ struct BackgroundRect {
     color: Rgb,
 }
 
+/// Cell backgrounds, with adjacent same-colored cells on a line merged into one rect.
+#[derive(Default)]
+struct BackgroundRects(Vec<BackgroundRect>);
+
+impl BackgroundRects {
+    /// Extend the last rect when this cell continues it, or start a new rect.
+    fn push(&mut self, line: usize, column: usize, cells: usize, color: Rgb) {
+        match self.0.last_mut() {
+            Some(rect)
+                if rect.line == line
+                    && rect.column + rect.cells == column
+                    && rect.color == color =>
+            {
+                rect.cells += cells;
+            }
+            _ => self.0.push(BackgroundRect {
+                line,
+                column,
+                cells,
+                color,
+            }),
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &BackgroundRect> {
+        self.0.iter()
+    }
+}
+
 struct CursorCell {
     line: usize,
     column: usize,
@@ -79,7 +117,7 @@ struct GridSnapshot {
     background: Rgb,
     cursor_color: Rgb,
     batches: Vec<TextBatch>,
-    backgrounds: Vec<BackgroundRect>,
+    backgrounds: BackgroundRects,
     cursor: Option<CursorCell>,
 }
 
@@ -90,6 +128,14 @@ pub struct PrepaintState {
     cursor: Option<PaintQuad>,
     marked_text: Option<(PaintQuad, Point<Pixels>, ShapedLine)>,
     geometry: GridGeometry,
+    scrollbar: Option<PreparedScrollbar>,
+}
+
+struct PreparedScrollbar {
+    layout: ScrollbarLayout,
+    hitbox: Hitbox,
+    /// Track and thumb, or nothing while the bar is hidden.
+    quads: Vec<PaintQuad>,
 }
 
 impl IntoElement for TerminalElement {
@@ -134,22 +180,11 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        let base_font = font(FONT_FAMILY);
-        let font_size = px(FONT_SIZE);
-        let text_system = window.text_system().clone();
-        let font_id = text_system.resolve_font(&base_font);
-        let cell_width = text_system
-            .advance(font_id, font_size, 'm')
-            .map(|advance| advance.width)
-            .unwrap_or(px(FONT_SIZE * 0.6));
+        let shaper = TextShaper::new(window);
+        let cell_width = shaper.cell_width();
         let line_height = px((FONT_SIZE * LINE_HEIGHT_FACTOR).round());
-
-        let columns = (f32::from(bounds.size.width) / f32::from(cell_width))
-            .floor()
-            .max(2.0) as u16;
-        let screen_lines = (f32::from(bounds.size.height) / f32::from(line_height))
-            .floor()
-            .max(1.0) as u16;
+        let grid_bounds = inset(bounds, px(PADDING_X), px(PADDING_Y));
+        let (columns, screen_lines) = fit_grid(grid_bounds, cell_width, line_height);
         let focused = self.focus_handle.is_focused(window);
 
         let view = self.view.read(cx);
@@ -160,25 +195,12 @@ impl Element for TerminalElement {
             cell_width: f32::from(cell_width) as u16,
             cell_height: f32::from(line_height) as u16,
         });
-        // Re-arm before reading so output arriving mid-frame schedules another frame.
-        session.ack_wakeup();
-        let snapshot = {
-            let term = session.lock_term();
-            snapshot(term.renderable_content(), session.palette(), focused)
-        };
-        let marked_text = view.marked_text.clone();
-
-        let cell_origin = |line: usize, column: usize| {
-            point(
-                bounds.origin.x + cell_width * column as f32,
-                bounds.origin.y + line_height * line as f32,
-            )
-        };
-        let cell_bounds = |line: usize, column: usize, cells: usize| {
-            Bounds::new(
-                cell_origin(line, column),
-                size(cell_width * cells as f32, line_height),
-            )
+        let (snapshot, scroll_metrics) = take_snapshot(session, focused);
+        let palette = session.palette();
+        let grid = CellGrid {
+            origin: grid_bounds.origin,
+            cell_width,
+            line_height,
         };
 
         let backgrounds = snapshot
@@ -186,79 +208,43 @@ impl Element for TerminalElement {
             .iter()
             .map(|rect| {
                 fill(
-                    cell_bounds(rect.line, rect.column, rect.cells),
+                    grid.bounds(rect.line, rect.column, rect.cells),
                     to_hsla(rect.color),
                 )
             })
             .collect();
-
-        let lines = snapshot
-            .batches
-            .into_iter()
-            .map(|batch| {
-                let run = text_run(&base_font, batch.text.len(), batch.style);
-                let shaped = text_system.shape_line(batch.text.into(), font_size, &[run], None);
-                (cell_origin(batch.line, batch.column), shaped)
-            })
-            .collect();
-
-        let cursor_color = to_hsla(snapshot.cursor_color);
-        let cursor = snapshot.cursor.as_ref().and_then(|cursor| {
-            let cell = cell_bounds(cursor.line, cursor.column, cursor.cells);
-            let thickness = px(2.);
-            match cursor.shape {
-                // Focused block cursors are drawn by inverting the cell colors in `snapshot`.
-                CursorShape::Block | CursorShape::Hidden => None,
-                CursorShape::HollowBlock => Some(outline(cell, cursor_color, BorderStyle::Solid)),
-                CursorShape::Beam => Some(fill(
-                    Bounds::new(cell.origin, size(thickness, line_height)),
-                    cursor_color,
-                )),
-                CursorShape::Underline => Some(fill(
-                    Bounds::new(
-                        point(cell.origin.x, cell.bottom() - thickness),
-                        size(cell.size.width, thickness),
-                    ),
-                    cursor_color,
-                )),
-            }
+        let (cursor, cursor_origin) = prepare_cursor(
+            snapshot.cursor.as_ref(),
+            grid,
+            to_hsla(snapshot.cursor_color),
+        );
+        let marked_text = view.marked_text.clone().map(|text| {
+            let shaped = shaper.shape(text, marked_text_style(palette.foreground));
+            marked_text_overlay(shaped, cursor_origin, line_height, snapshot.background)
         });
-        let cursor_origin = snapshot.cursor.as_ref().map_or(bounds.origin, |cursor| {
-            cell_origin(cursor.line, cursor.column)
-        });
-
-        let marked_text = marked_text.map(|text| {
-            let style = CellStyle {
-                foreground: session.palette().foreground,
-                bold: false,
-                italic: false,
-                underline: true,
-                undercurl: false,
-                strikeout: false,
-            };
-            let run = text_run(&base_font, text.len(), style);
-            let shaped = text_system.shape_line(text.into(), font_size, &[run], None);
-            let backdrop = fill(
-                Bounds::new(cursor_origin, size(shaped.width, line_height)),
-                to_hsla(snapshot.background),
-            );
-            (backdrop, cursor_origin, shaped)
-        });
+        let scrollbar = prepare_scrollbar(
+            bounds,
+            scroll_metrics,
+            &view.scrollbar,
+            to_hsla(palette.foreground),
+            window,
+        );
 
         PrepaintState {
             background: to_hsla(snapshot.background),
             backgrounds,
-            lines,
+            lines: shape_lines(snapshot.batches, grid, &shaper),
             cursor,
             marked_text,
             geometry: GridGeometry {
-                origin: bounds.origin,
+                origin: grid.origin,
                 cell_width,
                 line_height,
                 columns: columns as usize,
                 lines: screen_lines as usize,
                 cursor_origin,
             },
+            scrollbar,
         }
     }
 
@@ -298,10 +284,230 @@ impl Element for TerminalElement {
             }
         }
 
+        let scrollbar = prepaint.scrollbar.take();
+        if let Some(scrollbar) = &scrollbar {
+            for quad in &scrollbar.quads {
+                window.paint_quad(quad.clone());
+            }
+            window.set_cursor_style(CursorStyle::Arrow, &scrollbar.hitbox);
+            self.register_scrollbar_listeners(scrollbar.layout, window);
+        }
+
         let geometry = prepaint.geometry;
-        self.view
-            .update(cx, |view, _| view.geometry = Some(geometry));
+        let scrollable = scrollbar.is_some();
+        self.view.update(cx, |view, cx| {
+            view.geometry = Some(geometry);
+            view.set_scrollable(scrollable, cx);
+        });
     }
+}
+
+impl TerminalElement {
+    /// Window-level listeners so a thumb drag keeps working when the pointer leaves the
+    /// terminal. They run before the terminal's own handlers, which they stop when they act.
+    fn register_scrollbar_listeners(&self, layout: ScrollbarLayout, window: &mut Window) {
+        let view = self.view.clone();
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+            if phase == DispatchPhase::Bubble
+                && view.update(cx, |view, cx| {
+                    view.scrollbar_mouse_down(event, layout, window, cx)
+                })
+            {
+                cx.stop_propagation();
+            }
+        });
+        let view = self.view.clone();
+        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+            if phase == DispatchPhase::Bubble
+                && view.update(cx, |view, cx| view.scrollbar_mouse_move(event, layout, cx))
+            {
+                cx.stop_propagation();
+            }
+        });
+        let view = self.view.clone();
+        window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
+            if phase == DispatchPhase::Bubble
+                && view.update(cx, |view, cx| view.scrollbar_mouse_up(cx))
+            {
+                cx.stop_propagation();
+            }
+        });
+    }
+}
+
+/// Shapes runs of terminal text in the terminal font.
+struct TextShaper {
+    text_system: Arc<WindowTextSystem>,
+    font: Font,
+    font_size: Pixels,
+}
+
+impl TextShaper {
+    fn new(window: &Window) -> Self {
+        Self {
+            text_system: window.text_system().clone(),
+            font: font(FONT_FAMILY),
+            font_size: px(FONT_SIZE),
+        }
+    }
+
+    /// The width of one cell: the advance of a glyph in the monospace font.
+    fn cell_width(&self) -> Pixels {
+        let font_id = self.text_system.resolve_font(&self.font);
+        self.text_system
+            .advance(font_id, self.font_size, 'm')
+            .map(|advance| advance.width)
+            .unwrap_or(px(FONT_SIZE * 0.6))
+    }
+
+    fn shape(&self, text: String, style: CellStyle) -> ShapedLine {
+        let run = text_run(&self.font, text.len(), style);
+        self.text_system
+            .shape_line(text.into(), self.font_size, &[run], None)
+    }
+}
+
+/// Maps grid cells to window positions.
+#[derive(Clone, Copy)]
+struct CellGrid {
+    origin: Point<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+}
+
+impl CellGrid {
+    fn origin(&self, line: usize, column: usize) -> Point<Pixels> {
+        point(
+            self.origin.x + self.cell_width * column as f32,
+            self.origin.y + self.line_height * line as f32,
+        )
+    }
+
+    fn bounds(&self, line: usize, column: usize, cells: usize) -> Bounds<Pixels> {
+        Bounds::new(
+            self.origin(line, column),
+            size(self.cell_width * cells as f32, self.line_height),
+        )
+    }
+}
+
+/// Columns and lines that fit in `bounds`, at least 2 columns and 1 line.
+fn fit_grid(bounds: Bounds<Pixels>, cell_width: Pixels, line_height: Pixels) -> (u16, u16) {
+    let columns = (f32::from(bounds.size.width) / f32::from(cell_width))
+        .floor()
+        .max(2.0) as u16;
+    let lines = (f32::from(bounds.size.height) / f32::from(line_height))
+        .floor()
+        .max(1.0) as u16;
+    (columns, lines)
+}
+
+/// Copy the visible grid and its scroll position, holding the terminal lock only for the copy.
+fn take_snapshot(session: &Session, focused: bool) -> (GridSnapshot, ScrollMetrics) {
+    // Re-arm before reading so output arriving mid-frame schedules another frame.
+    session.ack_wakeup();
+    let term = session.lock_term();
+    let grid = term.grid();
+    let scroll_metrics = ScrollMetrics {
+        history: grid.history_size(),
+        display_offset: grid.display_offset(),
+        screen_lines: grid.screen_lines(),
+    };
+    let snapshot = snapshot(term.renderable_content(), session.palette(), focused);
+    (snapshot, scroll_metrics)
+}
+
+fn shape_lines(
+    batches: Vec<TextBatch>,
+    grid: CellGrid,
+    shaper: &TextShaper,
+) -> Vec<(Point<Pixels>, ShapedLine)> {
+    batches
+        .into_iter()
+        .map(|batch| {
+            let origin = grid.origin(batch.line, batch.column);
+            (origin, shaper.shape(batch.text, batch.style))
+        })
+        .collect()
+}
+
+/// The cursor quad, and the top-left of the cursor cell (the grid origin without a cursor).
+fn prepare_cursor(
+    cursor: Option<&CursorCell>,
+    grid: CellGrid,
+    color: Hsla,
+) -> (Option<PaintQuad>, Point<Pixels>) {
+    let Some(cursor) = cursor else {
+        return (None, grid.origin);
+    };
+    let cell = grid.bounds(cursor.line, cursor.column, cursor.cells);
+    (
+        cursor_quad(cursor.shape, cell, color),
+        grid.origin(cursor.line, cursor.column),
+    )
+}
+
+/// The scroll bar in the right padding of `element_bounds`, when there is history to scroll.
+fn prepare_scrollbar(
+    element_bounds: Bounds<Pixels>,
+    metrics: ScrollMetrics,
+    state: &ScrollbarState,
+    color: Hsla,
+    window: &mut Window,
+) -> Option<PreparedScrollbar> {
+    if metrics.history == 0 {
+        return None;
+    }
+    let layout = ScrollbarLayout {
+        track: Bounds::new(
+            point(element_bounds.right() - px(PADDING_X), element_bounds.top()),
+            size(px(PADDING_X), element_bounds.size.height),
+        ),
+        metrics,
+    };
+    let quads = if state.is_visible() {
+        scrollbar_quads(layout, state.is_active(), color)
+    } else {
+        Vec::new()
+    };
+    Some(PreparedScrollbar {
+        layout,
+        hitbox: window.insert_hitbox(layout.track, HitboxBehavior::Normal),
+        quads,
+    })
+}
+
+/// Track (only while hovered or dragged) and thumb, right-aligned in the track.
+fn scrollbar_quads(layout: ScrollbarLayout, active: bool, color: Hsla) -> Vec<PaintQuad> {
+    let Some((top, height)) = layout.thumb() else {
+        return Vec::new();
+    };
+    let track = layout.track;
+    let width = px(if active {
+        SCROLLBAR_ACTIVE_THUMB_WIDTH
+    } else {
+        SCROLLBAR_THUMB_WIDTH
+    });
+    let thumb = Bounds::new(
+        point(track.right() - width - px(1.), track.top() + px(top)),
+        size(width, px(height)),
+    );
+    let thumb_color = color.opacity(if active { 0.6 } else { 0.35 });
+    let thumb = fill(thumb, thumb_color).corner_radii(width / 2.);
+    if !active {
+        return vec![thumb];
+    }
+    vec![fill(track, color.opacity(0.08)), thumb]
+}
+
+fn inset(bounds: Bounds<Pixels>, x: Pixels, y: Pixels) -> Bounds<Pixels> {
+    Bounds::new(
+        point(bounds.origin.x + x, bounds.origin.y + y),
+        size(
+            (bounds.size.width - x * 2.).max(px(0.)),
+            (bounds.size.height - y * 2.).max(px(0.)),
+        ),
+    )
 }
 
 /// Copy the visible cells into paint batches. Runs under the terminal lock: no shaping here.
@@ -322,7 +528,7 @@ fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) ->
         background: default_background,
         cursor_color,
         batches: Vec::new(),
-        backgrounds: Vec::new(),
+        backgrounds: BackgroundRects::default(),
         cursor: None,
     };
 
@@ -342,23 +548,15 @@ fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) ->
             1
         };
 
-        let mut foreground = palette.resolve(cell.fg, colors);
-        let mut background = palette.resolve(cell.bg, colors);
-        if cell.flags.contains(Flags::DIM) {
-            foreground = dim(foreground);
-        }
-        if cell.flags.contains(Flags::INVERSE) {
-            std::mem::swap(&mut foreground, &mut background);
-        }
-        if cell.flags.contains(Flags::HIDDEN) {
-            foreground = background;
-        }
-        if content
+        let selected = content
             .selection
-            .is_some_and(|selection| selection.contains(indexed.point))
-        {
-            background = SELECTION_BACKGROUND;
-        }
+            .is_some_and(|selection| selection.contains(indexed.point));
+        let (mut foreground, mut background) = cell_colors(
+            cell.flags,
+            palette.resolve(cell.fg, colors),
+            palette.resolve(cell.bg, colors),
+            selected,
+        );
         if show_cursor && indexed.point == cursor_point {
             if cursor_shape == CursorShape::Block {
                 foreground = background;
@@ -373,21 +571,7 @@ fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) ->
         }
 
         if background != default_background {
-            match snapshot.backgrounds.last_mut() {
-                Some(rect)
-                    if rect.line == line
-                        && rect.column + rect.cells == column
-                        && rect.color == background =>
-                {
-                    rect.cells += cells;
-                }
-                _ => snapshot.backgrounds.push(BackgroundRect {
-                    line,
-                    column,
-                    cells,
-                    color: background,
-                }),
-            }
+            snapshot.backgrounds.push(line, column, cells, background);
         }
 
         let style = CellStyle {
@@ -409,6 +593,79 @@ fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) ->
         );
     }
     snapshot
+}
+
+/// A cell's foreground and background after its DIM, INVERSE and HIDDEN attributes and the
+/// selection are applied.
+fn cell_colors(flags: Flags, foreground: Rgb, background: Rgb, selected: bool) -> (Rgb, Rgb) {
+    let foreground = if flags.contains(Flags::DIM) {
+        dim(foreground)
+    } else {
+        foreground
+    };
+    let (foreground, background) = if flags.contains(Flags::INVERSE) {
+        (background, foreground)
+    } else {
+        (foreground, background)
+    };
+    let foreground = if flags.contains(Flags::HIDDEN) {
+        background
+    } else {
+        foreground
+    };
+    let background = if selected {
+        SELECTION_BACKGROUND
+    } else {
+        background
+    };
+    (foreground, background)
+}
+
+/// The cursor drawn over the cell, or `None` when there is nothing to draw on top.
+fn cursor_quad(shape: CursorShape, cell: Bounds<Pixels>, color: Hsla) -> Option<PaintQuad> {
+    let thickness = px(2.);
+    match shape {
+        // Focused block cursors are drawn by inverting the cell colors in `snapshot`.
+        CursorShape::Block | CursorShape::Hidden => None,
+        CursorShape::HollowBlock => Some(outline(cell, color, BorderStyle::Solid)),
+        CursorShape::Beam => Some(fill(
+            Bounds::new(cell.origin, size(thickness, cell.size.height)),
+            color,
+        )),
+        CursorShape::Underline => Some(fill(
+            Bounds::new(
+                point(cell.origin.x, cell.bottom() - thickness),
+                size(cell.size.width, thickness),
+            ),
+            color,
+        )),
+    }
+}
+
+/// IME composition text is shown underlined in the default foreground.
+fn marked_text_style(foreground: Rgb) -> CellStyle {
+    CellStyle {
+        foreground,
+        bold: false,
+        italic: false,
+        underline: true,
+        undercurl: false,
+        strikeout: false,
+    }
+}
+
+/// Composition text at the cursor, on a backdrop that hides the cells beneath it.
+fn marked_text_overlay(
+    shaped: ShapedLine,
+    origin: Point<Pixels>,
+    line_height: Pixels,
+    background: Rgb,
+) -> (PaintQuad, Point<Pixels>, ShapedLine) {
+    let backdrop = fill(
+        Bounds::new(origin, size(shaped.width, line_height)),
+        to_hsla(background),
+    );
+    (backdrop, origin, shaped)
 }
 
 /// Append a cell to the current batch when it continues it, or start a new batch.
@@ -540,6 +797,75 @@ mod tests {
             .iter()
             .map(|batch| (batch.column, batch.cells, batch.text.as_str()))
             .collect()
+    }
+
+    /// `(line, column, cells)` of each rect.
+    fn rects(backgrounds: &BackgroundRects) -> Vec<(usize, usize, usize)> {
+        backgrounds
+            .iter()
+            .map(|rect| (rect.line, rect.column, rect.cells))
+            .collect()
+    }
+
+    #[test]
+    fn adjacent_backgrounds_with_same_color_merge() {
+        let mut backgrounds = BackgroundRects::default();
+        backgrounds.push(0, 0, 1, RED);
+        backgrounds.push(0, 1, 2, RED);
+        backgrounds.push(0, 3, 1, RED);
+        assert_eq!(rects(&backgrounds), [(0, 0, 4)]);
+    }
+
+    #[test]
+    fn background_color_change_starts_a_new_rect() {
+        let mut backgrounds = BackgroundRects::default();
+        backgrounds.push(0, 0, 1, RED);
+        backgrounds.push(0, 1, 1, BLUE);
+        assert_eq!(rects(&backgrounds), [(0, 0, 1), (0, 1, 1)]);
+    }
+
+    #[test]
+    fn background_gap_or_new_line_starts_a_new_rect() {
+        let mut backgrounds = BackgroundRects::default();
+        backgrounds.push(0, 0, 1, RED);
+        backgrounds.push(0, 2, 1, RED);
+        backgrounds.push(1, 3, 1, RED);
+        assert_eq!(rects(&backgrounds), [(0, 0, 1), (0, 2, 1), (1, 3, 1)]);
+    }
+
+    #[test]
+    fn plain_cell_keeps_its_colors() {
+        assert_eq!(cell_colors(Flags::empty(), RED, BLUE, false), (RED, BLUE));
+    }
+
+    #[test]
+    fn dim_darkens_the_foreground() {
+        assert_eq!(cell_colors(Flags::DIM, RED, BLUE, false), (dim(RED), BLUE));
+    }
+
+    #[test]
+    fn inverse_swaps_after_dim() {
+        assert_eq!(
+            cell_colors(Flags::DIM | Flags::INVERSE, RED, BLUE, false),
+            (BLUE, dim(RED))
+        );
+    }
+
+    #[test]
+    fn hidden_text_takes_the_background_color() {
+        assert_eq!(cell_colors(Flags::HIDDEN, RED, BLUE, false), (BLUE, BLUE));
+        assert_eq!(
+            cell_colors(Flags::HIDDEN | Flags::INVERSE, RED, BLUE, false),
+            (RED, RED)
+        );
+    }
+
+    #[test]
+    fn selection_replaces_the_background() {
+        assert_eq!(
+            cell_colors(Flags::INVERSE, RED, BLUE, true),
+            (BLUE, SELECTION_BACKGROUND)
+        );
     }
 
     #[test]

@@ -10,8 +10,15 @@ publish = false
 
 [workspace.dependencies]
 alacritty_terminal = "0.26"
+directories = "6"
 log = "0.4"
 parking_lot = "0.12"
 futures = "0.3"
 gpui-kit = "0.7"
+interprocess = "2.4"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+agent-status = { path = "crates/agent-status" }
 term-core = { path = "crates/term-core" }
+workspace-model = { path = "crates/workspace-model" }
