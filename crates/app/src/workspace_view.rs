@@ -27,7 +27,8 @@ use workspace_model::{
 };
 
 use crate::hooks::ClaudeHooks;
-use crate::launcher::{Launcher, launch_name};
+use crate::launcher::{self, Launcher, launch_name};
+use crate::shortcuts::{DUPLICATE_TAB_KEY, NEW_TAB_KEY};
 use crate::sidebar::NUMBERED_TABS;
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
@@ -35,9 +36,6 @@ use crate::terminal_view::{TabChanged, TerminalView};
 use crate::window_bounds;
 
 const NEW_GROUP_NAME: &str = "New group";
-
-/// Key of the Ctrl+Shift+T shortcut, shared by `handle_tab_shortcut` and the `+` menu hint.
-const NEW_TAB_KEY: &str = "t";
 
 /// How long a hover card's `+N` is reused before `git diff` runs again.
 const DIFF_STAT_TTL: Duration = Duration::from_secs(5);
@@ -369,7 +367,13 @@ impl WorkspaceView {
 
     /// Folder for new tabs: the selected tab's current one, else the app's working directory.
     fn new_tab_cwd(&self, cx: &App) -> Option<PathBuf> {
-        self.active_tab()
+        self.tab_cwd(self.active, cx)
+    }
+
+    /// The tab's current folder, else the app's working directory.
+    fn tab_cwd(&self, index: usize, cx: &App) -> Option<PathBuf> {
+        self.tabs
+            .get(index)
             .and_then(|tab| {
                 tab.view
                     .read(cx)
@@ -386,14 +390,25 @@ impl WorkspaceView {
         }
     }
 
-    /// Open another tab running what the selected tab runs, in its current folder.
-    fn duplicate_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(tab) = self.active_tab() else {
+    /// Open the default shell (the `+` menu's "Terminal") in the selected tab's folder.
+    fn open_default_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let launchers = self.launchers.clone();
+        let Some(shell) = launcher::default_shell(&launchers) else {
+            window.push_notification(Notification::error("No shell found"), cx);
+            return;
+        };
+        self.open_launcher(shell, window, cx);
+    }
+
+    /// Open another tab running what the tab runs, in its current folder and group.
+    fn duplicate_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(index) else {
             return;
         };
         let mut spec = tab.spec.clone();
-        spec.cwd = self.new_tab_cwd(cx);
-        self.open_tab_or_notify(spec, window, cx);
+        let group = self.layout.group_of(tab.id).map(|group| group.id);
+        spec.cwd = self.tab_cwd(index, cx);
+        self.open_tab_in_or_notify(spec, group, window, cx);
     }
 
     /// Select a tab, expanding its group if it is collapsed and ending a search that hides it.
@@ -516,6 +531,7 @@ impl WorkspaceView {
         };
         let location = self.tabs[index].view.read(cx).location().cloned();
         match command {
+            TabCommand::Duplicate => self.duplicate_tab(index, window, cx),
             TabCommand::TogglePin => {
                 self.layout.toggle_pin(id);
                 self.sync_order(cx);
@@ -914,8 +930,8 @@ impl WorkspaceView {
         cx.notify();
     }
 
-    /// Ctrl+Tab / Ctrl+Shift+Tab cycle tabs, Ctrl+1..9 select one, Ctrl+Shift+T opens another
-    /// tab like the selected one, Ctrl+Shift+W closes it, Ctrl+Shift+B shows or hides the
+    /// Ctrl+Tab / Ctrl+Shift+Tab cycle tabs, Ctrl+1..9 select one, Ctrl+Shift+T opens the
+    /// default shell, Ctrl+Shift+D another tab like the selected one, Ctrl+Shift+W closes it, Ctrl+Shift+B shows or hides the
     /// sidebar, Ctrl+Shift+S searches tabs, Ctrl+Shift+A jumps to the next tab needing
     /// attention.
     fn handle_tab_shortcut(
@@ -930,7 +946,8 @@ impl WorkspaceView {
         }
         match (keystroke.key.as_str(), modifiers.shift) {
             ("tab", shift) => self.cycle(!shift, window, cx),
-            (NEW_TAB_KEY, true) => self.duplicate_active(window, cx),
+            (NEW_TAB_KEY, true) => self.open_default_shell(window, cx),
+            (DUPLICATE_TAB_KEY, true) => self.duplicate_tab(self.active, window, cx),
             ("w", true) => self.close_tab(self.active, window, cx),
             ("b", true) => self.toggle_sidebar(cx),
             ("s", true) => self.focus_search(window, cx),

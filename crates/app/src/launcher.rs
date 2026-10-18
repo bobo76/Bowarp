@@ -105,7 +105,7 @@ pub fn discover() -> Vec<Launcher> {
     launchers
 }
 
-/// The launcher the menu's "Terminal" entry (and later Ctrl+Shift+T) opens: Git Bash on
+/// The launcher the menu's "Terminal" entry and Ctrl+Shift+T open: Git Bash on
 /// Windows, else the first installed shell, which is `$SHELL` when `discover` found it.
 pub fn default_shell(launchers: &[Launcher]) -> Option<&Launcher> {
     preferred_shell(launchers, cfg!(windows))

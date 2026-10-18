@@ -32,7 +32,8 @@ but disabled. New tabs start in the selected tab's folder.
 |---|---|
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+1..9 | Select tab 1..9 |
-| Ctrl+Shift+T | New tab running what the selected tab runs, in its folder |
+| Ctrl+Shift+T | New tab with the default shell, in the selected tab's folder |
+| Ctrl+Shift+D | Duplicate the selected tab: same program, its folder (also in the tab menu) |
 | Ctrl+Shift+W | Close the selected tab |
 | Ctrl+Shift+B | Hide or show the sidebar (also the title bar button) |
 | Ctrl+Shift+S | Search tabs (shows the sidebar if hidden) |
@@ -75,7 +76,7 @@ files not yet added and not ignored, refreshed at most every 5 s).
 | none | No recent output |
 | hollow ring | Exited |
 
-Right-click a row or use its `⋮` button for the tab menu: pin (pinned tabs stay at the top
+Right-click a row or use its `⋮` button for the tab menu: duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
 and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working
 directory, rename (Enter keeps, Escape cancels, an empty name goes back to the program's
 title), move up / down, close, and a color marker. "New group with tab" and "Move to group"

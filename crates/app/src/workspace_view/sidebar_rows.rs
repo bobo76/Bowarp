@@ -7,18 +7,18 @@ use std::time::Instant;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::input::{Escape, Input};
-use gpui_kit::component::kbd::Kbd;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
 use gpui_kit::{
     Anchor, AnyElement, App, AppContext, ClickEvent, Context, Div, DragMoveEvent,
-    InteractiveElement, IntoElement, Keystroke, Modifiers, ParentElement, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, WeakEntity, Window, div, px, transparent_white,
+    InteractiveElement, IntoElement, ParentElement, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, WeakEntity, Window, div, px,
 };
 use workspace_model::{DropTarget, Group, GroupId, Item, LauncherIcon, Location, display_path};
 
-use super::{NEW_TAB_KEY, RenameTarget, WorkspaceView};
+use super::{RenameTarget, WorkspaceView};
 use crate::launcher::{self, Launcher};
+use crate::shortcuts::{self, NEW_TAB_KEY};
 use crate::sidebar::{
     self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabCard,
     TabDetail, TabRow,
@@ -410,7 +410,7 @@ impl WorkspaceView {
             .icon(IconName::Plus)
             .ghost()
             .xsmall()
-            .tooltip("New tab")
+            .tooltip(shortcuts::with_shortcut("New tab", NEW_TAB_KEY))
             .dropdown_menu(move |mut menu, _, _| {
                 let open = |launcher: &Launcher| {
                     let launcher = launcher.clone();
@@ -425,16 +425,11 @@ impl WorkspaceView {
                 if let Some(default) = default {
                     menu = menu.item(
                         PopupMenuItem::element(|_, _| {
-                            div()
-                                .id("new-tab-terminal")
-                                .aria_label(TERMINAL_LABEL)
-                                .flex()
-                                .items_center()
-                                .w_full()
-                                .gap_3()
-                                .justify_between()
-                                .child(TERMINAL_LABEL)
-                                .child(new_tab_shortcut())
+                            shortcuts::menu_label_with_hint(
+                                "new-tab-terminal",
+                                "Terminal",
+                                NEW_TAB_KEY,
+                            )
                         })
                         .icon(sidebar::launcher_icon(LauncherIcon::Terminal))
                         .on_click(open(default)),
@@ -544,26 +539,6 @@ impl WorkspaceView {
             _ => None,
         }
     }
-}
-
-const TERMINAL_LABEL: &str = "Terminal";
-
-/// Ctrl+Shift+T, shown like the hints gpui-component's menu draws for bound actions.
-fn new_tab_shortcut() -> Kbd {
-    let keystroke = Keystroke {
-        modifiers: Modifiers {
-            control: true,
-            shift: true,
-            ..Modifiers::default()
-        },
-        key: NEW_TAB_KEY.into(),
-        key_char: None,
-    };
-    Kbd::new(keystroke)
-        .p_0()
-        .flex_nowrap()
-        .border_0()
-        .bg(transparent_white())
 }
 
 /// The branch when the folder is in a repository, else the folder.

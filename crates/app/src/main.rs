@@ -8,6 +8,7 @@ mod keys;
 mod launcher;
 mod mouse;
 mod scrollbar;
+mod shortcuts;
 mod sidebar;
 mod tab_menu;
 mod tabs_file;
