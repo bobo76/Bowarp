@@ -201,7 +201,8 @@ pub fn row_divider(cx: &App) -> impl IntoElement {
 /// Wraps a sidebar row so it can show where a dragged tab would land.
 pub fn drop_slot(row: impl IntoElement, marker: Option<DropMarker>, cx: &App) -> Div {
     let theme = cx.theme();
-    // The line sits centered on the 1px divider between rows.
+    // The line sits inside the row, against the divider: a line reaching past the row would be
+    // painted over by the divider and the next row (children paint in order).
     let line = || {
         div()
             .absolute()
@@ -214,18 +215,24 @@ pub fn drop_slot(row: impl IntoElement, marker: Option<DropMarker>, cx: &App) ->
     let slot = div().relative().child(row);
     match marker {
         None => slot,
-        Some(DropMarker::Above) => slot.child(line().top(px(-1.5))),
-        Some(DropMarker::Below) => slot.child(line().bottom(px(-1.5))),
+        Some(DropMarker::Above) => slot.child(line().top_0()),
+        Some(DropMarker::Below) => slot.child(line().bottom_0()),
         Some(DropMarker::Inside) => slot.child(
             div()
                 .absolute()
                 .inset_0()
-                .rounded_md()
                 .border_1()
                 .border_color(theme.drag_border)
                 .bg(theme.drop_target),
         ),
     }
+}
+
+/// A hovered row's background: weaker than the selected row's accent so the two stay apart.
+/// Opaque, because the badge ring copies it.
+fn hover_background(cx: &App) -> Hsla {
+    let theme = cx.theme();
+    theme.sidebar.blend(theme.sidebar_accent.opacity(0.5))
 }
 
 /// The row's background, which the badge ring copies so the badge reads as cut out of the
@@ -356,10 +363,15 @@ pub fn tab_row(
     } else {
         (theme.sidebar, theme.sidebar_foreground)
     };
+    let hovered = if row.selected {
+        background
+    } else {
+        hover_background(cx)
+    };
     let muted = theme.muted_foreground;
     let row_background = RowBackground {
         normal: background,
-        hovered: theme.sidebar_accent,
+        hovered,
         row_group: group.clone(),
     };
 
@@ -377,7 +389,7 @@ pub fn tab_row(
         .pr_2()
         .bg(background)
         .text_color(foreground)
-        .hover(|style| style.bg(theme.sidebar_accent))
+        .hover(|style| style.bg(hovered))
         .on_click(on_select)
         .when_some(row.color, |tab, color| {
             tab.child(
@@ -625,10 +637,10 @@ pub fn group_header(
     let theme = cx.theme();
     let group = SharedString::from(format!("group-{}", row.slot));
     let muted = theme.muted_foreground;
-    let background = if row.holds_selected {
-        theme.sidebar_accent
+    let (background, hovered) = if row.holds_selected {
+        (theme.sidebar_accent, theme.sidebar_accent)
     } else {
-        theme.sidebar
+        (theme.sidebar, hover_background(cx))
     };
     let chevron = if row.collapsed {
         IconName::ChevronRight
@@ -666,7 +678,7 @@ pub fn group_header(
         .bg(background)
         .text_sm()
         .text_color(theme.sidebar_foreground)
-        .hover(|style| style.bg(theme.sidebar_accent))
+        .hover(|style| style.bg(hovered))
         .on_click(on_toggle)
         .child(Icon::new(chevron).size(px(14.)).text_color(muted))
         .when_some(row.color, |header, color| {
