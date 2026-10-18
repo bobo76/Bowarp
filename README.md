@@ -144,7 +144,7 @@ The file explorer (Ctrl+Shift+|, the title bar button next to the sidebar toggle
 its `×`) sits between the sidebar and the terminal and shows the selected tab's folder; it
 follows tab switches and `cd`. Folders come first, then files, sorted by name, dotfiles
 included. Click a folder to expand or collapse it (each root keeps its own expanded folders);
-clicking a file only selects it. Expanded folders refresh when their content changes.
+click a file to open it in the file viewer. Expanded folders refresh when their content changes.
 
 Right-click an entry for its menu: New file (in the entry's folder; Enter or clicking elsewhere
 creates it, Escape cancels), cd to directory (shell tabs), Open in new tab (the default shell),
@@ -152,6 +152,29 @@ Reveal in file manager, Rename, Delete (asks first; deletes for good, not to the
 as context (types the path at the selected tab's prompt without Enter: `@path` in Claude Code,
 the shell-quoted path elsewhere), Copy path, Copy relative path (from the explorer's root).
 cd and Open in new tab use the folder itself, or a file's parent folder.
+
+## File viewer
+
+A file clicked in the explorer opens in a panel right of the terminal (closed with its `×`).
+Markdown and JSON have two views, picked in the panel's header:
+
+- **Rendered**: Markdown as a formatted page; JSON laid out one member per line, colored, with
+  fold arrows by the line numbers (hover them) to collapse an object or array. Keys keep their
+  order and values stay as written. JSON that doesn't parse shows the error's line and column
+  above the source.
+- **Raw**: the file as written, colored and editable.
+
+Other files open in the raw view only, colored for JSON, JavaScript, TypeScript (and TSX),
+Markdown, TOML, YAML, Rust, Bash and Python, plain otherwise. Files over 2 MB, binary files and
+files that aren't UTF-8 are not shown.
+
+| Keys | Action |
+|---|---|
+| Ctrl+S | Save the file (a `●` after its name marks unsaved edits) |
+
+Opening another file or closing the panel with unsaved edits asks before dropping them. When
+the file changes on disk (an agent edits it), the panel reloads it, unless it has unsaved edits,
+which are kept.
 
 ## About
 

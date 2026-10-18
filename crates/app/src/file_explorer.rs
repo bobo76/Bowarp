@@ -50,6 +50,8 @@ pub enum ExplorerEvent {
     Attach(PathBuf),
     /// A name editor closed: the keyboard goes back to the terminal.
     EditEnded,
+    /// Show the file in the viewer.
+    OpenFile(PathBuf),
 }
 
 /// What an entry's context menu does.
@@ -321,7 +323,8 @@ impl FileExplorer {
             self.refresh(cx);
             return;
         }
-        self.selected = Some(path);
+        self.selected = Some(path.clone());
+        cx.emit(ExplorerEvent::OpenFile(path));
         cx.notify();
     }
 

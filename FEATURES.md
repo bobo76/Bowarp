@@ -36,6 +36,9 @@ directly to model APIs.
   session's current folder and refreshes when files change.
 - Act on files and folders from the tree: create, rename, delete, open a session or `cd`
   there, copy paths, and hand a file's path to the agent as context.
+- View and edit a clicked file beside the terminal: Markdown rendered or as source, JSON
+  laid out and colored with foldable blocks, other text colored by language; saving with
+  Ctrl+S, and reloading when the file changes on disk.
 
 ## Agent Activity and Attention
 

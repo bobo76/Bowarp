@@ -17,7 +17,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, App, AppContext, ClipboardItem, Context, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, Keystroke, MouseButton, ParentElement, Render,
-    Styled, Subscription, Task, Window, div,
+    Styled, Subscription, Task, Window, div, relative,
 };
 use term_core::{LaunchSpec, SessionKind};
 use workspace_model::file_tree::{cd_command, context_reference};
@@ -30,6 +30,7 @@ use workspace_model::{
 use crate::about;
 use crate::assets::FILES_ICON;
 use crate::file_explorer::{ExplorerEvent, FileExplorer};
+use crate::file_viewer::{FileViewer, ViewerEvent};
 use crate::hooks::ClaudeHooks;
 use crate::launcher::{self, Launcher, launch_name};
 use crate::shell_integration;
@@ -44,6 +45,9 @@ const NEW_GROUP_NAME: &str = "New group";
 
 /// How long a hover card's `+N` is reused before `git diff` runs again.
 const DIFF_STAT_TTL: Duration = Duration::from_secs(5);
+
+/// The file viewer's share of the window width.
+const VIEWER_WIDTH: f32 = 0.45;
 
 struct Tab {
     /// The session id, which stays with the tab when tabs move.
@@ -139,6 +143,7 @@ pub struct WorkspaceView {
     sidebar_visible: bool,
     explorer: Entity<FileExplorer>,
     explorer_visible: bool,
+    viewer: Entity<FileViewer>,
     renaming: Option<Rename>,
     /// The sidebar's "Search tabs..." field.
     search: Entity<InputState>,
@@ -158,6 +163,7 @@ pub struct WorkspaceView {
     _hook_messages: Task<()>,
     _search_events: Subscription,
     _explorer_events: Subscription,
+    _viewer_events: Subscription,
 }
 
 impl WorkspaceView {
@@ -192,6 +198,8 @@ impl WorkspaceView {
             );
         let explorer = cx.new(FileExplorer::new);
         let explorer_events = cx.subscribe_in(&explorer, window, Self::on_explorer_event);
+        let viewer = cx.new(|cx| FileViewer::new(window, cx));
+        let viewer_events = cx.subscribe_in(&viewer, window, Self::on_viewer_event);
         Self {
             tabs: Vec::new(),
             layout: Layout::default(),
@@ -199,6 +207,7 @@ impl WorkspaceView {
             sidebar_visible: true,
             explorer,
             explorer_visible: false,
+            viewer,
             renaming: None,
             search,
             diff_stats: HashMap::new(),
@@ -212,6 +221,7 @@ impl WorkspaceView {
             _hook_messages: hook_task,
             _search_events: search_events,
             _explorer_events: explorer_events,
+            _viewer_events: viewer_events,
         }
     }
 
@@ -1021,6 +1031,25 @@ impl WorkspaceView {
                 self.focus_active(window, cx);
             }
             ExplorerEvent::EditEnded => self.focus_active(window, cx),
+            ExplorerEvent::OpenFile(path) => self
+                .viewer
+                .update(cx, |viewer, cx| viewer.open(path.clone(), window, cx)),
+        }
+    }
+
+    fn on_viewer_event(
+        &mut self,
+        _: &Entity<FileViewer>,
+        event: &ViewerEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ViewerEvent::Opened => cx.notify(),
+            ViewerEvent::Closed => {
+                self.focus_active(window, cx);
+                cx.notify();
+            }
         }
     }
 
@@ -1165,7 +1194,16 @@ impl Render for WorkspaceView {
                     .when(self.explorer_visible, |content| {
                         content.child(self.explorer.clone())
                     })
-                    .child(div().flex_1().min_w_0().h_full().children(active)),
+                    .child(div().flex_1().min_w_0().h_full().children(active))
+                    .when(self.viewer.read(cx).is_open(), |content| {
+                        content.child(
+                            div()
+                                .flex_none()
+                                .w(relative(VIEWER_WIDTH))
+                                .h_full()
+                                .child(self.viewer.clone()),
+                        )
+                    }),
             )
     }
 }

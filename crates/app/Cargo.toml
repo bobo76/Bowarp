@@ -10,7 +10,18 @@ repository.workspace = true
 agent-status.workspace = true
 directories.workspace = true
 futures.workspace = true
-gpui-kit.workspace = true
+gpui-kit = { workspace = true, features = [
+    "tree-sitter",
+    "tree-sitter-bash",
+    "tree-sitter-javascript",
+    "tree-sitter-markdown",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-toml",
+    "tree-sitter-tsx",
+    "tree-sitter-typescript",
+    "tree-sitter-yaml",
+] }
 log.workspace = true
 notify.workspace = true
 term-core.workspace = true

@@ -3,13 +3,14 @@
 //! how tabs are laid out (pinned, groups, order), which tabs a sidebar search matches and which
 //! tab wants attention next, how long a session has been in its status, and where the window
 //! and its tabs were when it closed, which running instance owns that save, which icon each
-//! new-tab launcher shows, the file explorer's tree, the shell commands run in the app
-//! (history), the shell integration marks (OSC 133) in a shell's output and the About dialog's
-//! version line. No UI dependency.
+//! new-tab launcher shows, the file explorer's tree, how the file viewer shows a file, the
+//! shell commands run in the app (history), the shell integration marks (OSC 133) in a shell's
+//! output and the About dialog's version line. No UI dependency.
 
 mod about;
 mod attention;
 pub mod file_tree;
+pub mod file_view;
 mod git;
 mod history;
 mod instance_lock;

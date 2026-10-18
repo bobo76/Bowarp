@@ -468,6 +468,10 @@ New work the look needs:
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
   the window; Delete already runs in the background.
+- File viewer: keep the scroll position when the file is reloaded after a change on disk
+  (it goes back to the top); open links to other files (`FEATURES.md`) in the viewer instead
+  of the system handler; drag the viewer's left edge to resize it (fixed at 45% of the
+  width); the `⋮` menu from the reference screenshot.
 - Untested on Windows: hook command quoting (`"C:\...\agentws-hook.exe"` run by Claude Code's
   shell) and `.cmd` launchers (`claude.cmd` from npm) under ConPTY.
 
