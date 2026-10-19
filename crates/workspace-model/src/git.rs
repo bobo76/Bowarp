@@ -15,6 +15,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_UNTRACKED_FILE_BYTES: u64 = 1 << 20;
 /// At most this many untracked files are read.
 const MAX_UNTRACKED_FILES: usize = 1000;
+/// Win32 process creation flag: start a console program without a console window.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Variables that would point every `git` at one repository, whatever folder it runs in.
 const REPO_ENV: [&str; 4] = [
     "GIT_DIR",
@@ -125,6 +128,12 @@ fn run_git(dir: &Path, args: &[&str], deadline: Instant) -> Option<String> {
         .stderr(Stdio::null());
     for name in REPO_ENV {
         command.env_remove(name);
+    }
+    // A console child of a GUI process gets its own console window, which flashes on hover.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
     }
     let mut child = command.spawn().ok()?;
     let mut stdout = child.stdout.take()?;

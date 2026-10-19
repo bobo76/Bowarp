@@ -10,12 +10,18 @@ What is done is described in [FEATURES.md](FEATURES.md); the details are in the 
 
 (none)
 
+**Bugs (Windows)**
+
+- The file explorer doesn't follow `cd`: it keeps showing the tab's launch folder.
+  `Session::current_dir` (`term-core/src/session.rs`) only reads `/proc/<pid>/cwd` on Linux
+  and returns `None` elsewhere. Fix: read the shell's working directory from its PEB
+  (`NtQueryInformationProcess` -> `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory`), or use
+  the OSC 7 / OSC 133 shell-integration path. New tabs and the hover card's branch have the
+  same root cause.
+
 **Not doable yet**
 
 - Windows: "Bash" opened Ubuntu (Git Bash / WSL distro launchers): code done in `launcher.rs`, needs a Windows machine to build and run (this machine is Linux).
-- Windows: a tab's working directory (`NtQueryInformationProcess` PEB read); until then it
-  shows the launch folder.
-- Windows: the hover card's `git` child may need `CREATE_NO_WINDOW` (untested).
 - Windows: check that the title bar buttons (sidebar, explorer, About) click. They were dead
   because gpui-component's `TitleBar` marks its child area `WindowControlArea::Drag`, so
   `WM_NCHITTEST` answered `HTCAPTION` over them and `DefWindowProc`'s move loop ate the
