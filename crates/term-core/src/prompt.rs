@@ -58,6 +58,17 @@ pub struct ExecutedCommand {
     pub folder: Option<PathBuf>,
 }
 
+/// What the tracker reports about the commands the shell runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PromptEvent {
+    /// A command started (`C` mark), with its command line when the shell reported it.
+    Started(Option<String>),
+    /// A command line typed at a tracked prompt is about to run; sent after its `Started`.
+    Executed(ExecutedCommand),
+    /// The running command finished (`D` mark): the shell is back at its prompt.
+    Finished,
+}
+
 /// What the user typed at the prompt, as the shell reported it (zsh) or read from the grid.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PromptInput {
@@ -144,15 +155,15 @@ struct TrackerState {
 pub struct PromptTracker {
     state: Mutex<TrackerState>,
     child_pid: OnceLock<u32>,
-    on_executed: Box<dyn Fn(ExecutedCommand) + Send + Sync>,
+    on_event: Box<dyn Fn(PromptEvent) + Send + Sync>,
 }
 
 impl PromptTracker {
-    pub fn new(on_executed: impl Fn(ExecutedCommand) + Send + Sync + 'static) -> Self {
+    pub fn new(on_event: impl Fn(PromptEvent) + Send + Sync + 'static) -> Self {
         Self {
             state: Mutex::default(),
             child_pid: OnceLock::new(),
-            on_executed: Box::new(on_executed),
+            on_event: Box::new(on_event),
         }
     }
 
@@ -172,49 +183,65 @@ impl PromptTracker {
     /// `in_sync`: the mark is inside a synchronized update, whose bytes the parser holds back
     /// until it ends, so a tag would not be answered in time; the prompt is not tracked then.
     fn mark(&self, mark: PromptMark, in_sync: bool) -> Option<u16> {
-        let executed = {
+        let (events, tag) = {
             let mut state = self.state();
             match mark {
                 PromptMark::PromptStart | PromptMark::CommandStart => {
-                    if in_sync {
-                        return None;
+                    // A prompt without a D mark before it (bash whose PROMPT_COMMAND was
+                    // replaced): the command finished anyway. The pending mark's `apply` sets
+                    // the phase again once it resolves.
+                    let mut events = Vec::new();
+                    if state.phase == Phase::Running {
+                        state.phase = Phase::Idle;
+                        state.line = None;
+                        events.push(PromptEvent::Finished);
                     }
-                    let tag = TAG_BASE + state.next_tag;
-                    state.next_tag = (state.next_tag + 1) % TAG_COUNT;
-                    state.pending = Some(Pending {
-                        mark,
-                        tag,
-                        parsed: false,
-                        handed_over: None,
-                    });
-                    return Some(tag);
+                    if in_sync {
+                        (events, None)
+                    } else {
+                        let tag = TAG_BASE + state.next_tag;
+                        state.next_tag = (state.next_tag + 1) % TAG_COUNT;
+                        state.pending = Some(Pending {
+                            mark,
+                            tag,
+                            parsed: false,
+                            handed_over: None,
+                        });
+                        (events, Some(tag))
+                    }
                 }
                 PromptMark::CommandExecuted(command) => {
                     state.line = None;
-                    match std::mem::replace(&mut state.phase, Phase::Running) {
-                        Phase::Typing { folder, .. } => {
-                            command.map(|command| ExecutedCommand { command, folder })
-                        }
-                        _ => None,
+                    let mut events = vec![PromptEvent::Started(command.clone())];
+                    if let Phase::Typing { folder, .. } =
+                        std::mem::replace(&mut state.phase, Phase::Running)
+                        && let Some(command) = command
+                    {
+                        events.push(PromptEvent::Executed(ExecutedCommand { command, folder }));
                     }
+                    (events, None)
                 }
                 PromptMark::CommandFinished => {
-                    state.phase = Phase::Idle;
+                    let was_running = std::mem::replace(&mut state.phase, Phase::Idle);
                     state.line = None;
-                    None
+                    if was_running == Phase::Running {
+                        (vec![PromptEvent::Finished], None)
+                    } else {
+                        (Vec::new(), None)
+                    }
                 }
                 PromptMark::CommandLine(line) => {
                     // A line too long to report is read from the grid.
                     state.reports_line = line.is_some();
                     state.line = line;
-                    None
+                    (Vec::new(), None)
                 }
             }
         };
-        if let Some(executed) = executed {
-            (self.on_executed)(executed);
+        for event in events {
+            (self.on_event)(event);
         }
-        None
+        tag
     }
 
     /// The parser has been handed everything up to the pending mark's tag.
@@ -782,17 +809,17 @@ mod tests {
     struct Harness {
         term: Arc<FairMutex<Term<Listener>>>,
         tracker: Arc<PromptTracker>,
-        executed: Arc<Mutex<Vec<ExecutedCommand>>>,
+        events: Arc<Mutex<Vec<PromptEvent>>>,
         filter: MarkFilter<Listener>,
         parser: Processor,
     }
 
     impl Harness {
         fn new(columns: u16, lines: u16) -> Self {
-            let executed = Arc::new(Mutex::new(Vec::new()));
-            let sink = executed.clone();
-            let tracker = Arc::new(PromptTracker::new(move |command| {
-                sink.lock().unwrap().push(command);
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let sink = events.clone();
+            let tracker = Arc::new(PromptTracker::new(move |event| {
+                sink.lock().unwrap().push(event);
             }));
             let term = Arc::new(FairMutex::new(Term::new(
                 Config::default(),
@@ -803,7 +830,7 @@ mod tests {
             Self {
                 term,
                 tracker,
-                executed,
+                events,
                 filter,
                 parser: Processor::new(),
             }
@@ -838,8 +865,23 @@ mod tests {
         }
 
         fn commands(&self) -> Vec<String> {
-            let executed = self.executed.lock().unwrap();
-            executed.iter().map(|done| done.command.clone()).collect()
+            let events = self.events.lock().unwrap();
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    PromptEvent::Executed(done) => Some(done.command.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        /// The events other than `Executed`, taken.
+        fn take_running_events(&self) -> Vec<PromptEvent> {
+            let mut events = self.events.lock().unwrap();
+            std::mem::take(&mut *events)
+                .into_iter()
+                .filter(|event| !matches!(event, PromptEvent::Executed(_)))
+                .collect()
         }
     }
 
@@ -887,6 +929,63 @@ mod tests {
         harness.feed(PROMPT.as_bytes());
         assert_eq!(harness.input().unwrap().text, "");
         assert_eq!(harness.commands(), ["ls -la"]);
+    }
+
+    #[test]
+    fn running_commands_are_reported_from_start_to_finish() {
+        let mut harness = Harness::new(40, 5);
+        // The first prompt's D mark ends no command.
+        harness.feed(format!("{PROMPT}sleep 5{}", executed("sleep 5")).as_bytes());
+        assert_eq!(
+            harness.take_running_events(),
+            [PromptEvent::Started(Some("sleep 5".into()))]
+        );
+        harness.feed(PROMPT.as_bytes());
+        assert_eq!(harness.take_running_events(), [PromptEvent::Finished]);
+        // A command left out of the history runs without its command line.
+        harness.feed(b" secret\r\n\x1b]133;C;aw=t0k\x07");
+        assert_eq!(harness.take_running_events(), [PromptEvent::Started(None)]);
+        harness.feed(PROMPT.as_bytes());
+        // Another D mark without a command in between, as after Ctrl+C at the prompt.
+        harness.feed(PROMPT.as_bytes());
+        assert_eq!(harness.take_running_events(), [PromptEvent::Finished]);
+        // Two C marks (a pasted line, PowerShell's multi-line input), then one D mark.
+        harness.feed(format!("{}{}", executed("a"), executed("b")).as_bytes());
+        harness.feed(PROMPT.as_bytes());
+        assert_eq!(
+            harness.take_running_events(),
+            [
+                PromptEvent::Started(Some("a".into())),
+                PromptEvent::Started(Some("b".into())),
+                PromptEvent::Finished,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_command_before_the_first_prompt_runs_until_the_prompt() {
+        let mut harness = Harness::new(40, 5);
+        harness.feed(executed("make").as_bytes());
+        assert_eq!(
+            harness.take_running_events(),
+            [PromptEvent::Started(Some("make".into()))]
+        );
+        harness.feed(PROMPT.as_bytes());
+        assert_eq!(harness.take_running_events(), [PromptEvent::Finished]);
+    }
+
+    #[test]
+    fn a_prompt_without_a_d_mark_finishes_the_command() {
+        let mut harness = Harness::new(40, 5);
+        // bash whose PROMPT_COMMAND was replaced: its prompts carry A and B but no D.
+        let prompt = PROMPT.trim_start_matches("\x1b]133;D;aw=t0k\x07");
+        harness.feed(format!("{PROMPT}sleep 5{}", executed("sleep 5")).as_bytes());
+        harness.take_running_events();
+        harness.feed(prompt.as_bytes());
+        assert_eq!(harness.take_running_events(), [PromptEvent::Finished]);
+        // The next command line is tracked as usual.
+        harness.feed(b"ls");
+        assert_eq!(harness.input().map(|input| input.text), Some("ls".into()));
     }
 
     #[test]

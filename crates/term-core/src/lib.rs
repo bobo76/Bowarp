@@ -12,5 +12,5 @@ mod session;
 pub use alacritty_terminal;
 pub use launch::{LaunchSpec, SessionKind};
 pub use palette::{Palette, dim};
-pub use prompt::{ExecutedCommand, PromptInput};
+pub use prompt::{ExecutedCommand, PromptEvent, PromptInput};
 pub use session::{EventCallback, Session, SessionEvent, SessionListener, TermDimensions};

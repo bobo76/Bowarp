@@ -35,7 +35,7 @@ use crate::hooks::ClaudeHooks;
 use crate::launcher::{self, Launcher, launch_name};
 use crate::shell_integration;
 use crate::shortcuts::{self, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY};
-use crate::sidebar::NUMBERED_TABS;
+use crate::sidebar::{self, NUMBERED_TABS};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
 use crate::terminal_view::{TabChanged, TerminalView};
@@ -141,6 +141,9 @@ pub struct WorkspaceView {
     layout: Layout,
     active: usize,
     sidebar_visible: bool,
+    /// Whether Running badges may pulse in this window ([`sidebar::pulse_allowed`]), read each
+    /// render.
+    pulse_running: bool,
     explorer: Entity<FileExplorer>,
     explorer_visible: bool,
     viewer: Entity<FileViewer>,
@@ -205,6 +208,7 @@ impl WorkspaceView {
             layout: Layout::default(),
             active: 0,
             sidebar_visible: true,
+            pulse_running: false,
             explorer,
             explorer_visible: false,
             viewer,
@@ -1144,6 +1148,7 @@ impl Focusable for WorkspaceView {
 
 impl Render for WorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.pulse_running = sidebar::pulse_allowed(window);
         let active = self.active_tab().map(|tab| tab.view.clone());
         let title = active.as_ref().map_or_else(
             || "Agent Workspace".into(),

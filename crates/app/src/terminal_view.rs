@@ -24,7 +24,9 @@ use term_core::{
     EventCallback, LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions,
 };
 use workspace_model::file_tree::ShellSyntax;
-use workspace_model::{Lap, Location};
+use workspace_model::{
+    COMMAND_LABEL_CHARS, Lap, Location, RUNNING_AFTER, RunningBadge, command_label, running_badge,
+};
 
 use crate::history;
 use crate::history_popup::HistoryPopup;
@@ -85,6 +87,22 @@ enum ProcessState {
     Exited(Option<i32>),
 }
 
+/// A command started at a shell's prompt (its `C` mark) that has not finished (`D` mark).
+struct RunningCommand {
+    /// The command line as the hover card shows it, when the shell reported it.
+    label: Option<String>,
+    started: Instant,
+    /// Tells the sidebar once the command has run for [`RUNNING_AFTER`]; dropped with the
+    /// command, so one that finishes sooner never shows.
+    _reveal: Task<()>,
+}
+
+impl RunningCommand {
+    fn badge(&self) -> RunningBadge {
+        running_badge(self.started.elapsed())
+    }
+}
+
 /// Emitted when what the sidebar and title bar show changes: title, status, activity, folder
 /// or branch.
 pub struct TabChanged;
@@ -118,6 +136,8 @@ pub struct TerminalView {
     pub(crate) history_popup: Option<HistoryPopup>,
     title: Option<String>,
     process: ProcessState,
+    /// Set by the shell integration marks; agent sessions keep their hook status instead.
+    running_command: Option<RunningCommand>,
     scroll_remainder: f32,
     selecting: bool,
     /// Button whose press was reported to the program; its release and drags are reported too.
@@ -189,6 +209,7 @@ impl TerminalView {
             history_popup: None,
             title: None,
             process: ProcessState::Running,
+            running_command: None,
             scroll_remainder: 0.0,
             selecting: false,
             reported_button: None,
@@ -250,9 +271,35 @@ impl TerminalView {
         }
         match self.process {
             ProcessState::Exited(_) => TabStatus::Exited,
+            ProcessState::Running
+                if self
+                    .running_command
+                    .as_ref()
+                    .is_some_and(|running| running.badge() != RunningBadge::Hidden) =>
+            {
+                TabStatus::Running
+            }
             ProcessState::Running if self.activity_task.is_some() => TabStatus::Active,
             ProcessState::Running => TabStatus::Quiet,
         }
+    }
+
+    /// The running command's line for the hover card, while the status is
+    /// [`TabStatus::Running`] and the shell reported it.
+    pub fn running_label(&self) -> Option<&str> {
+        if self.tab_status() != TabStatus::Running {
+            return None;
+        }
+        self.running_command.as_ref()?.label.as_deref()
+    }
+
+    /// Whether the Running badge pulses: only for the first seconds of a command.
+    pub fn running_pulses(&self) -> bool {
+        self.tab_status() == TabStatus::Running
+            && self
+                .running_command
+                .as_ref()
+                .is_some_and(|running| running.badge() == RunningBadge::Pulsing)
     }
 
     /// How long Claude Code has been working on the current turn, or `None` when it is not
@@ -332,12 +379,40 @@ impl TerminalView {
                 self.emit_tab_changed(cx);
             }
             SessionEvent::Bell => return,
+            SessionEvent::CommandStarted(command) => {
+                let label =
+                    command.and_then(|command| command_label(&command, COMMAND_LABEL_CHARS));
+                match self.running_command.as_mut() {
+                    // A second C mark before a D mark: the same run goes on, with the new line.
+                    Some(running) => {
+                        running.label = label;
+                        if self.agent.is_none() {
+                            cx.emit(TabChanged);
+                        }
+                    }
+                    None => {
+                        self.running_command = Some(RunningCommand {
+                            label,
+                            started: Instant::now(),
+                            _reveal: self.reveal_running(cx),
+                        });
+                    }
+                }
+            }
             SessionEvent::CommandExecuted(command) => {
                 self.history_popup = None;
                 history::record(command, cx);
             }
+            SessionEvent::CommandFinished => {
+                self.running_command = None;
+                if self.agent.is_none() {
+                    // The command may have changed the folder or the branch.
+                    self.emit_tab_changed(cx);
+                }
+            }
             SessionEvent::Exited(code) => {
                 self.process = ProcessState::Exited(code);
+                self.running_command = None;
                 if let Some(agent) = self.agent.as_mut() {
                     agent.exit();
                     self.agent_lap.set(agent.status(), Instant::now());
@@ -346,6 +421,25 @@ impl TerminalView {
             }
         }
         cx.notify();
+    }
+
+    /// Tell the sidebar once the running command has run for [`RUNNING_AFTER`], when its status
+    /// becomes Running.
+    fn reveal_running(&self, cx: &mut Context<Self>) -> Task<()> {
+        let started = Instant::now();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(RUNNING_AFTER).await;
+            // Should the timer fire a little early, the badge would stay hidden.
+            let left = RUNNING_AFTER.saturating_sub(started.elapsed());
+            if !left.is_zero() {
+                cx.background_executor().timer(left).await;
+            }
+            let _ = this.update(cx, |view, cx| {
+                if view.agent.is_none() {
+                    cx.emit(TabChanged);
+                }
+            });
+        })
     }
 
     /// Mark a session without status hooks active on output, and quiet again once no output

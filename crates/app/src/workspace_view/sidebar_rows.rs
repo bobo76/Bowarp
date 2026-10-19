@@ -215,6 +215,7 @@ impl WorkspaceView {
                 .location()
                 .map(|location| tab_detail(location, self.home.as_deref())),
             status: view.tab_status(),
+            pulse: self.pulse_running && view.running_pulses(),
             selected: index == self.active,
             pinned: self.layout.is_pinned(id),
             color: self.tab_color(tab),
@@ -310,6 +311,7 @@ impl WorkspaceView {
             index,
             status: view.tab_status(),
             working_for: view.working_for(Instant::now()),
+            running_label: view.running_label().map(|label| label.to_string().into()),
             folder: location
                 .map(|location| display_path(&location.dir, self.home.as_deref()).into()),
             branch: location

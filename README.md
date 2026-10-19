@@ -107,6 +107,7 @@ files not yet added and not ignored, refreshed at most every 5 s).
 | orange, plus a warning triangle before the title | Needs attention |
 | green with a check | Done: finished while you were on another tab (until you select it) |
 | green | Idle |
+| teal, pulsing for the first 10 s | Running: a command typed at the prompt of a bash, zsh or PowerShell tab has run for half a second; the card shows it (no pulse on a software-rendered GPU) |
 | light grey | Recent output (shell or Copilot) |
 | none | No recent output |
 | hollow ring | Exited |
@@ -133,9 +134,9 @@ that is Done. A tab in a collapsed group is revealed.
 ## Groups
 
 Click a group header to collapse or expand it; a collapsed group shows how many of its tabs
-need attention, are working, or are done. Selecting a tab in a collapsed group (Ctrl+1..9,
-Ctrl+Tab) expands it. New tabs join the selected tab's group. A tab without its own color shows
-its group's color. Groups stay when their last tab leaves.
+need attention, are working, run a command, or are done. Selecting a tab in a collapsed group
+(Ctrl+1..9, Ctrl+Tab) expands it. New tabs join the selected tab's group. A tab without its own
+color shows its group's color. Groups stay when their last tab leaves.
 
 The group menu (right-click the header or its `⋮` button): rename, collapse, move up / down,
 close its tabs, ungroup (the tabs stay, the group goes; "Delete group" when empty), color.

@@ -61,13 +61,15 @@ directly to model APIs.
   or has exited, when reliable status information is available.
 - Show status on individual tabs, including tabs that are not currently selected.
 - Show how long an agent has been working on its current turn.
+- Show when a command typed at a shell tab's prompt is running, and which command (shell
+  integration).
 - Show how long the current command has been running in a shell tab.
 - Mark an agent that finished while its tab was not selected as done until it is viewed.
 - Mark a tab that rang the bell, or whose long shell command finished (or failed), while
   it was not selected, until it is viewed.
 - Read agent status from the CLI's own hooks without changing the user's CLI settings.
 - Show aggregate status on collapsed groups, such as the number of working
-  sessions and sessions needing attention.
+  sessions, running shell commands and sessions needing attention.
 - Make sessions needing attention easy to locate and select.
 - Support completion and attention notifications with user-configurable sound.
 - When reliable agent status is unavailable, label terminal output activity as

@@ -90,22 +90,11 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   `claude --resume <id>` line included (decision in [README.md](README.md#design-decisions)).
 - Agent icon in a shell tab: while `claude` or `copilot` runs from a shell tab's prompt, its
   sidebar row shows the Claude / Copilot icon, and the shell icon returns at the next prompt.
-  The command comes from the shell integration's OSC 133 `C` mark (`on_executed` in
-  `term-core/src/prompt.rs`, which command history already uses); its first word is matched
+  The command comes from the shell integration's OSC 133 `C` mark (`PromptEvent::Started` in
+  `term-core/src/prompt.rs`, which the Running status already uses); its first word is matched
   by file name (path and `.exe` / `.cmd` stripped, like `shell_icon`). Needs shell
   integration, so it misses scripts, `npx` and aliases. Icon only: the status stays shell-like
   (no `--settings` hooks for a `claude` typed at the prompt).
-- Running command indicator in a shell tab: while a command typed at the prompt runs (from
-  the OSC 133 `C` mark to the `D` mark, the span `on_executed` in `term-core/src/prompt.rs`
-  already sees), the tab gets a new `TabStatus::Running` in place of `Active` / `Quiet`
-  (`terminal_view.rs`): a teal badge on the sidebar icon that pulses (opacity animation,
-  event-driven redraw only while visible), a "Running" chip in the hover card with the
-  command's text (`cmd=` decoded, e.g. `~/start_sensor_be.sh`, ellipsized), and a `Running`
-  count in the group summary chips. The prompt returning clears it; so does the tab exiting.
-  Needs shell integration, so it misses a job resumed with `fg`, commands in a nested shell or
-  over `ssh`, and shows an alias as typed; a later `/proc/<shell>/stat` `tpgid` check (Linux)
-  could fill those gaps. Pairs with "Agent icon in a shell tab" (above) and "Running time in
-  the tab hover card" (below).
 - Clickable links in terminal output: Ctrl+click opens a URL in the browser, both plain-text
   URLs found in the visible grid and OSC 8 hyperlinks (`alacritty_terminal` keeps them on the
   cell). A `path`, `path:line` or `path:line:col` (`src/foo.rs:42`, which Claude Code prints
@@ -186,6 +175,12 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   parse it, but the pty reader wrapper (`term-core/src/prompt.rs`) could find it.
 - Untested on Windows: hook command quoting (`"C:\...\agentws-hook.exe"` run by Claude Code's
   shell) and `.cmd` launchers (`claude.cmd` from npm) under ConPTY.
+- Cache the active TerminalView (`.cached(...)`) so sidebar animation frames and other
+  WorkspaceView re-renders don't re-render the terminal; every input the view shows (focus,
+  resize, selection, session wakeup) must notify it; check with Xvfb.
+- PowerShell: the integration writes the `C` mark on Enter even when PSReadLine only adds a
+  line to an unfinished command (`if ($x) {`), so the tab shows Running while typing; write it
+  only for accepted lines (needs a machine with pwsh to check).
 
 ## Maybe
 

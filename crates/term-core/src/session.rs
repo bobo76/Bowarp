@@ -20,7 +20,7 @@ use parking_lot::MutexGuard;
 
 use crate::launch::{LaunchSpec, SessionKind};
 use crate::palette::Palette;
-use crate::prompt::{ExecutedCommand, MarkedPty, PromptInput, PromptTracker};
+use crate::prompt::{ExecutedCommand, MarkedPty, PromptEvent, PromptInput, PromptTracker};
 
 /// How long a closed session's child has to exit after SIGHUP before it is killed.
 const EXIT_GRACE: Duration = Duration::from_secs(2);
@@ -35,8 +35,13 @@ pub enum SessionEvent {
     Bell,
     /// The child process exited, with its exit code when one is available.
     Exited(Option<i32>),
-    /// A shell with integration is about to run this command line.
+    /// A shell with integration started a command, with its command line when the shell
+    /// reported it.
+    CommandStarted(Option<String>),
+    /// A shell with integration is about to run this command line typed at its prompt.
     CommandExecuted(ExecutedCommand),
+    /// The command a shell with integration ran finished: the prompt is back.
+    CommandFinished,
 }
 
 /// Called on the session's I/O thread, sometimes while it holds the terminal lock: it must
@@ -195,9 +200,13 @@ impl Session {
         palette: Palette,
         callback: EventCallback,
     ) -> io::Result<Self> {
-        let executed_callback = callback.clone();
-        let prompt = Arc::new(PromptTracker::new(move |command| {
-            executed_callback(SessionEvent::CommandExecuted(command));
+        let prompt_callback = callback.clone();
+        let prompt = Arc::new(PromptTracker::new(move |event| {
+            prompt_callback(match event {
+                PromptEvent::Started(command) => SessionEvent::CommandStarted(command),
+                PromptEvent::Executed(command) => SessionEvent::CommandExecuted(command),
+                PromptEvent::Finished => SessionEvent::CommandFinished,
+            });
         }));
         let shared = Arc::new(Shared {
             callback,

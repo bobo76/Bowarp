@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -6,8 +7,9 @@ use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu};
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Context, Div, Hsla, InteractiveElement, IntoElement,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, div, px, rgb,
+    Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Div, Hsla, InteractiveElement,
+    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
+    div, pulsating_between, px, rgb,
 };
 use term_core::SessionKind;
 use workspace_model::{Attention, LauncherIcon, TabColor, format_lap};
@@ -27,6 +29,12 @@ pub const NUMBERED_TABS: usize = 9;
 const CLAUDE_ORANGE: u32 = 0xd97757;
 /// Added lines in the hover card, as in a diff.
 const ADDED_GREEN: u32 = 0x3fb950;
+/// One breath of the Running badge, between these opacities. It repaints at most
+/// `RUNNING_PULSE_FPS` times a second, only while a pulsing badge is drawn, and only for the
+/// first `RUNNING_PULSE_FOR` of a command.
+const RUNNING_PULSE: Duration = Duration::from_millis(2000);
+const RUNNING_PULSE_OPACITY: (f32, f32) = (0.35, 1.);
+const RUNNING_PULSE_FPS: f32 = 10.;
 
 /// A tab's status, shown as a badge on its icon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,6 +47,8 @@ pub enum TabStatus {
     Done,
     /// Claude Code finished and waits for the next prompt.
     Idle,
+    /// A command typed at a shell's prompt runs (shell integration).
+    Running,
     /// A session without status hooks printed output recently.
     Active,
     /// A session without status hooks has been quiet for a while.
@@ -52,6 +62,7 @@ impl TabStatus {
             Self::Working => rgb(0x4c9aff),
             Self::NeedsAttention => rgb(0xf5a524),
             Self::Done | Self::Idle => rgb(0x3fb950),
+            Self::Running => rgb(0x2dd4bf),
             Self::Active => rgb(0xc9d1d9),
             Self::Quiet | Self::Exited => rgb(0x545d68),
         }
@@ -64,6 +75,7 @@ impl TabStatus {
             Self::NeedsAttention => "Needs attention",
             Self::Done => "Done",
             Self::Idle => "Idle",
+            Self::Running => "Running",
             Self::Active => "Recent output",
             Self::Quiet => "No recent output",
             Self::Exited => "Exited",
@@ -75,7 +87,12 @@ impl TabStatus {
         match self {
             Self::NeedsAttention => Some(Attention::Needed),
             Self::Done => Some(Attention::Done),
-            Self::Working | Self::Idle | Self::Active | Self::Quiet | Self::Exited => None,
+            Self::Working
+            | Self::Idle
+            | Self::Running
+            | Self::Active
+            | Self::Quiet
+            | Self::Exited => None,
         }
     }
 }
@@ -144,6 +161,8 @@ pub struct TabRow {
     pub name: SharedString,
     pub detail: Option<TabDetail>,
     pub status: TabStatus,
+    /// Whether a Running badge pulses rather than stays still.
+    pub pulse: bool,
     pub selected: bool,
     pub pinned: bool,
     /// The tab's own color, else its group's.
@@ -242,8 +261,47 @@ struct RowBackground {
     row_group: SharedString,
 }
 
-/// The badge on the icon's bottom-right corner. Quiet sessions get none.
-fn status_badge(status: TabStatus, background: &RowBackground) -> Option<AnyElement> {
+/// The Running badge's dot, pulsing or still.
+fn running_dot(color: Hsla, pulse: bool, index: usize) -> AnyElement {
+    let dot = div().size_full().rounded_full().bg(color);
+    if !pulse {
+        return dot.into_any_element();
+    }
+    dot.with_animation(
+        ("running-badge", index),
+        Animation::new(RUNNING_PULSE)
+            .repeat_synced()
+            .with_easing(pulsating_between(
+                RUNNING_PULSE_OPACITY.0,
+                RUNNING_PULSE_OPACITY.1,
+            ))
+            .with_max_fps(RUNNING_PULSE_FPS),
+        |dot, opacity| dot.opacity(opacity),
+    )
+    .into_any_element()
+}
+
+/// Whether Running badges may pulse in `window`: not on a software-emulated GPU (a VM, remote
+/// X, Xvfb), where every frame costs CPU. `AGENTWS_FORCE_PULSE` set makes debug builds pulse
+/// anyway, to check the pulse under Xvfb.
+pub fn pulse_allowed(window: &Window) -> bool {
+    static FORCE: OnceLock<bool> = OnceLock::new();
+    let forced = cfg!(debug_assertions)
+        && *FORCE.get_or_init(|| std::env::var_os("AGENTWS_FORCE_PULSE").is_some());
+    forced
+        || !window
+            .gpu_specs()
+            .is_some_and(|specs| specs.is_software_emulated)
+}
+
+/// The badge on the icon's bottom-right corner. Quiet sessions get none. The Running badge
+/// pulses when `pulse` is set; `index` tells the rows' animations apart.
+fn status_badge(
+    status: TabStatus,
+    pulse: bool,
+    index: usize,
+    background: &RowBackground,
+) -> Option<AnyElement> {
     let ring = background.normal;
     let hovered = background.hovered;
     let badge = div()
@@ -265,6 +323,12 @@ fn status_badge(status: TabStatus, background: &RowBackground) -> Option<AnyElem
             .size(px(14.))
             .bg(status.color())
             .child(Icon::new(IconName::Check).size(px(8.)).text_color(ring)),
+        // The dot fades over the ring color, so the icon never shows through it.
+        TabStatus::Running => badge
+            .size(px(12.))
+            .bg(ring)
+            .group_hover(background.row_group.clone(), |style| style.bg(hovered))
+            .child(running_dot(status.color(), pulse, index)),
         TabStatus::Exited => badge
             .size(px(12.))
             .bg(ring)
@@ -285,6 +349,8 @@ fn status_badge(status: TabStatus, background: &RowBackground) -> Option<AnyElem
 fn session_icon(
     kind: SessionKind,
     status: TabStatus,
+    pulse: bool,
+    index: usize,
     background: &RowBackground,
     cx: &App,
 ) -> impl IntoElement {
@@ -299,7 +365,7 @@ fn session_icon(
         .rounded_md()
         .bg(theme.secondary)
         .child(kind_icon(kind).size(px(18.)))
-        .children(status_badge(status, background))
+        .children(status_badge(status, pulse, index, background))
 }
 
 fn detail_line(detail: TabDetail, color: Hsla) -> impl IntoElement {
@@ -402,7 +468,14 @@ pub fn tab_row(
                     .bg(tab_color(color)),
             )
         })
-        .child(session_icon(row.kind, row.status, &row_background, cx))
+        .child(session_icon(
+            row.kind,
+            row.status,
+            row.pulse,
+            row.index,
+            &row_background,
+            cx,
+        ))
         .child(
             div()
                 .flex()
@@ -454,6 +527,8 @@ pub struct TabCard {
     pub status: TabStatus,
     /// How long the agent has been working on the current turn, shown in the status chip.
     pub working_for: Option<Duration>,
+    /// The command a shell runs, shown in the Running chip.
+    pub running_label: Option<SharedString>,
     /// The full folder, with the home folder shortened to `~`.
     pub folder: Option<SharedString>,
     pub branch: Option<SharedString>,
@@ -467,8 +542,12 @@ pub struct TabCard {
 }
 
 /// The status as a colored chip: mark and label, with the lap time while working
-/// ("Working · 2m 14s").
-fn status_chip(status: TabStatus, working_for: Option<Duration>) -> impl IntoElement {
+/// ("Working · 2m 14s") or the command while running ("Running · make test").
+fn status_chip(
+    status: TabStatus,
+    working_for: Option<Duration>,
+    running_label: Option<SharedString>,
+) -> impl IntoElement {
     let color = status.color();
     let mark = match status {
         TabStatus::Done => Icon::new(IconName::Check).size(px(11.)).into_any_element(),
@@ -485,15 +564,17 @@ fn status_chip(status: TabStatus, working_for: Option<Duration>) -> impl IntoEle
         .flex()
         .items_center()
         .gap_1()
+        .min_w_0()
         .px_1p5()
         .py_0p5()
         .rounded_sm()
         .bg(color.opacity(0.15))
         .text_xs()
         .text_color(color)
-        .child(mark)
-        .child(status.label())
+        .child(div().flex_none().child(mark))
+        .child(div().flex_none().child(status.label()))
         .children(working_for.map(|lap| format!("· {}", format_lap(lap))))
+        .children(running_label.map(|command| single_line(format!("· {command}").into())))
 }
 
 pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
@@ -511,11 +592,19 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
                 .items_center()
                 .justify_between()
                 .mb_0p5()
-                .child(status_chip(card.status, card.working_for))
-                .children(
-                    tab_shortcut(card.index)
-                        .map(|shortcut| div().text_xs().text_color(muted).child(shortcut)),
-                ),
+                .gap_2()
+                .child(status_chip(
+                    card.status,
+                    card.working_for,
+                    card.running_label,
+                ))
+                .children(tab_shortcut(card.index).map(|shortcut| {
+                    div()
+                        .flex_none()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(shortcut)
+                })),
         )
         // The whole folder, wrapped rather than cut: its end is the part that tells tabs apart.
         .children(card.folder.map(|folder| div().child(folder)))
@@ -559,6 +648,7 @@ pub fn no_matches_hint(cx: &App) -> impl IntoElement {
 pub struct GroupSummary {
     pub needs_attention: usize,
     pub working: usize,
+    pub running: usize,
     pub done: usize,
 }
 
@@ -569,6 +659,7 @@ impl GroupSummary {
             match status {
                 TabStatus::NeedsAttention => summary.needs_attention += 1,
                 TabStatus::Working => summary.working += 1,
+                TabStatus::Running => summary.running += 1,
                 TabStatus::Done => summary.done += 1,
                 _ => {}
             }
@@ -581,6 +672,7 @@ impl GroupSummary {
         [
             (TabStatus::NeedsAttention, self.needs_attention),
             (TabStatus::Working, self.working),
+            (TabStatus::Running, self.running),
             (TabStatus::Done, self.done),
         ]
         .into_iter()
@@ -610,7 +702,7 @@ fn summary_chip(status: TabStatus, count: usize) -> impl IntoElement {
             .size(px(11.))
             .into_any_element(),
         TabStatus::Done => Icon::new(IconName::Check).size(px(11.)).into_any_element(),
-        // The same dot as the Working badge on a tab icon.
+        // The same dot as the Working and Running badges on a tab icon (not pulsing here).
         _ => div()
             .size(px(7.))
             .rounded_full()
@@ -738,14 +830,17 @@ mod tests {
             TabStatus::NeedsAttention,
             TabStatus::Working,
             TabStatus::Idle,
+            TabStatus::Running,
             TabStatus::Done,
             TabStatus::Quiet,
+            TabStatus::Active,
         ]);
         assert_eq!(
             summary,
             GroupSummary {
                 needs_attention: 1,
                 working: 2,
+                running: 1,
                 done: 1,
             }
         );
@@ -755,6 +850,7 @@ mod tests {
             vec![
                 (TabStatus::NeedsAttention, 1),
                 (TabStatus::Working, 2),
+                (TabStatus::Running, 1),
                 (TabStatus::Done, 1),
             ]
         );
