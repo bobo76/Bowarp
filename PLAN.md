@@ -8,7 +8,25 @@ What is done is described in [FEATURES.md](FEATURES.md); the details are in the 
 
 **Next steps, in priority order**
 
-(none)
+- Claude Code typed at a shell prompt behaves like a Claude Code tab: today a `claude` started
+  from a shell tab shows "Running for" until it quits, even while it sits idle, because it gets
+  no hooks. Instead:
+  - Shell tabs also get `AGENTWS_SESSION`, the hook pipe name and a new
+    `AGENTWS_CLAUDE_SETTINGS` (the settings file `ClaudeHooks` writes, `crates/app/src/hooks.rs`).
+  - The shell integration scripts (bash, zsh, PowerShell) define a `claude` wrapper that runs
+    `command claude --settings "$AGENTWS_CLAUDE_SETTINGS" "$@"` when that variable is set.
+  - `TerminalView`: while the running command (OSC 133 `C` mark, `PromptEvent::Started`) has
+    `claude` as its first word (matched by file name, path and `.exe` / `.cmd` stripped, like
+    `shell_icon`), the tab shows the hook status (Working, Waiting, Done, with the "Working ·
+    2m 14s" lap) instead of Running, and the sidebar row shows the Claude icon; `copilot` gets
+    its icon only (no hooks). The prompt returning (`Finished`) clears the hook status and the
+    tab is a shell tab again.
+  - Nested shells and tmux clear the session variables, as they already clear
+    `AGENTWS_MARK_TOKEN`, so a `claude` started there doesn't report to this tab.
+  - Check that a `--settings` the user passes still works alongside the wrapper's (Claude Code
+    may take only one; if so, document it).
+  Needs shell integration, so it misses `npx`, an absolute path to `claude` and scripts that run
+  it (a later Linux `/proc` child check could add the icon for those, without hooks).
 
 **Fixed, not built yet (the Windows machine has no MSVC Build Tools)**
 
@@ -117,13 +135,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   icon and status, saved as a shell in `tabs.json`. Today the tab is left dead as "Exited".
   The new terminal starts empty, so the agent's output is lost, the
   `claude --resume <id>` line included (decision in [README.md](README.md#design-decisions)).
-- Agent icon in a shell tab: while `claude` or `copilot` runs from a shell tab's prompt, its
-  sidebar row shows the Claude / Copilot icon, and the shell icon returns at the next prompt.
-  The command comes from the shell integration's OSC 133 `C` mark (`PromptEvent::Started` in
-  `term-core/src/prompt.rs`, which the Running status already uses); its first word is matched
-  by file name (path and `.exe` / `.cmd` stripped, like `shell_icon`). Needs shell
-  integration, so it misses scripts, `npx` and aliases. Icon only: the status stays shell-like
-  (no `--settings` hooks for a `claude` typed at the prompt).
 - Clickable links in terminal output: Ctrl+click opens a URL in the browser, both plain-text
   URLs found in the visible grid and OSC 8 hyperlinks (`alacritty_terminal` keeps them on the
   cell). A `path`, `path:line` or `path:line:col` (`src/foo.rs:42`, which Claude Code prints
@@ -203,6 +214,22 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   palette plus "Default") that tints the tab's sidebar row and its terminal background; saved
   with the tab in `tabs.json` and restored. The terminal's foreground colors stay unchanged,
   so the palette must keep text readable in light and dark themes.
+- Group hover card: hovering a group header for a moment opens a card next to it, like the
+  tab hover card (`with_hover_card` in `app/src/workspace_view/sidebar_rows.rs`), that sums up
+  the group's tabs. Most useful when the group is collapsed:
+  - Counts: "5 tabs · 2 Working · 1 Waiting · 1 Done", then one line per tab: kind icon,
+    name, status with its lap time ("Working · 2m 14s", "Running for 40s") and branch, in
+    sidebar order; tabs that need attention (Waiting, unviewed Done or failed) first.
+  - Common folder or branch shown once in the header when every tab shares it.
+  - Clicking a line selects that tab (expanding the group). The card ticks the lap times while
+    it shows (`set_card_clock` for each working tab) and is built only while it shows; no
+    card during a drag or over an empty group.
+- Full screen with F11: a `ToggleFullScreen` action bound to F11 at window level (so it works
+  whichever pane has focus, the terminal included; F11 is no longer sent to the program) that
+  calls GPUI's `window.toggle_fullscreen()`; also in the window menu / command palette. Full
+  screen is already saved and restored (`WindowMode::Fullscreen` in
+  `workspace-model/src/window_state.rs`). Check on X11 without a window manager (Xvfb) and
+  that leaving full screen returns to the earlier size or the maximized state.
 - Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - Draw box-drawing and block characters procedurally; font glyphs leave small gaps between rows for heavy/double verticals (`┃`, `║`).
 - Answer OSC 52 clipboard requests.
