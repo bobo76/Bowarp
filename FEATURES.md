@@ -20,7 +20,11 @@ directly to model APIs.
   transcript), with a modifier to keep local selection.
 - Shell command history shared by all shell tabs (with folder and time): an inline
   suggestion from history while typing and a history popup above the prompt (Up).
+- Open URLs and file paths printed in the output with Ctrl+click; a `path:line` opens in
+  the file viewer at that line.
 - Support split panes, adjustable pane sizes, and quick switching between sessions.
+- Run any action or jump to any tab from a command palette.
+- Light and dark themes, terminal color schemes, and adjustable window opacity.
 - Warn before closing a session or workspace with running processes.
 
 ## Tabs and Groups
@@ -49,7 +53,7 @@ directly to model APIs.
   there, copy paths, and hand a file's path to the agent as context.
 - View and edit a clicked file beside the terminal: Markdown rendered or as source, JSON
   laid out and colored with foldable blocks, other text colored by language; saving with
-  Ctrl+S, and reloading when the file changes on disk.
+  Ctrl+S, and reloading when the file changes on disk; find and replace in the open file.
 
 ## Agent Activity and Attention
 
@@ -57,7 +61,10 @@ directly to model APIs.
   or has exited, when reliable status information is available.
 - Show status on individual tabs, including tabs that are not currently selected.
 - Show how long an agent has been working on its current turn.
+- Show how long the current command has been running in a shell tab.
 - Mark an agent that finished while its tab was not selected as done until it is viewed.
+- Mark a tab that rang the bell, or whose long shell command finished (or failed), while
+  it was not selected, until it is viewed.
 - Read agent status from the CLI's own hooks without changing the user's CLI settings.
 - Show aggregate status on collapsed groups, such as the number of working
   sessions and sessions needing attention.

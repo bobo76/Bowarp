@@ -38,9 +38,6 @@ hook command quoting).
 - **Stack:** Rust + GPUI + `alacritty_terminal`.
   - Priorities: performance, then memory, then Windows, then Ubuntu.
   - Native GPU rendering, no browser engine, event-driven redraw (zero work when idle).
-- **Development platform:** start on Ubuntu; same code targets Windows (ConPTY) with regular Windows testing.
-- **Agent status scope for M1:** Claude Code only. Copilot CLI and plain shells show
-  "recent activity" based on output timestamps.
 - **Licensing:** Zed's `terminal` / `terminal_view` crates are GPL-3 - reference only, do not copy.
   `gpui` and `alacritty_terminal` are Apache-2.0.
 
@@ -83,7 +80,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 
 ## Later Milestones
 
-- **M3:** split panes, adjustable sizes, pane shortcuts.
 - **M4:** named workspaces (the single window's tabs are already restored), offer to relaunch; restored tabs clearly marked "not running".
 - **M5:** terminal search, close-with-running-process warnings, notifications + configurable sound.
 - **M6:** Copilot CLI status (if it gains a hook mechanism), Windows packaging, Ubuntu polish
@@ -91,48 +87,101 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 
 ## Backlog
 
-- Draw box-drawing and block characters procedurally; font glyphs leave small gaps between
-  rows for heavy/double verticals (`┃`, `║`).
-- Report drags that leave the terminal area (GPUI only delivers moves while hovered).
-- Answer OSC 52 clipboard requests.
-- Show an "exited" banner in the terminal area (currently only in the title).
-- Tune wheel scroll speed (about 2 lines per notch on X11).
-- Configurable font family and size.
-- Configurable default shell for the Terminal entry and Ctrl+Shift+T, saved in the settings
-  file (overrides the $SHELL / Git Bash default).
-- Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
-  `cx.build_action`) in place of `default_bindings`.
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
+- Show an "exited" banner in the terminal area (currently only in the title).
+- Tune wheel scroll speed (about 2 lines per notch on X11).
+- Quitting an agent falls back to a shell: when a Claude Code / Copilot tab's program exits,
+  the tab starts the default shell in the agent's last folder (its last known `location()`,
+  since `current_dir` is `None` once the child exited) and becomes a plain shell tab: shell
+  icon and status, saved as a shell in `tabs.json`. Today the tab is left dead as "Exited".
+  The new terminal starts empty, so the agent's output is lost, the
+  `claude --resume <id>` line included (decision in [README.md](README.md#design-decisions)).
+- Agent icon in a shell tab: while `claude` or `copilot` runs from a shell tab's prompt, its
+  sidebar row shows the Claude / Copilot icon, and the shell icon returns at the next prompt.
+  The command comes from the shell integration's OSC 133 `C` mark (`on_executed` in
+  `term-core/src/prompt.rs`, which command history already uses); its first word is matched
+  by file name (path and `.exe` / `.cmd` stripped, like `shell_icon`). Needs shell
+  integration, so it misses scripts, `npx` and aliases. Icon only: the status stays shell-like
+  (no `--settings` hooks for a `claude` typed at the prompt).
+- Clickable links in terminal output: Ctrl+click opens a URL in the browser, both plain-text
+  URLs found in the visible grid and OSC 8 hyperlinks (`alacritty_terminal` keeps them on the
+  cell). A `path`, `path:line` or `path:line:col` (`src/foo.rs:42`, which Claude Code prints
+  all the time), resolved against the tab's folder and only if it exists, opens in the file
+  viewer scrolled to that line. Underline and hand cursor while Ctrl is held over a link.
+- Bell as an attention signal: a BEL (`SessionEvent::Bell`, ignored today in
+  `terminal_view.rs`) in a tab that isn't selected marks it as needing attention until it
+  is viewed, like a finished agent. This covers programs without hooks (Copilot, scripts).
+  Optional sound with the M5 notification sound; rate-limited so a stream of bells doesn't
+  repeat it.
+- Long command finished in a shell tab: when a command that ran longer than a threshold
+  (default 10 s, in the settings file) ends while its tab isn't selected, the tab is marked
+  done, or failed when the OSC 133 `D` exit code isn't 0, until it is viewed. Needs shell
+  integration. Same notification and sound as M5's agent notifications.
+- Running time in the tab hover card: "Running for mm:ss" (`h:mm:ss` from an hour on) for the
+  command running in a shell tab, from its OSC 133 `C` mark to now, ticking while the card is
+  open (`set_card_clock`). This includes an agent typed at a shell prompt (`claude` in a bash
+  tab), which gets no hooks and so no "Working · 2m 14s" lap; only Claude Code tabs opened
+  from the new-tab menu have that lap.
+- Command palette: Ctrl+Shift+P opens a fuzzy search over every action (the ones with
+  shortcuts and the menu-only ones such as Duplicate, Move to group or Copy branch), showing
+  each one's shortcut, plus the tabs by name ("go to tab"). Enter runs the action on the
+  selected tab.
+- Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
+  and terminal color schemes: a few bundled schemes plus user schemes imported from
+  base16/iTerm files, saved in the settings file. "System" follows the OS light/dark setting.
+- Window opacity and background blur, set in the settings file (opacity applies to the
+  terminal background only, text stays opaque); blur where the platform allows it (Windows
+  acrylic/mica, KDE on X11).
+- File viewer find and replace: Ctrl+F searches the open file (highlight all matches,
+  Enter / Shift+Enter to move, match count, case and whole-word toggles), Ctrl+H adds a
+  replace field (replace one / all) in source mode; rendered Markdown only gets find.
+- Configurable font family and size.
+- Configurable default shell for the new-tab menu's first entry and Ctrl+Shift+T, saved in the settings
+  file (overrides the $SHELL / Git Bash default).
+- File explorer "cd ..": a parent-folder button in the explorer header (Lucide `folder-up`
+  icon, a folder with an up arrow, added to `crates/app/assets/icons/`; tooltip "Parent folder
+  (cd ..)") and/or a `..` row above the root. Both emit `ExplorerEvent::CdTo` with the parent
+  folder, so a shell tab types `cd <parent>` and the tree follows the new working directory.
+  Disabled at a filesystem or drive root, and in a tab that isn't a shell (`can_cd` false:
+  Claude Code, Copilot), since the tree always shows the session's folder.
+- Resizable file viewer pane: drag the divider on the viewer's left edge to resize it
+  (currently fixed at 45% of the width, `VIEWER_WIDTH` in `app/src/workspace_view.rs`); resize
+  cursor on hover, a minimum width for both the viewer and the terminal, double-click resets
+  to 45%. The width is kept as a fraction so it follows window resizes, and is saved in the
+  settings file and restored at startup.
+- File viewer: keep the scroll position when the file is reloaded after a change on disk
+  (it goes back to the top); open links to other files (`FEATURES.md`) in the viewer instead
+  of the system handler; the `⋮` menu from the reference screenshot.
 - New-tab folder picker (currently the selected tab's folder).
-- Drag group headers to reorder groups (the group menu's Move up / down does it for now).
-- Sidebar search: Up/Down to move through the matches from the search field; the filter/sort
-  button from the reference screenshot.
-- Icon overrides per tab (tab menu); what can be picked (bundled icons, emoji, letters) is
-  still to decide.
-- Working directory from OSC 7 (only useful for remote shells): `alacritty_terminal` does not
-  parse it, but the pty reader wrapper (`term-core/src/prompt.rs`) could find it.
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
   the window; Delete already runs in the background.
-- File viewer: keep the scroll position when the file is reloaded after a change on disk
-  (it goes back to the top); open links to other files (`FEATURES.md`) in the viewer instead
-  of the system handler; drag the viewer's left edge to resize it (fixed at 45% of the
-  width); the `⋮` menu from the reference screenshot.
-- Split panes (M3), in three steps:
-  - Split panes: split the selected tab's area right or down (tab menu entries and a
-    shortcut each) into panes, each running its own session started in the focused pane's
-    folder; a click focuses a pane (focused pane outlined), closing a pane's session or its
-    `×` removes it and the remaining pane takes the space. The tab row shows the focused
-    pane's title, status and folder; the tab's status is the most urgent of its panes. Panes
-    nest (a split inside a split). Pure layout tree (split, remove, focus order) in
-    `workspace-model` with unit tests.
-  - Adjustable sizes and restore: drag the divider between two panes to resize them
-    (minimum size per pane, double-click resets to an even split); the pane layout and sizes
-    are saved in `tabs.json` and restored with the tab.
-  - Pane shortcuts: move focus to the pane left / right / above / below, close the focused
-    pane, zoom the focused pane to the whole tab and back; hints in the tab menu and
-    README.md.
+- Sidebar search: Up/Down to move through the matches from the search field; the filter/sort
+  button from the reference screenshot.
+- Configuration panel: a settings dialog opened from the title bar's settings button (see the
+  title bar row above) that edits the settings file, for the configurable items in this list.
+- Configurable terminal path: the executable path for each launcher entry (Terminal, Git Bash,
+  `claude`, `copilot`) saved in the settings file, for programs that aren't on `PATH` or
+  where the wrong copy is found first; an empty value keeps the current lookup.
+- Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
+  `cx.build_action`) in place of `default_bindings`.
+- Configurable terminal icon: the icon for each launcher entry, picked from the bundled
+  `LauncherIcon` set (Bash, PowerShell, Command Prompt, Zsh, Fish, Ubuntu, ...) and saved in
+  the settings file; it shows in the new-tab menu and on the sidebar row of every tab started
+  from that entry (restored tabs included). "Automatic" keeps the current detection
+  (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`), e.g. for a
+  wrapper script that `shell_icon` only sees as `Shell`.
+- Configurable tab background color: a color picked per tab from the tab menu (a small
+  palette plus "Default") that tints the tab's sidebar row and its terminal background; saved
+  with the tab in `tabs.json` and restored. The terminal's foreground colors stay unchanged,
+  so the palette must keep text readable in light and dark themes.
+- Drag group headers to reorder groups (the group menu's Move up / down does it for now).
+- Draw box-drawing and block characters procedurally; font glyphs leave small gaps between rows for heavy/double verticals (`┃`, `║`).
+- Answer OSC 52 clipboard requests.
+- Report drags that leave the terminal area (GPUI only delivers moves while hovered).
+- Working directory from OSC 7 (only useful for remote shells): `alacritty_terminal` does not
+  parse it, but the pty reader wrapper (`term-core/src/prompt.rs`) could find it.
 - Untested on Windows: hook command quoting (`"C:\...\agentws-hook.exe"` run by Claude Code's
   shell) and `.cmd` launchers (`claude.cmd` from npm) under ConPTY.
 
@@ -141,13 +190,3 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 - **GPUI API churn:** exact `gpui-pre` version; UI isolated in `app`.
 - **IME and clipboard edge cases** in a custom terminal element: test early in M1, especially on Windows.
 - **Claude Code `--settings` flag and hook payload shapes:** verify against current docs before relying on them.
-
-## Ubuntu Prerequisites
-
-- Rust toolchain via `rustup`.
-- GPUI build deps (Vulkan, X11/Wayland, fonts):
-
-  ```
-  sudo apt install build-essential pkg-config libvulkan-dev libwayland-dev libxkbcommon-x11-dev \
-    libx11-xcb-dev libxcb1-dev libfontconfig-dev libfreetype-dev libssl-dev clang cmake
-  ```

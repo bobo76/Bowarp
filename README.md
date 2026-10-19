@@ -6,6 +6,14 @@ Architecture: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Build and run
 
+On Ubuntu, install the Rust toolchain via `rustup` and the GPUI build dependencies (Vulkan,
+X11/Wayland, fonts):
+
+```
+sudo apt install build-essential pkg-config libvulkan-dev libwayland-dev libxkbcommon-x11-dev \
+  libx11-xcb-dev libxcb1-dev libfontconfig-dev libfreetype-dev libssl-dev clang cmake
+```
+
 Build the whole workspace first: `agentws-hook` must sit next to the app binary, or agent
 status is disabled.
 
@@ -19,8 +27,6 @@ The first tab runs a shell by default. To start with an agent or in another fold
 ```
 cargo run -p agent-workspace -- [shell|claude|copilot] [project-dir]
 ```
-
-Ubuntu build dependencies are listed in [PLAN.md](PLAN.md#ubuntu-prerequisites).
 
 ## Tabs
 
@@ -182,6 +188,24 @@ The `i` button in the title bar (after the explorer button) shows the version, w
 commit it was built from when built from a checkout, and a link to the repository. Copy version
 copies the whole line for a bug report (or select part of it and press Ctrl+C); Escape or Close
 dismisses it.
+
+## Design decisions
+
+- **Quitting an agent (planned, see the backlog in [PLAN.md](PLAN.md)):** when Claude Code or
+  Copilot CLI exits in its tab, the tab starts a new default shell in the agent's last folder
+  and becomes a shell tab; the agent's output is not kept. The agent keeps running directly
+  (no shell around it), which:
+  - starts faster: no shell startup files (`.bashrc`, `nvm`, `conda`) run before it;
+  - uses less memory: no idle shell waiting behind every agent tab;
+  - works the same with every default shell, `cmd` and shells without integration included,
+    with no command quoting through a shell (fewer Windows pitfalls);
+  - keeps a tab's kind fixed while the agent runs, so status and icon need no tracking of what
+    runs in it.
+
+  Rejected: launching the agent inside
+  the default shell (as if typed at a bash prompt), which would keep the screen and the
+  `claude --resume <id>` line and give the agent your shell startup environment, but needs a
+  run-first step in every shell integration script and a tab kind that changes over time.
 
 ## Manual check
 
