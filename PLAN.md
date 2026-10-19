@@ -23,34 +23,34 @@ change folder through a hidden key (Ctrl+Alt+Shift+F12, folder read from `AGENTW
 bash gets a typed `cd`. Check on Windows that the PowerShell key gets through ConPTY and
 PSReadLine: the button moves the shell and the tree, with no stray characters.
 
-**Next steps, in priority order**
+**Done: quick wins (one pass), 273 tests**
 
-- Claude Code typed at a shell prompt behaves like a Claude Code tab: today a `claude` started
-  from a shell tab shows "Running for" until it quits, even while it sits idle, because it gets
-  no hooks. Instead:
-  - Shell tabs also get `AGENTWS_SESSION`, the hook pipe name and a new
-    `AGENTWS_CLAUDE_SETTINGS` (the settings file `ClaudeHooks` writes, `crates/app/src/hooks.rs`).
-  - The shell integration scripts (bash, zsh, PowerShell) define a `claude` wrapper that runs
-    `command claude --settings "$AGENTWS_CLAUDE_SETTINGS" "$@"` when that variable is set.
-  - `TerminalView`: while the running command (OSC 133 `C` mark, `PromptEvent::Started`) has
-    `claude` as its first word (matched by file name, path and `.exe` / `.cmd` stripped, like
-    `shell_icon`), the tab shows the hook status (Working, Waiting, Done, with the "Working ·
-    2m 14s" lap) instead of Running, and the sidebar row shows the Claude icon; `copilot` gets
-    its icon only (no hooks). The prompt returning (`Finished`) clears the hook status and the
-    tab is a shell tab again.
-  - Nested shells and tmux clear the session variables, as they already clear
-    `AGENTWS_MARK_TOKEN`, so a `claude` started there doesn't report to this tab.
-  - Check that a `--settings` the user passes still works alongside the wrapper's (Claude Code
-    may take only one; if so, document it).
-  Needs shell integration, so it misses `npx`, an absolute path to `claude` and scripts that run
-  it (a later Linux `/proc` child check could add the icon for those, without hooks).
+Ctrl+click links in terminal output (URLs, OSC 8 hyperlinks, existing files as `path`,
+`path:line` or `path:line:col`, also across a wrapped line), underlined with a hand cursor
+while Ctrl is held; an agent tab going on as a shell when Claude Code or Copilot CLI quits
+with code 0 (a failed agent keeps its last screen);
+images in the file viewer (raster drawn from the file, SVG drawn or as source, pixel size in
+the header); links between documents opening in the viewer; the viewer's divider (drag,
+double-click for 45%, minimum 240 px for viewer and terminal, kept as a fraction of the
+window); and one viewer per tab. Link detection, `path:line:col` parsing, document links and
+the width limits are in `workspace-model` (`links`, `pane_width`). Checked under Xvfb
+(`pipeline/retros/quick-wins/shots/`), except the hand cursor (screenshots don't show the
+pointer) and the browser itself (a logging `xdg-open` stood in). Not supported: AVIF images
+(GPUI's decoder lacks it: "The image could not be read."), a `#heading` in a document link
+(the file opens at the top), an OSC 8 link spanning several lines (only its row is
+underlined). The shell starts in the agent's last known folder: on Linux its `/proc` folder as
+of its last title change or hook event, elsewhere the folder it started in.
 
-**Fixed, not built yet (the Windows machine has no MSVC Build Tools)**
+**Next steps**
+
+None.
+
+**Fixed, not tested yet (built and unit-tested by the Windows CI, not run on a Windows machine)**
 
 - No command history on Windows (Up at a prompt went to the shell): output is now held after
   the `A` / `B` marks there too, the event loop being woken by a completion packet posted to
   its poller for the pty's key (`Wake` in `term-core/src/prompt.rs`), so the prompt's
-  position is tracked. Type-checked for `x86_64-pc-windows-msvc` only. Check in PowerShell,
+  position is tracked. Check in PowerShell,
   Windows PowerShell, Git Bash and an Ubuntu tab: Up opens the HISTORY popup, the dimmed
   suggestion follows typing, Enter on a row replaces the command line (PSReadLine's default
   Windows edit mode may not bind Ctrl+E, which `PromptInput::replace_keys` sends first: try
@@ -84,6 +84,9 @@ PSReadLine: the button moves the shell and the tree, with no stray characters.
   (`pipeline/retros/copilot-status/shots/`). A permission prompt keeps `9;4;3`, so it shows
   Working, not NeedsAttention; Esc at the prompt clears it. Check on Windows that the
   progress reports get through ConPTY: Working during a turn in a Copilot tab.
+- Console windows flashing over the app: the hover card's `git` child now starts with
+  `CREATE_NO_WINDOW`. Check on Windows: hovering tabs in a git folder shows the branch and
+  opens no console window.
 
 **Not doable yet**
 
@@ -93,8 +96,8 @@ PSReadLine: the button moves the shell and the tree, with no stray characters.
   `WM_NCHITTEST` answered `HTCAPTION` over them and `DefWindowProc`'s move loop ate the
   mouse-up; they now sit in a `div().occlude()` wrapper, which should give them `HTCLIENT`.
 
-**Deferred (needs a Windows machine):** Windows build and the same check (ConPTY, named pipe,
-hook command quoting).
+**Deferred (needs a Windows machine):** run the CI's Windows build and check ConPTY, the named
+pipe and hook command quoting.
 
 ## Decisions
 
@@ -151,19 +154,27 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 
 ## Backlog
 
+- Claude Code typed at a shell prompt behaves like a Claude Code tab: today a `claude` started
+  from a shell tab shows "Running for" until it quits, even while it sits idle, because it gets
+  no hooks. Instead:
+  - Shell tabs also get `AGENTWS_SESSION`, the hook pipe name and a new
+    `AGENTWS_CLAUDE_SETTINGS` (the settings file `ClaudeHooks` writes, `crates/app/src/hooks.rs`).
+  - The shell integration scripts (bash, zsh, PowerShell) define a `claude` wrapper that runs
+    `command claude --settings "$AGENTWS_CLAUDE_SETTINGS" "$@"` when that variable is set.
+  - `TerminalView`: while the running command (OSC 133 `C` mark, `PromptEvent::Started`) has
+    `claude` as its first word (matched by file name, path and `.exe` / `.cmd` stripped, like
+    `shell_icon`), the tab shows the hook status (Working, Waiting, Done, with the "Working ·
+    2m 14s" lap) instead of Running, and the sidebar row shows the Claude icon; `copilot` gets
+    its icon only (no hooks). The prompt returning (`Finished`) clears the hook status and the
+    tab is a shell tab again.
+  - Nested shells and tmux clear the session variables, as they already clear
+    `AGENTWS_MARK_TOKEN`, so a `claude` started there doesn't report to this tab.
+  - Check that a `--settings` the user passes still works alongside the wrapper's (Claude Code
+    may take only one; if so, document it).
+  Needs shell integration, so it misses `npx`, an absolute path to `claude` and scripts that run
+  it (a later Linux `/proc` child check could add the icon for those, without hooks).
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
-- Quitting an agent falls back to a shell: when a Claude Code / Copilot tab's program exits,
-  the tab starts the default shell in the agent's last folder (its last known `location()`,
-  since `current_dir` is `None` once the child exited) and becomes a plain shell tab: shell
-  icon and status, saved as a shell in `tabs.json`. Today the tab is left dead as "Exited".
-  The new terminal starts empty, so the agent's output is lost, the
-  `claude --resume <id>` line included (decision in [README.md](README.md#design-decisions)).
-- Clickable links in terminal output: Ctrl+click opens a URL in the browser, both plain-text
-  URLs found in the visible grid and OSC 8 hyperlinks (`alacritty_terminal` keeps them on the
-  cell). A `path`, `path:line` or `path:line:col` (`src/foo.rs:42`, which Claude Code prints
-  all the time), resolved against the tab's folder and only if it exists, opens in the file
-  viewer scrolled to that line. Underline and hand cursor while Ctrl is held over a link.
 - Bell sound: with the M5 notification sound; rate-limited so a stream of bells doesn't
   repeat it (the attention mark is in the easy wins above).
 - Long command finished in a shell tab: when a command that ran longer than a threshold
@@ -186,27 +197,9 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 - Configurable font family and size.
 - Configurable default shell for the new-tab menu's first entry and Ctrl+Shift+T, saved in the settings
   file (overrides the $SHELL / Git Bash default).
-- Resizable file viewer pane: drag the divider on the viewer's left edge to resize it
-  (currently fixed at 45% of the width, `VIEWER_WIDTH` in `app/src/workspace_view.rs`); resize
-  cursor on hover, a minimum width for both the viewer and the terminal, double-click resets
-  to 45%. The width is kept as a fraction so it follows window resizes, and is saved in the
-  settings file and restored at startup.
-- File viewer per tab: each tab remembers its own open file, or none (today one `FileViewer`
-  in `WorkspaceView` is shared by all tabs). Selecting a tab shows the file it had open, or
-  hides the pane if it had none: open a file in tab 1, select tab 2 and the pane hides, select
-  tab 1 again and it comes back with the same file; if tab 2 has another file open, switching
-  between the two tabs switches the file shown. Closing the viewer only closes it in the
-  selected tab, and closing a tab drops its file.
-- File viewer: open links to other files (`FEATURES.md`) in the viewer instead
-  of the system handler; the `⋮` menu from the reference screenshot.
-- File viewer images: clicking an image in the explorer (`FileKind::Image` in
-  `workspace-model/src/file_tree.rs`: png, jpg, gif, bmp, webp, svg, ico, tiff, avif) opens it
-  in the viewer like any other file, instead of "The file is binary." (or a raw-text SVG).
-  Shown with GPUI's `img()` from the file path, fit to the pane and centred, never upscaled
-  past 100%; the header shows the file name and the pixel size. Same open path, size limit
-  (`MAX_VIEW_BYTES`) and reload on change as text files; a file that fails to decode shows
-  "The image could not be read." SVG gets the source/rendered toggle Markdown has (rendered
-  by default). No zoom or pan for now.
+- Save the file viewer's width (resizable since the quick wins) in the settings file and
+  restore it at startup.
+- File viewer: the `⋮` menu from the reference screenshot.
 - New-tab folder picker (currently the selected tab's folder).
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall

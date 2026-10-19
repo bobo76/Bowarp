@@ -3,7 +3,8 @@
 //! how tabs are laid out (pinned, groups, order), which tabs a sidebar search matches and which
 //! tab wants attention next, how long a session has been in its status, and where the window
 //! and its tabs were when it closed, which running instance owns that save, which icon each
-//! new-tab launcher shows, the file explorer's tree, how the file viewer shows a file, the
+//! new-tab launcher shows, the file explorer's tree, how the file viewer shows a file and how
+//! wide it is, the links in terminal output and documents, the
 //! shell commands run in the app (history), the shell integration marks (OSC 133) in a shell's
 //! output, the progress reports (OSC 9;4) in a program's output, how a running command is
 //! labeled and badged, how far the mouse wheel scrolls and the About dialog's version line. No
@@ -19,8 +20,10 @@ mod instance_lock;
 mod lap;
 mod launcher_icon;
 pub mod layout;
+pub mod links;
 mod location;
 mod osc133;
+pub mod pane_width;
 mod progress;
 mod running;
 mod search;

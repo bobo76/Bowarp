@@ -19,6 +19,7 @@ mod sidebar;
 mod tab_menu;
 mod tabs_file;
 mod terminal_element;
+mod terminal_links;
 mod terminal_view;
 mod window_bounds;
 mod workspace_view;

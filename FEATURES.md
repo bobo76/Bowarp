@@ -22,6 +22,8 @@ directly to model APIs.
   suggestion from history while typing and a history popup above the prompt (Up).
 - Open URLs and file paths printed in the output with Ctrl+click; a `path:line` opens in
   the file viewer at that line.
+- When an agent (Claude Code, Copilot CLI) quits normally (exit code 0), its tab goes on as a
+  shell in the agent's folder; when it fails, the tab keeps its last screen to read the error.
 - Support split panes, adjustable pane sizes, and quick switching between sessions.
 - Run any action or jump to any tab from a command palette.
 - Light and dark themes, terminal color schemes, and adjustable window opacity.
@@ -52,9 +54,10 @@ directly to model APIs.
 - Act on files and folders from the tree: create, rename, delete, open a shell or an agent
   session or `cd` there (or to the parent folder), and copy paths.
 - View and edit a clicked file beside the terminal: Markdown rendered or as source, JSON
-  laid out and colored with foldable blocks, other text colored by language; saving with
-  Ctrl+S, and reloading when the file changes on disk (keeping the scroll position); find and
-  replace in the open file.
+  laid out and colored with foldable blocks, other text colored by language, images (SVG
+  drawn or as source); saving with Ctrl+S, and reloading when the file changes on disk
+  (keeping the scroll position); find and replace in the open file. Links between documents
+  open in the viewer. The viewer is resizable, and each tab keeps its own open file.
 
 ## Agent Activity and Attention
 

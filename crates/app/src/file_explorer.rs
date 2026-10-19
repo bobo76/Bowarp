@@ -211,6 +211,30 @@ impl FileExplorer {
         self.refresh(cx);
     }
 
+    /// Show `folder` in the tree, expanded and selected, with the folders down to it
+    /// expanded. `false` when it is not under the root shown.
+    pub fn reveal(&mut self, folder: &Path, cx: &mut Context<Self>) -> bool {
+        let Some(root) = self.root.clone() else {
+            return false;
+        };
+        // Both real paths, as a link may hold `..` and the tab's folder a symlink.
+        let (Ok(real_folder), Ok(real_root)) = (fs::canonicalize(folder), fs::canonicalize(&root))
+        else {
+            return false;
+        };
+        let Ok(relative) = real_folder.strip_prefix(&real_root) else {
+            return false;
+        };
+        let mut current = root.clone();
+        for part in relative.components() {
+            current.push(part);
+            self.expanded.expand(&root, &current);
+        }
+        self.selected = Some(current);
+        self.refresh(cx);
+        true
+    }
+
     /// Read the expanded folders not read yet, watch exactly the expanded ones, and rebuild
     /// the rows.
     fn refresh(&mut self, cx: &mut Context<Self>) {

@@ -1,30 +1,39 @@
-//! The file viewer panel: a file clicked in the explorer, shown beside the terminal. Markdown
-//! and JSON have a rendered view (the page, or the JSON laid out and colored) and a raw one;
-//! other files only the raw one. The raw view edits the file, and Ctrl+S saves it.
+//! The file viewer panel: a file clicked in the explorer (or a path Ctrl+clicked in the
+//! terminal), shown beside the terminal. Markdown, JSON and SVG have a rendered view (the page,
+//! the JSON laid out and colored, the drawing) and a raw one; other text files only the raw
+//! one, and images only the drawing. The raw view edits the file, and Ctrl+S saves it. Each tab
+//! has its own viewer.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
 use futures::channel::mpsc::{self, UnboundedReceiver};
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariant, ButtonVariants};
-use gpui_kit::component::input::{Editor, EditorState, InputEvent};
+use gpui_kit::component::input::{Editor, EditorState, InputEvent, Position};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme, IconName, Selectable, Sizable, WindowExt};
 use gpui_kit::{
-    AnyElement, AppContext, Context, ElementId, Entity, EventEmitter, InteractiveElement,
-    IntoElement, KeyDownEvent, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, Subscription, Task, Window, div, px,
+    AnyElement, App, AppContext, ClickEvent, Context, DevicePixels, ElementId, Entity,
+    EventEmitter, ImgResourceLoader, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
+    ObjectFit, ParentElement, Render, RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR, SharedString,
+    Size, StatefulInteractiveElement, Styled, StyledImage, Subscription, Task, WeakEntity, Window,
+    div, img, px,
 };
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use workspace_model::display_path;
 use workspace_model::file_view::{self, JsonError, ViewKind};
+use workspace_model::links;
 
 /// Changes arriving within this time are applied together.
 const CHANGE_BATCH: Duration = Duration::from_millis(100);
+
+/// Shown for an image (or an SVG drawing) that does not decode.
+const UNREADABLE_IMAGE: &str = "The image could not be read.";
 
 /// What the viewer tells the workspace.
 pub enum ViewerEvent {
@@ -32,6 +41,15 @@ pub enum ViewerEvent {
     Opened,
     /// The panel was closed.
     Closed,
+    /// A Markdown link to a folder was clicked: show it in the explorer.
+    RevealFolder(PathBuf),
+}
+
+/// A place in a file to show: 1-based, as compilers print it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FilePlace {
+    pub line: Option<u32>,
+    pub column: Option<u32>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,6 +63,8 @@ enum Rendered {
     Markdown(SharedString),
     Json(Entity<EditorState>),
     InvalidJson(JsonError),
+    /// An SVG drawn from the text at its own size, or `Err` when it does not parse.
+    Svg(Result<Arc<RenderImage>, ()>),
 }
 
 struct OpenFile {
@@ -61,6 +81,8 @@ struct OpenFile {
 
 enum Content {
     Open(OpenFile),
+    /// A raster image, drawn from the file (GPUI caches it by path until the file changes).
+    Image,
     /// Why the file is not shown.
     Unviewable(String),
 }
@@ -110,17 +132,50 @@ impl FileViewer {
 
     /// Show `path`, asking first when the file shown has unsaved edits.
     pub fn open(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_at(path, FilePlace::default(), window, cx);
+    }
+
+    /// Show `path` with the cursor at `place` (in the raw view, where lines show), asking
+    /// first when another file shown has unsaved edits.
+    pub fn open_at(
+        &mut self,
+        path: PathBuf,
+        place: FilePlace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.path.as_ref() == Some(&path) {
+            self.go_to(place, window, cx);
             return;
         }
         self.discard_then(window, cx, move |viewer, window, cx| {
             viewer.load(path.clone(), window, cx);
+            viewer.go_to(place, window, cx);
+        });
+    }
+
+    /// Put the cursor at `place`, scrolled into view, switching to the raw view.
+    fn go_to(&mut self, place: FilePlace, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(line) = place.line else {
+            return;
+        };
+        self.set_mode(Mode::Raw, window, cx);
+        let Some(file) = self.open_file() else {
+            return;
+        };
+        let position = Position {
+            line: line.saturating_sub(1),
+            character: place.column.unwrap_or(1).saturating_sub(1),
+        };
+        file.editor.update(cx, |editor, cx| {
+            editor.set_cursor_position(position, window, cx);
         });
     }
 
     /// Close the panel, asking first when the file has unsaved edits.
     fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.discard_then(window, cx, |viewer, _, cx| {
+        self.discard_then(window, cx, |viewer, window, cx| {
+            viewer.forget_image(window, cx);
             viewer.path = None;
             viewer.content = None;
             viewer.watch(None);
@@ -129,14 +184,19 @@ impl FileViewer {
         });
     }
 
+    /// Whether the file shown has edits not saved.
+    pub(crate) fn is_dirty(&self) -> bool {
+        self.open_file().is_some_and(|file| file.dirty)
+    }
+
     /// Run `then` now, or once the user agrees to drop the unsaved edits.
-    fn discard_then(
+    pub(crate) fn discard_then(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
         then: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) {
-        if !self.open_file().is_some_and(|file| file.dirty) {
+        if !self.is_dirty() {
             then(self, window, cx);
             return;
         }
@@ -164,9 +224,18 @@ impl FileViewer {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        self.content = Some(match read_text(&path) {
-            Ok(text) => Content::Open(self.open_text(&name, text, window, cx)),
-            Err(reason) => Content::Unviewable(reason),
+        self.forget_image(window, cx);
+        let kind = file_view::view_kind(&name);
+        self.content = Some(if kind == ViewKind::Image {
+            match check_image(&path) {
+                Ok(()) => Content::Image,
+                Err(reason) => Content::Unviewable(reason),
+            }
+        } else {
+            match read_text(&path) {
+                Ok(text) => Content::Open(self.open_text(&name, text, window, cx)),
+                Err(reason) => Content::Unviewable(reason),
+            }
         });
         self.watch(path.parent());
         self.path = Some(path);
@@ -229,6 +298,9 @@ impl FileViewer {
         if mode == Mode::Rendered {
             // Show the edits made in the raw view.
             let text = file.editor.read(cx).value();
+            if let Some(Rendered::Svg(Ok(image))) = file.rendered.take() {
+                cx.drop_image(image, Some(window));
+            }
             file.rendered = Some(render_text(
                 file.kind,
                 &text,
@@ -313,6 +385,20 @@ impl FileViewer {
         let Some(path) = self.path.clone() else {
             return;
         };
+        // By the file's kind: an image that could not be read a moment ago may be back.
+        let is_image = path
+            .file_name()
+            .is_some_and(|name| file_view::view_kind(&name.to_string_lossy()) == ViewKind::Image);
+        if is_image {
+            // Decoded again on the next paint.
+            self.forget_image(window, cx);
+            self.content = Some(match check_image(&path) {
+                Ok(()) => Content::Image,
+                Err(reason) => Content::Unviewable(reason),
+            });
+            cx.notify();
+            return;
+        }
         // Gone (perhaps for a moment, while being replaced): keep showing what was read.
         let Ok(text) = read_text(&path) else {
             return;
@@ -327,6 +413,9 @@ impl FileViewer {
         }
         set_value_keeping_scroll(&file.editor, text.clone(), window, cx);
         if file.mode == Mode::Rendered {
+            if let Some(Rendered::Svg(Ok(image))) = file.rendered.take() {
+                cx.drop_image(image, Some(window));
+            }
             file.rendered = Some(render_text(
                 file.kind,
                 &text,
@@ -337,6 +426,77 @@ impl FileViewer {
         }
         file.saved = text;
         cx.notify();
+    }
+
+    /// Drop the decoded image of the file shown from GPUI's cache, so the memory goes and a
+    /// changed file is decoded afresh.
+    pub(crate) fn forget_image(&mut self, window: &mut Window, cx: &mut App) {
+        match &mut self.content {
+            Some(Content::Image) => {
+                let Some(path) = &self.path else {
+                    return;
+                };
+                let resource = image_resource(path);
+                // The decoded image's textures, then the image.
+                if let Some(Ok(image)) = window.get_asset::<ImgResourceLoader>(&resource, cx) {
+                    cx.drop_image(image, Some(window));
+                }
+                cx.remove_asset::<ImgResourceLoader>(&resource);
+            }
+            Some(Content::Open(file)) => {
+                if let Some(Rendered::Svg(Ok(image))) = &file.rendered {
+                    cx.drop_image(image.clone(), Some(window));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The pixel size of the image shown, once decoded; `Some(Err)` when it does not decode.
+    /// Asks for a redraw when the decoding ends.
+    fn image_size(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Result<Size<DevicePixels>, ()>> {
+        match &self.content {
+            Some(Content::Image) => {
+                let resource = image_resource(self.path.as_ref()?);
+                let decoded = window.use_asset::<ImgResourceLoader>(&resource, cx)?;
+                Some(decoded.map(|image| image.size(0)).map_err(|_| ()))
+            }
+            Some(Content::Open(file)) if file.mode == Mode::Rendered => match &file.rendered {
+                Some(Rendered::Svg(image)) => {
+                    Some(image.as_ref().map(|image| image.size(0)).map_err(|_| ()))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Open a link clicked in the Markdown page: a file next to it in this viewer, a folder in
+    /// the explorer, a web page with the system's handler.
+    fn open_link(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let folder = self.path.as_ref().and_then(|path| path.parent());
+        match folder.and_then(|folder| links::local_link(url, folder)) {
+            Some(path) if path.is_file() => self.open(path, window, cx),
+            Some(path) if path.is_dir() => cx.emit(ViewerEvent::RevealFolder(path)),
+            // Nothing local goes to the system's handler: a device or a pipe is not opened.
+            Some(path) => {
+                let problem = if path.exists() {
+                    "Can't open"
+                } else {
+                    "Can't find"
+                };
+                window.push_notification(
+                    Notification::error(format!("{problem} {}", path.display())),
+                    cx,
+                );
+            }
+            None if url.starts_with('#') => {}
+            None => cx.open_url(url),
+        }
     }
 
     fn open_file(&self) -> Option<&OpenFile> {
@@ -370,7 +530,16 @@ impl FileViewer {
         }
     }
 
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let pixel_size = match self.image_size(window, cx) {
+            Some(Ok(size)) => Some(format!(
+                "{} × {}",
+                u32::from(size.width),
+                u32::from(size.height)
+            )),
+            _ => None,
+        };
+        let muted = cx.theme().muted_foreground;
         let file = self.open_file();
         let dirty = file.is_some_and(|file| file.dirty);
         let toggle = file
@@ -422,6 +591,9 @@ impl FileViewer {
                         self.file_name()
                     }),
             )
+            .children(
+                pixel_size.map(|size| div().flex_none().text_xs().text_color(muted).child(size)),
+            )
             .children(toggle)
             .child(
                 Button::new("close-viewer")
@@ -437,6 +609,12 @@ impl FileViewer {
         let muted = cx.theme().muted_foreground;
         let file = match &self.content {
             None => return div().into_any_element(),
+            Some(Content::Image) => {
+                let Some(path) = &self.path else {
+                    return div().into_any_element();
+                };
+                return image_view(img(path.clone()), muted);
+            }
             Some(Content::Unviewable(reason)) => {
                 return div()
                     .p_4()
@@ -468,6 +646,15 @@ impl FileViewer {
                 )
                 .child(div().flex_1().min_h_0().child(raw_editor()))
                 .into_any_element(),
+            (Mode::Rendered, Some(Rendered::Svg(Ok(image)))) => {
+                image_view(img(image.clone()), muted)
+            }
+            (Mode::Rendered, Some(Rendered::Svg(Err(())))) => div()
+                .p_4()
+                .text_sm()
+                .text_color(muted)
+                .child(UNREADABLE_IMAGE)
+                .into_any_element(),
             (Mode::Rendered, Some(Rendered::Markdown(text))) => {
                 let path = self
                     .path
@@ -478,6 +665,7 @@ impl FileViewer {
                     .as_ref()
                     .and_then(|path| path.parent())
                     .map(|folder| display_path(folder, self.home.as_deref()));
+                let viewer = cx.entity().downgrade();
                 div()
                     .id("viewer-markdown")
                     .size_full()
@@ -492,12 +680,63 @@ impl FileViewer {
                             ElementId::Name(path.unwrap_or_default().into()),
                             text.clone(),
                         )
-                        .selectable(true),
+                        .selectable(true)
+                        .on_link_click(move |url, event, window, cx| {
+                            on_link_click(&viewer, url, event, window, cx);
+                        }),
                     )
                     .into_any_element()
             }
         }
     }
+}
+
+/// A link clicked in the Markdown page, with the left or middle button (as without a handler)
+/// or the keyboard.
+fn on_link_click(
+    viewer: &WeakEntity<FileViewer>,
+    url: &SharedString,
+    event: &ClickEvent,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    // As the default handler: a touch long-press is a secondary click.
+    let opens = match event {
+        ClickEvent::Mouse(click) => {
+            matches!(click.up.button, MouseButton::Left | MouseButton::Middle)
+        }
+        ClickEvent::Keyboard(_) => true,
+        ClickEvent::Touch(click) => !click.long_press,
+    };
+    if !opens {
+        return;
+    }
+    let _ = viewer.update(cx, |viewer, cx| viewer.open_link(url, window, cx));
+}
+
+/// An image fit to the pane and centred, never drawn larger than its own size.
+fn image_view(image: gpui_kit::Img, muted: gpui_kit::Hsla) -> AnyElement {
+    div()
+        .size_full()
+        .p_4()
+        .child(
+            image
+                .size_full()
+                .object_fit(ObjectFit::ScaleDown)
+                .with_fallback(move || {
+                    div()
+                        .text_sm()
+                        .text_color(muted)
+                        .child(UNREADABLE_IMAGE)
+                        .into_any_element()
+                }),
+        )
+        .into_any_element()
+}
+
+/// GPUI's cache key for an image file, as `img(path)` uses it.
+fn image_resource(path: &Path) -> Resource {
+    Resource::Path(Arc::from(path))
 }
 
 /// The editor for `state`, filling its space without a border of its own.
@@ -534,6 +773,15 @@ fn render_text(
     if kind == ViewKind::Markdown {
         return Rendered::Markdown(text.to_string().into());
     }
+    if kind == ViewKind::Svg {
+        // GPUI draws SVGs at twice their size for smoothness (its `img` paints them so); this
+        // draws one at its own size, the size the header shows.
+        let image = cx
+            .svg_renderer()
+            .render_single_frame(text.as_bytes(), 1. / SMOOTH_SVG_SCALE_FACTOR)
+            .map_err(|err| log::debug!("file viewer: SVG not drawn: {err}"));
+        return Rendered::Svg(image);
+    }
     let pretty = match file_view::pretty_json(text) {
         Ok(pretty) => pretty,
         Err(err) => return Rendered::InvalidJson(err),
@@ -550,6 +798,13 @@ fn render_text(
     }))
 }
 
+/// Whether an image file may be shown: it exists and is within the size limit. Whether it
+/// decodes is known once it is drawn.
+fn check_image(path: &Path) -> Result<(), String> {
+    let size = fs::metadata(path).map_err(|err| err.to_string())?.len();
+    file_view::check_size(size).map_err(|reason| reason.to_string())
+}
+
 /// The file's text, or why it is not shown.
 fn read_text(path: &Path) -> Result<String, String> {
     let size = fs::metadata(path).map_err(|err| err.to_string())?.len();
@@ -559,7 +814,7 @@ fn read_text(path: &Path) -> Result<String, String> {
 }
 
 impl Render for FileViewer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (background, border) = (theme.background, theme.border);
         div()
@@ -571,7 +826,7 @@ impl Render for FileViewer {
             .border_l_1()
             .border_color(border)
             .on_key_down(cx.listener(Self::on_key_down))
-            .child(self.render_header(cx))
+            .child(self.render_header(window, cx))
             .child(div().flex_1().min_h_0().child(self.render_body(cx)))
     }
 }

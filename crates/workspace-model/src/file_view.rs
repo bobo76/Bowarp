@@ -6,6 +6,8 @@ use std::fmt;
 
 use serde::de::IgnoredAny;
 
+use crate::file_tree::{FileKind, file_kind};
+
 /// Files larger than this are not opened: the editor slows down well before.
 pub const MAX_VIEW_BYTES: u64 = 2 * 1024 * 1024;
 
@@ -16,6 +18,10 @@ pub enum ViewKind {
     Markdown,
     /// Laid out and colored for reading, or edited as written.
     Json,
+    /// SVG: drawn as an image, or edited as source.
+    Svg,
+    /// A raster image, drawn only.
+    Image,
     /// Edited as source only.
     Source,
 }
@@ -23,7 +29,7 @@ pub enum ViewKind {
 impl ViewKind {
     /// Whether the file has a view besides its source.
     pub fn has_rendered_view(self) -> bool {
-        self != Self::Source
+        matches!(self, Self::Markdown | Self::Json | Self::Svg)
     }
 }
 
@@ -33,6 +39,8 @@ pub fn view_kind(name: &str) -> ViewKind {
         Some("md" | "markdown") => ViewKind::Markdown,
         // JSONC allows comments, which the layout would refuse.
         Some("json") => ViewKind::Json,
+        Some("svg") => ViewKind::Svg,
+        _ if file_kind(name) == FileKind::Image => ViewKind::Image,
         _ => ViewKind::Source,
     }
 }
@@ -206,8 +214,13 @@ mod tests {
         assert_eq!(view_kind("tsconfig.jsonc"), ViewKind::Source);
         assert_eq!(view_kind("main.js"), ViewKind::Source);
         assert_eq!(view_kind(".md"), ViewKind::Source);
+        assert_eq!(view_kind("logo.svg"), ViewKind::Svg);
+        assert_eq!(view_kind("shot.PNG"), ViewKind::Image);
+        assert_eq!(view_kind("photo.avif"), ViewKind::Image);
         assert!(!ViewKind::Source.has_rendered_view());
+        assert!(!ViewKind::Image.has_rendered_view());
         assert!(ViewKind::Json.has_rendered_view());
+        assert!(ViewKind::Svg.has_rendered_view());
     }
 
     #[test]

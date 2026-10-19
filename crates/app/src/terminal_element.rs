@@ -131,6 +131,8 @@ pub struct PrepaintState {
     ghost_text: Option<(Point<Pixels>, ShapedLine)>,
     geometry: GridGeometry,
     scrollbar: Option<PreparedScrollbar>,
+    /// The underline of the link under a held Ctrl, and the hitboxes giving it a hand cursor.
+    link: Vec<(PaintQuad, Hitbox)>,
 }
 
 struct PreparedScrollbar {
@@ -241,6 +243,21 @@ impl Element for TerminalElement {
             to_hsla(palette.foreground),
             window,
         );
+        let link_color = to_hsla(palette.foreground);
+        let link = view
+            .hovered_link
+            .iter()
+            .flat_map(|link| &link.rows)
+            .map(|row| {
+                let cells = grid.bounds(row.line, row.column, row.cells);
+                let underline = Bounds::new(
+                    point(cells.origin.x, cells.bottom() - px(2.)),
+                    size(cells.size.width, px(1.)),
+                );
+                let hitbox = window.insert_hitbox(cells, HitboxBehavior::Normal);
+                (fill(underline, link_color), hitbox)
+            })
+            .collect();
 
         PrepaintState {
             background: to_hsla(snapshot.background),
@@ -258,6 +275,7 @@ impl Element for TerminalElement {
                 cursor_origin,
             },
             scrollbar,
+            link,
         }
     }
 
@@ -301,6 +319,20 @@ impl Element for TerminalElement {
                 log::warn!("failed to paint marked text: {err}");
             }
         }
+
+        for (underline, hitbox) in prepaint.link.drain(..) {
+            window.paint_quad(underline);
+            window.set_cursor_style(CursorStyle::PointingHand, &hitbox);
+        }
+        let view = self.view.clone();
+        // Window-wide, so the underline goes when the pointer leaves the terminal.
+        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+            if phase == DispatchPhase::Bubble {
+                view.update(cx, |view, cx| {
+                    view.update_link_hover(event.position, &event.modifiers, cx);
+                });
+            }
+        });
 
         let scrollbar = prepaint.scrollbar.take();
         if let Some(scrollbar) = &scrollbar {

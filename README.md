@@ -54,6 +54,7 @@ but disabled. New tabs start in the selected tab's folder.
 | Ctrl+Shift+C, Ctrl+Insert | Copy the selection |
 | Ctrl+Shift+V, Shift+Insert | Paste |
 | Shift+PageUp / Shift+PageDown | Scroll the history by a page |
+| Ctrl+click | Open the link under the pointer (also when the program tracks the mouse) |
 
 Ctrl+C, Tab and Shift+Tab always go to the program. When a program tracks the mouse (Claude
 Code does), clicks and the wheel go to it; hold Shift to select text locally. On Linux a
@@ -61,9 +62,19 @@ selection is also copied to the primary selection, and middle-click pastes it. A
 scrolls 2 lines on Linux, and X11 touchpad scrolling is slowed the same way (Windows uses the
 system's lines-per-notch setting).
 
+Hold Ctrl over a link in the output to underline it (hand cursor), and Ctrl+click to open it:
+a URL (`http`, `https`, `ftp`) or an OSC 8 hyperlink in the browser, a file path or a `file://`
+URL naming a file in the file viewer. OSC 8 hyperlinks count only for `http`, `https`, `ftp`,
+`mailto` and `file`, as their text need not show where they go. Paths are resolved from the
+tab's folder (`~/` from home) and are links only when the file exists; `src/foo.rs:42` or
+`src/foo.rs:42:7` opens the file at that line, in its raw view. A link the program wrapped onto
+the next line counts as one.
+
 When the program exits, a bar below the terminal says so, with its exit code (the terminal
 gives up the bar's height, so no output is hidden); the history stays readable until the tab
-is closed.
+is closed. When Claude Code or Copilot CLI quits, the tab instead starts the default shell in
+the agent's last folder and becomes a shell tab (icon, status, saved as a shell); the agent's
+output is not kept.
 
 ## Command history (bash, zsh, PowerShell tabs)
 
@@ -190,18 +201,26 @@ itself, or a file's parent folder.
 
 ## File viewer
 
-A file clicked in the explorer opens in a panel right of the terminal (closed with its `×`).
-Markdown and JSON have two views, picked in the panel's header:
+A file clicked in the explorer (or a path Ctrl+clicked in the terminal) opens in a panel right
+of the terminal (closed with its `×`). Each tab has its own: selecting a tab shows the file it
+had open, or no panel. Drag the divider on the panel's left edge to resize it (both the panel
+and the terminal keep at least 240 px); double-click it for the default 45% of the window. The
+width is the same in every tab, follows window resizes and is not saved yet.
 
-- **Rendered**: Markdown as a formatted page; JSON laid out one member per line, colored, with
-  fold arrows by the line numbers (hover them) to collapse an object or array. Keys keep their
-  order and values stay as written. JSON that doesn't parse shows the error's line and column
-  above the source.
+Markdown, JSON and SVG have two views, picked in the panel's header:
+
+- **Rendered**: Markdown as a formatted page, whose links to other files open them in the
+  panel (folders in the explorer, web links in the browser); JSON laid out one member per
+  line, colored, with fold arrows by the line numbers (hover them) to collapse an object or
+  array. Keys keep their order and values stay as written. JSON that doesn't parse shows the
+  error's line and column above the source. SVG drawn as an image.
 - **Raw**: the file as written, colored and editable.
 
 Other files open in the raw view only, colored for JSON, JavaScript, TypeScript (and TSX),
-Markdown, TOML, YAML, Rust, Bash and Python, plain otherwise. Files over 2 MB, binary files and
-files that aren't UTF-8 are not shown.
+Markdown, TOML, YAML, Rust, Bash and Python, plain otherwise. Images (PNG, JPEG, GIF, BMP, WebP,
+ICO, TIFF) are drawn fit to the panel, never larger than their own size, with their pixel size
+in the header; one that does not decode (AVIF is not supported) shows "The image could not be
+read." Files over 2 MB, other binary files and files that aren't UTF-8 are not shown.
 
 | Keys | Action |
 |---|---|
@@ -225,10 +244,11 @@ higher and tagged `v<version>`; finishing a milestone bumps `minor`.
 
 ## Design decisions
 
-- **Quitting an agent (planned, see the backlog in [PLAN.md](PLAN.md)):** when Claude Code or
-  Copilot CLI exits in its tab, the tab starts a new default shell in the agent's last folder
-  and becomes a shell tab; the agent's output is not kept. The agent keeps running directly
-  (no shell around it), which:
+- **Quitting an agent:** when Claude Code or
+  Copilot CLI exits in its tab with code 0, the tab starts a new default shell in the agent's
+  last folder and becomes a shell tab; the agent's output is not kept. When it exits with an
+  error, the tab stays as it was ("Exited"), so the error can be read. The agent keeps
+  running directly (no shell around it), which:
   - starts faster: no shell startup files (`.bashrc`, `nvm`, `conda`) run before it;
   - uses less memory: no idle shell waiting behind every agent tab;
   - works the same with every default shell, `cmd` and shells without integration included,

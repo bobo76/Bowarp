@@ -14,9 +14,9 @@ use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
     AnyElement, App, AppContext, Bounds, ClipboardItem, Context, CursorStyle, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, NoAction, ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent,
-    Styled, Task, UTF16Selection, Window, actions, div, size,
+    KeyBinding, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NoAction, ParentElement, Pixels, Point, Render,
+    ScrollDelta, ScrollWheelEvent, Styled, Task, UTF16Selection, Window, actions, div, size,
 };
 use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
@@ -31,6 +31,7 @@ use workspace_model::{
     command_label, notch_lines, running_badge,
 };
 
+use crate::file_viewer::FilePlace;
 use crate::history;
 use crate::history_popup::HistoryPopup;
 use crate::keys;
@@ -40,6 +41,7 @@ use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
 use crate::shell_integration;
 use crate::sidebar::TabStatus;
 use crate::terminal_element::{TerminalElement, to_hsla};
+use crate::terminal_links::{self, LinkTarget, TerminalLink};
 
 const KEY_CONTEXT: &str = "Terminal";
 
@@ -115,6 +117,16 @@ const HIDDEN_CD_KEYS: &[u8] = b"\x1b[24;8~";
 /// or branch.
 pub struct TabChanged;
 
+/// Emitted when a Claude Code or Copilot CLI session's program exited: the tab goes on as a
+/// shell.
+pub struct AgentExited;
+
+/// Emitted when a file path is Ctrl+clicked: the file is to be shown in the viewer.
+pub struct OpenFileRequest {
+    pub path: PathBuf,
+    pub place: FilePlace,
+}
+
 /// One terminal session and its interaction state.
 pub struct TerminalView {
     pub(crate) session: Session,
@@ -159,6 +171,16 @@ pub struct TerminalView {
     /// Last cell a motion report was sent for, so motion is reported once per cell.
     last_motion_cell: Option<Cell>,
     pub(crate) scrollbar: ScrollbarState,
+    /// The link under the pointer while Ctrl is held, drawn underlined with a hand cursor.
+    pub(crate) hovered_link: Option<TerminalLink>,
+    /// Where the pointer was when Ctrl was last seen held over the terminal, so new output
+    /// under it is looked at again; `None` once Ctrl is released.
+    link_pointer: Option<Point<Pixels>>,
+    /// The cell (and scroll offset) `hovered_link` was last looked up for while Ctrl was held,
+    /// so moving within a cell does not look again; cleared when output arrives.
+    link_cell: Option<(Cell, usize)>,
+    /// For links to `~/` paths.
+    home: Option<PathBuf>,
     _session_events: Task<()>,
 }
 
@@ -234,6 +256,10 @@ impl TerminalView {
             reported_button: None,
             last_motion_cell: None,
             scrollbar: ScrollbarState::default(),
+            hovered_link: None,
+            link_pointer: None,
+            link_cell: None,
+            home: std::env::home_dir(),
             _session_events: session_events,
         }
     }
@@ -356,6 +382,9 @@ impl TerminalView {
     pub fn hide(&mut self) {
         self.visible = false;
         self.history_popup = None;
+        self.hovered_link = None;
+        self.link_pointer = None;
+        self.link_cell = None;
         // A wakeup sent before the next paint would never be acknowledged by `prepaint`.
         self.session.ack_wakeup();
     }
@@ -439,6 +468,11 @@ impl TerminalView {
         match event {
             SessionEvent::Wakeup => {
                 self.track_activity(cx);
+                // The text under a held Ctrl may have changed.
+                if let Some(pointer) = self.link_pointer {
+                    self.link_cell = self.link_key(pointer);
+                    self.set_hovered_link(self.link_under(pointer), cx);
+                }
                 if !self.visible {
                     // Nothing paints, so re-arm here to keep hearing about output.
                     self.session.ack_wakeup();
@@ -500,6 +534,10 @@ impl TerminalView {
                     self.agent_lap.set(agent.status(), Instant::now());
                 }
                 cx.emit(TabChanged);
+                // A failed agent keeps its last screen, so its error can be read.
+                if self.kind() != SessionKind::Shell && code == Some(0) {
+                    cx.emit(AgentExited);
+                }
             }
         }
         cx.notify();
@@ -758,6 +796,80 @@ impl TerminalView {
         Some((Cell { column, line }, side))
     }
 
+    /// The visible cell under `position`, `None` outside the grid.
+    fn cell_under(&self, position: Point<Pixels>) -> Option<Cell> {
+        let geometry = self.geometry?;
+        let x = f32::from(position.x - geometry.origin.x);
+        let y = f32::from(position.y - geometry.origin.y);
+        if x < 0.0 || y < 0.0 {
+            return None;
+        }
+        let column = (x / f32::from(geometry.cell_width)) as usize;
+        let line = (y / f32::from(geometry.line_height)) as usize;
+        (column < geometry.columns && line < geometry.lines).then_some(Cell { column, line })
+    }
+
+    /// The link under `position`, if any.
+    fn link_under(&self, position: Point<Pixels>) -> Option<TerminalLink> {
+        let cell = self.cell_under(position)?;
+        let folder = self.current_folder();
+        terminal_links::link_at(&self.session, cell, folder.as_deref(), self.home.as_deref())
+    }
+
+    fn set_hovered_link(&mut self, link: Option<TerminalLink>, cx: &mut Context<Self>) {
+        if link != self.hovered_link {
+            self.hovered_link = link;
+            cx.notify();
+        }
+    }
+
+    /// Underline the link under the pointer while Ctrl is held (and nothing else is).
+    pub(crate) fn update_link_hover(
+        &mut self,
+        position: Point<Pixels>,
+        modifiers: &Modifiers,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_link_modifier(modifiers) || !self.visible {
+            self.link_pointer = None;
+            self.link_cell = None;
+            self.set_hovered_link(None, cx);
+            return;
+        }
+        let key = self.link_key(position);
+        let unchanged = self.link_pointer.is_some() && key.is_some() && key == self.link_cell;
+        self.link_pointer = Some(position);
+        if unchanged {
+            return;
+        }
+        self.link_cell = key;
+        self.set_hovered_link(self.link_under(position), cx);
+    }
+
+    /// The cell under `position` with the scroll offset: the link there stays the same while
+    /// these do and no output arrives.
+    fn link_key(&self, position: Point<Pixels>) -> Option<(Cell, usize)> {
+        let cell = self.cell_under(position)?;
+        Some((cell, self.session.display_offset()))
+    }
+
+    fn on_modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_link_hover(window.mouse_position(), &event.modifiers, cx);
+    }
+
+    /// Open a Ctrl+clicked link: a URL in the browser, a file in the viewer.
+    fn open_link(&mut self, target: LinkTarget, cx: &mut Context<Self>) {
+        match target {
+            LinkTarget::Url(url) => cx.open_url(&url),
+            LinkTarget::File { path, place } => cx.emit(OpenFileRequest { path, place }),
+        }
+    }
+
     fn grid_point(&self, position: Point<Pixels>) -> Option<(GridPoint, Side)> {
         let (cell, side) = self.viewport_cell(position)?;
         let display_offset = self.session.display_offset();
@@ -799,6 +911,17 @@ impl TerminalView {
     ) {
         window.focus(&self.focus_handle, cx);
         self.close_history_popup(cx);
+        // A link takes the click before the program's mouse reports and the selection.
+        if event.button == MouseButton::Left
+            && is_link_modifier(&event.modifiers)
+            && let Some(link) = self.link_under(event.position)
+        {
+            self.hovered_link = None;
+            self.link_cell = None;
+            self.open_link(link.target, cx);
+            cx.notify();
+            return;
+        }
         let Some(button) = ReportButton::from_gpui(event.button) else {
             return;
         };
@@ -885,7 +1008,14 @@ fn is_shift_only(modifiers: &Modifiers) -> bool {
     modifiers.shift && !modifiers.control && !modifiers.alt
 }
 
+/// Ctrl (Cmd on macOS) alone: held over a link, it shows and opens the link.
+fn is_link_modifier(modifiers: &Modifiers) -> bool {
+    modifiers.secondary() && !modifiers.shift && !modifiers.alt
+}
+
 impl EventEmitter<TabChanged> for TerminalView {}
+impl EventEmitter<AgentExited> for TerminalView {}
+impl EventEmitter<OpenFileRequest> for TerminalView {}
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -914,6 +1044,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::on_copy))
             .on_action(cx.listener(Self::on_paste))
             .on_key_down(cx.listener(Self::on_key_down))
+            .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .on_any_mouse_down(cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
