@@ -4,6 +4,27 @@ A terminal workspace for running Claude Code, Copilot CLI and shell sessions sid
 per-tab agent status. Feature spec: [FEATURES.md](FEATURES.md). Plan and status: [PLAN.md](PLAN.md).
 Architecture: [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Install on Windows
+
+Run `agent-workspace-windows-x64-setup.exe` from the latest GitHub release. It installs per user
+(no admin prompt) into `%LOCALAPPDATA%\Programs\Agent Workspace` and adds a Start Menu shortcut.
+Run a newer setup to upgrade: it closes the app and overwrites that folder, so a taskbar pin keeps
+opening the current version. The release zip is still there for a portable copy.
+
+## Install on Linux
+
+Unpack `agent-workspace-linux-x64.tar.gz` from the latest GitHub release and run its installer
+(per user, no sudo):
+
+```
+tar -xzf agent-workspace-linux-x64.tar.gz
+agent-workspace-linux-x64/install.sh
+```
+
+It puts the binaries in `~/.local/opt/agent-workspace` (linked from `~/.local/bin`), plus the
+desktop entry and icons under `~/.local/share`. Run a newer tarball's `install.sh` to upgrade in
+place, so a dock pin keeps opening the current version. `install.sh --uninstall` removes it.
+
 ## Build and run
 
 On Ubuntu, install the Rust toolchain via `rustup` and the GPUI build dependencies (Vulkan,

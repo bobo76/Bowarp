@@ -26,6 +26,7 @@ directly to model APIs.
   shell in the agent's folder; when it fails, the tab keeps its last screen to read the error.
 - Support split panes, adjustable pane sizes, and quick switching between sessions.
 - Run any action or jump to any tab from a command palette.
+- Toggle full screen (F11).
 - Light and dark themes, terminal color schemes, and adjustable window opacity.
 - Warn before closing a session or workspace with running processes.
 
@@ -38,7 +39,8 @@ directly to model APIs.
 - Show each tab's git branch, or its current folder outside a repository, under its name.
 - Show a tab's details on hover: status, full folder, branch, program title, session
   kind, and lines added in the working tree.
-- Search tabs by name, title, folder, branch, or group.
+- Search tabs by name, title, folder, branch, or group, moving through the results with
+  Up/Down.
 - Copy a tab's branch, title, or working directory; close other tabs or the tabs below.
 - Hide and show the sidebar.
 - Assign colors to individual tabs and groups, with tabs optionally inheriting

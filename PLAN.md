@@ -4,100 +4,40 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 ## Status (2026-10-19)
 
-What is done is described in [FEATURES.md](FEATURES.md); the details are in the git history.
+[FEATURES.md](FEATURES.md) is the target; what is not built yet is in the milestones and the
+backlog below. Details of finished work are in the git history (276 tests).
 
-**Done: easy wins (one pass), 260 tests**
+**Known limitations**
 
-F11 full screen (window-level `ToggleFullScreen`), 2 lines per wheel notch on Linux, the
-explorer's "Open in new tab with" (Claude Code, Copilot) replacing "Attach as context", its
-parent-folder button (`cd ..`), the bell marking a hidden tab Needs attention, the exited bar in
-the terminal, the file viewer keeping its scroll on reload, and Up/Down in the sidebar search.
-Checked under Xvfb (`pipeline/retros/easy-wins/shots/`), except full screen itself: F11 is not
-sent to the program and sends the window manager the `_NET_WM_STATE_FULLSCREEN` toggle, but
-no window manager runs there. Check on a desktop (X11, Wayland, Windows): F11 enters and leaves
-full screen from the terminal, the search field and the explorer, and leaving it returns to the
-earlier size or to the maximized state. F11 has no menu entry: the app has no window menu (a
-right-click on the title bar opens the window manager's own).
-The parent-folder button is disabled while a command runs; at the prompt zsh and PowerShell
-change folder through a hidden key (Ctrl+Alt+Shift+F12, folder read from `AGENTWS_CD_FILE`),
-bash gets a typed `cd`. Check on Windows that the PowerShell key gets through ConPTY and
-PSReadLine: the button moves the shell and the tree, with no stray characters.
-
-**Done: quick wins (one pass), 273 tests**
-
-Ctrl+click links in terminal output (URLs, OSC 8 hyperlinks, existing files as `path`,
-`path:line` or `path:line:col`, also across a wrapped line), underlined with a hand cursor
-while Ctrl is held; an agent tab going on as a shell when Claude Code or Copilot CLI quits
-with code 0 (a failed agent keeps its last screen);
-images in the file viewer (raster drawn from the file, SVG drawn or as source, pixel size in
-the header); links between documents opening in the viewer; the viewer's divider (drag,
-double-click for 45%, minimum 240 px for viewer and terminal, kept as a fraction of the
-window); and one viewer per tab. Link detection, `path:line:col` parsing, document links and
-the width limits are in `workspace-model` (`links`, `pane_width`). Checked under Xvfb
-(`pipeline/retros/quick-wins/shots/`), except the hand cursor (screenshots don't show the
-pointer) and the browser itself (a logging `xdg-open` stood in). Not supported: AVIF images
-(GPUI's decoder lacks it: "The image could not be read."), a `#heading` in a document link
-(the file opens at the top), an OSC 8 link spanning several lines (only its row is
-underlined). The shell starts in the agent's last known folder: on Linux its `/proc` folder as
-of its last title change or hook event, elsewhere the folder it started in.
+- Not supported in the file viewer: AVIF images (GPUI's decoder lacks it: "The image could
+  not be read."), a `#heading` in a document link (the file opens at the top).
+- An OSC 8 link spanning several lines: only its row is underlined.
+- An agent tab going on as a shell starts in the agent's last known folder: on Linux its
+  `/proc` folder as of its last title change or hook event, elsewhere the folder it started in.
+- F11 has no menu entry: the app has no window menu (a right-click on the title bar opens the
+  window manager's own).
+- No command history in cmd tabs: cmd's prompt prints only the `D` mark, not the `A` / `B`
+  marks that locate the prompt.
 
 **Next steps**
 
-None.
+- Command history in PowerShell: Up opens the HISTORY popup, but Enter on a row prints `^E`
+  before the command: PSReadLine's Windows edit mode doesn't bind the Ctrl+E that
+  `PromptInput::replace_keys` sends first. Send PowerShell tabs a key it binds (End) instead,
+  and check pwsh and Windows PowerShell.
 
 **Fixed, not tested yet (built and unit-tested by the Windows CI, not run on a Windows machine)**
 
-- No command history on Windows (Up at a prompt went to the shell): output is now held after
-  the `A` / `B` marks there too, the event loop being woken by a completion packet posted to
-  its poller for the pty's key (`Wake` in `term-core/src/prompt.rs`), so the prompt's
-  position is tracked. Check in PowerShell,
-  Windows PowerShell, Git Bash and an Ubuntu tab: Up opens the HISTORY popup, the dimmed
-  suggestion follows typing, Enter on a row replaces the command line (PSReadLine's default
-  Windows edit mode may not bind Ctrl+E, which `PromptInput::replace_keys` sends first: try
-  it with the cursor moved left), output never stalls after a prompt, and ConPTY's redraws
-  don't misplace the popup or the command line read from the screen.
+- The explorer's `cd` into a WSL tab typed the Windows path (`cd 'C:\Users'`, refused by
+  bash); WSL tabs now get `ShellSyntax::Wsl`, which types `C:\x` as `/mnt/c/x` (default mount
+  root only) and `\\wsl$\<distro>\x` as `/x`. Check in an Ubuntu tab: the parent-folder button
+  and "cd to directory" move the shell, and `cd` updates the explorer and the title.
 
-- File explorer not following `cd` on Windows: the shells now report their folder in the `D`
-  mark (`cwd=<hex>`), and Windows scans the marks. PowerShell, Windows PowerShell and Git
-  Bash (login shell, via `AGENTWS_BASH_LOGIN`) now get the script. Checked outside the app: the scripts' marks, and
-  that ConPTY (Windows 11 26100) passes OSC 133 through unchanged. Check in each of those tabs: `cd` updates the explorer, the Running
-  indicator works, a new tab opens in the selected tab's folder, and Windows PowerShell
-  starts without an execution-policy error.
-- File explorer not following `cd` in cmd and WSL tabs, and cmd's title showing
-  `cmd.exe`'s path: cmd's `PROMPT` now prints a `D` mark with the folder as text
-  (`path=<text>`, cmd cannot print hex) and sets the title to the folder; a WSL distro whose
-  login shell is bash starts it with the bash script (`wsl -d <distro> -e sh -c ...`, token
-  through `WSLENV`), which reports the folder with `wslpath -w`. The scripts are checked out
-  with LF (`.gitattributes`), as WSL's bash rejects CRLF, and arguments are now quoted on
-  Windows (`escape_args`). wsl-vpnkit is hidden from the launchers. Checked outside the app:
-  the WSL launch's marks and folders, and cmd's prompt. Check in a cmd and an Ubuntu tab:
-  `cd` updates the explorer and the title; PowerShell and Git Bash tabs still start.
-- Copilot CLI status: the pty reader looks for progress reports (OSC 9;4, which Windows
-  Terminal shows as the tab spinner) in every session's output (`ProgressScanner`), and a
-  Copilot tab's first one switches it from output activity to agent status: Working (with
-  the lap time) while progress shows, Idle or Done once it is removed. Copilot only reports
-  progress to terminals it recognizes (from env vars alone, the same JS on every platform),
-  so Copilot tabs get `ConEmuANSI=ON` (`session_env`); in Copilot 1.0.98 that type changes
-  nothing else. Checked on Linux with Copilot CLI 1.0.98: `9;4;3` when a turn starts,
-  repeated every 5 s, `9;4;0` when it ends or is cancelled; the hover card shows Working
-  with its time, Idle after the turn, Done in a hidden tab
-  (`pipeline/retros/copilot-status/shots/`). A permission prompt keeps `9;4;3`, so it shows
-  Working, not NeedsAttention; Esc at the prompt clears it. Check on Windows that the
-  progress reports get through ConPTY: Working during a turn in a Copilot tab.
-- Console windows flashing over the app: the hover card's `git` child now starts with
-  `CREATE_NO_WINDOW`. Check on Windows: hovering tabs in a git folder shows the branch and
-  opens no console window.
-
-**Not doable yet**
-
-- Windows: "Bash" opened Ubuntu (Git Bash / WSL distro launchers): code done in `launcher.rs`, needs a Windows machine to build and run (this machine is Linux).
-- Windows: check that the title bar buttons (sidebar, explorer, About) click. They were dead
-  because gpui-component's `TitleBar` marks its child area `WindowControlArea::Drag`, so
-  `WM_NCHITTEST` answered `HTCAPTION` over them and `DefWindowProc`'s move loop ate the
-  mouse-up; they now sit in a `div().occlude()` wrapper, which should give them `HTCLIENT`.
-
-**Deferred (needs a Windows machine):** run the CI's Windows build and check ConPTY, the named
-pipe and hook command quoting.
+Checked on a desktop (2026-10-19): F11 full screen; on Windows: the parent-folder button in PowerShell, the
+explorer following `cd` in PowerShell, Windows PowerShell, Git Bash and cmd (and cmd's title),
+Copilot CLI status, no console window from the hover card's `git`, the title bar buttons,
+"Bash" opening Git Bash, and Claude Code hooks (`agentws-hook.exe` quoting, `claude.cmd`
+under ConPTY).
 
 ## Decisions
 
@@ -176,7 +116,7 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
 - Bell sound: with the M5 notification sound; rate-limited so a stream of bells doesn't
-  repeat it (the attention mark is in the easy wins above).
+  repeat it (the bell already marks a hidden tab Needs attention).
 - Long command finished in a shell tab: when a command that ran longer than a threshold
   (default 10 s, in the settings file) ends while its tab isn't selected, the tab is marked
   done, or failed when the OSC 133 `D` exit code isn't 0, until it is viewed. Needs shell
@@ -200,6 +140,11 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 - Save the file viewer's width (resizable since the quick wins) in the settings file and
   restore it at startup.
 - File viewer: the `⋮` menu from the reference screenshot.
+- File viewer image size limit: images share the text editor's 2 MB `MAX_VIEW_BYTES`
+  (`check_image` in `crates/app/src/file_viewer.rs` calls `file_view::check_size`), so an
+  ordinary 4 MB PNG is refused, though images are drawn by GPUI and never reach the editor.
+  Add a separate `MAX_IMAGE_BYTES` (50 MB) for `check_image`, have `Unviewable::TooLarge`
+  carry the limit it broke so the message names the right one, and test both limits.
 - New-tab folder picker (currently the selected tab's folder).
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
@@ -238,8 +183,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 - Report drags that leave the terminal area (GPUI only delivers moves while hovered).
 - Working directory from OSC 7 (only useful for remote shells): `alacritty_terminal` does not
   parse it, but the pty reader wrapper (`term-core/src/prompt.rs`) could find it.
-- Untested on Windows: hook command quoting (`"C:\...\agentws-hook.exe"` run by Claude Code's
-  shell) and `.cmd` launchers (`claude.cmd` from npm) under ConPTY.
 - Cache the active TerminalView (`.cached(...)`) so sidebar animation frames and other
   WorkspaceView re-renders don't re-render the terminal; every input the view shows (focus,
   resize, selection, session wakeup) must notify it; check with Xvfb.

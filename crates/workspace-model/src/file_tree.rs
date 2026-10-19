@@ -237,8 +237,10 @@ pub fn folders_to_reread(
 /// How the shell a tab runs parses a typed path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShellSyntax {
-    /// bash, zsh, fish, sh, Git Bash, WSL.
+    /// bash, zsh, fish, sh, Git Bash.
     Posix,
+    /// A WSL distro's shell: POSIX, with Windows paths in the distro's form.
+    Wsl,
     /// pwsh and Windows PowerShell.
     PowerShell,
     /// cmd.exe.
@@ -253,6 +255,7 @@ impl ShellSyntax {
         match name.strip_suffix(".exe").unwrap_or(&name) {
             "pwsh" | "powershell" => Self::PowerShell,
             "cmd" => Self::Cmd,
+            "wsl" => Self::Wsl,
             _ => Self::Posix,
         }
     }
@@ -266,6 +269,8 @@ pub enum TypeError {
     ControlCharacter,
     /// cmd.exe expands `%` even inside quotes and has no way to escape `"` in them.
     CmdSpecial,
+    /// A network path other than a WSL distro's has no path inside WSL.
+    OutsideWsl,
 }
 
 impl fmt::Display for TypeError {
@@ -274,6 +279,7 @@ impl fmt::Display for TypeError {
             Self::NotUtf8 => "The path isn't valid UTF-8",
             Self::ControlCharacter => "The path holds control characters",
             Self::CmdSpecial => "The path holds % or \", which cmd can't take",
+            Self::OutsideWsl => "The path can't be reached from WSL",
         })
     }
 }
@@ -294,14 +300,50 @@ pub fn quote_path(path: &Path, shell: ShellSyntax) -> Result<String, TypeError> 
         ShellSyntax::Posix => Ok(quote_posix(text)),
         ShellSyntax::PowerShell => Ok(quote_powershell(text)),
         ShellSyntax::Cmd => quote_cmd(text),
+        ShellSyntax::Wsl => Ok(quote_posix(&wsl_path(text)?)),
     }
+}
+
+/// `text`, a Windows path, as WSL sees it under its default `/mnt` mount root: `C:\x` is
+/// `/mnt/c/x` and `\\wsl$\<distro>\x` (or `\\wsl.localhost\...`) is `/x`. Other paths are
+/// kept as they are.
+fn wsl_path(text: &str) -> Result<String, TypeError> {
+    let text = match text.strip_prefix(r"\\?\") {
+        Some(rest) => match rest.strip_prefix(r"UNC\") {
+            Some(unc) => format!(r"\\{unc}"),
+            None => rest.to_string(),
+        },
+        None => text.to_string(),
+    };
+    if let Some(unc) = text.strip_prefix(r"\\") {
+        let mut parts = unc.splitn(3, '\\');
+        let host = parts.next().unwrap_or_default();
+        let in_distro = parts.next().is_some_and(|distro| !distro.is_empty());
+        if !in_distro
+            || !(host.eq_ignore_ascii_case("wsl$") || host.eq_ignore_ascii_case("wsl.localhost"))
+        {
+            return Err(TypeError::OutsideWsl);
+        }
+        return Ok(format!(
+            "/{}",
+            parts.next().unwrap_or_default().replace('\\', "/")
+        ));
+    }
+    let mut chars = text.chars();
+    if let (Some(drive), Some(':')) = (chars.next(), chars.next())
+        && drive.is_ascii_alphabetic()
+    {
+        let rest = chars.as_str().replace('\\', "/");
+        return Ok(format!("/mnt/{}{rest}", drive.to_ascii_lowercase()));
+    }
+    Ok(text)
 }
 
 /// The line "cd to directory" types for `folder`, Enter included.
 pub fn cd_command(folder: &Path, shell: ShellSyntax) -> Result<String, TypeError> {
     let quoted = quote_path(folder, shell)?;
     Ok(match shell {
-        ShellSyntax::Posix => format!("cd {quoted}\r"),
+        ShellSyntax::Posix | ShellSyntax::Wsl => format!("cd {quoted}\r"),
         // `cd` takes wildcards (`[`, `]`, `*`) in PowerShell.
         ShellSyntax::PowerShell => format!("Set-Location -LiteralPath {quoted}\r"),
         // `/d` also changes the drive.
@@ -593,6 +635,7 @@ mod tests {
             ShellSyntax::Posix,
             ShellSyntax::PowerShell,
             ShellSyntax::Cmd,
+            ShellSyntax::Wsl,
         ] {
             for path in [
                 "/r/a\x03touch pwned\r",
@@ -641,6 +684,31 @@ mod tests {
     }
 
     #[test]
+    fn wsl_paths_use_the_distro_form() {
+        let wsl = ShellSyntax::Wsl;
+        assert_eq!(
+            quote(r"C:\Users\Public", wsl).unwrap(),
+            "/mnt/c/Users/Public"
+        );
+        assert_eq!(quote(r"D:\my dir", wsl).unwrap(), "'/mnt/d/my dir'");
+        assert_eq!(quote(r"C:\", wsl).unwrap(), "/mnt/c/");
+        assert_eq!(quote(r"\\?\C:\Users", wsl).unwrap(), "/mnt/c/Users");
+        assert_eq!(quote(r"\\wsl$\Ubuntu\home\me", wsl).unwrap(), "/home/me");
+        assert_eq!(
+            quote(r"\\?\UNC\wsl.localhost\Ubuntu\etc", wsl).unwrap(),
+            "/etc"
+        );
+        assert_eq!(quote(r"\\wsl$\Ubuntu", wsl).unwrap(), "/");
+        assert_eq!(quote("/home/me", wsl).unwrap(), "/home/me");
+        assert_eq!(quote(r"\\server\share", wsl), Err(TypeError::OutsideWsl));
+        assert_eq!(quote(r"\\wsl$", wsl), Err(TypeError::OutsideWsl));
+        assert_eq!(
+            cd_command(Path::new(r"C:\Users"), wsl).unwrap(),
+            "cd /mnt/c/Users\r"
+        );
+    }
+
+    #[test]
     fn cd_commands_follow_the_shell() {
         let folder = Path::new("/r/my dir");
         assert_eq!(
@@ -669,7 +737,7 @@ mod tests {
         );
         assert_eq!(ShellSyntax::of_program("CMD.EXE"), ShellSyntax::Cmd);
         assert_eq!(ShellSyntax::of_program("/bin/bash"), ShellSyntax::Posix);
-        assert_eq!(ShellSyntax::of_program("wsl.exe"), ShellSyntax::Posix);
+        assert_eq!(ShellSyntax::of_program("wsl.exe"), ShellSyntax::Wsl);
     }
 
     #[test]
