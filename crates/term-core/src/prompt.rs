@@ -50,8 +50,8 @@ const MARK_TIMEOUT: Duration = Duration::from_millis(200);
 /// handed-over mark yet, so the I/O thread doesn't spin meanwhile.
 const PARSE_WAIT: Duration = Duration::from_millis(1);
 const READ_CHUNK: usize = 64 * 1024;
-/// Output after an `A` or `B` mark is held back until the mark is resolved (see the module
-/// documentation for Windows).
+/// A real pty's output is held after `A` and `B` marks only where the event loop can be woken
+/// to read the held output (`Wake`, Unix).
 const HOLDS_PROMPTS: bool = cfg!(unix);
 /// Ctrl+E (end of line) in bash, zsh and PowerShell's emacs mode.
 const END_OF_LINE: char = '\x05';
@@ -558,13 +558,22 @@ struct MarkFilter<L: EventListener> {
     /// Scanned, not yet handed to the parser (ends with a tag query after a mark).
     output: Vec<u8>,
     output_pos: usize,
+    /// Output after an `A` or `B` mark is held back until the mark is resolved; without it the
+    /// prompt's position is not tracked (Windows, see the module documentation).
+    holds_prompts: bool,
 }
 
 impl<L: EventListener> MarkFilter<L> {
-    fn new(term: Arc<FairMutex<Term<L>>>, tracker: Arc<PromptTracker>, token: &str) -> Self {
+    fn new(
+        term: Arc<FairMutex<Term<L>>>,
+        tracker: Arc<PromptTracker>,
+        token: &str,
+        holds_prompts: bool,
+    ) -> Self {
         Self {
             term,
             tracker,
+            holds_prompts,
             scanner: Osc133Scanner::new(token),
             chunk: vec![0; READ_CHUNK].into_boxed_slice(),
             input: Vec::new(),
@@ -622,7 +631,7 @@ impl<L: EventListener> MarkFilter<L> {
             Some((end, mark)) => {
                 self.output.extend_from_slice(&rest[..end]);
                 self.input_pos += end;
-                let untracked = self.scanner.in_sync() || !HOLDS_PROMPTS;
+                let untracked = self.scanner.in_sync() || !self.holds_prompts;
                 if let Some(tag) = self.tracker.mark(mark, untracked) {
                     self.output.extend_from_slice(tag_query(tag).as_bytes());
                 }
@@ -716,7 +725,7 @@ impl<T, L: EventListener> MarkedPty<T, L> {
         });
         Self {
             pty,
-            filter: MarkFilter::new(term, tracker, token.unwrap_or_default()),
+            filter: MarkFilter::new(term, tracker, token.unwrap_or_default(), HOLDS_PROMPTS),
             #[cfg(unix)]
             wake,
             #[cfg(not(unix))]
@@ -853,7 +862,7 @@ mod tests {
                 &TermDimensions::new(columns, lines),
                 Listener(tracker.clone()),
             )));
-            let filter = MarkFilter::new(term.clone(), tracker.clone(), TOKEN);
+            let filter = MarkFilter::new(term.clone(), tracker.clone(), TOKEN, true);
             Self {
                 term,
                 tracker,
@@ -1027,6 +1036,22 @@ mod tests {
         harness.feed(b"\x1b]133;D;aw=t0k;cwd=2f686f6d65\x07\x1b]133;D;aw=t0k\x07");
         assert!(harness.take_running_events().is_empty());
         assert_eq!(harness.tracker.folder(), Some(PathBuf::from("/home")));
+    }
+
+    #[test]
+    fn without_the_hold_commands_are_reported_but_not_the_prompt() {
+        let mut harness = Harness::new(40, 5);
+        harness.filter.holds_prompts = false;
+        harness.feed(format!("{PROMPT}sleep 5{}", executed("sleep 5")).as_bytes());
+        assert_eq!(
+            harness.take_running_events(),
+            [PromptEvent::Started(Some("sleep 5".into()))]
+        );
+        harness.feed(PROMPT.as_bytes());
+        assert_eq!(harness.take_running_events(), [PromptEvent::Finished]);
+        harness.feed(b"ls");
+        assert_eq!(harness.input(), None);
+        assert!(harness.commands().is_empty());
     }
 
     #[test]
