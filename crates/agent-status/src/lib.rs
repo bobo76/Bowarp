@@ -1,4 +1,4 @@
-//! Claude Code session status from hooks.
+//! Agent session status: Claude Code from hooks, Copilot CLI from its progress reports.
 //!
 //! Claude Code sessions are launched with settings that run `agentws-hook` on status-changing
 //! events. The hook forwards each event over a local socket to the app's [`HookServer`], and

@@ -38,7 +38,7 @@ use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::tty::{ChildEvent, EventedPty, EventedReadWrite};
 use polling::{Event as PollingEvent, PollMode, Poller};
-use workspace_model::{CommandLine, Osc133Scanner, PromptMark};
+use workspace_model::{CommandLine, Osc133Scanner, ProgressScanner, ProgressState, PromptMark};
 
 /// DECRQM mode numbers used as tags: `TAG_BASE..TAG_BASE + TAG_COUNT`, far from real modes.
 const TAG_BASE: u16 = 61_000;
@@ -698,11 +698,19 @@ impl Wake {
     }
 }
 
+/// Called on the I/O thread with each new progress state the program reports.
+pub(crate) type ProgressCallback = Box<dyn Fn(ProgressState) + Send>;
+
 /// A pty whose output is read through a [`MarkFilter`]. Without shell integration (or without
-/// a [`Wake`] on Unix) output passes through unchanged and no marks are tracked.
+/// a [`Wake`] on Unix) output passes through unchanged and no marks are tracked. Progress
+/// reports are looked for in all output.
 pub(crate) struct MarkedPty<T, L: EventListener> {
     pty: T,
     filter: MarkFilter<L>,
+    progress: ProgressScanner,
+    /// The last progress state reported, so a program repeating it is not reported again.
+    last_progress: Option<ProgressState>,
+    on_progress: ProgressCallback,
     #[cfg(unix)]
     wake: Option<Wake>,
     #[cfg(not(unix))]
@@ -716,6 +724,7 @@ impl<T, L: EventListener> MarkedPty<T, L> {
         term: Arc<FairMutex<Term<L>>>,
         tracker: Arc<PromptTracker>,
         token: Option<&str>,
+        on_progress: ProgressCallback,
     ) -> Self {
         #[cfg(unix)]
         let wake = token.and_then(|_| {
@@ -726,6 +735,9 @@ impl<T, L: EventListener> MarkedPty<T, L> {
         Self {
             pty,
             filter: MarkFilter::new(term, tracker, token.unwrap_or_default(), HOLDS_PROMPTS),
+            progress: ProgressScanner::new(),
+            last_progress: None,
+            on_progress,
             #[cfg(unix)]
             wake,
             #[cfg(not(unix))]
@@ -734,9 +746,18 @@ impl<T, L: EventListener> MarkedPty<T, L> {
     }
 }
 
-impl<T: EventedReadWrite, L: EventListener> Read for MarkedPty<T, L> {
+impl<T: EventedReadWrite, L: EventListener> MarkedPty<T, L> {
+    fn report_progress(&mut self, output: &[u8]) {
+        let Some(state) = self.progress.scan(output) else {
+            return;
+        };
+        if self.last_progress.replace(state) != Some(state) {
+            (self.on_progress)(state);
+        }
+    }
+
     #[cfg(unix)]
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read_marked(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let Some(wake) = self.wake.as_mut() else {
             return self.pty.reader().read(buf);
         };
@@ -750,11 +771,19 @@ impl<T: EventedReadWrite, L: EventListener> Read for MarkedPty<T, L> {
     }
 
     #[cfg(not(unix))]
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read_marked(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if !self.scans {
             return self.pty.reader().read(buf);
         }
         self.filter.read(self.pty.reader(), buf)
+    }
+}
+
+impl<T: EventedReadWrite, L: EventListener> Read for MarkedPty<T, L> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let count = self.read_marked(buf)?;
+        self.report_progress(&buf[..count]);
+        Ok(count)
     }
 }
 

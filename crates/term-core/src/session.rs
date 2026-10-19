@@ -17,6 +17,7 @@ use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{self, Term, TermMode};
 use alacritty_terminal::tty;
 use parking_lot::MutexGuard;
+use workspace_model::ProgressState;
 
 use crate::launch::{LaunchSpec, SessionKind};
 use crate::palette::Palette;
@@ -43,6 +44,8 @@ pub enum SessionEvent {
     /// The command a shell with integration ran finished: the prompt is back. Also sent when
     /// the shell reports a new folder at a prompt without a command before it.
     CommandFinished,
+    /// The program reported a new progress state (OSC 9;4).
+    ProgressChanged(ProgressState),
 }
 
 /// Called on the session's I/O thread, sometimes while it holds the terminal lock: it must
@@ -247,7 +250,14 @@ impl Session {
         if let Some(pid) = child_pid {
             prompt.set_child_pid(pid);
         }
-        let pty = MarkedPty::new(pty, term.clone(), prompt, spec.mark_token.as_deref());
+        let progress_callback = shared.callback.clone();
+        let pty = MarkedPty::new(
+            pty,
+            term.clone(),
+            prompt,
+            spec.mark_token.as_deref(),
+            Box::new(move |state| progress_callback(SessionEvent::ProgressChanged(state))),
+        );
         let event_loop = EventLoop::new(term.clone(), listener, pty, options.drain_on_exit, false)?;
         let _ = shared.sender.set(event_loop.channel());
         let io_thread = event_loop.spawn();

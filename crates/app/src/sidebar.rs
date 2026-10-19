@@ -39,19 +39,19 @@ const RUNNING_PULSE_FPS: f32 = 10.;
 /// A tab's status, shown as a badge on its icon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabStatus {
-    /// Claude Code is working on a prompt.
+    /// An agent is working on a prompt.
     Working,
-    /// Claude Code waits for a permission decision or an answer.
+    /// An agent waits for a permission decision or an answer.
     NeedsAttention,
-    /// Claude Code finished a turn while the tab was hidden; shown until the tab is selected.
+    /// An agent finished a turn while the tab was hidden; shown until the tab is selected.
     Done,
-    /// Claude Code finished and waits for the next prompt.
+    /// An agent finished and waits for the next prompt.
     Idle,
     /// A command typed at a shell's prompt runs (shell integration).
     Running,
-    /// A session without status hooks printed output recently.
+    /// A session without agent status printed output recently.
     Active,
-    /// A session without status hooks has been quiet for a while.
+    /// A session without agent status has been quiet for a while.
     Quiet,
     Exited,
 }

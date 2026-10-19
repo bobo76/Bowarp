@@ -5,8 +5,8 @@
 //! and its tabs were when it closed, which running instance owns that save, which icon each
 //! new-tab launcher shows, the file explorer's tree, how the file viewer shows a file, the
 //! shell commands run in the app (history), the shell integration marks (OSC 133) in a shell's
-//! output, how a running command is labeled and badged and the About dialog's version line. No UI
-//! dependency.
+//! output, the progress reports (OSC 9;4) in a program's output, how a running command is
+//! labeled and badged and the About dialog's version line. No UI dependency.
 
 mod about;
 mod attention;
@@ -20,6 +20,7 @@ mod launcher_icon;
 pub mod layout;
 mod location;
 mod osc133;
+mod progress;
 mod running;
 mod search;
 mod tab;
@@ -40,6 +41,7 @@ pub use layout::{
 };
 pub use location::{Location, display_path};
 pub use osc133::{CommandLine, Osc133Scanner, PromptMark, new_mark_token};
+pub use progress::{ProgressScanner, ProgressState};
 pub use running::{
     COMMAND_LABEL_CHARS, RUNNING_AFTER, RUNNING_PULSE_FOR, RunningBadge, command_label,
     format_clock, running_badge,

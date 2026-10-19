@@ -28,6 +28,14 @@ What is done is described in [FEATURES.md](FEATURES.md); the details are in the 
   Windows (`escape_args`). wsl-vpnkit is hidden from the launchers. Checked outside the app:
   the WSL launch's marks and folders, and cmd's prompt. Check in a cmd and an Ubuntu tab:
   `cd` updates the explorer and the title; PowerShell and Git Bash tabs still start.
+- Copilot CLI status: the pty reader looks for progress reports (OSC 9;4, which Windows
+  Terminal shows as the tab spinner) in every session's output (`ProgressScanner`), and a
+  Copilot tab's first one switches it from output activity to agent status: Working (with
+  the lap time) while progress shows, Idle or Done once it is removed. Not checked against
+  Copilot's real output: assumed to show `3` (busy) while working and `0` (remove) when the
+  turn ends; any shown state counts as Working, so a permission prompt is not
+  NeedsAttention. Check in a Copilot tab: Working and its time during a turn, Idle after it,
+  Done when it ends in a hidden tab, and whether a permission prompt or Esc clears it.
 
 **Not doable yet**
 
@@ -89,7 +97,8 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 
 - **M4:** named workspaces (the single window's tabs are already restored), offer to relaunch; restored tabs clearly marked "not running".
 - **M5:** terminal search, close-with-running-process warnings, notifications + configurable sound.
-- **M6:** Copilot CLI status (if it gains a hook mechanism), Windows packaging, Ubuntu polish
+- **M6:** Copilot CLI NeedsAttention (progress reports only give Working / Idle; needs hooks or a
+  progress state for prompts), Windows packaging, Ubuntu polish
   (Wayland/X11, socket paths).
 
 ## Backlog
@@ -151,11 +160,23 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   folder, so a shell tab types `cd <parent>` and the tree follows the new working directory.
   Disabled at a filesystem or drive root, and in a tab that isn't a shell (`can_cd` false:
   Claude Code, Copilot), since the tree always shows the session's folder.
+- File explorer entry menu: remove "Attach as context" (`EntryCommand::AttachContext`,
+  `ExplorerEvent::Attach`, and `file_tree.rs`'s prompt text if nothing else uses it), and add
+  "Open in new tab with" below "Open in new tab" with a submenu of Claude Code and Copilot,
+  started in the entry's folder (the folder itself, or a file's parent folder) like the
+  new-tab menu's agent entries. "Open in new tab" keeps opening the default shell. Update the
+  README's explorer menu description.
 - Resizable file viewer pane: drag the divider on the viewer's left edge to resize it
   (currently fixed at 45% of the width, `VIEWER_WIDTH` in `app/src/workspace_view.rs`); resize
   cursor on hover, a minimum width for both the viewer and the terminal, double-click resets
   to 45%. The width is kept as a fraction so it follows window resizes, and is saved in the
   settings file and restored at startup.
+- File viewer per tab: each tab remembers its own open file, or none (today one `FileViewer`
+  in `WorkspaceView` is shared by all tabs). Selecting a tab shows the file it had open, or
+  hides the pane if it had none: open a file in tab 1, select tab 2 and the pane hides, select
+  tab 1 again and it comes back with the same file; if tab 2 has another file open, switching
+  between the two tabs switches the file shown. Closing the viewer only closes it in the
+  selected tab, and closing a tab drops its file.
 - File viewer: keep the scroll position when the file is reloaded after a change on disk
   (it goes back to the top); open links to other files (`FEATURES.md`) in the viewer instead
   of the system handler; the `⋮` menu from the reference screenshot.

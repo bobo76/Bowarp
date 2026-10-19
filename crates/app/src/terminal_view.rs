@@ -25,7 +25,8 @@ use term_core::{
 };
 use workspace_model::file_tree::ShellSyntax;
 use workspace_model::{
-    COMMAND_LABEL_CHARS, Lap, Location, RUNNING_AFTER, RunningBadge, command_label, running_badge,
+    COMMAND_LABEL_CHARS, Lap, Location, ProgressState, RUNNING_AFTER, RunningBadge, command_label,
+    running_badge,
 };
 
 use crate::history;
@@ -117,11 +118,12 @@ pub struct TerminalView {
     location: Option<Location>,
     /// How the program parses typed paths.
     shell: ShellSyntax,
-    /// Status from Claude Code hooks; `None` for sessions without hooks.
+    /// Status from Claude Code hooks, or from Copilot CLI's progress reports once it sent
+    /// one; `None` for sessions without either.
     agent: Option<AgentState>,
-    /// When the hook status last changed, for the hover card's lap time.
+    /// When the agent status last changed, for the hover card's lap time.
     agent_lap: Lap<AgentStatus>,
-    /// Claude Code finished a turn while the tab was hidden; cleared when it is shown.
+    /// The agent finished a turn while the tab was hidden; cleared when it is shown.
     finished_unseen: bool,
     /// Hidden views do not paint, so they acknowledge wakeups themselves.
     visible: bool,
@@ -303,7 +305,7 @@ impl TerminalView {
                 .is_some_and(|running| running.badge() == RunningBadge::Pulsing)
     }
 
-    /// How long Claude Code has been working on the current turn, or `None` when it is not
+    /// How long the agent has been working on the current turn, or `None` when it is not
     /// working. Tool calls keep the lap running; waiting for a permission decision ends it.
     pub fn working_for(&self, now: Instant) -> Option<Duration> {
         let working = self.agent?.status() == AgentStatus::Working;
@@ -352,17 +354,44 @@ impl TerminalView {
 
     /// Apply a status event from this session's Claude Code hooks.
     pub fn apply_hook_event(&mut self, event: HookEvent, at: u64, cx: &mut Context<Self>) {
-        let Some(agent) = self.agent.as_mut() else {
+        self.update_agent(|agent| agent.apply(event, at), cx);
+    }
+
+    /// Apply a progress report from Copilot CLI. Its first one switches the tab from output
+    /// activity to agent status, so a Copilot that never reports progress keeps the former.
+    fn apply_progress(&mut self, state: ProgressState, cx: &mut Context<Self>) {
+        if self.kind() != SessionKind::CopilotCli {
             return;
+        }
+        let adopted = self.agent.is_none();
+        if adopted {
+            self.agent = Some(AgentState::default());
+            self.activity_task = None;
+        }
+        let changed = self.update_agent(|agent| agent.apply_progress(state.is_shown()), cx);
+        if adopted && !changed {
+            cx.emit(TabChanged);
+        }
+    }
+
+    /// Change the agent status and tell the sidebar when it changed. Returns whether it did.
+    fn update_agent(
+        &mut self,
+        change: impl FnOnce(&mut AgentState),
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(agent) = self.agent.as_mut() else {
+            return false;
         };
         let before = agent.status();
-        agent.apply(event, at);
+        change(agent);
         let after = agent.status();
         if !self.agent_lap.set(after, Instant::now()) {
-            return;
+            return false;
         }
         self.finished_unseen = finished_unseen(before, after, self.visible);
         self.emit_tab_changed(cx);
+        true
     }
 
     fn on_session_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
@@ -411,6 +440,7 @@ impl TerminalView {
                     self.emit_tab_changed(cx);
                 }
             }
+            SessionEvent::ProgressChanged(state) => self.apply_progress(state, cx),
             SessionEvent::Exited(code) => {
                 self.process = ProcessState::Exited(code);
                 self.running_command = None;
