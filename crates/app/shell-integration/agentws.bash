@@ -5,7 +5,8 @@
 # as bash saved it to its history), D command finished (with the shell's folder). Each mark
 # carries the session's token (AGENTWS_MARK_TOKEN), so the app ignores marks printed by
 # programs. Needs bash 4.4 (PS0). With AGENTWS_BASH_LOGIN set (Git Bash, whose shortcut starts
-# a login shell, which ignores --rcfile) it loads the login files instead of ~/.bashrc.
+# a login shell, which ignores --rcfile, and WSL, which starts one too) it loads the login files
+# instead of ~/.bashrc.
 
 __agentws_token=${AGENTWS_MARK_TOKEN-}
 __agentws_login=${AGENTWS_BASH_LOGIN-}
@@ -47,13 +48,19 @@ if [ -z "${__agentws_loaded-}" ] && [ -n "$__agentws_token" ] &&
     }
 
     # __agentws_cwd: the D mark's ";cwd=<hex>" for $PWD, as a native path: a Windows one in
-    # Git Bash (MSYS) and Cygwin. Only redone when $PWD changes, cygpath being slow to start.
+    # Git Bash (MSYS), Cygwin and WSL (\\wsl.localhost\<distro>\... for the Linux folders).
+    # Only redone when $PWD changes, cygpath and wslpath being slow to start.
     __agentws_update_cwd() {
         local dir=$PWD
         __agentws_pwd=$PWD
         __agentws_cwd=
         case "$OSTYPE" in
             msys* | cygwin*) dir=$(cygpath -w "$PWD" 2>/dev/null) || dir= ;;
+            linux*)
+                if [ -n "${WSL_DISTRO_NAME-}" ]; then
+                    dir=$(wslpath -w "$PWD" 2>/dev/null) || dir=
+                fi
+                ;;
         esac
         if [ -n "$dir" ] && __agentws_hex "$dir"; then
             __agentws_cwd=";cwd=$__agentws_reply"

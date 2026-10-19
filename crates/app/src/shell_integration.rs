@@ -4,8 +4,10 @@
 //! session gets a random token in `AGENTWS_MARK_TOKEN`, which the script reads (and removes
 //! from the environment) and puts in every mark, so marks printed by programs are ignored. The
 //! scripts are written to `shell-integration/` in the config folder at the first launch;
-//! nothing is written to the user's own files. cmd.exe, fish, WSL and shells started with
-//! arguments (except Git Bash's login shell) run unchanged.
+//! nothing is written to the user's own files. cmd.exe has no hooks: its `PROMPT` reports the
+//! folder (`D` with `path=`) and puts it in the title. A WSL distro whose login shell is bash
+//! gets the bash script (its token passed through `WSLENV`). fish, other WSL shells and shells
+//! started with arguments (except Git Bash's login shell and `wsl -d <distro>`) run unchanged.
 
 use std::fs;
 use std::io;
@@ -15,6 +17,7 @@ use std::sync::OnceLock;
 use term_core::{LaunchSpec, SessionKind};
 use workspace_model::new_mark_token;
 
+use crate::launcher::WSL_DISTRO_FLAG;
 use crate::window_bounds::config_file;
 
 const BASH_SCRIPT: &str = include_str!("../shell-integration/agentws.bash");
@@ -33,6 +36,19 @@ const MARK_TOKEN_ENV: &str = "AGENTWS_MARK_TOKEN";
 const BASH_LOGIN_ARGS: [&str; 2] = ["-i", "-l"];
 /// Tells the bash script to load the login files, since a login shell ignores `--rcfile`.
 const BASH_LOGIN_ENV: &str = "AGENTWS_BASH_LOGIN";
+/// cmd.exe's prompt, read from this variable; `$P$G` (folder and `>`) when unset.
+const CMD_PROMPT_ENV: &str = "PROMPT";
+const CMD_DEFAULT_PROMPT: &str = "$P$G";
+/// The variables Windows hands to WSL processes.
+const WSL_ENV: &str = "WSLENV";
+/// Run inside the distro with the bash script's Windows path as `$1`: bash, as the login shell
+/// it would have been, loading the script; any other login shell unchanged.
+const WSL_LAUNCH: &str = concat!(
+    r#"shell=$(getent passwd "$(id -un)" | cut -d: -f7); "#,
+    r#"case "${shell##*/}" in bash) "#,
+    r#"AGENTWS_BASH_LOGIN=1 exec "$shell" --rcfile "$(wslpath -u "$1")" -i;; esac; "#,
+    r#"unset AGENTWS_MARK_TOKEN; exec "${shell:-/bin/sh}" -l"#,
+);
 /// Files earlier versions wrote, and the completion cache zsh wrote next to them.
 const STALE_FILES: [&str; 3] = ["zsh/.zprofile", "zsh/.zshrc", "zsh/.zcompdump"];
 
@@ -42,6 +58,8 @@ enum Shell {
     Bash,
     Zsh,
     Pwsh,
+    Cmd,
+    Wsl,
 }
 
 impl Shell {
@@ -52,6 +70,8 @@ impl Shell {
             "bash" => Some(Self::Bash),
             "zsh" => Some(Self::Zsh),
             "pwsh" | "powershell" => Some(Self::Pwsh),
+            "cmd" => Some(Self::Cmd),
+            "wsl" => Some(Self::Wsl),
             _ => None,
         }
     }
@@ -67,6 +87,7 @@ pub fn attach(spec: &mut LaunchSpec) -> bool {
     let Some(dir) = scripts_dir() else {
         return false;
     };
+    let token = new_mark_token();
     match shell {
         Shell::Bash => {
             let login = !spec.args.is_empty();
@@ -96,8 +117,26 @@ pub fn attach(spec: &mut LaunchSpec) -> bool {
                 powershell_load(&script),
             ];
         }
+        Shell::Cmd => {
+            let prompt = std::env::var(CMD_PROMPT_ENV)
+                .ok()
+                .filter(|prompt| !prompt.is_empty());
+            spec.env.insert(
+                CMD_PROMPT_ENV.into(),
+                cmd_prompt(&token, prompt.as_deref().unwrap_or(CMD_DEFAULT_PROMPT)),
+            );
+        }
+        Shell::Wsl => {
+            let script = dir.join(BASH_FILE).to_string_lossy().into_owned();
+            spec.args
+                .extend(["-e", "sh", "-c", WSL_LAUNCH, "sh", script.as_str()].map(String::from));
+            let wsl_env = match std::env::var(WSL_ENV) {
+                Ok(names) if !names.is_empty() => format!("{names}:{MARK_TOKEN_ENV}"),
+                _ => MARK_TOKEN_ENV.into(),
+            };
+            spec.env.insert(WSL_ENV.into(), wsl_env);
+        }
     }
-    let token = new_mark_token();
     spec.env.insert(MARK_TOKEN_ENV.into(), token.clone());
     spec.mark_token = Some(token);
     spec.program = Some(program);
@@ -119,8 +158,19 @@ fn target(spec: &LaunchSpec) -> Option<(Shell, String)> {
         None => return None,
     };
     let shell = Shell::of_program(&program)?;
-    let plain_args = spec.args.is_empty() || (shell == Shell::Bash && spec.args == BASH_LOGIN_ARGS);
+    let plain_args = spec.args.is_empty()
+        || match shell {
+            Shell::Bash => spec.args == BASH_LOGIN_ARGS,
+            Shell::Wsl => spec.args.len() == 2 && spec.args[0] == WSL_DISTRO_FLAG,
+            _ => false,
+        };
     plain_args.then_some((shell, program))
+}
+
+/// cmd.exe's `PROMPT`: a `D` mark with the folder (`$P`), the folder as the title, then
+/// `prompt` itself. `$e` is ESC, and `$e\` ends a sequence.
+fn cmd_prompt(token: &str, prompt: &str) -> String {
+    format!(r"$e]133;D;aw={token};path=$P$e\$e]0;$P$e\{prompt}")
 }
 
 /// The `-Command` that loads `script`. Its text runs as a script block rather than as a
@@ -192,8 +242,36 @@ mod tests {
         );
         assert_eq!(Shell::of_program("powershell.exe"), Some(Shell::Pwsh));
         assert_eq!(Shell::of_program("fish"), None);
-        assert_eq!(Shell::of_program("cmd.exe"), None);
-        assert_eq!(Shell::of_program("wsl.exe"), None);
+        assert_eq!(
+            Shell::of_program(r"C:\Windows\System32\cmd.exe"),
+            Some(Shell::Cmd)
+        );
+        assert_eq!(Shell::of_program("wsl.exe"), Some(Shell::Wsl));
+    }
+
+    #[test]
+    fn cmd_prompt_reports_the_folder_before_the_users_prompt() {
+        assert_eq!(
+            cmd_prompt("t0k", "$P$G"),
+            r"$e]133;D;aw=t0k;path=$P$e\$e]0;$P$e\$P$G"
+        );
+    }
+
+    #[test]
+    fn wsl_gets_the_script_for_a_distro_or_the_default_one() {
+        let wsl = |args: &[&str]| {
+            LaunchSpec::new(
+                SessionKind::Shell,
+                Some("wsl.exe".into()),
+                args.iter().map(|&arg| arg.into()).collect(),
+                None,
+            )
+        };
+        let shell = |spec: &LaunchSpec| target(spec).map(|(shell, _)| shell);
+        assert_eq!(shell(&wsl(&["-d", "Ubuntu"])), Some(Shell::Wsl));
+        assert_eq!(shell(&wsl(&[])), Some(Shell::Wsl));
+        assert_eq!(shell(&wsl(&["-e", "top"])), None);
+        assert_eq!(shell(&wsl(&["-d", "Ubuntu", "-e", "top"])), None);
     }
 
     #[test]

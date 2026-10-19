@@ -230,13 +230,16 @@ impl Session {
             listener.clone(),
         )));
 
-        // Windows has an extra `escape_args` field; the struct update fills it there.
+        // Off Windows the struct update has nothing left to fill.
         #[allow(clippy::needless_update)]
         let options = tty::Options {
             shell: spec.shell_command(),
             working_directory: spec.cwd.clone(),
             drain_on_exit: true,
             env: session_env(&spec.env),
+            // Quote arguments holding spaces or quotes, so each reaches the program whole.
+            #[cfg(windows)]
+            escape_args: true,
             ..Default::default()
         };
         let pty = tty::new(&options, size.window_size(), id)?;

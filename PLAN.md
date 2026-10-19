@@ -19,6 +19,15 @@ What is done is described in [FEATURES.md](FEATURES.md); the details are in the 
   that ConPTY (Windows 11 26100) passes OSC 133 through unchanged. Check in each of those tabs: `cd` updates the explorer, the Running
   indicator works, a new tab opens in the selected tab's folder, and Windows PowerShell
   starts without an execution-policy error.
+- File explorer not following `cd` in cmd and WSL tabs, and cmd's title showing
+  `cmd.exe`'s path: cmd's `PROMPT` now prints a `D` mark with the folder as text
+  (`path=<text>`, cmd cannot print hex) and sets the title to the folder; a WSL distro whose
+  login shell is bash starts it with the bash script (`wsl -d <distro> -e sh -c ...`, token
+  through `WSLENV`), which reports the folder with `wslpath -w`. The scripts are checked out
+  with LF (`.gitattributes`), as WSL's bash rejects CRLF, and arguments are now quoted on
+  Windows (`escape_args`). wsl-vpnkit is hidden from the launchers. Checked outside the app:
+  the WSL launch's marks and folders, and cmd's prompt. Check in a cmd and an Ubuntu tab:
+  `cd` updates the explorer and the title; PowerShell and Git Bash tabs still start.
 
 **Not doable yet**
 

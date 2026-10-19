@@ -47,8 +47,8 @@ const SHELLS: &[(&str, &str)] = &[
 
 /// WSL distros that only back other tools and have no usable shell.
 #[cfg(any(windows, test))]
-const HIDDEN_DISTROS: &[&str] = &["docker-desktop", "docker-desktop-data"];
-const WSL_DISTRO_FLAG: &str = "-d";
+const HIDDEN_DISTROS: &[&str] = &["docker-desktop", "docker-desktop-data", "wsl-vpnkit"];
+pub(crate) const WSL_DISTRO_FLAG: &str = "-d";
 
 /// Interactive login shell, as Git's own "Git Bash" shortcut starts it.
 #[cfg(any(windows, test))]
@@ -343,9 +343,9 @@ mod wsl_tests {
     }
 
     #[test]
-    fn hides_docker_backing_distros() {
+    fn hides_helper_distros() {
         assert!(shows_distro("Ubuntu"));
-        assert!(shows_distro("wsl-vpnkit"));
+        assert!(!shows_distro("WSL-VPNKit"));
         assert!(!shows_distro("docker-desktop"));
         assert!(!shows_distro("Docker-Desktop-Data"));
     }

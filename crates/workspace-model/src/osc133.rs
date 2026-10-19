@@ -3,11 +3,13 @@
 //! The shell scripts the app injects print `ESC ] 133 ; X ; aw=<token> ... BEL` around the
 //! prompt: `A` where the prompt starts, `B` where the command line starts (right after the
 //! prompt), `C` when a command is about to run (with the command line, `cmd=<hex>`) and `D`
-//! when it finished (with the shell's folder, `cwd=<hex>`). zsh also reports the command line while it is edited: `L` with
-//! `cur=<characters before the cursor>;buf=<hex>`, plus `post=1` when zsh shows text after it
-//! (zsh-autosuggestions). The token is random per session ([`new_mark_token`]) and only the
-//! injected script knows it, so marks in a program's output (a `cat`ed file, a remote shell's
-//! integration over ssh) are ignored.
+//! when it finished (with the shell's folder, `cwd=<hex>`, or for cmd.exe, which cannot print
+//! hex, `path=<text>` as the last parameter, a Windows path possibly holding `;`). zsh also
+//! reports the command line while it is edited: `L` with `cur=<characters before the
+//! cursor>;buf=<hex>`, plus `post=1` when zsh shows text after it (zsh-autosuggestions). The
+//! token is random per session ([`new_mark_token`]) and only the injected script knows it, so
+//! marks in a program's output (a `cat`ed file, a remote shell's integration over ssh) are
+//! ignored.
 //!
 //! The terminal emulator ignores these, so the pty reader looks for them with
 //! [`Osc133Scanner`], which keeps its state across reads so a mark split over two reads is
@@ -51,6 +53,8 @@ const BEL: u8 = 0x07;
 const CAN: u8 = 0x18;
 const SUB: u8 = 0x1a;
 const MARK_PREFIX: &[u8] = b"133;";
+/// The folder as text: the last parameter, everything after it being the path.
+const PATH_PARAM: &[u8] = b";path=";
 /// Kept of a mark's payload: the scripts send command lines of up to 4096 bytes, hex-encoded.
 const MAX_PAYLOAD: usize = 8192 + 256;
 /// Kept of a CSI's parameters: enough for `?2026`.
@@ -196,6 +200,13 @@ impl Osc133Scanner {
         let rest = self.payload.strip_prefix(MARK_PREFIX)?;
         let (&letter, after) = rest.split_first()?;
         let mut params = Params::default();
+        let (after, path) = match after
+            .windows(PATH_PARAM.len())
+            .position(|window| window == PATH_PARAM)
+        {
+            Some(at) => (&after[..at], Some(&after[at + PATH_PARAM.len()..])),
+            None => (after, None),
+        };
         if !after.is_empty() {
             let after = after.strip_prefix(b";")?;
             for param in after.split(|&byte| byte == b';') {
@@ -228,7 +239,12 @@ impl Osc133Scanner {
             b'A' => PromptMark::PromptStart,
             b'B' => PromptMark::CommandStart,
             b'C' => PromptMark::CommandExecuted(text(params.command)),
-            b'D' => PromptMark::CommandFinished(text(params.folder).map(PathBuf::from)),
+            b'D' => {
+                let path = path
+                    .filter(|path| !self.truncated && !path.is_empty())
+                    .and_then(|path| String::from_utf8(path.to_vec()).ok());
+                PromptMark::CommandFinished(text(params.folder).or(path).map(PathBuf::from))
+            }
             b'L' => {
                 let cursor = params
                     .cursor
@@ -370,6 +386,18 @@ mod tests {
             kinds(&[b"\x1b]133;D;aw=t0k;cwd=zz\x07"]),
             [PromptMark::CommandFinished(None)]
         );
+    }
+
+    #[test]
+    fn text_paths_run_to_the_end_of_the_mark() {
+        assert_eq!(
+            kinds(&[b"\x1b]133;D;aw=t0k;path=C:\\a;b=c\x1b\\"]),
+            [PromptMark::CommandFinished(Some(PathBuf::from(
+                "C:\\a;b=c"
+            )))]
+        );
+        // The token must come before the path.
+        assert!(kinds(&[b"\x1b]133;D;path=C:\\;aw=t0k\x07"]).is_empty());
     }
 
     #[test]

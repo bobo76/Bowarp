@@ -77,7 +77,8 @@ prompt, each with its folder; click one to put it on the prompt. Commands starti
 are not kept, nor bash commands that bash keeps out of its own history (`HISTCONTROL`,
 `HISTIGNORE`). Up still goes to the program in full-screen programs (`less`, editors), while a
 command runs, in Claude Code and Copilot tabs, and in shells without integration (fish, cmd,
-WSL, shells started with their own arguments other than Git Bash).
+WSL shells other than bash, shells started with their own arguments other than Git Bash and
+WSL distros).
 
 These tabs start with a small script that loads your own `~/.bashrc` / zsh startup files /
 PowerShell profile and then marks the prompt (OSC 133); the scripts live in
@@ -85,9 +86,12 @@ PowerShell profile and then marks the prompt (OSC 133); the scripts live in
 your own `ZDOTDIR`. The marks carry a per-session token, so output that merely contains such
 marks (a file you `cat`, a remote shell over ssh) is not tracked. bash needs 4.4 or later;
 PowerShell needs PSReadLine. Git Bash's login shell gets the script too, which then loads your
-login files (`/etc/profile`, then `~/.bash_profile`) instead of `~/.bashrc`. On Windows the
-history is not available yet (the prompt's position is not tracked there); the script only
-gives the Running status and the folder.
+login files (`/etc/profile`, then `~/.bash_profile`) instead of `~/.bashrc`; so does a WSL
+distro whose login shell is bash (it reports Linux folders as `\\wsl.localhost\<distro>\...`).
+cmd gets no script: its `PROMPT` (yours, else `$P$G`) is prefixed with a mark that reports the
+folder and puts it in the title. On Windows the history is not available yet (the prompt's
+position is not tracked there); the script only gives the Running status and the folder, and
+cmd only the folder.
 
 The scroll bar sits in the right margin and shows while you scroll or hover it. Drag the
 thumb, or click the track to jump there. It is hidden when there is no history, as on a
