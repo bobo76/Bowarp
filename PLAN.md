@@ -10,14 +10,15 @@ What is done is described in [FEATURES.md](FEATURES.md); the details are in the 
 
 (none)
 
-**Bugs (Windows)**
+**Fixed, not built yet (the Windows machine has no MSVC Build Tools)**
 
-- The file explorer doesn't follow `cd`: it keeps showing the tab's launch folder.
-  `Session::current_dir` (`term-core/src/session.rs`) only reads `/proc/<pid>/cwd` on Linux
-  and returns `None` elsewhere. Fix: read the shell's working directory from its PEB
-  (`NtQueryInformationProcess` -> `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory`), or use
-  the OSC 7 / OSC 133 shell-integration path. New tabs and the hover card's branch have the
-  same root cause.
+- File explorer not following `cd` on Windows: the shells now report their folder in the `D`
+  mark (`cwd=<hex>`), and Windows scans the marks without holding output (no prompt
+  position, so no history yet). PowerShell, Windows PowerShell and Git Bash (login shell, via
+  `AGENTWS_BASH_LOGIN`) now get the script. Checked outside the app: the scripts' marks, and
+  that ConPTY (Windows 11 26100) passes OSC 133 through unchanged. Check in each of those tabs: `cd` updates the explorer, the Running
+  indicator works, a new tab opens in the selected tab's folder, and Windows PowerShell
+  starts without an execution-policy error.
 
 **Not doable yet**
 
@@ -83,6 +84,10 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   (Wayland/X11, socket paths).
 
 ## Backlog
+
+- Windows: command history. It needs the prompt's position (`A` / `B` marks held until the
+  parser reaches them, `MarkFilter`), whose Unix wake-up socket has no stand-in for the
+  Windows pty reader yet (`HOLDS_PROMPTS` in `term-core/src/prompt.rs`).
 
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.

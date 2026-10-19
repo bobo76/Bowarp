@@ -40,7 +40,8 @@ pub enum SessionEvent {
     CommandStarted(Option<String>),
     /// A shell with integration is about to run this command line typed at its prompt.
     CommandExecuted(ExecutedCommand),
-    /// The command a shell with integration ran finished: the prompt is back.
+    /// The command a shell with integration ran finished: the prompt is back. Also sent when
+    /// the shell reports a new folder at a prompt without a command before it.
     CommandFinished,
 }
 
@@ -267,17 +268,14 @@ impl Session {
     }
 
     /// The child's current working directory, which follows `cd` in a shell. `None` when it
-    /// cannot be read: the child exited, or the platform is not supported yet (only Linux).
+    /// cannot be known: the child exited, or (off Linux) the shell has no integration script
+    /// to report it.
     pub fn current_dir(&self) -> Option<PathBuf> {
         // The pid of an exited child may already belong to another process.
         if self.has_exited() {
             return None;
         }
-        let pid = self.child_pid?;
-        if cfg!(target_os = "linux") {
-            return std::fs::read_link(format!("/proc/{pid}/cwd")).ok();
-        }
-        None
+        self.shared.prompt.folder()
     }
 
     pub fn palette(&self) -> &Palette {

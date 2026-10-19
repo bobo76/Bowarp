@@ -15,6 +15,10 @@
 //! and zsh reports the command line as it is edited (`L`); for bash it is read from the grid,
 //! from the `B` mark to the cursor. Marks inside a synchronized update are not held: the
 //! parser keeps those bytes back until the update ends, so that prompt is not tracked.
+//!
+//! On Windows nothing is held back (the pty is not a file descriptor the hold's wake-up socket
+//! can stand in for), so the prompt's position is never tracked there: only the marks applied
+//! when found count, which is enough for the Running status and the shell's folder (`D`).
 
 #[cfg(unix)]
 use std::io::Write;
@@ -46,6 +50,9 @@ const MARK_TIMEOUT: Duration = Duration::from_millis(200);
 /// handed-over mark yet, so the I/O thread doesn't spin meanwhile.
 const PARSE_WAIT: Duration = Duration::from_millis(1);
 const READ_CHUNK: usize = 64 * 1024;
+/// Output after an `A` or `B` mark is held back until the mark is resolved (see the module
+/// documentation for Windows).
+const HOLDS_PROMPTS: bool = cfg!(unix);
 /// Ctrl+E (end of line) in bash, zsh and PowerShell's emacs mode.
 const END_OF_LINE: char = '\x05';
 const BACKSPACE: char = '\x7f';
@@ -65,7 +72,8 @@ pub enum PromptEvent {
     Started(Option<String>),
     /// A command line typed at a tracked prompt is about to run; sent after its `Started`.
     Executed(ExecutedCommand),
-    /// The running command finished (`D` mark): the shell is back at its prompt.
+    /// The running command finished (`D` mark): the shell is back at its prompt. Also sent
+    /// for a `D` mark that reports a new folder without a command before it.
     Finished,
 }
 
@@ -148,6 +156,8 @@ struct TrackerState {
     reports_line: bool,
     /// The latest report, until a command runs or finishes.
     line: Option<CommandLine>,
+    /// The folder the shell sent with its latest `D` mark.
+    folder: Option<PathBuf>,
 }
 
 /// The shell integration state of one session, shared by the I/O thread, the terminal's event
@@ -221,10 +231,15 @@ impl PromptTracker {
                     }
                     (events, None)
                 }
-                PromptMark::CommandFinished => {
+                PromptMark::CommandFinished(folder) => {
+                    // A new folder at the first prompt (a startup file's `cd`) is news too.
+                    let moved = folder.is_some() && folder != state.folder;
+                    if moved {
+                        state.folder = folder;
+                    }
                     let was_running = std::mem::replace(&mut state.phase, Phase::Idle);
                     state.line = None;
-                    if was_running == Phase::Running {
+                    if was_running == Phase::Running || moved {
                         (vec![PromptEvent::Finished], None)
                     } else {
                         (Vec::new(), None)
@@ -288,7 +303,7 @@ impl PromptTracker {
         // Read while the shell waits at its prompt: once the command runs, `cd` may have
         // changed it.
         let folder = (pending.mark == PromptMark::CommandStart)
-            .then(|| self.child_folder())
+            .then(|| self.child_folder(&state))
             .flatten();
         apply(&mut state, &pending.mark, term, folder);
         true
@@ -315,12 +330,19 @@ impl PromptTracker {
         prompt_input(term, prompt.as_ref(), &start, line)
     }
 
-    fn child_folder(&self) -> Option<PathBuf> {
-        let pid = self.child_pid.get()?;
-        if cfg!(target_os = "linux") {
+    /// The shell's folder now: read from the process on Linux, else the one its script last
+    /// reported (at each prompt).
+    pub fn folder(&self) -> Option<PathBuf> {
+        self.child_folder(&self.state())
+    }
+
+    fn child_folder(&self, state: &TrackerState) -> Option<PathBuf> {
+        if cfg!(target_os = "linux")
+            && let Some(pid) = self.child_pid.get()
+        {
             return std::fs::read_link(format!("/proc/{pid}/cwd")).ok();
         }
-        None
+        state.folder.clone()
     }
 }
 
@@ -538,8 +560,6 @@ struct MarkFilter<L: EventListener> {
     output_pos: usize,
 }
 
-// Windows passes output through (see `MarkedPty`).
-#[cfg_attr(not(unix), allow(dead_code))]
 impl<L: EventListener> MarkFilter<L> {
     fn new(term: Arc<FairMutex<Term<L>>>, tracker: Arc<PromptTracker>, token: &str) -> Self {
         Self {
@@ -602,7 +622,8 @@ impl<L: EventListener> MarkFilter<L> {
             Some((end, mark)) => {
                 self.output.extend_from_slice(&rest[..end]);
                 self.input_pos += end;
-                if let Some(tag) = self.tracker.mark(mark, self.scanner.in_sync()) {
+                let untracked = self.scanner.in_sync() || !HOLDS_PROMPTS;
+                if let Some(tag) = self.tracker.mark(mark, untracked) {
                     self.output.extend_from_slice(tag_query(tag).as_bytes());
                 }
             }
@@ -668,14 +689,15 @@ impl Wake {
     }
 }
 
-/// A pty whose output is read through a [`MarkFilter`]. Without a [`Wake`] (no shell
-/// integration, or Windows, where the pty is not a file descriptor) output passes through
-/// unchanged and no marks are tracked.
+/// A pty whose output is read through a [`MarkFilter`]. Without shell integration (or without
+/// a [`Wake`] on Unix) output passes through unchanged and no marks are tracked.
 pub(crate) struct MarkedPty<T, L: EventListener> {
     pty: T,
     filter: MarkFilter<L>,
     #[cfg(unix)]
     wake: Option<Wake>,
+    #[cfg(not(unix))]
+    scans: bool,
 }
 
 impl<T, L: EventListener> MarkedPty<T, L> {
@@ -697,6 +719,8 @@ impl<T, L: EventListener> MarkedPty<T, L> {
             filter: MarkFilter::new(term, tracker, token.unwrap_or_default()),
             #[cfg(unix)]
             wake,
+            #[cfg(not(unix))]
+            scans: token.is_some(),
         }
     }
 }
@@ -718,7 +742,10 @@ impl<T: EventedReadWrite, L: EventListener> Read for MarkedPty<T, L> {
 
     #[cfg(not(unix))]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.pty.reader().read(buf)
+        if !self.scans {
+            return self.pty.reader().read(buf);
+        }
+        self.filter.read(self.pty.reader(), buf)
     }
 }
 
@@ -986,6 +1013,20 @@ mod tests {
         // The next command line is tracked as usual.
         harness.feed(b"ls");
         assert_eq!(harness.input().map(|input| input.text), Some("ls".into()));
+    }
+
+    #[test]
+    fn the_folder_reported_at_each_prompt_is_kept() {
+        let mut harness = Harness::new(40, 5);
+        assert_eq!(harness.tracker.folder(), None);
+        // "/home" at the first prompt: news, though no command ran.
+        harness.feed(b"\x1b]133;D;aw=t0k;cwd=2f686f6d65\x07");
+        assert_eq!(harness.tracker.folder(), Some(PathBuf::from("/home")));
+        assert_eq!(harness.take_running_events(), [PromptEvent::Finished]);
+        // The same folder again, or none sent: nothing to report, the folder stays.
+        harness.feed(b"\x1b]133;D;aw=t0k;cwd=2f686f6d65\x07\x1b]133;D;aw=t0k\x07");
+        assert!(harness.take_running_events().is_empty());
+        assert_eq!(harness.tracker.folder(), Some(PathBuf::from("/home")));
     }
 
     #[test]

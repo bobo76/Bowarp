@@ -3,9 +3,9 @@
 # meaning $HOME) and loads the user's .zshenv; zsh then reads their .zprofile, .zshrc and
 # .zlogin itself, in the usual order. The OSC 133 marks are set up on the first prompt, once
 # every startup file ran: A prompt start, B command start (end of PS1), C command executed
-# (preexec, with the command line), D command finished (precmd), and L, the command line being
-# edited (zle). Each mark carries the session's token (AGENTWS_MARK_TOKEN), so the app ignores
-# marks printed by programs. Text is sent hex-encoded.
+# (preexec, with the command line), D command finished (precmd, with the folder), and L, the
+# command line being edited (zle). Each mark carries the session's token (AGENTWS_MARK_TOKEN),
+# so the app ignores marks printed by programs. Text is sent hex-encoded.
 if [[ -n ${AGENTWS_USER_ZDOTDIR+x} ]]; then
     ZDOTDIR=$AGENTWS_USER_ZDOTDIR
 else
@@ -47,7 +47,11 @@ if [[ -o interactive && -n $__agentws_token && -z ${__agentws_loaded-} ]]; then
 
     # Runs last, so it sees the PS1 that prompt themes set in their own precmd.
     __agentws_precmd() {
-        __agentws_mark D
+        if __agentws_hex "$PWD"; then
+            __agentws_mark D ";cwd=$REPLY"
+        else
+            __agentws_mark D
+        fi
         __agentws_wrap_ps1
         if [[ ${precmd_functions[-1]} != __agentws_precmd ]]; then
             precmd_functions=(${precmd_functions:#__agentws_precmd} __agentws_precmd)

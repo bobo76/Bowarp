@@ -1,11 +1,11 @@
 //! Shell integration: bash, zsh and PowerShell tabs start with a small script that loads the
 //! user's own startup files and then marks the prompt with OSC 133 (`term_core::PromptInput`),
-//! which the command history needs. Each session gets a random token in
-//! `AGENTWS_MARK_TOKEN`, which the script reads (and removes from the environment) and puts in
-//! every mark, so marks printed by programs are ignored. The scripts are written to
-//! `shell-integration/` in the config folder at the first launch; nothing is written to the
-//! user's own files. cmd.exe, fish, WSL, shells started with arguments, and PowerShell on
-//! Windows (whose pty output is not scanned for marks yet) run unchanged.
+//! which the command history, the Running status and (off Linux) the shell's folder need. Each
+//! session gets a random token in `AGENTWS_MARK_TOKEN`, which the script reads (and removes
+//! from the environment) and puts in every mark, so marks printed by programs are ignored. The
+//! scripts are written to `shell-integration/` in the config folder at the first launch;
+//! nothing is written to the user's own files. cmd.exe, fish, WSL and shells started with
+//! arguments (except Git Bash's login shell) run unchanged.
 
 use std::fs;
 use std::io;
@@ -29,6 +29,10 @@ const ZSH_DIR_ENV: &str = "ZDOTDIR";
 /// The user's own `ZDOTDIR`, for the injected `.zshenv` (unset: `$HOME`).
 const USER_ZDOTDIR_ENV: &str = "AGENTWS_USER_ZDOTDIR";
 const MARK_TOKEN_ENV: &str = "AGENTWS_MARK_TOKEN";
+/// Arguments of the one launch that has some and still gets a script: Git Bash's login shell.
+const BASH_LOGIN_ARGS: [&str; 2] = ["-i", "-l"];
+/// Tells the bash script to load the login files, since a login shell ignores `--rcfile`.
+const BASH_LOGIN_ENV: &str = "AGENTWS_BASH_LOGIN";
 /// Files earlier versions wrote, and the completion cache zsh wrote next to them.
 const STALE_FILES: [&str; 3] = ["zsh/.zprofile", "zsh/.zshrc", "zsh/.zcompdump"];
 
@@ -57,34 +61,23 @@ impl Shell {
 /// own arguments, and launches when the scripts could not be written are left unchanged;
 /// returns whether the script was attached.
 pub fn attach(spec: &mut LaunchSpec) -> bool {
-    if spec.kind != SessionKind::Shell || !spec.args.is_empty() {
-        return false;
-    }
-    // Without a program alacritty starts the login shell (`$SHELL` here) on Unix, PowerShell
-    // on Windows.
-    let program = match &spec.program {
-        Some(program) => program.clone(),
-        None if cfg!(unix) => match std::env::var("SHELL") {
-            Ok(shell) if !shell.is_empty() => shell,
-            _ => return false,
-        },
-        None => return false,
-    };
-    let Some(shell) = Shell::of_program(&program) else {
+    let Some((shell, program)) = target(spec) else {
         return false;
     };
-    if shell == Shell::Pwsh && cfg!(windows) {
-        return false;
-    }
     let Some(dir) = scripts_dir() else {
         return false;
     };
     match shell {
         Shell::Bash => {
+            let login = !spec.args.is_empty();
             spec.args = vec![
                 "--rcfile".into(),
                 dir.join(BASH_FILE).to_string_lossy().into_owned(),
             ];
+            if login {
+                spec.args.push("-i".into());
+                spec.env.insert(BASH_LOGIN_ENV.into(), "1".into());
+            }
         }
         Shell::Zsh => {
             if let Ok(user_zdotdir) = std::env::var(ZSH_DIR_ENV) {
@@ -100,7 +93,7 @@ pub fn attach(spec: &mut LaunchSpec) -> bool {
             spec.args = vec![
                 "-NoExit".into(),
                 "-Command".into(),
-                format!(". {}", powershell_quote(&script)),
+                powershell_load(&script),
             ];
         }
     }
@@ -109,6 +102,34 @@ pub fn attach(spec: &mut LaunchSpec) -> bool {
     spec.mark_token = Some(token);
     spec.program = Some(program);
     true
+}
+
+/// The shell a launch runs and its program, when it gets a script.
+fn target(spec: &LaunchSpec) -> Option<(Shell, String)> {
+    if spec.kind != SessionKind::Shell {
+        return None;
+    }
+    // Without a program alacritty starts the login shell (`$SHELL` here) on Unix, PowerShell
+    // on Windows.
+    let program = match &spec.program {
+        Some(program) => program.clone(),
+        None if cfg!(unix) => std::env::var("SHELL")
+            .ok()
+            .filter(|shell| !shell.is_empty())?,
+        None => return None,
+    };
+    let shell = Shell::of_program(&program)?;
+    let plain_args = spec.args.is_empty() || (shell == Shell::Bash && spec.args == BASH_LOGIN_ARGS);
+    plain_args.then_some((shell, program))
+}
+
+/// The `-Command` that loads `script`. Its text runs as a script block rather than as a
+/// script file, which the default execution policy of Windows PowerShell (Restricted) blocks.
+fn powershell_load(script: &str) -> String {
+    format!(
+        ". ([ScriptBlock]::Create([IO.File]::ReadAllText({})))",
+        powershell_quote(script)
+    )
 }
 
 /// `text` as a PowerShell single-quoted string.
@@ -180,17 +201,45 @@ mod tests {
         let mut claude = LaunchSpec::claude_code(None);
         assert!(!attach(&mut claude));
         assert!(claude.args.is_empty() && claude.env.is_empty());
-        let mut git_bash = LaunchSpec::new(
+        let mut bash_script = LaunchSpec::new(
             SessionKind::Shell,
             Some("bash".into()),
-            vec!["-i".into(), "-l".into()],
+            vec!["build.sh".into()],
             None,
         );
-        assert!(!attach(&mut git_bash));
-        assert_eq!(git_bash.args, ["-i", "-l"]);
+        assert!(!attach(&mut bash_script));
+        assert_eq!(bash_script.args, ["build.sh"]);
         let mut fish = LaunchSpec::new(SessionKind::Shell, Some("fish".into()), vec![], None);
         assert!(!attach(&mut fish));
         assert_eq!(fish.program.as_deref(), Some("fish"));
+    }
+
+    #[test]
+    fn git_bash_and_windows_powershell_get_a_script() {
+        let git_bash = LaunchSpec::new(
+            SessionKind::Shell,
+            Some(r"C:\Program Files\Git\bin\bash.exe".into()),
+            vec!["-i".into(), "-l".into()],
+            None,
+        );
+        assert_eq!(target(&git_bash).map(|(shell, _)| shell), Some(Shell::Bash));
+        let login_zsh = LaunchSpec::new(
+            SessionKind::Shell,
+            Some("zsh".into()),
+            vec!["-i".into(), "-l".into()],
+            None,
+        );
+        assert_eq!(target(&login_zsh), None);
+        let powershell = LaunchSpec::new(
+            SessionKind::Shell,
+            Some("powershell.exe".into()),
+            vec![],
+            None,
+        );
+        assert_eq!(
+            target(&powershell).map(|(shell, _)| shell),
+            Some(Shell::Pwsh)
+        );
     }
 
     /// Runs `program` interactively on `input` (no terminal: no line editor) and returns the
@@ -270,7 +319,12 @@ mod tests {
             matches!(marks[start + 2], CommandExecuted(Some(_))),
             "{marks:?}"
         );
-        assert!(marks.contains(&CommandFinished));
+        assert!(
+            marks
+                .iter()
+                .any(|mark| matches!(mark, CommandFinished(Some(folder)) if folder.is_absolute())),
+            "{marks:?}"
+        );
         // The planted marks have the wrong token; only the printf command itself counts.
         assert_eq!(commands.len(), 2, "{marks:?}");
         assert!(commands[1].starts_with("printf"), "{marks:?}");
@@ -331,5 +385,9 @@ mod tests {
     fn powershell_paths_are_single_quoted() {
         assert_eq!(powershell_quote(r"C:\a b\x.ps1"), r"'C:\a b\x.ps1'");
         assert_eq!(powershell_quote("it's"), "'it''s'");
+        assert_eq!(
+            powershell_load(r"C:\x.ps1"),
+            r". ([ScriptBlock]::Create([IO.File]::ReadAllText('C:\x.ps1')))"
+        );
     }
 }

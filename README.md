@@ -77,14 +77,17 @@ prompt, each with its folder; click one to put it on the prompt. Commands starti
 are not kept, nor bash commands that bash keeps out of its own history (`HISTCONTROL`,
 `HISTIGNORE`). Up still goes to the program in full-screen programs (`less`, editors), while a
 command runs, in Claude Code and Copilot tabs, and in shells without integration (fish, cmd,
-WSL, shells started with their own arguments).
+WSL, shells started with their own arguments other than Git Bash).
 
 These tabs start with a small script that loads your own `~/.bashrc` / zsh startup files /
 PowerShell profile and then marks the prompt (OSC 133); the scripts live in
 `shell-integration/` in the config folder. zsh reads your `.zprofile` and `.zshrc` itself, from
 your own `ZDOTDIR`. The marks carry a per-session token, so output that merely contains such
 marks (a file you `cat`, a remote shell over ssh) is not tracked. bash needs 4.4 or later;
-PowerShell needs PSReadLine and is not integrated on Windows yet.
+PowerShell needs PSReadLine. Git Bash's login shell gets the script too, which then loads your
+login files (`/etc/profile`, then `~/.bash_profile`) instead of `~/.bashrc`. On Windows the
+history is not available yet (the prompt's position is not tracked there); the script only
+gives the Running status and the folder.
 
 The scroll bar sits in the right margin and shows while you scroll or hover it. Drag the
 thumb, or click the track to jump there. It is hidden when there is no history, as on a
@@ -149,7 +152,8 @@ the group, the lower half into it; the space below the last row drops at the end
 
 The file explorer (Ctrl+Shift+|, the title bar button next to the sidebar toggle, closed with
 its `×`) sits between the sidebar and the terminal and shows the selected tab's folder; it
-follows tab switches and `cd`. Folders come first, then files, sorted by name, dotfiles
+follows tab switches and `cd` (off Linux, in bash, zsh and PowerShell tabs only: their script
+reports the folder at each prompt). Folders come first, then files, sorted by name, dotfiles
 included. Click a folder to expand or collapse it (each root keeps its own expanded folders);
 click a file to open it in the file viewer. Expanded folders refresh when their content changes.
 

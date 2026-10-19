@@ -3,7 +3,7 @@
 //! The shell scripts the app injects print `ESC ] 133 ; X ; aw=<token> ... BEL` around the
 //! prompt: `A` where the prompt starts, `B` where the command line starts (right after the
 //! prompt), `C` when a command is about to run (with the command line, `cmd=<hex>`) and `D`
-//! when it finished. zsh also reports the command line while it is edited: `L` with
+//! when it finished (with the shell's folder, `cwd=<hex>`). zsh also reports the command line while it is edited: `L` with
 //! `cur=<characters before the cursor>;buf=<hex>`, plus `post=1` when zsh shows text after it
 //! (zsh-autosuggestions). The token is random per session ([`new_mark_token`]) and only the
 //! injected script knows it, so marks in a program's output (a `cat`ed file, a remote shell's
@@ -15,6 +15,7 @@
 //! the parser holds output back.
 
 use std::hash::{BuildHasher, Hasher, RandomState};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The command line being edited, as the shell reported it.
@@ -37,8 +38,9 @@ pub enum PromptMark {
     /// `C`: the command line was accepted and is about to run. `None` when the shell did not
     /// send it (too long, or left out of the shell's own history).
     CommandExecuted(Option<String>),
-    /// `D`: the command finished (or the prompt was redrawn without running one).
-    CommandFinished,
+    /// `D`: the command finished (or the prompt was redrawn without running one), with the
+    /// shell's folder when the script sent it.
+    CommandFinished(Option<PathBuf>),
     /// `L` (zsh): the command line as it is edited; `None` when it was too long to send.
     CommandLine(Option<CommandLine>),
 }
@@ -204,6 +206,7 @@ impl Osc133Scanner {
                 match key {
                     b"aw" => params.token = Some(value),
                     b"cmd" => params.command = Some(value),
+                    b"cwd" => params.folder = Some(value),
                     b"cur" => params.cursor = Some(value),
                     b"buf" => params.buffer = Some(value),
                     b"post" => params.post = value == b"1",
@@ -225,7 +228,7 @@ impl Osc133Scanner {
             b'A' => PromptMark::PromptStart,
             b'B' => PromptMark::CommandStart,
             b'C' => PromptMark::CommandExecuted(text(params.command)),
-            b'D' => PromptMark::CommandFinished,
+            b'D' => PromptMark::CommandFinished(text(params.folder).map(PathBuf::from)),
             b'L' => {
                 let cursor = params
                     .cursor
@@ -248,6 +251,7 @@ impl Osc133Scanner {
 struct Params<'a> {
     token: Option<&'a [u8]>,
     command: Option<&'a [u8]>,
+    folder: Option<&'a [u8]>,
     cursor: Option<&'a [u8]>,
     buffer: Option<&'a [u8]>,
     post: bool,
@@ -355,11 +359,25 @@ mod tests {
     }
 
     #[test]
+    fn folders_are_decoded() {
+        assert_eq!(
+            kinds(&[b"\x1b]133;D;aw=t0k;cwd=433a5cc3a9\x07"]),
+            [PromptMark::CommandFinished(Some(PathBuf::from(
+                "C:\\\u{e9}"
+            )))]
+        );
+        assert_eq!(
+            kinds(&[b"\x1b]133;D;aw=t0k;cwd=zz\x07"]),
+            [PromptMark::CommandFinished(None)]
+        );
+    }
+
+    #[test]
     fn mark_split_across_reads_is_found_where_it_ends() {
         let found = marks(&[b"text\x1b]13", b"3;B;aw=", b"t0k\x07rest"]);
         assert_eq!(found, vec![(2, 4, PromptMark::CommandStart)]);
         let found = marks(&[b"\x1b]133;D;aw=t0k\x1b", b"\\"]);
-        assert_eq!(found, vec![(1, 1, PromptMark::CommandFinished)]);
+        assert_eq!(found, vec![(1, 1, PromptMark::CommandFinished(None))]);
     }
 
     #[test]
