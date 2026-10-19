@@ -12,7 +12,8 @@ else
     unset ZDOTDIR
 fi
 __agentws_token=${AGENTWS_MARK_TOKEN-}
-unset AGENTWS_USER_ZDOTDIR AGENTWS_MARK_TOKEN
+__agentws_cd_file=${AGENTWS_CD_FILE-}
+unset AGENTWS_USER_ZDOTDIR AGENTWS_MARK_TOKEN AGENTWS_CD_FILE
 if [[ -f ${ZDOTDIR:-$HOME}/.zshenv ]]; then
     source "${ZDOTDIR:-$HOME}/.zshenv"
 fi
@@ -84,6 +85,21 @@ if [[ -o interactive && -n $__agentws_token && -z ${__agentws_loaded-} ]]; then
         __agentws_report_line
     }
 
+    # Bound to Ctrl+Alt+Shift+F12, which the app sends to change folder without typing a command:
+    # cd to the folder the app wrote to $__agentws_cd_file (read as text, never run), then
+    # redo the prompt hooks and redraw the prompt, keeping the line being typed.
+    __agentws_cd() {
+        local file=$__agentws_cd_file dir hook
+        [[ -n $file && -f $file ]] || return 0
+        dir=$(<$file)
+        command rm -f -- $file
+        builtin cd -- $dir 2>/dev/null || return 0
+        for hook in $precmd_functions; do
+            $hook
+        done
+        zle reset-prompt
+    }
+
     # The first precmd: every startup file has run, so hooks added now run after theirs.
     __agentws_install() {
         add-zsh-hook -d precmd __agentws_install
@@ -92,6 +108,13 @@ if [[ -o interactive && -n $__agentws_token && -z ${__agentws_loaded-} ]]; then
         if autoload -Uz add-zle-hook-widget 2>/dev/null; then
             add-zle-hook-widget line-init __agentws_line_init
             add-zle-hook-widget line-pre-redraw __agentws_report_line
+        fi
+        if [[ -n $__agentws_cd_file ]]; then
+            zle -N __agentws_cd
+            local keymap
+            for keymap in emacs viins vicmd; do
+                bindkey -M $keymap $'\e[24;8~' __agentws_cd
+            done
         fi
         __agentws_wrap_ps1
     }

@@ -2,9 +2,26 @@
 
 Feature spec: [FEATURES.md](FEATURES.md)
 
-## Status (2026-10-18)
+## Status (2026-10-19)
 
 What is done is described in [FEATURES.md](FEATURES.md); the details are in the git history.
+
+**Done: easy wins (one pass), 260 tests**
+
+F11 full screen (window-level `ToggleFullScreen`), 2 lines per wheel notch on Linux, the
+explorer's "Open in new tab with" (Claude Code, Copilot) replacing "Attach as context", its
+parent-folder button (`cd ..`), the bell marking a hidden tab Needs attention, the exited bar in
+the terminal, the file viewer keeping its scroll on reload, and Up/Down in the sidebar search.
+Checked under Xvfb (`pipeline/retros/easy-wins/shots/`), except full screen itself: F11 is not
+sent to the program and sends the window manager the `_NET_WM_STATE_FULLSCREEN` toggle, but
+no window manager runs there. Check on a desktop (X11, Wayland, Windows): F11 enters and leaves
+full screen from the terminal, the search field and the explorer, and leaving it returns to the
+earlier size or to the maximized state. F11 has no menu entry: the app has no window menu (a
+right-click on the title bar opens the window manager's own).
+The parent-folder button is disabled while a command runs; at the prompt zsh and PowerShell
+change folder through a hidden key (Ctrl+Alt+Shift+F12, folder read from `AGENTWS_CD_FILE`),
+bash gets a typed `cd`. Check on Windows that the PowerShell key gets through ConPTY and
+PSReadLine: the button moves the shell and the tree, with no stray characters.
 
 **Next steps, in priority order**
 
@@ -136,8 +153,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
-- Show an "exited" banner in the terminal area (currently only in the title).
-- Tune wheel scroll speed (about 2 lines per notch on X11).
 - Quitting an agent falls back to a shell: when a Claude Code / Copilot tab's program exits,
   the tab starts the default shell in the agent's last folder (its last known `location()`,
   since `current_dir` is `None` once the child exited) and becomes a plain shell tab: shell
@@ -149,11 +164,8 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   cell). A `path`, `path:line` or `path:line:col` (`src/foo.rs:42`, which Claude Code prints
   all the time), resolved against the tab's folder and only if it exists, opens in the file
   viewer scrolled to that line. Underline and hand cursor while Ctrl is held over a link.
-- Bell as an attention signal: a BEL (`SessionEvent::Bell`, ignored today in
-  `terminal_view.rs`) in a tab that isn't selected marks it as needing attention until it
-  is viewed, like a finished agent. This covers programs without hooks (Copilot, scripts).
-  Optional sound with the M5 notification sound; rate-limited so a stream of bells doesn't
-  repeat it.
+- Bell sound: with the M5 notification sound; rate-limited so a stream of bells doesn't
+  repeat it (the attention mark is in the easy wins above).
 - Long command finished in a shell tab: when a command that ran longer than a threshold
   (default 10 s, in the settings file) ends while its tab isn't selected, the tab is marked
   done, or failed when the OSC 133 `D` exit code isn't 0, until it is viewed. Needs shell
@@ -174,18 +186,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 - Configurable font family and size.
 - Configurable default shell for the new-tab menu's first entry and Ctrl+Shift+T, saved in the settings
   file (overrides the $SHELL / Git Bash default).
-- File explorer "cd ..": a parent-folder button in the explorer header (Lucide `folder-up`
-  icon, a folder with an up arrow, added to `crates/app/assets/icons/`; tooltip "Parent folder
-  (cd ..)") and/or a `..` row above the root. Both emit `ExplorerEvent::CdTo` with the parent
-  folder, so a shell tab types `cd <parent>` and the tree follows the new working directory.
-  Disabled at a filesystem or drive root, and in a tab that isn't a shell (`can_cd` false:
-  Claude Code, Copilot), since the tree always shows the session's folder.
-- File explorer entry menu: remove "Attach as context" (`EntryCommand::AttachContext`,
-  `ExplorerEvent::Attach`, and `file_tree.rs`'s prompt text if nothing else uses it), and add
-  "Open in new tab with" below "Open in new tab" with a submenu of Claude Code and Copilot,
-  started in the entry's folder (the folder itself, or a file's parent folder) like the
-  new-tab menu's agent entries. "Open in new tab" keeps opening the default shell. Update the
-  README's explorer menu description.
 - Resizable file viewer pane: drag the divider on the viewer's left edge to resize it
   (currently fixed at 45% of the width, `VIEWER_WIDTH` in `app/src/workspace_view.rs`); resize
   cursor on hover, a minimum width for both the viewer and the terminal, double-click resets
@@ -197,15 +197,21 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   tab 1 again and it comes back with the same file; if tab 2 has another file open, switching
   between the two tabs switches the file shown. Closing the viewer only closes it in the
   selected tab, and closing a tab drops its file.
-- File viewer: keep the scroll position when the file is reloaded after a change on disk
-  (it goes back to the top); open links to other files (`FEATURES.md`) in the viewer instead
+- File viewer: open links to other files (`FEATURES.md`) in the viewer instead
   of the system handler; the `⋮` menu from the reference screenshot.
+- File viewer images: clicking an image in the explorer (`FileKind::Image` in
+  `workspace-model/src/file_tree.rs`: png, jpg, gif, bmp, webp, svg, ico, tiff, avif) opens it
+  in the viewer like any other file, instead of "The file is binary." (or a raw-text SVG).
+  Shown with GPUI's `img()` from the file path, fit to the pane and centred, never upscaled
+  past 100%; the header shows the file name and the pixel size. Same open path, size limit
+  (`MAX_VIEW_BYTES`) and reload on change as text files; a file that fails to decode shows
+  "The image could not be read." SVG gets the source/rendered toggle Markdown has (rendered
+  by default). No zoom or pan for now.
 - New-tab folder picker (currently the selected tab's folder).
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
   the window; Delete already runs in the background.
-- Sidebar search: Up/Down to move through the matches from the search field; the filter/sort
-  button from the reference screenshot.
+- Sidebar search: the filter/sort button from the reference screenshot.
 - Configuration panel: a settings dialog opened from the title bar's settings button (see the
   title bar row above) that edits the settings file, for the configurable items in this list.
 - Configurable terminal path: the executable path for each launcher entry (Terminal, Git Bash,
@@ -233,12 +239,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   - Clicking a line selects that tab (expanding the group). The card ticks the lap times while
     it shows (`set_card_clock` for each working tab) and is built only while it shows; no
     card during a drag or over an empty group.
-- Full screen with F11: a `ToggleFullScreen` action bound to F11 at window level (so it works
-  whichever pane has focus, the terminal included; F11 is no longer sent to the program) that
-  calls GPUI's `window.toggle_fullscreen()`; also in the window menu / command palette. Full
-  screen is already saved and restored (`WindowMode::Fullscreen` in
-  `workspace-model/src/window_state.rs`). Check on X11 without a window manager (Xvfb) and
-  that leaving full screen returns to the earlier size or the maximized state.
 - Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - Draw box-drawing and block characters procedurally; font glyphs leave small gaps between rows for heavy/double verticals (`┃`, `║`).
 - Answer OSC 52 clipboard requests.

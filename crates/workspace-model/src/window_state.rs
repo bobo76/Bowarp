@@ -97,10 +97,17 @@ impl WindowState {
     /// window keeps the saved bounds and changes only the mode: some platforms (X11) report the
     /// maximized size for it, which would leave a screen-sized window after un-maximizing at
     /// the next start. A maximized window can't move, so the saved restore bounds are still
-    /// the right ones. Without saved bounds, the reported ones are used.
+    /// the right ones. Without saved bounds, the reported ones are used. Full screen is saved
+    /// as maximized, so the next start is not full screen (without a window manager's title
+    /// bar, only F11 would leave it).
     pub fn keeping_saved_bounds(self, saved: Option<WindowState>) -> Self {
-        match (self.mode, saved) {
-            (WindowMode::Windowed, _) | (_, None) => self,
+        let mode = match self.mode {
+            WindowMode::Fullscreen => WindowMode::Maximized,
+            mode => mode,
+        };
+        match (mode, saved) {
+            (WindowMode::Windowed, _) => self,
+            (mode, None) => Self { mode, ..self },
             (mode, Some(saved)) => Self {
                 bounds: saved.bounds,
                 mode,
@@ -217,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn maximized_keeps_the_saved_bounds() {
+    fn maximized_and_full_screen_keep_the_saved_bounds_and_save_as_maximized() {
         let saved = windowed(rect(30., 40., 900., 700.));
         let screen = rect(0., 0., 1920., 1080.);
         for mode in [WindowMode::Maximized, WindowMode::Fullscreen] {
@@ -227,11 +234,15 @@ mod tests {
             };
             let expected = WindowState {
                 bounds: saved.bounds,
-                mode,
+                mode: WindowMode::Maximized,
             };
             assert_eq!(closing.keeping_saved_bounds(Some(saved)), expected);
             // Nothing saved yet: what the platform reports is all there is.
-            assert_eq!(closing.keeping_saved_bounds(None), closing);
+            let reported = WindowState {
+                bounds: screen,
+                mode: WindowMode::Maximized,
+            };
+            assert_eq!(closing.keeping_saved_bounds(None), reported);
         }
     }
 

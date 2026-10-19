@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::hover_card::HoverCard;
-use gpui_kit::component::input::{Escape, Input};
+use gpui_kit::component::input::{Escape, Input, MoveDown, MoveUp};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
 use gpui_kit::{
@@ -116,7 +116,8 @@ impl WorkspaceView {
             )
     }
 
-    /// The "Search tabs..." field: Enter selects the first match, Escape clears it.
+    /// The "Search tabs..." field: Up/Down select the previous or next match, Enter selects
+    /// the first match (or keeps the one moved to), Escape clears it.
     fn render_search(&self, cx: &mut Context<Self>) -> AnyElement {
         div()
             .flex_1()
@@ -124,6 +125,15 @@ impl WorkspaceView {
             .on_action(
                 cx.listener(|workspace, _: &Escape, window, cx| workspace.end_search(window, cx)),
             )
+            // Captured: the field itself would take Up/Down to move its caret.
+            .capture_action(cx.listener(|workspace, _: &MoveUp, window, cx| {
+                workspace.step_search(false, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &MoveDown, window, cx| {
+                workspace.step_search(true, window, cx);
+                cx.stop_propagation();
+            }))
             .child(
                 Input::new(&self.search).small().cleanable(true).prefix(
                     Icon::new(IconName::Search)

@@ -16,6 +16,7 @@ pub const DEBIAN_ICON: &str = "icons/agentws/debian.svg";
 pub const LINUX_ICON: &str = "icons/agentws/linux.svg";
 pub const COPILOT_ICON: &str = "icons/agentws/githubcopilot.svg";
 pub const FILES_ICON: &str = "icons/agentws/files.svg";
+pub const FOLDER_UP_ICON: &str = "icons/agentws/folder-up.svg";
 pub const FILE_IMAGE_ICON: &str = "icons/agentws/file-image.svg";
 pub const FILE_CODE_ICON: &str = "icons/agentws/file-code.svg";
 pub const FILE_DATA_ICON: &str = "icons/agentws/file-braces.svg";
@@ -24,7 +25,7 @@ pub const MARKDOWN_ICON: &str = "icons/agentws/markdown.svg";
 pub const APP_ICON: &str = "icons/agentws/app-icon.svg";
 
 /// Icons bundled with the app: (asset path, SVG). `git-branch`, `pin`, `terminal`,
-/// `square-chevron-right`, `files` and the `file-*` icons are from Lucide (ISC, see
+/// `square-chevron-right`, `files`, `folder-up` and the `file-*` icons are from Lucide (ISC, see
 /// `assets/icons/LICENSE-LUCIDE`); `git`, `gnubash`, `zsh`, `fishshell`, `ubuntu`, `debian`,
 /// `linux`, `githubcopilot` and `markdown` are from Simple Icons 15.0.0 (CC0, see
 /// `assets/icons/LICENSE-SIMPLE-ICONS`); the spark and the app icon are our own.
@@ -55,6 +56,10 @@ const ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/githubcopilot.svg"),
     ),
     (FILES_ICON, include_bytes!("../assets/icons/files.svg")),
+    (
+        FOLDER_UP_ICON,
+        include_bytes!("../assets/icons/folder-up.svg"),
+    ),
     (
         FILE_IMAGE_ICON,
         include_bytes!("../assets/icons/file-image.svg"),

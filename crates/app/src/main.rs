@@ -107,6 +107,7 @@ fn main() {
         .run(move |cx| {
             gpui_kit::init(cx);
             terminal_view::init(cx);
+            workspace_view::init(cx);
             history::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);
             let quit_hooks = hooks.clone();

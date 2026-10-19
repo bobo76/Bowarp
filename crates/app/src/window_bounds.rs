@@ -44,7 +44,8 @@ pub fn initial(cx: &App) -> WindowBounds {
 }
 
 /// Save `bounds` for the next start. A maximized or fullscreen window keeps the bounds already
-/// saved and updates only the mode (see `WindowState::keeping_saved_bounds`). A failure is only
+/// saved and updates only the mode, full screen being saved as maximized (see
+/// `WindowState::keeping_saved_bounds`). A failure is only
 /// reported: it costs the user nothing but the default window position next time.
 pub fn save(bounds: WindowBounds) {
     let Some(path) = state_path() else {

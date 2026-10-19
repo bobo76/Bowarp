@@ -210,6 +210,13 @@ pub fn entry_folder(path: &Path, is_dir: bool) -> &Path {
     path.parent().unwrap_or(path)
 }
 
+/// The folder the explorer's "Parent folder (cd ..)" goes to from `root`; `None` at a
+/// filesystem or drive root.
+pub fn parent_folder(root: &Path) -> Option<&Path> {
+    root.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+}
+
 /// The changed folders to read again for a batch of changed `paths`: a change names an entry,
 /// so the folder is the watched one holding it, or the entry itself when it is a watched
 /// folder. `watched` maps each watched real path to the folders showing it.
@@ -354,28 +361,6 @@ fn quote_cmd(text: &str) -> Result<String, TypeError> {
         return Ok(text.to_string());
     }
     Ok(format!("\"{text}\""))
-}
-
-/// What "Attach as context" types at a prompt for `path`, followed by a space to keep typing:
-/// a Claude Code file mention (`@path`, `@"path"` when it holds a space or a quote) when
-/// `mention`, else the path quoted for `shell`. A path holding `"` can't be mentioned, so
-/// it is typed as is.
-pub fn context_reference(
-    path: &Path,
-    shell: ShellSyntax,
-    mention: bool,
-) -> Result<String, TypeError> {
-    if !mention {
-        return Ok(format!("{} ", quote_path(path, shell)?));
-    }
-    let text = typeable(path)?;
-    if text.contains('"') {
-        return Ok(format!("{text} "));
-    }
-    if text.chars().any(|c| c.is_whitespace() || c == '\'') {
-        return Ok(format!("@\"{text}\" "));
-    }
-    Ok(format!("@{text} "))
 }
 
 /// Why a name typed for a new or renamed entry is refused.
@@ -621,12 +606,6 @@ mod tests {
                     cd_command(Path::new(path), shell),
                     Err(TypeError::ControlCharacter)
                 );
-                for mention in [false, true] {
-                    assert_eq!(
-                        context_reference(Path::new(path), shell, mention),
-                        Err(TypeError::ControlCharacter)
-                    );
-                }
             }
         }
     }
@@ -639,9 +618,26 @@ mod tests {
         let path = Path::new(OsStr::from_bytes(b"/r/a\xffb"));
         assert_eq!(typeable(path), Err(TypeError::NotUtf8));
         assert_eq!(
-            context_reference(path, ShellSyntax::Posix, true),
+            quote_path(path, ShellSyntax::Posix),
             Err(TypeError::NotUtf8)
         );
+    }
+
+    #[test]
+    fn parent_folder_stops_at_the_root() {
+        assert_eq!(parent_folder(Path::new("/r/a")), Some(Path::new("/r")));
+        assert_eq!(parent_folder(Path::new("/r")), Some(Path::new("/")));
+        assert_eq!(parent_folder(Path::new("/")), None);
+        assert_eq!(parent_folder(Path::new("")), None);
+        assert_eq!(parent_folder(Path::new("a")), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn parent_folder_stops_at_a_drive_root() {
+        assert_eq!(parent_folder(Path::new(r"C:\r")), Some(Path::new(r"C:\")));
+        assert_eq!(parent_folder(Path::new(r"C:\")), None);
+        assert_eq!(parent_folder(Path::new(r"\\server\share\")), None);
     }
 
     #[test]
@@ -674,18 +670,6 @@ mod tests {
         assert_eq!(ShellSyntax::of_program("CMD.EXE"), ShellSyntax::Cmd);
         assert_eq!(ShellSyntax::of_program("/bin/bash"), ShellSyntax::Posix);
         assert_eq!(ShellSyntax::of_program("wsl.exe"), ShellSyntax::Posix);
-    }
-
-    #[test]
-    fn context_references_mention_in_claude_code_and_quote_in_shells() {
-        let refer = |path: &str, mention| {
-            context_reference(Path::new(path), ShellSyntax::Posix, mention).unwrap()
-        };
-        assert_eq!(refer("/r/a.md", true), "@/r/a.md ");
-        assert_eq!(refer("/r/my notes.md", true), "@\"/r/my notes.md\" ");
-        assert_eq!(refer("/r/my notes.md", false), "'/r/my notes.md' ");
-        // A `"` would end the mention early: the path is typed as is.
-        assert_eq!(refer("/r/say \"hi\".md", true), "/r/say \"hi\".md ");
     }
 
     #[test]

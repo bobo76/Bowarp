@@ -325,8 +325,7 @@ impl FileViewer {
         if file.dirty || file.saved == text {
             return;
         }
-        file.editor
-            .update(cx, |editor, cx| editor.set_value(text.clone(), window, cx));
+        set_value_keeping_scroll(&file.editor, text.clone(), window, cx);
         if file.mode == Mode::Rendered {
             file.rendered = Some(render_text(
                 file.kind,
@@ -509,6 +508,21 @@ fn code_editor(state: &Entity<EditorState>, readonly: bool) -> Editor {
         .h_full()
 }
 
+/// Show `text` in `editor` where its view was: `set_value` scrolls back to the top. The
+/// offset is applied after the next layout, clamped to the new text's length.
+fn set_value_keeping_scroll(
+    editor: &Entity<EditorState>,
+    text: String,
+    window: &mut Window,
+    cx: &mut Context<FileViewer>,
+) {
+    editor.update(cx, |editor, cx| {
+        let offset = editor.scroll_offset();
+        editor.set_value(text, window, cx);
+        editor.set_scroll_offset(offset, cx);
+    });
+}
+
 /// The rendered view of `text`, reusing the editor of `previous` for JSON.
 fn render_text(
     kind: ViewKind,
@@ -525,7 +539,7 @@ fn render_text(
         Err(err) => return Rendered::InvalidJson(err),
     };
     if let Some(Rendered::Json(editor)) = previous {
-        editor.update(cx, |editor, cx| editor.set_value(pretty, window, cx));
+        set_value_keeping_scroll(&editor, pretty, window, cx);
         return Rendered::Json(editor);
     }
     Rendered::Json(cx.new(|cx| {

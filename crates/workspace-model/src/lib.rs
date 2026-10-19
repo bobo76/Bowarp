@@ -6,7 +6,8 @@
 //! new-tab launcher shows, the file explorer's tree, how the file viewer shows a file, the
 //! shell commands run in the app (history), the shell integration marks (OSC 133) in a shell's
 //! output, the progress reports (OSC 9;4) in a program's output, how a running command is
-//! labeled and badged and the About dialog's version line. No UI dependency.
+//! labeled and badged, how far the mouse wheel scrolls and the About dialog's version line. No
+//! UI dependency.
 
 mod about;
 mod attention;
@@ -25,6 +26,7 @@ mod running;
 mod search;
 mod tab;
 mod tabs_state;
+mod wheel;
 mod window_state;
 
 pub use about::version_line;
@@ -46,7 +48,8 @@ pub use running::{
     COMMAND_LABEL_CHARS, RUNNING_AFTER, RUNNING_PULSE_FOR, RunningBadge, command_label,
     format_clock, running_badge,
 };
-pub use search::{SearchedTab, TabQuery};
+pub use search::{SearchedTab, TabQuery, step_match};
 pub use tab::{TabColor, TabMeta};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};
+pub use wheel::{WheelScroll, notch_lines};
 pub use window_state::{Rect, WindowMode, WindowState};

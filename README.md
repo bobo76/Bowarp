@@ -45,6 +45,7 @@ but disabled. New tabs start in the selected tab's folder.
 | Ctrl+Shift+S | Search tabs (shows the sidebar if hidden) |
 | Ctrl+Shift+\| | Hide or show the file explorer (also the title bar button; the key that types `\|`) |
 | Ctrl+Shift+A | Go to the next tab needing attention; with none, the next one that is Done |
+| F11 | Full screen on or off, also from a dialog (F11 is not sent to the program; on Linux the window manager applies it). Quitting in full screen starts maximized next time |
 
 ## Terminal
 
@@ -56,7 +57,13 @@ but disabled. New tabs start in the selected tab's folder.
 
 Ctrl+C, Tab and Shift+Tab always go to the program. When a program tracks the mouse (Claude
 Code does), clicks and the wheel go to it; hold Shift to select text locally. On Linux a
-selection is also copied to the primary selection, and middle-click pastes it.
+selection is also copied to the primary selection, and middle-click pastes it. A wheel notch
+scrolls 2 lines on Linux, and X11 touchpad scrolling is slowed the same way (Windows uses the
+system's lines-per-notch setting).
+
+When the program exits, a bar below the terminal says so, with its exit code (the terminal
+gives up the bar's height, so no output is hidden); the history stays readable until the tab
+is closed.
 
 ## Command history (bash, zsh, PowerShell tabs)
 
@@ -118,6 +125,10 @@ files not yet added and not ignored, refreshed at most every 5 s).
 | none | No recent output |
 | hollow ring | Exited |
 
+A tab whose program rings the bell (BEL: Copilot, scripts, anything without status hooks)
+while you are on another tab shows Needs attention until you select it. Claude Code tabs with
+hooks ignore the bell, since their hooks already report it.
+
 Right-click a row or use its `⋮` button for the tab menu: duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
 and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working
 directory, rename (Enter keeps, Escape cancels, an empty name goes back to the program's
@@ -130,6 +141,8 @@ The "Search tabs..." field above the list (Ctrl+Shift+S) keeps the tabs whose na
 folder, branch or group name contain every word typed, ignoring case. Groups holding a match
 show expanded while searching (their headers do not collapse until the search ends). Enter
 selects the first match and clears the search; Escape clears it and returns to the terminal.
+Up / Down in the field select the previous / next match (wrapping around) and keep the keyboard
+in the field; Enter then keeps the tab moved to.
 Selecting a tab the search hides (Ctrl+1..9, Ctrl+Tab, the attention jump) also clears it.
 
 While a tab other than the selected one needs attention, a warning button with the number of
@@ -160,12 +173,20 @@ reports the folder at each prompt). Folders come first, then files, sorted by na
 included. Click a folder to expand or collapse it (each root keeps its own expanded folders);
 click a file to open it in the file viewer. Expanded folders refresh when their content changes.
 
+The folder-with-an-arrow button in the explorer's header ("Parent folder (cd ..)") moves a
+shell tab to the folder above the tree's, and the tree follows. zsh and PowerShell change
+folder through a key binding of their script, keeping a half-typed line and redrawing the
+prompt; other shells get a typed `cd` line. It is disabled while a command runs in the tab
+(bash, zsh and PowerShell tabs, whose script reports it: `cd` would be typed into the
+program), at a filesystem or drive root, and in Claude Code and Copilot tabs, whose tree shows
+the session's own folder.
+
 Right-click an entry for its menu: New file (in the entry's folder; Enter or clicking elsewhere
-creates it, Escape cancels), cd to directory (shell tabs), Open in new tab (the default shell),
-Reveal in file manager, Rename, Delete (asks first; deletes for good, not to the trash), Attach
-as context (types the path at the selected tab's prompt without Enter: `@path` in Claude Code,
-the shell-quoted path elsewhere), Copy path, Copy relative path (from the explorer's root).
-cd and Open in new tab use the folder itself, or a file's parent folder.
+creates it, Escape cancels), cd to directory (shell tabs, at the prompt), Open in new tab (the
+default shell), Open in new tab with (a submenu: Claude Code or Copilot CLI), Reveal in file
+manager, Rename, Delete (asks first; deletes for good, not to the trash), Copy path, Copy
+relative path (from the explorer's root). cd and the Open in new tab entries use the folder
+itself, or a file's parent folder.
 
 ## File viewer
 
@@ -187,8 +208,8 @@ files that aren't UTF-8 are not shown.
 | Ctrl+S | Save the file (a `●` after its name marks unsaved edits) |
 
 Opening another file or closing the panel with unsaved edits asks before dropping them. When
-the file changes on disk (an agent edits it), the panel reloads it, unless it has unsaved edits,
-which are kept.
+the file changes on disk (an agent edits it), the panel reloads it where it was scrolled to,
+unless it has unsaved edits, which are kept.
 
 ## About
 

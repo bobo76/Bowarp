@@ -170,6 +170,9 @@ impl Element for TerminalElement {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
         style.size.height = relative(1.).into();
+        // In a column with the exit banner, give way to it.
+        style.flex_shrink = 1.;
+        style.min_size.height = px(0.).into();
         (window.request_layout(style, [], cx), ())
     }
 

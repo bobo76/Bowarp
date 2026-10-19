@@ -32,6 +32,10 @@ const ZSH_DIR_ENV: &str = "ZDOTDIR";
 /// The user's own `ZDOTDIR`, for the injected `.zshenv` (unset: `$HOME`).
 const USER_ZDOTDIR_ENV: &str = "AGENTWS_USER_ZDOTDIR";
 const MARK_TOKEN_ENV: &str = "AGENTWS_MARK_TOKEN";
+/// The file the zsh and PowerShell scripts' hidden cd key binding reads the folder from.
+pub const CD_FILE_ENV: &str = "AGENTWS_CD_FILE";
+/// The folder holding those files, one per session, named after its token.
+const CD_DIR: &str = "cd";
 /// Arguments of the one launch that has some and still gets a script: Git Bash's login shell.
 const BASH_LOGIN_ARGS: [&str; 2] = ["-i", "-l"];
 /// Tells the bash script to load the login files, since a login shell ignores `--rcfile`.
@@ -137,6 +141,12 @@ pub fn attach(spec: &mut LaunchSpec) -> bool {
             spec.env.insert(WSL_ENV.into(), wsl_env);
         }
     }
+    // bash cannot redraw its prompt from a key binding (`bind -x`), so it gets a typed `cd`.
+    if matches!(shell, Shell::Zsh | Shell::Pwsh) {
+        let file = dir.join(CD_DIR).join(&token);
+        spec.env
+            .insert(CD_FILE_ENV.into(), file.to_string_lossy().into_owned());
+    }
     spec.env.insert(MARK_TOKEN_ENV.into(), token.clone());
     spec.mark_token = Some(token);
     spec.program = Some(program);
@@ -214,6 +224,7 @@ fn write_scripts(dir: &Path) -> io::Result<()> {
         (PWSH_FILE, PWSH_SCRIPT),
     ];
     fs::create_dir_all(dir.join(ZSH_DIR))?;
+    fs::create_dir_all(dir.join(CD_DIR))?;
     for name in STALE_FILES {
         let _ = fs::remove_file(dir.join(name));
     }

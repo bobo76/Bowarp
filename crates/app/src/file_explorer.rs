@@ -14,22 +14,25 @@ use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, WindowExt};
+use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, App, AppContext, ClipboardItem, Context, Entity, EventEmitter, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, Task, WeakEntity, Window, div, px, uniform_list,
+    IntoElement, MouseButton, ParentElement, Render, SharedString, StatefulInteractiveElement,
+    Styled, Subscription, Task, WeakEntity, Window, div, px, uniform_list,
 };
 use notify::event::ModifyKind;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use workspace_model::file_tree::{
-    self, DirEntry, ExpandedFolders, FileKind, TreeRow, entry_folder, relative_path, validate_name,
+    self, DirEntry, ExpandedFolders, FileKind, TreeRow, entry_folder, parent_folder, relative_path,
+    validate_name,
 };
 
 use crate::assets::{
-    FILE_ARCHIVE_ICON, FILE_CODE_ICON, FILE_DATA_ICON, FILE_IMAGE_ICON, FILES_ICON, MARKDOWN_ICON,
+    FILE_ARCHIVE_ICON, FILE_CODE_ICON, FILE_DATA_ICON, FILE_IMAGE_ICON, FILES_ICON, FOLDER_UP_ICON,
+    MARKDOWN_ICON,
 };
+use crate::launcher::Launcher;
 use crate::sidebar;
 
 pub const EXPLORER_WIDTH: f32 = 300.;
@@ -44,10 +47,8 @@ pub enum ExplorerEvent {
     Close,
     /// Type `cd <folder>` in the selected tab.
     CdTo(PathBuf),
-    /// Open the default shell in a new tab in the folder.
-    OpenTab(PathBuf),
-    /// Type a reference to the entry at the selected tab's prompt, without Enter.
-    Attach(PathBuf),
+    /// Open a new tab in the folder: the agent, or the default shell when `None`.
+    OpenTab(PathBuf, Option<Launcher>),
     /// A name editor closed: the keyboard goes back to the terminal.
     EditEnded,
     /// Show the file in the viewer.
@@ -60,10 +61,11 @@ enum EntryCommand {
     NewFile,
     CdTo,
     OpenInNewTab,
+    /// Open the agent at this index of the explorer's agents.
+    OpenInNewTabWith(usize),
     Reveal,
     Rename,
     Delete,
-    AttachContext,
     CopyPath,
     CopyRelativePath,
 }
@@ -96,6 +98,8 @@ pub struct FileExplorer {
     root: Option<PathBuf>,
     /// Whether the selected tab runs a shell, which "cd to directory" needs.
     can_cd: bool,
+    /// The agent CLIs "Open in new tab with" offers.
+    agents: Rc<[Launcher]>,
     expanded: ExpandedFolders,
     listings: HashMap<PathBuf, Listing>,
     selected: Option<PathBuf>,
@@ -115,7 +119,7 @@ pub struct FileExplorer {
 impl EventEmitter<ExplorerEvent> for FileExplorer {}
 
 impl FileExplorer {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(agents: Vec<Launcher>, cx: &mut Context<Self>) -> Self {
         let (sender, receiver) = mpsc::unbounded();
         let watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
             let Ok(event) = result else {
@@ -139,6 +143,7 @@ impl FileExplorer {
         Self {
             root: None,
             can_cd: false,
+            agents: agents.into(),
             expanded: ExpandedFolders::default(),
             listings: HashMap::new(),
             selected: None,
@@ -190,7 +195,10 @@ impl FileExplorer {
 
     /// Show `root` (the selected tab's folder). `can_cd`: whether that tab runs a shell.
     pub fn set_root(&mut self, root: Option<PathBuf>, can_cd: bool, cx: &mut Context<Self>) {
-        self.can_cd = can_cd;
+        if can_cd != self.can_cd {
+            self.can_cd = can_cd;
+            cx.notify();
+        }
         if root == self.root {
             return;
         }
@@ -341,11 +349,15 @@ impl FileExplorer {
         match command {
             EntryCommand::NewFile => self.start_edit(EditTarget::NewFile(folder), window, cx),
             EntryCommand::CdTo => cx.emit(ExplorerEvent::CdTo(folder)),
-            EntryCommand::OpenInNewTab => cx.emit(ExplorerEvent::OpenTab(folder)),
+            EntryCommand::OpenInNewTab => cx.emit(ExplorerEvent::OpenTab(folder, None)),
+            EntryCommand::OpenInNewTabWith(agent) => {
+                if let Some(agent) = self.agents.get(agent) {
+                    cx.emit(ExplorerEvent::OpenTab(folder, Some(agent.clone())));
+                }
+            }
             EntryCommand::Reveal => cx.reveal_path(&path),
             EntryCommand::Rename => self.start_edit(EditTarget::Rename(path), window, cx),
             EntryCommand::Delete => self.confirm_delete(path, is_dir, window, cx),
-            EntryCommand::AttachContext => cx.emit(ExplorerEvent::Attach(path)),
             EntryCommand::CopyPath => copy_text(path.display().to_string(), cx),
             EntryCommand::CopyRelativePath => {
                 if let Some(root) = &self.root {
@@ -518,29 +530,46 @@ impl FileExplorer {
         is_dir: bool,
         is_root: bool,
         can_cd: bool,
+        agents: Rc<[Launcher]>,
     ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
-        move |menu, _, _| {
+        move |menu, window, cx| {
             let item = |label: &'static str, command: EntryCommand, enabled: bool| {
-                let explorer = explorer.clone();
-                let path = path.clone();
-                PopupMenuItem::new(label)
-                    .disabled(!enabled)
-                    .on_click(move |_, window, cx| {
-                        let _ = explorer.update(cx, |explorer, cx| {
-                            explorer.run_command(command, path.clone(), is_dir, window, cx)
-                        });
-                    })
+                command_item(&explorer, &path, is_dir, label.into(), command, enabled)
             };
+            let (submenu_explorer, submenu_path) = (explorer.clone(), path.clone());
+            let agents = agents.clone();
             menu.min_w(px(200.))
                 .item(item("New file", EntryCommand::NewFile, true))
                 .separator()
                 .item(item("cd to directory", EntryCommand::CdTo, can_cd))
                 .item(item("Open in new tab", EntryCommand::OpenInNewTab, true))
+                .submenu("Open in new tab with", window, cx, move |menu, _, _| {
+                    agents
+                        .iter()
+                        .enumerate()
+                        .fold(menu, |menu, (index, agent)| {
+                            let installed = agent.program.is_some();
+                            let label = if installed {
+                                agent.label.clone()
+                            } else {
+                                format!("{} (not installed)", agent.label)
+                            };
+                            menu.item(
+                                command_item(
+                                    &submenu_explorer,
+                                    &submenu_path,
+                                    is_dir,
+                                    label.into(),
+                                    EntryCommand::OpenInNewTabWith(index),
+                                    installed,
+                                )
+                                .icon(sidebar::launcher_icon(agent.icon)),
+                            )
+                        })
+                })
                 .item(item("Reveal in file manager", EntryCommand::Reveal, true))
                 .item(item("Rename", EntryCommand::Rename, !is_root))
                 .item(item("Delete", EntryCommand::Delete, !is_root))
-                .separator()
-                .item(item("Attach as context", EntryCommand::AttachContext, true))
                 .separator()
                 .item(item("Copy path", EntryCommand::CopyPath, true))
                 .item(item(
@@ -586,6 +615,7 @@ impl FileExplorer {
                     is_dir,
                     row.depth == 0,
                     self.can_cd,
+                    self.agents.clone(),
                 );
                 let chevron = if !is_dir {
                     div().w(px(INDENT)).flex_none().into_any_element()
@@ -675,13 +705,43 @@ impl FileExplorer {
                     .child(Icon::empty().path(FILES_ICON).small()),
             )
             .child(
-                Button::new("close-explorer")
-                    .icon(IconName::Close)
-                    .ghost()
-                    .xsmall()
-                    .tooltip("Close explorer")
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ExplorerEvent::Close))),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(self.parent_button(cx))
+                    .child(
+                        Button::new("close-explorer")
+                            .icon(IconName::Close)
+                            .ghost()
+                            .xsmall()
+                            .tooltip("Close explorer")
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(ExplorerEvent::Close))),
+                    ),
             )
+    }
+
+    /// "Parent folder (cd ..)": types `cd` to the folder above the tree's in a shell tab, and
+    /// the tree follows the shell there. Disabled at a filesystem or drive root, and in other
+    /// tabs, whose tree always shows the session's folder.
+    fn parent_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let parent = self
+            .root
+            .as_deref()
+            .and_then(parent_folder)
+            .map(Path::to_path_buf)
+            .filter(|_| self.can_cd);
+        Button::new("explorer-parent")
+            .icon(Icon::empty().path(FOLDER_UP_ICON))
+            .ghost()
+            .xsmall()
+            .disabled(parent.is_none())
+            .tooltip("Parent folder (cd ..)")
+            .on_click(cx.listener(move |_, _, _, cx| {
+                if let Some(parent) = parent.clone() {
+                    cx.emit(ExplorerEvent::CdTo(parent));
+                }
+            }))
     }
 }
 
@@ -723,6 +783,25 @@ impl Render for FileExplorer {
             .child(self.render_header(cx))
             .child(body)
     }
+}
+
+/// A context menu entry running `command` on the entry at `path`.
+fn command_item(
+    explorer: &WeakEntity<FileExplorer>,
+    path: &Path,
+    is_dir: bool,
+    label: SharedString,
+    command: EntryCommand,
+    enabled: bool,
+) -> PopupMenuItem {
+    let (explorer, path) = (explorer.clone(), path.to_path_buf());
+    PopupMenuItem::new(label)
+        .disabled(!enabled)
+        .on_click(move |_, window, cx| {
+            let _ = explorer.update(cx, |explorer, cx| {
+                explorer.run_command(command, path.clone(), is_dir, window, cx)
+            });
+        })
 }
 
 /// The icon for a row: an open or closed folder, or the file's kind.
