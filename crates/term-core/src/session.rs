@@ -239,7 +239,7 @@ impl Session {
             shell: spec.shell_command(),
             working_directory: spec.cwd.clone(),
             drain_on_exit: true,
-            env: session_env(&spec.env),
+            env: session_env(spec.kind, &spec.env),
             // Quote arguments holding spaces or quotes, so each reaches the program whole.
             #[cfg(windows)]
             escape_args: true,
@@ -486,12 +486,17 @@ fn child_pid(pty: &tty::Pty) -> Option<u32> {
 
 /// Environment for every child: advertise a capable terminal without mutating our own
 /// process environment (alacritty's `tty::setup_env` does that, which is not thread-safe).
-fn session_env(extra: &HashMap<String, String>) -> HashMap<String, String> {
+fn session_env(kind: SessionKind, extra: &HashMap<String, String>) -> HashMap<String, String> {
     let mut env = HashMap::from([
         ("TERM".to_string(), "xterm-256color".to_string()),
         ("COLORTERM".to_string(), "truecolor".to_string()),
         ("TERM_PROGRAM".to_string(), "agent-workspace".to_string()),
     ]);
+    // Copilot CLI only reports progress (OSC 9;4) to terminals it recognizes; ConEmu's
+    // variable is the narrowest one that turns it on (checked with Copilot CLI 1.0.98).
+    if kind == SessionKind::CopilotCli {
+        env.insert("ConEmuANSI".to_string(), "ON".to_string());
+    }
     env.extend(
         extra
             .iter()
@@ -503,6 +508,15 @@ fn session_env(extra: &HashMap<String, String>) -> HashMap<String, String> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_copilot_sessions_get_the_progress_report_variable() {
+        let copilot = session_env(SessionKind::CopilotCli, &HashMap::new());
+        assert_eq!(copilot.get("ConEmuANSI").map(String::as_str), Some("ON"));
+        for kind in [SessionKind::Shell, SessionKind::ClaudeCode] {
+            assert!(!session_env(kind, &HashMap::new()).contains_key("ConEmuANSI"));
+        }
+    }
 
     /// The real event loop over a real pty: output held back after a mark is read again once
     /// the pty has nothing new (the wake socket must be polled under alacritty's pty key).

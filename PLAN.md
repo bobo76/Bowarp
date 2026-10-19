@@ -49,11 +49,15 @@ What is done is described in [FEATURES.md](FEATURES.md); the details are in the 
 - Copilot CLI status: the pty reader looks for progress reports (OSC 9;4, which Windows
   Terminal shows as the tab spinner) in every session's output (`ProgressScanner`), and a
   Copilot tab's first one switches it from output activity to agent status: Working (with
-  the lap time) while progress shows, Idle or Done once it is removed. Not checked against
-  Copilot's real output: assumed to show `3` (busy) while working and `0` (remove) when the
-  turn ends; any shown state counts as Working, so a permission prompt is not
-  NeedsAttention. Check in a Copilot tab: Working and its time during a turn, Idle after it,
-  Done when it ends in a hidden tab, and whether a permission prompt or Esc clears it.
+  the lap time) while progress shows, Idle or Done once it is removed. Copilot only reports
+  progress to terminals it recognizes (from env vars alone, the same JS on every platform),
+  so Copilot tabs get `ConEmuANSI=ON` (`session_env`); in Copilot 1.0.98 that type changes
+  nothing else. Checked on Linux with Copilot CLI 1.0.98: `9;4;3` when a turn starts,
+  repeated every 5 s, `9;4;0` when it ends or is cancelled; the hover card shows Working
+  with its time, Idle after the turn, Done in a hidden tab
+  (`pipeline/retros/copilot-status/shots/`). A permission prompt keeps `9;4;3`, so it shows
+  Working, not NeedsAttention; Esc at the prompt clears it. Check on Windows that the
+  progress reports get through ConPTY: Working during a turn in a Copilot tab.
 
 **Not doable yet**
 
