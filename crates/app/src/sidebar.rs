@@ -12,7 +12,7 @@ use gpui_kit::{
     div, pulsating_between, px, rgb,
 };
 use term_core::SessionKind;
-use workspace_model::{Attention, LauncherIcon, TabColor, format_lap};
+use workspace_model::{Attention, LauncherIcon, TabColor, format_clock, format_lap};
 
 use crate::assets::{
     AGENT_SPARK_ICON, BASH_ICON, COPILOT_ICON, DEBIAN_ICON, FISH_ICON, GIT_BRANCH_ICON, GIT_ICON,
@@ -527,6 +527,8 @@ pub struct TabCard {
     pub status: TabStatus,
     /// How long the agent has been working on the current turn, shown in the status chip.
     pub working_for: Option<Duration>,
+    /// How long the shell's command has run, shown below the chip ("Running for 2:14").
+    pub running_for: Option<Duration>,
     /// The command a shell runs, shown in the Running chip.
     pub running_label: Option<SharedString>,
     /// The full folder, with the home folder shortened to `~`.
@@ -606,6 +608,12 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
                         .child(shortcut)
                 })),
         )
+        .children(card.running_for.map(|running| {
+            div()
+                .text_xs()
+                .text_color(muted)
+                .child(format!("Running for {}", format_clock(running)))
+        }))
         // The whole folder, wrapped rather than cut: its end is the part that tells tabs apart.
         .children(card.folder.map(|folder| div().child(folder)))
         .children(

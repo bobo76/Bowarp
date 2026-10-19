@@ -42,7 +42,7 @@ pub use location::{Location, display_path};
 pub use osc133::{CommandLine, Osc133Scanner, PromptMark, new_mark_token};
 pub use running::{
     COMMAND_LABEL_CHARS, RUNNING_AFTER, RUNNING_PULSE_FOR, RunningBadge, command_label,
-    running_badge,
+    format_clock, running_badge,
 };
 pub use search::{SearchedTab, TabQuery};
 pub use tab::{TabColor, TabMeta};

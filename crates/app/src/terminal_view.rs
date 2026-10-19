@@ -293,6 +293,16 @@ impl TerminalView {
         self.running_command.as_ref()?.label.as_deref()
     }
 
+    /// How long the running command has run (from its `C` mark), while the status is
+    /// [`TabStatus::Running`].
+    pub fn running_for(&self, now: Instant) -> Option<Duration> {
+        if self.tab_status() != TabStatus::Running {
+            return None;
+        }
+        let running = self.running_command.as_ref()?;
+        Some(now.saturating_duration_since(running.started))
+    }
+
     /// Whether the Running badge pulses: only for the first seconds of a command.
     pub fn running_pulses(&self) -> bool {
         self.tab_status() == TabStatus::Running

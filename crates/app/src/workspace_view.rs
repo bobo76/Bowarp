@@ -846,10 +846,11 @@ impl WorkspaceView {
         waiting_count(&self.attention(cx), self.current_index())
     }
 
-    /// Start or stop repainting the lap time in the tab's hover card. While the card shows, the
-    /// window repaints on each whole second of the lap, and only while the agent is working;
-    /// otherwise the task just checks once a second whether it started working. Closing a
-    /// card stops the task, so nothing runs while no card shows.
+    /// Start or stop repainting the lap time or running time in the tab's hover card. While
+    /// the card shows, the window repaints on each whole second of the time, and only while
+    /// the agent is working or a command runs; otherwise the task just checks once a second
+    /// whether one started. Closing a card stops the task, so nothing runs while no card
+    /// shows.
     fn set_card_clock(&mut self, id: u64, open: bool, cx: &mut Context<Self>) {
         if !open {
             if self
@@ -863,18 +864,17 @@ impl WorkspaceView {
         }
         let task = cx.spawn(async move |this, cx| {
             loop {
-                let Ok(working_for) = this.read_with(cx, |workspace, cx| {
+                let Ok(ticking) = this.read_with(cx, |workspace, cx| {
                     let index = workspace.tab_index(id)?;
-                    workspace.tabs[index]
-                        .view
-                        .read(cx)
-                        .working_for(Instant::now())
+                    let view = workspace.tabs[index].view.read(cx);
+                    let now = Instant::now();
+                    view.working_for(now).or_else(|| view.running_for(now))
                 }) else {
                     return;
                 };
-                let delay = working_for.map_or(Duration::from_secs(1), until_next_second);
+                let delay = ticking.map_or(Duration::from_secs(1), until_next_second);
                 cx.background_executor().timer(delay).await;
-                if working_for.is_some() && this.update(cx, |_, cx| cx.notify()).is_err() {
+                if ticking.is_some() && this.update(cx, |_, cx| cx.notify()).is_err() {
                     return;
                 }
             }

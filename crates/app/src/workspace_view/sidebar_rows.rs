@@ -307,10 +307,12 @@ impl WorkspaceView {
         let tab = &self.tabs[index];
         let view = tab.view.read(cx);
         let location = view.location();
+        let now = Instant::now();
         Some(TabCard {
             index,
             status: view.tab_status(),
-            working_for: view.working_for(Instant::now()),
+            working_for: view.working_for(now),
+            running_for: view.running_for(now),
             running_label: view.running_label().map(|label| label.to_string().into()),
             folder: location
                 .map(|location| display_path(&location.dir, self.home.as_deref()).into()),

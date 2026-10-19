@@ -107,7 +107,7 @@ files not yet added and not ignored, refreshed at most every 5 s).
 | orange, plus a warning triangle before the title | Needs attention |
 | green with a check | Done: finished while you were on another tab (until you select it) |
 | green | Idle |
-| teal, pulsing for the first 10 s | Running: a command typed at the prompt of a bash, zsh or PowerShell tab has run for half a second; the card shows it (no pulse on a software-rendered GPU) |
+| teal, pulsing for the first 10 s | Running: a command typed at the prompt of a bash, zsh or PowerShell tab has run for half a second; the card shows it and how long it has run (`Running for 2:14`, ticking while the card is open; no pulse on a software-rendered GPU) |
 | light grey | Recent output (shell or Copilot) |
 | none | No recent output |
 | hollow ring | Exited |

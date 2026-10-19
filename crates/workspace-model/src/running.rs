@@ -30,6 +30,18 @@ pub fn running_badge(elapsed: Duration) -> RunningBadge {
     }
 }
 
+/// A running command's time as a clock in whole seconds: `0:05`, `2:14`, `1:05:03` (hours
+/// only from an hour on).
+pub fn format_clock(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    let (hours, minutes) = (seconds / 3600, seconds / 60 % 60);
+    if hours == 0 {
+        format!("{minutes}:{:02}", seconds % 60)
+    } else {
+        format!("{hours}:{minutes:02}:{:02}", seconds % 60)
+    }
+}
+
 /// Characters of a running command the hover card shows; a longer one is cut with `…`.
 pub const COMMAND_LABEL_CHARS: usize = 40;
 
@@ -137,5 +149,20 @@ mod tests {
         assert_eq!(command_label("", 40), None);
         assert_eq!(command_label(" \n\t", 40), None);
         assert_eq!(command_label("ls", 0), None);
+    }
+
+    #[test]
+    fn clock_shows_minutes_and_seconds_below_an_hour() {
+        assert_eq!(format_clock(Duration::ZERO), "0:00");
+        assert_eq!(format_clock(Duration::from_millis(5_900)), "0:05");
+        assert_eq!(format_clock(Duration::from_secs(134)), "2:14");
+        assert_eq!(format_clock(Duration::from_secs(3599)), "59:59");
+    }
+
+    #[test]
+    fn clock_adds_hours_from_an_hour_on() {
+        assert_eq!(format_clock(Duration::from_secs(3600)), "1:00:00");
+        assert_eq!(format_clock(Duration::from_secs(3903)), "1:05:03");
+        assert_eq!(format_clock(Duration::from_secs(36_000 + 59)), "10:00:59");
     }
 }

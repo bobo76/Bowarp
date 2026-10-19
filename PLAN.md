@@ -109,11 +109,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   (default 10 s, in the settings file) ends while its tab isn't selected, the tab is marked
   done, or failed when the OSC 133 `D` exit code isn't 0, until it is viewed. Needs shell
   integration. Same notification and sound as M5's agent notifications.
-- Running time in the tab hover card: "Running for mm:ss" (`h:mm:ss` from an hour on) for the
-  command running in a shell tab, from its OSC 133 `C` mark to now, ticking while the card is
-  open (`set_card_clock`). This includes an agent typed at a shell prompt (`claude` in a bash
-  tab), which gets no hooks and so no "Working · 2m 14s" lap; only Claude Code tabs opened
-  from the new-tab menu have that lap.
 - Command palette: Ctrl+Shift+P opens a fuzzy search over every action (the ones with
   shortcuts and the menu-only ones such as Duplicate, Move to group or Copy branch), showing
   each one's shortcut, plus the tabs by name ("go to tab"). Enter runs the action on the
