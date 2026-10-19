@@ -250,15 +250,6 @@ impl TerminalView {
         self.title.as_deref().unwrap_or(&self.name)
     }
 
-    pub fn display_title(&self) -> String {
-        let title = self.name();
-        match self.process {
-            ProcessState::Running => title.to_string(),
-            ProcessState::Exited(Some(code)) => format!("{title} [exited {code}]"),
-            ProcessState::Exited(None) => format!("{title} [exited]"),
-        }
-    }
-
     pub fn tab_status(&self) -> TabStatus {
         if let Some(agent) = self.agent {
             return match agent.status() {

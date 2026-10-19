@@ -13,7 +13,7 @@ use workspace_model::version_line;
 
 use crate::assets::APP_ICON;
 
-const APP_NAME: &str = "Agent Workspace";
+pub const APP_NAME: &str = "Agent Workspace";
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 
 /// The line a bug report quotes: "agent-workspace 0.1.0 (abc1234)".

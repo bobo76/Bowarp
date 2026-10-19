@@ -1150,12 +1150,8 @@ impl Render for WorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.pulse_running = sidebar::pulse_allowed(window);
         let active = self.active_tab().map(|tab| tab.view.clone());
-        let title = active.as_ref().map_or_else(
-            || "Agent Workspace".into(),
-            |view| view.read(cx).display_title(),
-        );
-        if window.window_title() != title {
-            window.set_window_title(&title);
+        if window.window_title() != about::APP_NAME {
+            window.set_window_title(about::APP_NAME);
         }
 
         div()
@@ -1169,23 +1165,16 @@ impl Render for WorkspaceView {
                         cx.listener(|workspace, _, window, cx| workspace.close_window(window, cx)),
                     )
                     .child(
+                        // Occluding keeps the title bar's drag area from taking the
+                        // buttons' clicks (Windows answers HTCAPTION over them).
                         div()
                             .flex()
                             .items_center()
-                            .gap_2()
-                            .child(
-                                // Occluding keeps the title bar's drag area from taking the
-                                // buttons' clicks (Windows answers HTCAPTION over them).
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .occlude()
-                                    .child(self.sidebar_toggle(cx))
-                                    .child(self.explorer_toggle(cx))
-                                    .child(about::about_button()),
-                            )
-                            .child(div().text_sm().child(title)),
+                            .gap_1()
+                            .occlude()
+                            .child(self.sidebar_toggle(cx))
+                            .child(self.explorer_toggle(cx))
+                            .child(about::about_button()),
                     ),
             )
             .child(
