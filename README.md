@@ -189,6 +189,11 @@ commit it was built from when built from a checkout, and a link to the repositor
 copies the whole line for a bug report (or select part of it and press Ctrl+C); Escape or Close
 dismisses it.
 
+The version is the workspace `version` in `Cargo.toml`. `scripts/bump-version.sh
+[patch|minor|major]` (default `patch`) raises it, refreshes `Cargo.lock` and prints the new
+version; it refuses a `Cargo.toml` with uncommitted changes. Each pushed feature is one patch
+higher and tagged `v<version>`; finishing a milestone bumps `minor`.
+
 ## Design decisions
 
 - **Quitting an agent (planned, see the backlog in [PLAN.md](PLAN.md)):** when Claude Code or

@@ -8,16 +8,7 @@ What is done is described in [FEATURES.md](FEATURES.md); the details are in the 
 
 **Next steps, in priority order**
 
-1. Automatic version increments: a `scripts/bump-version.sh [patch|minor|major]` (default
-   `patch`) raises the workspace `version` in `Cargo.toml` (`0.1.0` -> `0.1.1`; `minor` and
-   `major` reset the lower parts), refreshes `Cargo.lock` (`cargo update -w`) and prints the
-   new version; it refuses a dirty `Cargo.toml` and a version that isn't `X.Y.Z`. The
-   pipeline's squash step (`PIPELINE-PLAN.md`) runs it before the squashed commit, so every
-   pushed feature is one patch higher, then tags the commit `v<version>` and pushes the tag
-   with the branch. Finishing a milestone bumps `minor` instead (M2 done -> `0.2.0`). The
-   About dialog already shows `CARGO_PKG_VERSION` plus the commit, so nothing changes there.
-   Check: the script on a scratch copy (patch, minor, major, dirty file, bad version),
-   `cargo build` picks up the new version, and the About line shows it.
+(none)
 
 **Not doable yet**
 
