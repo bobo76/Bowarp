@@ -41,6 +41,7 @@ use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::tty::{ChildEvent, EventedPty, EventedReadWrite};
 use polling::{Event as PollingEvent, PollMode, Poller};
+use workspace_model::file_tree::ShellSyntax;
 use workspace_model::{CommandLine, Osc133Scanner, ProgressScanner, ProgressState, PromptMark};
 
 /// DECRQM mode numbers used as tags: `TAG_BASE..TAG_BASE + TAG_COUNT`, far from real modes.
@@ -56,8 +57,11 @@ const READ_CHUNK: usize = 64 * 1024;
 /// A real pty's output is held after `A` and `B` marks only where the event loop can be woken
 /// to read the held output (`Wake`).
 const HOLDS_PROMPTS: bool = cfg!(any(unix, windows));
-/// Ctrl+E (end of line) in bash, zsh and PowerShell's emacs mode.
-const END_OF_LINE: char = '\x05';
+/// Ctrl+E: end of line in readline (bash) and zsh's emacs keymap.
+const END_OF_LINE: &str = "\x05";
+/// The End key as the terminal sends it (`keys::bytes`). PSReadLine's Windows edit mode, the
+/// default on Windows, doesn't bind Ctrl+E; End is EndOfLine in all its edit modes.
+const END_KEY: &str = "\x1b[F";
 const BACKSPACE: char = '\x7f';
 
 /// A command line the shell is about to run.
@@ -94,17 +98,22 @@ pub struct PromptInput {
 }
 
 impl PromptInput {
-    /// The keys that replace the command line with `command`: end of line, one Backspace per
-    /// typed character, then `command`.
-    pub fn replace_keys(&self, command: &str) -> String {
+    /// The keys that replace the command line with `command` in a `shell` tab: end of line,
+    /// one Backspace per typed character (UTF-16 unit in PowerShell), then `command`.
+    pub fn replace_keys(&self, command: &str, shell: ShellSyntax) -> String {
+        // PSReadLine's Backspace deletes one UTF-16 unit, so a non-BMP character takes two.
+        let length = |text: &str| match shell {
+            ShellSyntax::PowerShell => text.encode_utf16().count(),
+            ShellSyntax::Posix | ShellSyntax::Wsl | ShellSyntax::Cmd => text.chars().count(),
+        };
         // `text` read from the grid drops trailing blanks; the cursor may sit after typed
         // spaces.
-        let typed = self
-            .text
-            .chars()
-            .count()
-            .max(self.before_cursor.chars().count());
-        let mut keys = String::from(END_OF_LINE);
+        let typed = length(&self.text).max(length(&self.before_cursor));
+        let end = match shell {
+            ShellSyntax::PowerShell => END_KEY,
+            ShellSyntax::Posix | ShellSyntax::Wsl | ShellSyntax::Cmd => END_OF_LINE,
+        };
+        let mut keys = String::from(end);
         keys.extend(std::iter::repeat_n(BACKSPACE, typed));
         keys.push_str(command);
         keys
@@ -1230,16 +1239,68 @@ mod tests {
             at_end: true,
             prompt_line: 0,
         };
-        assert_eq!(input("", "").replace_keys("ls"), "\x05ls");
-        assert_eq!(input("gi", "git").replace_keys("ls"), "\x05\x7f\x7f\x7fls");
+        let posix = ShellSyntax::Posix;
+        assert_eq!(input("", "").replace_keys("ls", posix), "\x05ls");
+        assert_eq!(
+            input("gi", "git").replace_keys("ls", posix),
+            "\x05\x7f\x7f\x7fls"
+        );
         // Typed "git " read from the grid: the trailing space is trimmed from `text`.
         assert_eq!(
-            input("git ", "git").replace_keys("git status"),
+            input("git ", "git").replace_keys("git status", posix),
             "\x05\x7f\x7f\x7f\x7fgit status"
         );
         assert_eq!(
-            input("\u{e9}", "\u{e9}t\u{e9}").replace_keys("x"),
+            input("\u{e9}", "\u{e9}t\u{e9}").replace_keys("x", posix),
             "\x05\x7f\x7f\x7fx"
+        );
+        assert_eq!(
+            input("gi", "git").replace_keys("ls", ShellSyntax::Wsl),
+            "\x05\x7f\x7f\x7fls"
+        );
+    }
+
+    #[test]
+    fn powershell_goes_to_the_end_of_the_line_with_the_end_key() {
+        // PSReadLine's Windows edit mode (pwsh and Windows PowerShell) has no Ctrl+E.
+        let input = PromptInput {
+            before_cursor: "gi".into(),
+            text: "git".into(),
+            at_end: false,
+            prompt_line: 0,
+        };
+        assert_eq!(
+            input.replace_keys("ls", ShellSyntax::PowerShell),
+            "\x1b[F\x7f\x7f\x7fls"
+        );
+        let empty = PromptInput {
+            before_cursor: String::new(),
+            text: String::new(),
+            at_end: true,
+            prompt_line: 0,
+        };
+        assert_eq!(
+            empty.replace_keys("Get-ChildItem", ShellSyntax::PowerShell),
+            "\x1b[FGet-ChildItem"
+        );
+    }
+
+    #[test]
+    fn powershell_erases_a_non_bmp_character_with_two_backspaces() {
+        // PSReadLine deletes one UTF-16 unit per Backspace; other shells one character.
+        let input = PromptInput {
+            before_cursor: "a\u{1F600}".into(),
+            text: "a\u{1F600}".into(),
+            at_end: true,
+            prompt_line: 0,
+        };
+        assert_eq!(
+            input.replace_keys("ls", ShellSyntax::PowerShell),
+            "\x1b[F\x7f\x7f\x7fls"
+        );
+        assert_eq!(
+            input.replace_keys("ls", ShellSyntax::Posix),
+            "\x05\x7f\x7fls"
         );
     }
 

@@ -136,7 +136,7 @@ pub struct TerminalView {
     launch_cwd: Option<PathBuf>,
     location: Option<Location>,
     /// How the program parses typed paths.
-    shell: ShellSyntax,
+    pub(crate) shell: ShellSyntax,
     /// Status from Claude Code hooks, or from Copilot CLI's progress reports once it sent
     /// one; `None` for sessions without either.
     agent: Option<AgentState>,

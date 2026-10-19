@@ -167,7 +167,7 @@ impl TerminalView {
             return;
         };
         // Entries hold no control characters (`workspace_model::is_recordable`).
-        self.type_text(input.replace_keys(&entry.command), cx);
+        self.type_text(input.replace_keys(&entry.command, self.shell), cx);
     }
 
     fn accept_suggestion(&mut self, cx: &mut Context<Self>) -> bool {

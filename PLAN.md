@@ -5,7 +5,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
 ## Status (2026-10-19)
 
 [FEATURES.md](FEATURES.md) is the target; what is not built yet is in the milestones and the
-backlog below. Details of finished work are in the git history (276 tests).
+backlog below. Details of finished work are in the git history (278 tests).
 
 **Known limitations**
 
@@ -19,15 +19,41 @@ backlog below. Details of finished work are in the git history (276 tests).
 - No command history in cmd tabs: cmd's prompt prints only the `D` mark, not the `A` / `B`
   marks that locate the prompt.
 
-**Next steps**
+**Next steps (quick wins 3)**
 
-- Command history in PowerShell: Up opens the HISTORY popup, but Enter on a row prints `^E`
-  before the command: PSReadLine's Windows edit mode doesn't bind the Ctrl+E that
-  `PromptInput::replace_keys` sends first. Send PowerShell tabs a key it binds (End) instead,
-  and check pwsh and Windows PowerShell.
+1. File viewer image size limit: images share the text editor's 2 MB `MAX_VIEW_BYTES`
+   (`check_image` in `crates/app/src/file_viewer.rs` calls `file_view::check_size`), so an
+   ordinary 4 MB PNG is refused, though images are drawn by GPUI and never reach the editor.
+   Add a separate `MAX_IMAGE_BYTES` (50 MB) for `check_image`, have `Unviewable::TooLarge`
+   carry the limit it broke so the message names the right one, and test both limits.
+2. Settings file and settings page ([reference](docs/ui-reference/settings.png)):
+   - `settings.json` in the config folder (next to `tabs.json`), in `workspace-model`: every
+     field optional with a default, unknown fields kept, a broken file logged and replaced by
+     the defaults (not overwritten). Unit-tested.
+   - A settings button in the title bar opens the page; it shows as a "Settings" row in the
+     sidebar and takes the terminal area (like a tab, not saved in `tabs.json`, one at most).
+   - Built on gpui-component's `setting` module: a search box over item titles and keywords,
+     pages on the left, groups of rows (title, description, control) on the right, a reset
+     per item, and an "Open settings file" button at the bottom (opens it in the file viewer).
+   - Pages for this step: Appearance (font family, font size), Terminal (default shell),
+     About (version, config folder). Changes are saved at once and applied live (the
+     terminal re-measures its cells and resizes the pty).
+   - Later backlog items add their rows here (theme, opacity, shortcuts, launcher paths and
+     icons).
+3. Font family and size: from the settings file (today hard-coded).
+4. Default shell: the new-tab menu's first entry and Ctrl+Shift+T use it; empty keeps the
+   $SHELL / Git Bash default.
+5. File viewer width: saved in the settings file when it changes and restored at startup
+   (not shown on the settings page).
 
 **Fixed, not tested yet (built and unit-tested by the Windows CI, not run on a Windows machine)**
 
+- Command history in PowerShell: Enter on a HISTORY row printed `^E` before the command
+  (PSReadLine's Windows edit mode has no Ctrl+E); PowerShell tabs now get End (`ESC [ F`)
+  before the Backspaces (one per UTF-16 unit), bash/zsh still Ctrl+E. Check in pwsh and
+  Windows PowerShell: type part of a command, Up, Enter on a row: the line holds just that
+  command. Also with a grey inline prediction showing after the typed text (no leftover
+  text, no bell) and with an emoji on the line.
 - The explorer's `cd` into a WSL tab typed the Windows path (`cd 'C:\Users'`, refused by
   bash); WSL tabs now get `ShellSyntax::Wsl`, which types `C:\x` as `/mnt/c/x` (default mount
   root only) and `\\wsl$\<distro>\x` as `/x`. Check in an Ubuntu tab: the parent-folder button
@@ -78,7 +104,7 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 
 | Element | Look | Milestone |
 |---|---|---|
-| Title bar | settings button once there are settings | - |
+| Title bar | settings button | quick wins 3 |
 | Context menu | Save as new config (= save as a named workspace) | M4 |
 | Clipboard notice | banner above the terminal when a program writes the clipboard (OSC 52), with allow/deny | M5 |
 
@@ -134,24 +160,17 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 - File viewer find and replace: Ctrl+F searches the open file (highlight all matches,
   Enter / Shift+Enter to move, match count, case and whole-word toggles), Ctrl+H adds a
   replace field (replace one / all) in source mode; rendered Markdown only gets find.
-- Configurable font family and size.
-- Configurable default shell for the new-tab menu's first entry and Ctrl+Shift+T, saved in the settings
-  file (overrides the $SHELL / Git Bash default).
-- Save the file viewer's width (resizable since the quick wins) in the settings file and
-  restore it at startup.
 - File viewer: the `⋮` menu from the reference screenshot.
-- File viewer image size limit: images share the text editor's 2 MB `MAX_VIEW_BYTES`
-  (`check_image` in `crates/app/src/file_viewer.rs` calls `file_view::check_size`), so an
-  ordinary 4 MB PNG is refused, though images are drawn by GPUI and never reach the editor.
-  Add a separate `MAX_IMAGE_BYTES` (50 MB) for `check_image`, have `Unviewable::TooLarge`
-  carry the limit it broke so the message names the right one, and test both limits.
+- Command history with zsh-autosuggestions (likely bug, unverified): Enter on a HISTORY row
+  sends Ctrl+E, which the plugin binds to accept the grey suggestion, but the reported line
+  (`$BUFFER`, `.zshenv` `__agentws_report_line`) excludes it, so the Backspaces leave the
+  accepted rest in front of the new command. Send a key that doesn't accept it, or clear
+  `POSTDISPLAY` first.
 - New-tab folder picker (currently the selected tab's folder).
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
   the window; Delete already runs in the background.
 - Sidebar search: the filter/sort button from the reference screenshot.
-- Configuration panel: a settings dialog opened from the title bar's settings button (see the
-  title bar row above) that edits the settings file, for the configurable items in this list.
 - Configurable terminal path: the executable path for each launcher entry (Terminal, Git Bash,
   `claude`, `copilot`) saved in the settings file, for programs that aren't on `PATH` or
   where the wrong copy is found first; an empty value keeps the current lookup.
