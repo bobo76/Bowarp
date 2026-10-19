@@ -106,7 +106,7 @@ pub fn discover() -> Vec<Launcher> {
     launchers
 }
 
-/// The launcher the menu's "Terminal" entry and Ctrl+Shift+T open: Git Bash on
+/// The launcher the menu's first entry and Ctrl+Shift+T open: Git Bash on
 /// Windows, else the first installed shell, which is `$SHELL` when `discover` found it.
 pub fn default_shell(launchers: &[Launcher]) -> Option<&Launcher> {
     preferred_shell(launchers, cfg!(windows))
@@ -125,15 +125,17 @@ fn preferred_shell(launchers: &[Launcher], prefer_git_bash: bool) -> Option<&Lau
     first
 }
 
-/// The `+` menu's entries: the default shell (shown as "Terminal"), then the shells, then the
-/// agents.
+/// The `+` menu's entries: the default shell (with the shortcut hint), then the other shells, then
+/// the agents.
 pub fn menu_sections(
     launchers: &[Launcher],
 ) -> (Option<&Launcher>, Vec<&Launcher>, Vec<&Launcher>) {
+    let default = default_shell(launchers);
     let (shells, agents) = launchers
         .iter()
+        .filter(|&launcher| default.is_none_or(|default| !std::ptr::eq(launcher, default)))
         .partition(|launcher| launcher.kind == SessionKind::Shell);
-    (default_shell(launchers), shells, agents)
+    (default, shells, agents)
 }
 
 fn default_shell_index(launchers: &[Launcher], default_shell: &Path) -> Option<usize> {
@@ -443,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn menu_lists_shells_then_agents() {
+    fn menu_lists_other_shells_then_agents() {
         let mut claude = shell("/usr/bin/claude");
         claude.kind = SessionKind::ClaudeCode;
         let launchers = [shell("/usr/bin/zsh"), claude, shell("/usr/bin/bash")];
@@ -458,13 +460,7 @@ mod tests {
             default.and_then(|shell| shell.program.as_deref()),
             Some(Path::new("/usr/bin/zsh"))
         );
-        assert_eq!(
-            programs(shells),
-            [
-                PathBuf::from("/usr/bin/zsh"),
-                PathBuf::from("/usr/bin/bash")
-            ]
-        );
+        assert_eq!(programs(shells), [PathBuf::from("/usr/bin/bash")]);
         assert_eq!(programs(agents), [PathBuf::from("/usr/bin/claude")]);
     }
 

@@ -44,10 +44,15 @@ pub fn tab_shortcut_hint(key: &str) -> Kbd {
 
 /// A menu entry's label with its shortcut on the right, for `PopupMenuItem::element`: the
 /// menu draws hints only for actions bound to a key, and these shortcuts are a key handler.
-pub fn menu_label_with_hint(id: &'static str, label: &'static str, key: &str) -> impl IntoElement {
+pub fn menu_label_with_hint(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    key: &str,
+) -> impl IntoElement {
+    let label = label.into();
     div()
         .id(id)
-        .aria_label(label)
+        .aria_label(label.clone())
         .flex()
         .items_center()
         .w_full()

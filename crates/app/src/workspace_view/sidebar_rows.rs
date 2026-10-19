@@ -14,7 +14,7 @@ use gpui_kit::{
     InteractiveElement, IntoElement, ParentElement, SharedString, Stateful,
     StatefulInteractiveElement, Styled, WeakEntity, Window, div, px,
 };
-use workspace_model::{DropTarget, Group, GroupId, Item, LauncherIcon, Location, display_path};
+use workspace_model::{DropTarget, Group, GroupId, Item, Location, display_path};
 
 use super::{RenameTarget, WorkspaceView};
 use crate::launcher::{self, Launcher};
@@ -404,8 +404,8 @@ impl WorkspaceView {
             .into_any_element()
     }
 
-    /// The `+` menu: "Terminal" (the default shell, with its shortcut), the shells, then the
-    /// agent CLIs.
+    /// The `+` menu: the default shell (with its shortcut), the other shells, then the agent
+    /// CLIs.
     fn new_tab_button(&self, workspace: WeakEntity<Self>) -> impl IntoElement {
         let launchers = self.launchers.clone();
         Button::new("new-tab")
@@ -425,15 +425,16 @@ impl WorkspaceView {
                 };
                 let (default, shells, agents) = launcher::menu_sections(&launchers);
                 if let Some(default) = default {
+                    let label = default.label.clone();
                     menu = menu.item(
-                        PopupMenuItem::element(|_, _| {
+                        PopupMenuItem::element(move |_, _| {
                             shortcuts::menu_label_with_hint(
-                                "new-tab-terminal",
-                                "Terminal",
+                                "new-tab-default-shell",
+                                label.clone(),
                                 NEW_TAB_KEY,
                             )
                         })
-                        .icon(sidebar::launcher_icon(LauncherIcon::Terminal))
+                        .icon(sidebar::launcher_icon(default.icon))
                         .on_click(open(default)),
                     );
                 }

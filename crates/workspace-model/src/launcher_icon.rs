@@ -1,8 +1,6 @@
 /// Icon the new-tab menu shows next to a launcher.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LauncherIcon {
-    /// The "Terminal" entry, which opens the default shell.
-    Terminal,
     /// A shell without an icon of its own (`sh`, `dash`, ...).
     Shell,
     /// PowerShell 7 (`pwsh`) and Windows PowerShell (`powershell`).

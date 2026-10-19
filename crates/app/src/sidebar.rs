@@ -98,7 +98,6 @@ pub fn kind_icon(kind: SessionKind) -> Icon {
 /// Icon of a new-tab menu entry.
 pub fn launcher_icon(icon: LauncherIcon) -> Icon {
     let path = match icon {
-        LauncherIcon::Terminal => return Icon::new(IconName::SquareTerminal),
         LauncherIcon::Claude => return kind_icon(SessionKind::ClaudeCode),
         LauncherIcon::Copilot => return kind_icon(SessionKind::CopilotCli),
         LauncherIcon::Shell | LauncherIcon::CommandPrompt => PROMPT_ICON,

@@ -412,7 +412,7 @@ impl WorkspaceView {
         }
     }
 
-    /// Open the default shell (the `+` menu's "Terminal") in the selected tab's folder.
+    /// Open the default shell (the `+` menu's first entry) in the selected tab's folder.
     fn open_default_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(shell) = launcher::default_shell(&self.launchers).cloned() else {
             window.push_notification(Notification::error("No shell found"), cx);
