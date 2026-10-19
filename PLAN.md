@@ -104,6 +104,17 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   by file name (path and `.exe` / `.cmd` stripped, like `shell_icon`). Needs shell
   integration, so it misses scripts, `npx` and aliases. Icon only: the status stays shell-like
   (no `--settings` hooks for a `claude` typed at the prompt).
+- Running command indicator in a shell tab: while a command typed at the prompt runs (from
+  the OSC 133 `C` mark to the `D` mark, the span `on_executed` in `term-core/src/prompt.rs`
+  already sees), the tab gets a new `TabStatus::Running` in place of `Active` / `Quiet`
+  (`terminal_view.rs`): a teal badge on the sidebar icon that pulses (opacity animation,
+  event-driven redraw only while visible), a "Running" chip in the hover card with the
+  command's text (`cmd=` decoded, e.g. `~/start_sensor_be.sh`, ellipsized), and a `Running`
+  count in the group summary chips. The prompt returning clears it; so does the tab exiting.
+  Needs shell integration, so it misses a job resumed with `fg`, commands in a nested shell or
+  over `ssh`, and shows an alias as typed; a later `/proc/<shell>/stat` `tpgid` check (Linux)
+  could fill those gaps. Pairs with "Agent icon in a shell tab" (above) and "Running time in
+  the tab hover card" (below).
 - Clickable links in terminal output: Ctrl+click opens a URL in the browser, both plain-text
   URLs found in the visible grid and OSC 8 hyperlinks (`alacritty_terminal` keeps them on the
   cell). A `path`, `path:line` or `path:line:col` (`src/foo.rs:42`, which Claude Code prints
@@ -184,6 +195,27 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   parse it, but the pty reader wrapper (`term-core/src/prompt.rs`) could find it.
 - Untested on Windows: hook command quoting (`"C:\...\agentws-hook.exe"` run by Claude Code's
   shell) and `.cmd` launchers (`claude.cmd` from npm) under ConPTY.
+
+## Maybe
+
+Ideas not committed to yet; not in [FEATURES.md](FEATURES.md) until picked.
+
+- Diff panel: the selected tab's working-tree changes (`git diff` against `HEAD`, untracked
+  files included) in the file viewer pane, one collapsible section per file with added and
+  removed lines colored, opened from the hover card's `+N` or a title bar button, and
+  refreshed when the file watcher sees a change. Shows what an agent changed without leaving
+  the app; read-only (no staging or reverting).
+- Git worktree and pull request on the sidebar row: a worktree marker when the tab's folder is
+  a linked worktree (`.git` is a file), with the main repository in the hover card; the open
+  PR's number and state for the branch, from `gh pr view --json` run off the UI thread and
+  cached per branch, skipped when `gh` is missing or not logged in.
+- Sticky command header: while scrolling back through a shell tab's output, the command that
+  produced the top visible line stays pinned above the terminal (from the OSC 133 marks);
+  clicking it scrolls to that command's prompt. Needs shell integration; not for agent tabs.
+- Secret redaction: text matching secret patterns (API keys such as `sk-...`, `ghp_...`,
+  AWS keys, `password=...`, plus user regexes from the settings file) is drawn masked in the
+  terminal and copied masked unless the copy is confirmed; hover or a toggle reveals it. Agents
+  often print `.env` contents. Display only, the program's output is unchanged.
 
 ## Risks
 
