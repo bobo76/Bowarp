@@ -89,9 +89,8 @@ PowerShell needs PSReadLine. Git Bash's login shell gets the script too, which t
 login files (`/etc/profile`, then `~/.bash_profile`) instead of `~/.bashrc`; so does a WSL
 distro whose login shell is bash (it reports Linux folders as `\\wsl.localhost\<distro>\...`).
 cmd gets no script: its `PROMPT` (yours, else `$P$G`) is prefixed with a mark that reports the
-folder and puts it in the title. On Windows the history is not available yet (the prompt's
-position is not tracked there); the script only gives the Running status and the folder, and
-cmd only the folder.
+folder and puts it in the title, so cmd tabs get the folder but no history and no Running
+status.
 
 The scroll bar sits in the right margin and shows while you scroll or hover it. Drag the
 thumb, or click the track to jump there. It is hidden when there is no history, as on a

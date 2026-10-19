@@ -16,10 +16,13 @@
 //! from the `B` mark to the cursor. Marks inside a synchronized update are not held: the
 //! parser keeps those bytes back until the update ends, so that prompt is not tracked.
 //!
-//! On Windows nothing is held back (the pty is not a file descriptor the hold's wake-up socket
-//! can stand in for), so the prompt's position is never tracked there: only the marks applied
-//! when found count, which is enough for the Running status and the shell's folder (`D`).
+//! While output is held back the event loop must be woken to read it again ([`Wake`]): on Unix
+//! a socket registered under the pty's key stays readable, on Windows a completion packet for
+//! the pty's key is posted to the event loop's poller, the way alacritty's own pipe reader
+//! wakes it.
 
+#[cfg(windows)]
+use polling::os::iocp::{CompletionPacket, PollerIocpExt};
 #[cfg(unix)]
 use std::io::Write;
 use std::io::{self, ErrorKind, Read};
@@ -51,8 +54,8 @@ const MARK_TIMEOUT: Duration = Duration::from_millis(200);
 const PARSE_WAIT: Duration = Duration::from_millis(1);
 const READ_CHUNK: usize = 64 * 1024;
 /// A real pty's output is held after `A` and `B` marks only where the event loop can be woken
-/// to read the held output (`Wake`, Unix).
-const HOLDS_PROMPTS: bool = cfg!(unix);
+/// to read the held output (`Wake`).
+const HOLDS_PROMPTS: bool = cfg!(any(unix, windows));
 /// Ctrl+E (end of line) in bash, zsh and PowerShell's emacs mode.
 const END_OF_LINE: char = '\x05';
 const BACKSPACE: char = '\x7f';
@@ -559,7 +562,7 @@ struct MarkFilter<L: EventListener> {
     output: Vec<u8>,
     output_pos: usize,
     /// Output after an `A` or `B` mark is held back until the mark is resolved; without it the
-    /// prompt's position is not tracked (Windows, see the module documentation).
+    /// prompt's position is not tracked.
     holds_prompts: bool,
 }
 
@@ -698,12 +701,31 @@ impl Wake {
     }
 }
 
+/// Makes the event loop read again while the filter holds output back. alacritty's Windows
+/// pipe reader only wakes the poller for new output once a read found its pipe empty, so the
+/// output already read past a mark (or still in that pipe) would wait for the next output.
+/// Each read that blocks posts one readable event for the pty's key instead.
+#[cfg(windows)]
+struct Wake {
+    poller: Arc<Poller>,
+    event: PollingEvent,
+}
+
+#[cfg(windows)]
+impl Wake {
+    fn set(&self) {
+        if let Err(err) = self.poller.post(CompletionPacket::new(self.event)) {
+            log::warn!("shell integration: could not wake the pty reader: {err}");
+        }
+    }
+}
+
 /// Called on the I/O thread with each new progress state the program reports.
 pub(crate) type ProgressCallback = Box<dyn Fn(ProgressState) + Send>;
 
 /// A pty whose output is read through a [`MarkFilter`]. Without shell integration (or without
-/// a [`Wake`] on Unix) output passes through unchanged and no marks are tracked. Progress
-/// reports are looked for in all output.
+/// a [`Wake`]) output passes through unchanged and no marks are tracked. Progress reports are
+/// looked for in all output.
 pub(crate) struct MarkedPty<T, L: EventListener> {
     pty: T,
     filter: MarkFilter<L>,
@@ -713,7 +735,10 @@ pub(crate) struct MarkedPty<T, L: EventListener> {
     on_progress: ProgressCallback,
     #[cfg(unix)]
     wake: Option<Wake>,
-    #[cfg(not(unix))]
+    /// Set when the event loop registers the pty, for shells with integration.
+    #[cfg(windows)]
+    wake: Option<Wake>,
+    #[cfg(windows)]
     scans: bool,
 }
 
@@ -740,7 +765,9 @@ impl<T, L: EventListener> MarkedPty<T, L> {
             on_progress,
             #[cfg(unix)]
             wake,
-            #[cfg(not(unix))]
+            #[cfg(windows)]
+            wake: None,
+            #[cfg(windows)]
             scans: token.is_some(),
         }
     }
@@ -770,12 +797,16 @@ impl<T: EventedReadWrite, L: EventListener> MarkedPty<T, L> {
         result
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     fn read_marked(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if !self.scans {
+        let Some(wake) = self.wake.as_ref() else {
             return self.pty.reader().read(buf);
+        };
+        let result = self.filter.read(self.pty.reader(), buf);
+        if matches!(&result, Err(err) if err.kind() == ErrorKind::WouldBlock) {
+            wake.set();
         }
-        self.filter.read(self.pty.reader(), buf)
+        result
     }
 }
 
@@ -809,6 +840,13 @@ impl<T: EventedReadWrite, L: EventListener> EventedReadWrite for MarkedPty<T, L>
                 )?;
             }
         }
+        #[cfg(windows)]
+        if self.scans {
+            self.wake = Some(Wake {
+                poller: poll.clone(),
+                event: PollingEvent::readable(alacritty_terminal::tty::PTY_READ_WRITE_TOKEN),
+            });
+        }
         Ok(())
     }
 
@@ -825,6 +863,10 @@ impl<T: EventedReadWrite, L: EventListener> EventedReadWrite for MarkedPty<T, L>
         #[cfg(unix)]
         if let Some(wake) = &self.wake {
             poll.delete(&wake.receiver)?;
+        }
+        #[cfg(windows)]
+        {
+            self.wake = None;
         }
         self.pty.deregister(poll)
     }

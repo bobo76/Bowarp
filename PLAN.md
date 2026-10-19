@@ -30,10 +30,19 @@ What is done is described in [FEATURES.md](FEATURES.md); the details are in the 
 
 **Fixed, not built yet (the Windows machine has no MSVC Build Tools)**
 
+- No command history on Windows (Up at a prompt went to the shell): output is now held after
+  the `A` / `B` marks there too, the event loop being woken by a completion packet posted to
+  its poller for the pty's key (`Wake` in `term-core/src/prompt.rs`), so the prompt's
+  position is tracked. Type-checked for `x86_64-pc-windows-msvc` only. Check in PowerShell,
+  Windows PowerShell, Git Bash and an Ubuntu tab: Up opens the HISTORY popup, the dimmed
+  suggestion follows typing, Enter on a row replaces the command line (PSReadLine's default
+  Windows edit mode may not bind Ctrl+E, which `PromptInput::replace_keys` sends first: try
+  it with the cursor moved left), output never stalls after a prompt, and ConPTY's redraws
+  don't misplace the popup or the command line read from the screen.
+
 - File explorer not following `cd` on Windows: the shells now report their folder in the `D`
-  mark (`cwd=<hex>`), and Windows scans the marks without holding output (no prompt
-  position, so no history yet). PowerShell, Windows PowerShell and Git Bash (login shell, via
-  `AGENTWS_BASH_LOGIN`) now get the script. Checked outside the app: the scripts' marks, and
+  mark (`cwd=<hex>`), and Windows scans the marks. PowerShell, Windows PowerShell and Git
+  Bash (login shell, via `AGENTWS_BASH_LOGIN`) now get the script. Checked outside the app: the scripts' marks, and
   that ConPTY (Windows 11 26100) passes OSC 133 through unchanged. Check in each of those tabs: `cd` updates the explorer, the Running
   indicator works, a new tab opens in the selected tab's folder, and Windows PowerShell
   starts without an execution-policy error.
@@ -124,10 +133,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   (Wayland/X11, socket paths).
 
 ## Backlog
-
-- Windows: command history. It needs the prompt's position (`A` / `B` marks held until the
-  parser reaches them, `MarkFilter`), whose Unix wake-up socket has no stand-in for the
-  Windows pty reader yet (`HOLDS_PROMPTS` in `term-core/src/prompt.rs`).
 
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
