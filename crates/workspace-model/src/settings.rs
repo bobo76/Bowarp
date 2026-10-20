@@ -519,12 +519,12 @@ mod tests {
     #[test]
     fn failed_save_is_kept_until_one_succeeds() {
         let root = TempDir::new();
-        // A file where the config folder should be: reading and saving fail.
+        // A file where the config folder should be: saving fails. Reading it is broken on Unix
+        // (not a directory) but missing on Windows (path not found), so not asserted.
         let folder = root.0.join("config");
         fs::write(&folder, "").unwrap();
         let path = folder.join("settings.json");
         let mut file = SettingsFile::load(path);
-        assert!(file.load_error().is_some());
         assert!(
             file.update(|settings| {
                 settings.extra.insert("a".into(), Value::from(1));
