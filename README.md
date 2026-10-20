@@ -48,7 +48,9 @@ The first tab runs a shell by default. To start with an agent or in another fold
 cargo run -p agent-workspace -- [shell|claude|copilot] [project-dir]
 ```
 
-Linting with Clippy, locally and in CI: [docs/code-quality.md](docs/code-quality.md).
+Linting with Clippy, locally and in CI: [docs/code-quality.md](docs/code-quality.md). Running
+the Linux build and tests on a Windows machine (Docker or WSL):
+[docs/linux-build-on-windows.md](docs/linux-build-on-windows.md).
 
 ## Tabs
 
