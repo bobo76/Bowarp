@@ -18,6 +18,7 @@ use gpui_kit::component::link::Link;
 use gpui_kit::component::setting::{
     SettingField, SettingGroup, SettingItem, SettingPage, Settings as SettingsView,
 };
+use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
 use gpui_kit::prelude::FluentBuilder;
@@ -25,11 +26,12 @@ use gpui_kit::{
     AnyElement, App, AppContext, Axis, ClickEvent, ClipboardItem, Entity, Focusable, IntoElement,
     ParentElement, SharedString, Styled, Subscription, Window, div, px,
 };
-use workspace_model::Settings;
+use workspace_model::{FontSize, Settings};
 
 use crate::about;
 use crate::assets::CODE_ICON;
 use crate::settings_file;
+use crate::terminal_element::DEFAULT_FONT_FAMILY;
 
 /// The settings page: the error banners, the pages, and the "Open settings file" button.
 pub fn render(
@@ -72,10 +74,39 @@ pub fn render(
         )
 }
 
-/// The Appearance page's groups. Later steps add their rows (font, theme, opacity) here.
+/// The Appearance page's groups. Later steps add their rows (theme, opacity) here.
 fn appearance_groups() -> Vec<SettingGroup> {
-    Vec::new()
+    vec![
+        SettingGroup::new().title("Font").items([
+            text_row(
+                "Font family",
+                format!(
+                    "The terminal's font, as installed. Empty, or a font that isn't installed, \
+                     uses {DEFAULT_FONT_FAMILY}."
+                ),
+                DEFAULT_FONT_FAMILY,
+                |settings| settings.font_family.clone(),
+                |settings, family| settings.font_family = family.trim().to_owned(),
+            )
+            .keywords(["typeface", "monospace", "text"]),
+            slider_row(
+                "Font size",
+                "The terminal's font size, in points.",
+                FONT_SIZE_SLIDER,
+                |settings| settings.font_size.points(),
+                |settings, size| settings.font_size = FontSize::new(size),
+            )
+            .keywords(["text", "zoom", "points"]),
+        ]),
+    ]
 }
+
+/// The font size slider's range and step; the file accepts `FontSize::MIN..=MAX`.
+const FONT_SIZE_SLIDER: SliderRange = SliderRange {
+    min: 8.,
+    max: 32.,
+    step: 1.,
+};
 
 /// The Terminal page's groups. Later steps add their rows (shell, launcher paths and icons)
 /// here.
@@ -217,7 +248,6 @@ impl<T> Clone for Binding<T> {
 impl<T> Binding<T> {
     /// Apply `value` live for this run without writing the file (`settings_file::preview`):
     /// for each step of a gesture (a slider moved). [`Binding::save`] must end the gesture.
-    #[expect(dead_code, reason = "the font size row (next step) applies live")]
     pub fn apply(&self, value: T, cx: &mut App) {
         (self.apply)(value, cx);
     }
@@ -244,7 +274,6 @@ pub type Control<T> = Rc<dyn Fn(T, &Binding<T>, &mut Window, &mut App) -> AnyEle
 /// "Reset to default" shows under the control, and the page's reset includes the row, while
 /// the value differs from `get(&Settings::default())`. Titles must differ between rows: they
 /// key the rows' control states.
-#[expect(dead_code, reason = "rows come with the next steps")]
 pub fn bound_row<T: Clone + PartialEq + 'static>(
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
@@ -331,7 +360,6 @@ pub fn switch_row(
 
 /// A text field row for a `String` field of `Settings` (see [`bound_row`]): saved when the
 /// field loses the keyboard or on Enter, not per key.
-#[expect(dead_code, reason = "rows come with the next steps")]
 pub fn text_row(
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
@@ -388,4 +416,77 @@ fn text_field(
         input.update(cx, |input, cx| input.set_value(value, window, cx));
     }
     Input::new(&input).small().w_64().into_any_element()
+}
+
+/// A slider's bounds and step (see [`slider_row`]).
+#[derive(Clone, Copy)]
+pub struct SliderRange {
+    pub min: f32,
+    pub max: f32,
+    pub step: f32,
+}
+
+/// A slider row for an `f32` field of `Settings` (see [`bound_row`]), with the value written
+/// next to it: applied live while dragged, saved once when released. A value outside `range`
+/// (set in the file) shows with the thumb at the end.
+pub fn slider_row(
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
+    range: SliderRange,
+    get: impl Fn(&Settings) -> f32 + 'static,
+    set: impl Fn(&mut Settings, f32) + 'static,
+) -> SettingItem {
+    bound_row(
+        title,
+        description,
+        get,
+        set,
+        Rc::new(move |value, binding, window, cx| slider_field(value, range, binding, window, cx)),
+    )
+}
+
+/// A slider's state, kept across renders (see [`Binding::state_key`]).
+struct SliderField {
+    slider: Entity<SliderState>,
+    _events: Subscription,
+}
+
+fn slider_field(
+    value: f32,
+    range: SliderRange,
+    binding: &Binding<f32>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let shown = value.clamp(range.min, range.max);
+    let state = window.use_keyed_state(binding.state_key("slider"), cx, |_, cx| {
+        let slider = cx.new(|_| {
+            SliderState::new()
+                .min(range.min)
+                .max(range.max)
+                .step(range.step)
+                .default_value(shown)
+        });
+        let binding = binding.clone();
+        let events = cx.subscribe(&slider, move |_, _, event: &SliderEvent, cx| match event {
+            SliderEvent::Change(value) => binding.apply(value.start(), cx),
+            SliderEvent::Release(value) => binding.save(value.start(), cx),
+        });
+        SliderField {
+            slider,
+            _events: events,
+        }
+    });
+    let slider = state.read(cx).slider.clone();
+    // A value changed elsewhere (reset, the file reloaded) moves the thumb.
+    if slider.read(cx).value().start() != shown {
+        slider.update(cx, |slider, cx| slider.set_value(shown, window, cx));
+    }
+    div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .child(Slider::new(&slider).w_48())
+        .child(div().w_8().text_sm().text_right().child(format!("{value}")))
+        .into_any_element()
 }

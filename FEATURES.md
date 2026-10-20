@@ -27,6 +27,7 @@ directly to model APIs.
 - Support split panes, adjustable pane sizes, and quick switching between sessions.
 - Run any action or jump to any tab from a command palette.
 - Toggle full screen (F11).
+- Choose the terminal font family and size, applied live to every tab.
 - Light and dark themes, terminal color schemes, and adjustable window opacity.
 - Warn before closing a session or workspace with running processes.
 

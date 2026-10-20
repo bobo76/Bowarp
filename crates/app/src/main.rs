@@ -111,6 +111,7 @@ fn main() {
         .run(move |cx| {
             gpui_kit::init(cx);
             settings_file::init(cx);
+            terminal_element::init(cx);
             terminal_view::init(cx);
             workspace_view::init(cx);
             history::init(cx);

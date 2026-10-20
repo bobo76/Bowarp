@@ -23,12 +23,24 @@ use crate::window_state::write_atomic;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// The terminal's font family; empty (the default) for the built-in one. A family that
+    /// isn't installed falls back to the built-in one too (the app checks).
+    #[serde(deserialize_with = "lenient")]
+    pub font_family: String,
+    /// The terminal's font size.
+    #[serde(deserialize_with = "lenient")]
+    pub font_size: FontSize,
     /// Fields this version doesn't know, written back as they were.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 impl Settings {
+    /// The font family the user set, trimmed; `None` for the built-in one.
+    pub fn font_family(&self) -> Option<&str> {
+        Some(self.font_family.trim()).filter(|family| !family.is_empty())
+    }
+
     pub fn from_json(text: &str) -> serde_json::Result<Self> {
         serde_json::from_str(text)
     }
@@ -39,12 +51,44 @@ impl Settings {
     }
 }
 
+/// The terminal's font size in points, kept within [`FontSize::MIN`]..=[`FontSize::MAX`]: a
+/// value outside is clamped when read, a value of the wrong type gives [`FontSize::DEFAULT`].
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct FontSize(f32);
+
+impl FontSize {
+    pub const MIN: f32 = 6.0;
+    pub const MAX: f32 = 72.0;
+    pub const DEFAULT: f32 = 14.0;
+
+    /// `points` clamped to the range; not a number gives the default.
+    pub fn new(points: f32) -> Self {
+        if points.is_nan() {
+            return Self::default();
+        }
+        Self(points.clamp(Self::MIN, Self::MAX))
+    }
+
+    pub fn points(self) -> f32 {
+        self.0
+    }
+}
+
+impl Default for FontSize {
+    fn default() -> Self {
+        Self(Self::DEFAULT)
+    }
+}
+
+impl<'de> Deserialize<'de> for FontSize {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        f32::deserialize(deserializer).map(Self::new)
+    }
+}
+
 /// `deserialize_with` for every `Settings` field: a value of the wrong type (or `null`) gives
 /// `T::default()` and is dropped at the next save. Fails only on invalid JSON.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used by the fields the next steps add")
-)]
 fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
@@ -209,6 +253,31 @@ impl SettingsFile {
         self.load_error = None;
         write_atomic(path, &text)
     }
+}
+
+/// The installed family to draw `requested` in: its name as listed in `installed` (the
+/// platform's family names), or `None` when it isn't listed. `ignore_case` matches names the
+/// way Windows does. Names starting with `.` (GPUI's aliases, like `.SystemUIFont`) are
+/// refused: they stand for proportional fonts.
+pub fn installed_font_family<'a>(
+    installed: &'a [String],
+    requested: &str,
+    ignore_case: bool,
+) -> Option<&'a str> {
+    if requested.is_empty() || requested.starts_with('.') {
+        return None;
+    }
+    let requested_lower = requested.to_lowercase();
+    installed
+        .iter()
+        .find(|name| {
+            if ignore_case {
+                name.to_lowercase() == requested_lower
+            } else {
+                name.as_str() == requested
+            }
+        })
+        .map(String::as_str)
 }
 
 #[cfg(test)]
@@ -539,6 +608,63 @@ mod tests {
         assert_eq!(file.load_error(), None);
     }
 
+    #[test]
+    fn font_settings_default_to_the_built_in_font() {
+        let settings = Settings::default();
+        assert_eq!(settings.font_family(), None);
+        assert_eq!(settings.font_size.points(), FontSize::DEFAULT);
+    }
+
+    #[test]
+    fn font_settings_read_good_values() {
+        let settings =
+            Settings::from_json(r#"{"font_family": " Fira Code ", "font_size": 20.5}"#).unwrap();
+        assert_eq!(settings.font_family(), Some("Fira Code"));
+        assert_eq!(settings.font_size.points(), 20.5);
+        assert!(settings.extra.is_empty());
+        let again = Settings::from_json(&settings.to_json().unwrap()).unwrap();
+        assert_eq!(again, settings);
+    }
+
+    #[test]
+    fn blank_font_family_is_the_built_in_one() {
+        for text in [r#"{"font_family": ""}"#, r#"{"font_family": "  "}"#] {
+            assert_eq!(
+                Settings::from_json(text).unwrap().font_family(),
+                None,
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn font_settings_with_wrong_types_get_their_defaults() {
+        let settings = Settings::from_json(r#"{"font_family": 3, "font_size": "big"}"#).unwrap();
+        assert_eq!(settings, Settings::default());
+        let settings = Settings::from_json(r#"{"font_size": null}"#).unwrap();
+        assert_eq!(settings.font_size, FontSize::default());
+    }
+
+    #[test]
+    fn font_size_is_clamped() {
+        for (text, points) in [
+            (r#"{"font_size": 2}"#, FontSize::MIN),
+            (r#"{"font_size": -14}"#, FontSize::MIN),
+            (r#"{"font_size": 500}"#, FontSize::MAX),
+            (r#"{"font_size": 1e40}"#, FontSize::MAX),
+            (r#"{"font_size": 6}"#, 6.0),
+            (r#"{"font_size": 72}"#, 72.0),
+        ] {
+            let settings = Settings::from_json(text).unwrap();
+            assert_eq!(settings.font_size.points(), points, "{text}");
+        }
+        assert_eq!(FontSize::new(f32::NAN), FontSize::default());
+        assert_eq!(FontSize::new(f32::INFINITY).points(), FontSize::MAX);
+        // Written back clamped.
+        let settings = Settings::from_json(r#"{"font_size": 100}"#).unwrap();
+        assert!(settings.to_json().unwrap().contains(r#""font_size": 72.0"#));
+    }
+
     #[derive(Debug, Default, PartialEq, Deserialize)]
     #[serde(default)]
     struct Sample {
@@ -585,5 +711,49 @@ mod tests {
         for text in ["", "[]", "3", "null", r#"{"size": }"#, r#"{"size": 1"#] {
             assert!(sample(text).is_err(), "{text:?}");
         }
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    #[test]
+    fn installed_font_family_matches_exactly_when_case_counts() {
+        let installed = names(&["DejaVu Sans Mono", "Liberation Mono"]);
+        let found = installed_font_family(&installed, "Liberation Mono", false);
+        assert_eq!(found, Some("Liberation Mono"));
+        assert_eq!(
+            installed_font_family(&installed, "liberation mono", false),
+            None
+        );
+        assert_eq!(installed_font_family(&installed, "Liberation", false), None);
+        assert_eq!(
+            installed_font_family(&installed, "No Such Font", false),
+            None
+        );
+    }
+
+    #[test]
+    fn installed_font_family_ignores_case_like_windows() {
+        let installed = names(&["Cascadia Mono", "Consolas", "Écrin Mono"]);
+        let found = installed_font_family(&installed, "cascadia MONO", true);
+        assert_eq!(found, Some("Cascadia Mono"));
+        assert_eq!(
+            installed_font_family(&installed, "écrin mono", true),
+            Some("Écrin Mono")
+        );
+        assert_eq!(installed_font_family(&installed, "Cascadia", true), None);
+    }
+
+    #[test]
+    fn installed_font_family_refuses_aliases_and_empty_names() {
+        let installed = names(&[".SystemUIFont", ".ZedMono", ""]);
+        for ignore_case in [false, true] {
+            for requested in [".SystemUIFont", ".ZedMono", ".zedmono", ""] {
+                let found = installed_font_family(&installed, requested, ignore_case);
+                assert_eq!(found, None, "{requested:?}");
+            }
+        }
+        assert_eq!(installed_font_family(&[], "Liberation Mono", false), None);
     }
 }

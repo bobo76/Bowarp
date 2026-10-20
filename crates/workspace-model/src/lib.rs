@@ -53,7 +53,9 @@ pub use running::{
     format_clock, running_badge,
 };
 pub use search::{SearchedTab, TabQuery, step_match};
-pub use settings::{Settings, SettingsFile, SettingsLoad, settings_backup_path};
+pub use settings::{
+    FontSize, Settings, SettingsFile, SettingsLoad, installed_font_family, settings_backup_path,
+};
 pub use tab::{TabColor, TabMeta};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};
 pub use wheel::{WheelScroll, notch_lines};

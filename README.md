@@ -267,6 +267,11 @@ can't be read (the defaults apply until it is fixed or a change moves it to
 `settings.json.bak`) or a change couldn't be saved. The About page shows the version and the
 config folder.
 
+The Appearance page sets the terminal font: its family (an installed font's name; empty, or a
+font that isn't installed, uses DejaVu Sans Mono, Cascadia Mono on Windows) and size (the
+slider applies while dragged and saves when released; the file accepts 6 to 72 points). Each
+tab re-measures its cells and resizes its terminal when it is next shown.
+
 ## About
 
 The `i` button in the title bar (after the explorer button) shows the version, with the git

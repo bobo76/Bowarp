@@ -24,13 +24,10 @@ pub(super) struct SettingsPane {
 
 impl SettingsPane {
     pub fn new(cx: &mut Context<WorkspaceView>) -> Self {
-        // A change saved from the page (or its error) redraws it; rows read the settings when
-        // drawn.
-        let changes = cx.observe_global::<AppSettings>(|workspace, cx| {
-            if workspace.settings.shown {
-                cx.notify();
-            }
-        });
+        // A change (from the page, or the file reloaded after a hand edit) redraws the page or
+        // the terminal: both read the settings when drawn, and the terminal measures its cells
+        // and resizes its pty then (a hidden tab does when it shows).
+        let changes = cx.observe_global::<AppSettings>(|_, cx| cx.notify());
         Self {
             open: false,
             shown: false,

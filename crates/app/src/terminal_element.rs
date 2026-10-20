@@ -8,10 +8,11 @@ use std::sync::Arc;
 
 use gpui_kit::{
     App, BorderStyle, Bounds, CursorStyle, DispatchPhase, Element, ElementId, ElementInputHandler,
-    Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior,
-    Hsla, InspectorElementId, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    PaintQuad, Pixels, Point, ShapedLine, StrikethroughStyle, Style, TextAlign, TextRun,
-    UnderlineStyle, Window, WindowTextSystem, fill, font, outline, point, px, relative, size,
+    Entity, FocusHandle, Font, FontStyle, FontWeight, Global, GlobalElementId, Hitbox,
+    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine, SharedString,
+    StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window, WindowTextSystem, fill,
+    font, outline, point, px, relative, size,
 };
 use term_core::alacritty_terminal::grid::Dimensions;
 use term_core::alacritty_terminal::term::cell::Flags;
@@ -19,15 +20,17 @@ use term_core::alacritty_terminal::term::{RenderableContent, TermMode};
 use term_core::alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Rgb};
 use term_core::{Palette, Session, TermDimensions, dim};
 use unicode_width::UnicodeWidthChar;
+use workspace_model::installed_font_family;
 
 use crate::scrollbar::{ScrollMetrics, ScrollbarLayout, ScrollbarState};
+use crate::settings_file::{self, AppSettings};
 use crate::terminal_view::{GridGeometry, TerminalView};
 
+/// The terminal font when the settings name none, or one that isn't installed.
 #[cfg(target_os = "windows")]
-pub(crate) const FONT_FAMILY: &str = "Cascadia Mono";
+pub(crate) const DEFAULT_FONT_FAMILY: &str = "Cascadia Mono";
 #[cfg(not(target_os = "windows"))]
-pub(crate) const FONT_FAMILY: &str = "DejaVu Sans Mono";
-const FONT_SIZE: f32 = 14.0;
+pub(crate) const DEFAULT_FONT_FAMILY: &str = "DejaVu Sans Mono";
 const LINE_HEIGHT_FACTOR: f32 = 1.2;
 /// Space around the grid. The scroll bar sits in the right padding.
 const PADDING_X: f32 = 8.0;
@@ -187,9 +190,10 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        let shaper = TextShaper::new(window);
+        // Read at each frame: a font change re-measures the cells and resizes the pty below.
+        let shaper = TextShaper::new(window, cx);
         let cell_width = shaper.cell_width();
-        let line_height = px((FONT_SIZE * LINE_HEIGHT_FACTOR).round());
+        let line_height = px((f32::from(shaper.font_size) * LINE_HEIGHT_FACTOR).round());
         let grid_bounds = inset(bounds, px(PADDING_X), px(PADDING_Y));
         let (columns, screen_lines) = fit_grid(grid_bounds, cell_width, line_height);
         let focused = self.focus_handle.is_focused(window);
@@ -394,11 +398,13 @@ struct TextShaper {
 }
 
 impl TextShaper {
-    fn new(window: &Window) -> Self {
+    /// In the font of the settings.
+    fn new(window: &Window, cx: &App) -> Self {
+        let text_system = window.text_system().clone();
         Self {
-            text_system: window.text_system().clone(),
-            font: font(FONT_FAMILY),
-            font_size: px(FONT_SIZE),
+            font: font(font_family(cx)),
+            font_size: px(settings_file::settings(cx).font_size.points()),
+            text_system,
         }
     }
 
@@ -408,7 +414,7 @@ impl TextShaper {
         self.text_system
             .advance(font_id, self.font_size, 'm')
             .map(|advance| advance.width)
-            .unwrap_or(px(FONT_SIZE * 0.6))
+            .unwrap_or(self.font_size * 0.6)
     }
 
     fn shape(&self, text: String, style: CellStyle) -> ShapedLine {
@@ -416,6 +422,56 @@ impl TextShaper {
         self.text_system
             .shape_line(text.into(), self.font_size, &[run], None)
     }
+}
+
+/// The terminal's font family, worked out from the settings when their family changes (not
+/// on each frame): the settings' one when it is installed, else the built-in one. GPUI would
+/// draw a missing family in the first font of its own fallback list that loads (often a
+/// proportional one), which breaks the grid.
+struct TerminalFont {
+    /// The settings' family it was worked out from (trimmed, empty for none).
+    requested: String,
+    family: SharedString,
+}
+
+impl Global for TerminalFont {}
+
+pub fn init(cx: &mut App) {
+    refresh_font_family(cx);
+    cx.observe_global::<AppSettings>(refresh_font_family)
+        .detach();
+}
+
+/// Checks the settings' family against the installed names (never `resolve_font`, which
+/// falls back or panics for a missing one) when it differs from the one last checked.
+fn refresh_font_family(cx: &mut App) {
+    let requested = settings_file::settings(cx)
+        .font_family()
+        .unwrap_or_default()
+        .to_owned();
+    if cx
+        .try_global::<TerminalFont>()
+        .is_some_and(|font| font.requested == requested)
+    {
+        return;
+    }
+    let family = if requested.is_empty() {
+        DEFAULT_FONT_FAMILY.into()
+    } else {
+        let installed = cx.text_system().all_font_names();
+        // DirectWrite matches family names in any case; cosmic-text (Linux) only exactly.
+        installed_font_family(&installed, &requested, cfg!(target_os = "windows")).map_or_else(
+            || DEFAULT_FONT_FAMILY.into(),
+            |family| family.to_owned().into(),
+        )
+    };
+    cx.set_global(TerminalFont { requested, family });
+}
+
+/// The terminal's font family (see `TerminalFont`).
+pub(crate) fn font_family(cx: &App) -> SharedString {
+    cx.try_global::<TerminalFont>()
+        .map_or_else(|| DEFAULT_FONT_FAMILY.into(), |font| font.family.clone())
 }
 
 /// Maps grid cells to window positions.

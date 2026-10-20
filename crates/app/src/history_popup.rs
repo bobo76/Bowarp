@@ -13,7 +13,7 @@ use term_core::{PromptInput, SessionKind};
 use workspace_model::{HistoryEntry, HistorySelection, display_path};
 
 use crate::history::History;
-use crate::terminal_element::FONT_FAMILY;
+use crate::terminal_element;
 use crate::terminal_view::TerminalView;
 
 /// Rows shown at most; more scroll.
@@ -279,6 +279,7 @@ impl TerminalView {
         let (muted, border) = (theme.muted_foreground, theme.border);
         let (background, foreground) = (theme.popover, theme.popover_foreground);
         let home = std::env::home_dir();
+        let family = terminal_element::font_family(cx);
         let empty = visible.is_empty();
         let rows: Vec<AnyElement> = visible
             .into_iter()
@@ -287,7 +288,8 @@ impl TerminalView {
                     .dir
                     .as_deref()
                     .map(|dir| display_path(dir, home.as_deref()));
-                self.history_row(index, entry.command, folder, selected == Some(index), cx)
+                let selected = selected == Some(index);
+                self.history_row(index, entry.command, folder, selected, family.clone(), cx)
             })
             .collect();
         div()
@@ -356,6 +358,7 @@ impl TerminalView {
         command: String,
         folder: Option<String>,
         selected: bool,
+        family: SharedString,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.theme();
@@ -380,7 +383,7 @@ impl TerminalView {
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .font_family(FONT_FAMILY)
+                    .font_family(family)
                     .text_sm()
                     .child(command),
             )

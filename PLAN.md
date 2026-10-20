@@ -5,7 +5,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
 ## Status (2026-10-19)
 
 [FEATURES.md](FEATURES.md) is the target; what is not built yet is in the milestones and the
-backlog below. Details of finished work are in the git history (303 tests).
+backlog below. Details of finished work are in the git history (315 tests).
 
 **Known limitations**
 
@@ -27,21 +27,24 @@ backlog below. Details of finished work are in the git history (303 tests).
   allowed. Edits made on disk while running apply when the settings page opens, when the
   file is saved in the file viewer, or at the next change from the app; edits made in another
   editor while the page shows apply only then (no file watch).
+- Terminal font: a family that isn't installed (exact name; any case on Windows) silently uses
+  the built-in one (DejaVu Sans Mono, Cascadia Mono on Windows); the page doesn't say so. So do
+  GPUI's `.`-names (`.SystemUIFont`) and a localized or secondary family name (Linux lists only
+  each font's first family name), even when the font would load under it. A font
+  change shows in a tab's terminal when it is next drawn, so background tabs (and their pty
+  size) catch up when selected. The slider covers 8-32 points; the file takes 6-72.
 
 **Next steps (quick wins 3: settings)**
 
-1. Font family and size: from the settings file (today hard-coded), with rows on the
-   Appearance page; a change applies live (the terminal re-measures its cells and resizes the
-   pty).
-2. Default shell: from the settings file (a row on the Terminal page); the new-tab menu's
+1. Default shell: from the settings file (a row on the Terminal page); the new-tab menu's
    first entry and Ctrl+Shift+T use it; empty keeps the $SHELL / Git Bash default.
-3. File viewer width: saved in the settings file when it changes and restored at startup
+2. File viewer width: saved in the settings file when it changes and restored at startup
    (not shown on the settings page).
-4. Configurable terminal path: the executable path for each launcher entry (Terminal, Git
+3. Configurable terminal path: the executable path for each launcher entry (Terminal, Git
    Bash, `claude`, `copilot`) saved in the settings file and shown on the settings page, for
    programs that aren't on `PATH` or where the wrong copy is found first; an empty value keeps
    the current lookup.
-5. Agent launch arguments: extra command-line arguments for the Claude Code and Copilot CLI
+4. Agent launch arguments: extra command-line arguments for the Claude Code and Copilot CLI
    launcher entries (e.g. `--yolo` for `copilot`, `--dangerously-skip-permissions` or
    `--model opus` for `claude`), saved in the settings file and shown on the settings page
    next to the entry's path. Split like a shell command line (quotes group words) and added
@@ -49,22 +52,22 @@ backlog below. Details of finished work are in the git history (303 tests).
    tabs started from that entry (the `+` menu, Ctrl+Shift+T). A restored tab keeps the
    arguments it started with (saved with the tab in `tabs.json`), not the current setting.
    Empty adds none.
-6. Configurable terminal icon: the icon for each launcher entry, picked from the bundled
+5. Configurable terminal icon: the icon for each launcher entry, picked from the bundled
    `LauncherIcon` set (Bash, PowerShell, Command Prompt, Zsh, Fish, Ubuntu, ...) and saved in
    the settings file (settings page row); it shows in the new-tab menu and on the sidebar row
    of every tab started from that entry (restored tabs included). "Automatic" keeps the
    current detection (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`),
    e.g. for a wrapper script that `shell_icon` only sees as `Shell`.
-7. Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
+6. Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
    and terminal color schemes: a few bundled schemes plus user schemes imported from
    base16/iTerm files, saved in the settings file and picked on the Appearance page. "System"
    follows the OS light/dark setting.
-8. Window opacity and background blur, set in the settings file (opacity applies to the
+7. Window opacity and background blur, set in the settings file (opacity applies to the
    terminal background only, text stays opaque); blur where the platform allows it (Windows
    acrylic/mica, KDE on X11).
-9. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
+8. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
    `cx.build_action`) from the settings file in place of `default_bindings`.
-10. Executable path on the settings page's About page: an "Executable" row under "Config
+9. Executable path on the settings page's About page: an "Executable" row under "Config
    folder" (`about_groups` in `app/src/settings_page.rs`) showing `std::env::current_exe()`,
    laid out vertically like the folder; "Unknown" when it can't be read. Tells which copy is
    running when several are installed or a dev build sits next to a release.
