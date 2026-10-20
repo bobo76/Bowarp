@@ -57,7 +57,7 @@ directly to model APIs.
   session or `cd` there (or to the parent folder), and copy paths.
 - View and edit a clicked file beside the terminal: Markdown rendered or as source, JSON
   laid out and colored with foldable blocks, other text colored by language, images (SVG
-  drawn or as source); saving with Ctrl+S, and reloading when the file changes on disk
+  drawn or as source; up to 50 MB, animated GIF and WebP up to 2 MB); saving with Ctrl+S, and reloading when the file changes on disk
   (keeping the scroll position); find and replace in the open file. Links between documents
   open in the viewer. The viewer is resizable, and each tab keeps its own open file.
 

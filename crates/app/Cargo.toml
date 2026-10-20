@@ -22,6 +22,24 @@ gpui-kit = { workspace = true, features = [
     "tree-sitter-typescript",
     "tree-sitter-yaml",
 ] }
+# Only to read an image's dimensions from its header. These are the formats GPUI decodes, so
+# nothing is compiled that GPUI doesn't already build.
+image = { version = "0.25.10", default-features = false, features = [
+    "bmp",
+    "dds",
+    "exr",
+    "ff",
+    "gif",
+    "hdr",
+    "ico",
+    "jpeg",
+    "png",
+    "pnm",
+    "qoi",
+    "tga",
+    "tiff",
+    "webp",
+] }
 log.workspace = true
 notify.workspace = true
 term-core.workspace = true

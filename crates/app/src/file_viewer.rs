@@ -4,7 +4,8 @@
 //! one, and images only the drawing. The raw view edits the file, and Ctrl+S saves it. Each tab
 //! has its own viewer.
 
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -24,6 +25,7 @@ use gpui_kit::{
     Size, StatefulInteractiveElement, Styled, StyledImage, Subscription, Task, WeakEntity, Window,
     div, img, px,
 };
+use image::{ImageError, ImageReader};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use workspace_model::display_path;
 use workspace_model::file_view::{self, JsonError, ViewKind};
@@ -798,11 +800,28 @@ fn render_text(
     }))
 }
 
-/// Whether an image file may be shown: it exists and is within the size limit. Whether it
-/// decodes is known once it is drawn.
+/// Whether an image file may be shown: it exists, is within its format's size limit, and is not
+/// wider or taller than a GPU texture. Only the file's header is read. Whether it decodes is
+/// known once it is drawn.
 fn check_image(path: &Path) -> Result<(), String> {
     let size = fs::metadata(path).map_err(|err| err.to_string())?.len();
-    file_view::check_size(size).map_err(|reason| reason.to_string())
+    let mut header = Vec::with_capacity(file_view::IMAGE_HEADER_LEN);
+    File::open(path)
+        .and_then(|file| {
+            file.take(file_view::IMAGE_HEADER_LEN as u64)
+                .read_to_end(&mut header)
+        })
+        .map_err(|err| err.to_string())?;
+    file_view::check_image_size(size, &header).map_err(|reason| reason.to_string())?;
+    // A header `image` can't read is left to GPUI, which shows its own error when drawing.
+    let Ok((width, height)) = ImageReader::open(path)
+        .and_then(ImageReader::with_guessed_format)
+        .map_err(ImageError::IoError)
+        .and_then(ImageReader::into_dimensions)
+    else {
+        return Ok(());
+    };
+    file_view::check_image_dimensions(width, height).map_err(|reason| reason.to_string())
 }
 
 /// The file's text, or why it is not shown.
@@ -828,5 +847,49 @@ impl Render for FileViewer {
             .on_key_down(cx.listener(Self::on_key_down))
             .child(self.render_header(window, cx))
             .child(div().flex_1().min_h_0().child(self.render_body(cx)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_image_reads_the_header_for_format_and_dimensions() {
+        let dir = std::env::temp_dir().join(format!("agentws-check-image-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let photo = dir.join("photo.png");
+        image::RgbaImage::new(64, 32).save(&photo).unwrap();
+        assert_eq!(check_image(&photo), Ok(()));
+
+        let panorama = dir.join("panorama.png");
+        image::GrayImage::new(file_view::MAX_IMAGE_SIDE + 1, 1)
+            .save(&panorama)
+            .unwrap();
+        assert_eq!(
+            check_image(&panorama),
+            Err(
+                "The image is too large to show (16385 x 1 pixels, the limit is 16384 on each \
+                 side)."
+                    .to_owned()
+            )
+        );
+
+        // Named as a PNG, but GIF bytes: the GIF limit applies.
+        let gif = dir.join("animated.png");
+        let mut bytes = b"GIF89a".to_vec();
+        bytes.resize(file_view::MAX_VIEW_BYTES as usize + 1, 0);
+        fs::write(&gif, bytes).unwrap();
+        assert!(check_image(&gif).unwrap_err().contains("the limit is 2 MB"));
+
+        // A header that can't be read is left to GPUI.
+        let garbage = dir.join("garbage.png");
+        fs::write(&garbage, b"not an image").unwrap();
+        assert_eq!(check_image(&garbage), Ok(()));
+
+        assert!(check_image(&dir.join("missing.png")).is_err());
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

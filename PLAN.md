@@ -5,12 +5,14 @@ Feature spec: [FEATURES.md](FEATURES.md)
 ## Status (2026-10-19)
 
 [FEATURES.md](FEATURES.md) is the target; what is not built yet is in the milestones and the
-backlog below. Details of finished work are in the git history (278 tests).
+backlog below. Details of finished work are in the git history (282 tests).
 
 **Known limitations**
 
 - Not supported in the file viewer: AVIF images (GPUI's decoder lacks it: "The image could
   not be read."), a `#heading` in a document link (the file opens at the top).
+- File viewer images: still WebP files share animated GIF/WebP's 2 MB limit (other images
+  50 MB), and images over 16384 pixels on a side are refused rather than scaled down.
 - An OSC 8 link spanning several lines: only its row is underlined.
 - An agent tab going on as a shell starts in the agent's last known folder: on Linux its
   `/proc` folder as of its last title change or hook event, elsewhere the folder it started in.
@@ -21,12 +23,7 @@ backlog below. Details of finished work are in the git history (278 tests).
 
 **Next steps (quick wins 3)**
 
-1. File viewer image size limit: images share the text editor's 2 MB `MAX_VIEW_BYTES`
-   (`check_image` in `crates/app/src/file_viewer.rs` calls `file_view::check_size`), so an
-   ordinary 4 MB PNG is refused, though images are drawn by GPUI and never reach the editor.
-   Add a separate `MAX_IMAGE_BYTES` (50 MB) for `check_image`, have `Unviewable::TooLarge`
-   carry the limit it broke so the message names the right one, and test both limits.
-2. Settings file and settings page ([reference](docs/ui-reference/settings.png)):
+1. Settings file and settings page ([reference](docs/ui-reference/settings.png)):
    - `settings.json` in the config folder (next to `tabs.json`), in `workspace-model`: every
      field optional with a default, unknown fields kept, a broken file logged and replaced by
      the defaults (not overwritten). Unit-tested.
@@ -40,10 +37,10 @@ backlog below. Details of finished work are in the git history (278 tests).
      terminal re-measures its cells and resizes the pty).
    - Later backlog items add their rows here (theme, opacity, shortcuts, launcher paths and
      icons).
-3. Font family and size: from the settings file (today hard-coded).
-4. Default shell: the new-tab menu's first entry and Ctrl+Shift+T use it; empty keeps the
+2. Font family and size: from the settings file (today hard-coded).
+3. Default shell: the new-tab menu's first entry and Ctrl+Shift+T use it; empty keeps the
    $SHELL / Git Bash default.
-5. File viewer width: saved in the settings file when it changes and restored at startup
+4. File viewer width: saved in the settings file when it changes and restored at startup
    (not shown on the settings page).
 
 **Fixed, not tested yet (built and unit-tested by the Windows CI, not run on a Windows machine)**
@@ -161,6 +158,11 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   Enter / Shift+Enter to move, match count, case and whole-word toggles), Ctrl+H adds a
   replace field (replace one / all) in source mode; rendered Markdown only gets find.
 - File viewer: the `⋮` menu from the reference screenshot.
+- First-run tab on Windows opens Git Bash: with no saved tabs and no tab on the command line,
+  `main.rs` starts `LaunchSpec::shell(cwd)` (no program), which alacritty runs as Windows
+  PowerShell, while Ctrl+Shift+T and the `+` menu open `launcher::default_shell` (Git Bash).
+  Start the first tab from `default_shell(&launchers)` in the current folder instead, falling
+  back to `LaunchSpec::shell` when no shell is found; Unix keeps `$SHELL`.
 - Command history with zsh-autosuggestions (likely bug, unverified): Enter on a HISTORY row
   sends Ctrl+E, which the plugin binds to accept the grey suggestion, but the reported line
   (`$BUFFER`, `.zshenv` `__agentws_report_line`) excludes it, so the Backspaces leave the

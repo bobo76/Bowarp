@@ -11,6 +11,20 @@ use crate::file_tree::{FileKind, file_kind};
 /// Files larger than this are not opened: the editor slows down well before.
 pub const MAX_VIEW_BYTES: u64 = 2 * 1024 * 1024;
 
+/// Still images larger than this are not shown. They are decoded and drawn by GPUI, never put
+/// in the editor. This bounds the file GPUI reads, not the decoded size: the `image` crate caps
+/// a still image's decode at 512 MiB, and [`MAX_IMAGE_SIDE`] keeps it within one GPU texture.
+/// GIF and WebP may be animated, and every frame is decoded with no cap, so they keep
+/// [`MAX_VIEW_BYTES`] (see [`image_size_limit`]).
+pub const MAX_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Images wider or taller than this many pixels are not shown: GPUI draws an image from one GPU
+/// texture, and a larger one draws blank. 16384 is the texture limit of most desktop GPUs.
+pub const MAX_IMAGE_SIDE: u32 = 16384;
+
+/// How many bytes from the start of an image file [`image_size_limit`] needs.
+pub const IMAGE_HEADER_LEN: usize = 12;
+
 /// How a file is shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewKind {
@@ -74,7 +88,17 @@ fn extension(name: &str) -> Option<String> {
 /// Why a file is not shown.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unviewable {
-    TooLarge(u64),
+    /// The file's size and the limit it is over, in bytes.
+    TooLarge {
+        size: u64,
+        limit: u64,
+    },
+    /// The image's size and the limit on each side, in pixels.
+    TooManyPixels {
+        width: u32,
+        height: u32,
+        limit: u32,
+    },
     Binary,
     NotUtf8,
 }
@@ -82,11 +106,20 @@ pub enum Unviewable {
 impl fmt::Display for Unviewable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TooLarge(size) => write!(
+            Self::TooLarge { size, limit } => write!(
                 f,
                 "The file is too large to open ({:.1} MB, the limit is {} MB).",
                 *size as f64 / (1024. * 1024.),
-                MAX_VIEW_BYTES / (1024 * 1024)
+                limit / (1024 * 1024)
+            ),
+            Self::TooManyPixels {
+                width,
+                height,
+                limit,
+            } => write!(
+                f,
+                "The image is too large to show ({width} x {height} pixels, the limit is {limit} \
+                 on each side)."
             ),
             Self::Binary => f.write_str("The file is binary."),
             Self::NotUtf8 => f.write_str("The file is not UTF-8 text."),
@@ -94,10 +127,44 @@ impl fmt::Display for Unviewable {
     }
 }
 
-/// Whether a file of `size` bytes may be read for viewing.
+/// Whether a file of `size` bytes may be read for viewing as text.
 pub fn check_size(size: u64) -> Result<(), Unviewable> {
-    if size > MAX_VIEW_BYTES {
-        return Err(Unviewable::TooLarge(size));
+    check_limit(size, MAX_VIEW_BYTES)
+}
+
+/// The size limit for an image file that starts with `header` (its first
+/// [`IMAGE_HEADER_LEN`] bytes, or fewer if the file is shorter). GIF and WebP may be animated,
+/// so they keep the text limit; other images get [`MAX_IMAGE_BYTES`]. The format is told from
+/// the bytes, as GPUI does, so a misnamed file gets the limit of what it really is.
+pub fn image_size_limit(header: &[u8]) -> u64 {
+    let gif = header.starts_with(b"GIF8");
+    let webp = header.len() >= 12 && header.starts_with(b"RIFF") && &header[8..12] == b"WEBP";
+    if gif || webp {
+        return MAX_VIEW_BYTES;
+    }
+    MAX_IMAGE_BYTES
+}
+
+/// Whether an image file of `size` bytes that starts with `header` may be shown.
+pub fn check_image_size(size: u64, header: &[u8]) -> Result<(), Unviewable> {
+    check_limit(size, image_size_limit(header))
+}
+
+/// Whether an image of `width` x `height` pixels may be shown.
+pub fn check_image_dimensions(width: u32, height: u32) -> Result<(), Unviewable> {
+    if width.max(height) > MAX_IMAGE_SIDE {
+        return Err(Unviewable::TooManyPixels {
+            width,
+            height,
+            limit: MAX_IMAGE_SIDE,
+        });
+    }
+    Ok(())
+}
+
+fn check_limit(size: u64, limit: u64) -> Result<(), Unviewable> {
+    if size > limit {
+        return Err(Unviewable::TooLarge { size, limit });
     }
     Ok(())
 }
@@ -252,10 +319,91 @@ mod tests {
             decode_text(vec![0xff, 0xfe, b'a']),
             Err(Unviewable::NotUtf8)
         );
+    }
+
+    #[test]
+    fn text_and_images_have_their_own_size_limits() {
         assert_eq!(check_size(MAX_VIEW_BYTES), Ok(()));
+        let too_large = check_size(MAX_VIEW_BYTES + 1).unwrap_err();
         assert_eq!(
-            check_size(MAX_VIEW_BYTES + 1),
-            Err(Unviewable::TooLarge(MAX_VIEW_BYTES + 1))
+            too_large,
+            Unviewable::TooLarge {
+                size: MAX_VIEW_BYTES + 1,
+                limit: MAX_VIEW_BYTES
+            }
+        );
+        assert_eq!(
+            too_large.to_string(),
+            "The file is too large to open (2.0 MB, the limit is 2 MB)."
+        );
+
+        // An ordinary photo is over the text limit but well within the image one.
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\x0d";
+        assert_eq!(check_image_size(4 * 1024 * 1024, png), Ok(()));
+        assert_eq!(check_image_size(MAX_IMAGE_BYTES, png), Ok(()));
+        let too_large = check_image_size(MAX_IMAGE_BYTES + 1, png).unwrap_err();
+        assert_eq!(
+            too_large,
+            Unviewable::TooLarge {
+                size: MAX_IMAGE_BYTES + 1,
+                limit: MAX_IMAGE_BYTES
+            }
+        );
+        assert_eq!(
+            too_large.to_string(),
+            "The file is too large to open (50.0 MB, the limit is 50 MB)."
+        );
+    }
+
+    #[test]
+    fn gif_and_webp_keep_the_text_limit_by_their_bytes() {
+        let gif = b"GIF89a\x80\x07\x38\x04\xf7\0";
+        let webp = b"RIFF\x10\0\0\0WEBP";
+        for header in [&gif[..], &b"GIF87a"[..], &webp[..]] {
+            assert_eq!(image_size_limit(header), MAX_VIEW_BYTES);
+        }
+        assert_eq!(check_image_size(MAX_VIEW_BYTES, gif), Ok(()));
+        assert_eq!(
+            check_image_size(MAX_VIEW_BYTES + 1, webp),
+            Err(Unviewable::TooLarge {
+                size: MAX_VIEW_BYTES + 1,
+                limit: MAX_VIEW_BYTES
+            })
+        );
+
+        // Other images, a RIFF file that is not WebP, and a header cut short.
+        let jpeg = b"\xff\xd8\xff\xe0\0\x10JFIF\0\x01";
+        let wav = b"RIFF\x10\0\0\0WAVE";
+        for header in [
+            &jpeg[..],
+            &wav[..],
+            &b"RIFF\x10\0\0\0WE"[..],
+            &b"GIF"[..],
+            &[][..],
+        ] {
+            assert_eq!(image_size_limit(header), MAX_IMAGE_BYTES);
+        }
+    }
+
+    #[test]
+    fn images_wider_or_taller_than_a_texture_are_refused() {
+        assert_eq!(check_image_dimensions(1, 1), Ok(()));
+        assert_eq!(
+            check_image_dimensions(MAX_IMAGE_SIDE, MAX_IMAGE_SIDE),
+            Ok(())
+        );
+        assert_eq!(
+            check_image_dimensions(MAX_IMAGE_SIDE + 1, 1),
+            Err(Unviewable::TooManyPixels {
+                width: MAX_IMAGE_SIDE + 1,
+                height: 1,
+                limit: MAX_IMAGE_SIDE
+            })
+        );
+        let too_tall = check_image_dimensions(4000, 20000).unwrap_err();
+        assert_eq!(
+            too_tall.to_string(),
+            "The image is too large to show (4000 x 20000 pixels, the limit is 16384 on each side)."
         );
     }
 
