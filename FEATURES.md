@@ -93,6 +93,8 @@ directly to model APIs.
   workspace.
 - Clearly distinguish restoring a layout from restoring a live process or an
   agent's conversation.
+- Keep preferences in a settings file that survives hand edits, other running windows and
+  unknown or mistyped entries; a file that can't be read is set aside, never lost.
 
 ## Performance and Usability
 

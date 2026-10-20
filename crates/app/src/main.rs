@@ -13,6 +13,7 @@ mod keys;
 mod launcher;
 mod mouse;
 mod scrollbar;
+mod settings_file;
 mod shell_integration;
 mod shortcuts;
 mod sidebar;
@@ -107,6 +108,7 @@ fn main() {
         .with_assets(assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            settings_file::init(cx);
             terminal_view::init(cx);
             workspace_view::init(cx);
             history::init(cx);

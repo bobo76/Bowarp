@@ -5,7 +5,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
 ## Status (2026-10-19)
 
 [FEATURES.md](FEATURES.md) is the target; what is not built yet is in the milestones and the
-backlog below. Details of finished work are in the git history (282 tests).
+backlog below. Details of finished work are in the git history (300 tests).
 
 **Known limitations**
 
@@ -20,28 +20,52 @@ backlog below. Details of finished work are in the git history (282 tests).
   window manager's own).
 - No command history in cmd tabs: cmd's prompt prints only the `D` mark, not the `A` / `B`
   marks that locate the prompt.
+- Settings file: a field with a value of the wrong type gets its default silently and the
+  value is dropped at the next change. A file that isn't a JSON object is ignored (reason
+  printed and kept for the settings page) and moved to `settings.json.bak` at the first
+  change. Unknown fields are kept but rewritten in alphabetical order; JSON comments aren't
+  allowed. Edits made on disk while running apply only at the next change from the app.
 
-**Next steps (quick wins 3)**
+**Next steps (quick wins 3: settings)**
 
-1. Settings file and settings page ([reference](docs/ui-reference/settings.png)):
-   - `settings.json` in the config folder (next to `tabs.json`), in `workspace-model`: every
-     field optional with a default, unknown fields kept, a broken file logged and replaced by
-     the defaults (not overwritten). Unit-tested.
+1. Settings page ([reference](docs/ui-reference/settings.png)):
    - A settings button in the title bar opens the page; it shows as a "Settings" row in the
      sidebar and takes the terminal area (like a tab, not saved in `tabs.json`, one at most).
    - Built on gpui-component's `setting` module: a search box over item titles and keywords,
      pages on the left, groups of rows (title, description, control) on the right, a reset
      per item, and an "Open settings file" button at the bottom (opens it in the file viewer).
-   - Pages for this step: Appearance (font family, font size), Terminal (default shell),
-     About (version, config folder). Changes are saved at once and applied live (the
-     terminal re-measures its cells and resizes the pty).
-   - Later backlog items add their rows here (theme, opacity, shortcuts, launcher paths and
-     icons).
-2. Font family and size: from the settings file (today hard-coded).
-3. Default shell: the new-tab menu's first entry and Ctrl+Shift+T use it; empty keeps the
-   $SHELL / Git Bash default.
+   - Pages for this step: About (version, config folder) and empty Appearance and Terminal
+     pages ready for rows; a banner shows the settings file's load or save error
+     (`SettingsFile::load_error` / `save_error`). Rows save at once (`settings_file::update`)
+     and apply live.
+   - Later steps add their rows here (font, shell, theme, opacity, shortcuts, launcher paths
+     and icons).
+2. Font family and size: from the settings file (today hard-coded), with rows on the
+   Appearance page; a change applies live (the terminal re-measures its cells and resizes the
+   pty).
+3. Default shell: from the settings file (a row on the Terminal page); the new-tab menu's
+   first entry and Ctrl+Shift+T use it; empty keeps the $SHELL / Git Bash default.
 4. File viewer width: saved in the settings file when it changes and restored at startup
    (not shown on the settings page).
+5. Configurable terminal path: the executable path for each launcher entry (Terminal, Git
+   Bash, `claude`, `copilot`) saved in the settings file and shown on the settings page, for
+   programs that aren't on `PATH` or where the wrong copy is found first; an empty value keeps
+   the current lookup.
+6. Configurable terminal icon: the icon for each launcher entry, picked from the bundled
+   `LauncherIcon` set (Bash, PowerShell, Command Prompt, Zsh, Fish, Ubuntu, ...) and saved in
+   the settings file (settings page row); it shows in the new-tab menu and on the sidebar row
+   of every tab started from that entry (restored tabs included). "Automatic" keeps the
+   current detection (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`),
+   e.g. for a wrapper script that `shell_icon` only sees as `Shell`.
+7. Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
+   and terminal color schemes: a few bundled schemes plus user schemes imported from
+   base16/iTerm files, saved in the settings file and picked on the Appearance page. "System"
+   follows the OS light/dark setting.
+8. Window opacity and background blur, set in the settings file (opacity applies to the
+   terminal background only, text stays opaque); blur where the platform allows it (Windows
+   acrylic/mica, KDE on X11).
+9. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
+   `cx.build_action`) from the settings file in place of `default_bindings`.
 
 **Fixed, not tested yet (built and unit-tested by the Windows CI, not run on a Windows machine)**
 
@@ -148,12 +172,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   shortcuts and the menu-only ones such as Duplicate, Move to group or Copy branch), showing
   each one's shortcut, plus the tabs by name ("go to tab"). Enter runs the action on the
   selected tab.
-- Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
-  and terminal color schemes: a few bundled schemes plus user schemes imported from
-  base16/iTerm files, saved in the settings file. "System" follows the OS light/dark setting.
-- Window opacity and background blur, set in the settings file (opacity applies to the
-  terminal background only, text stays opaque); blur where the platform allows it (Windows
-  acrylic/mica, KDE on X11).
 - File viewer find and replace: Ctrl+F searches the open file (highlight all matches,
   Enter / Shift+Enter to move, match count, case and whole-word toggles), Ctrl+H adds a
   replace field (replace one / all) in source mode; rendered Markdown only gets find.
@@ -197,17 +215,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
   the window; Delete already runs in the background.
 - Sidebar search: the filter/sort button from the reference screenshot.
-- Configurable terminal path: the executable path for each launcher entry (Terminal, Git Bash,
-  `claude`, `copilot`) saved in the settings file, for programs that aren't on `PATH` or
-  where the wrong copy is found first; an empty value keeps the current lookup.
-- Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
-  `cx.build_action`) in place of `default_bindings`.
-- Configurable terminal icon: the icon for each launcher entry, picked from the bundled
-  `LauncherIcon` set (Bash, PowerShell, Command Prompt, Zsh, Fish, Ubuntu, ...) and saved in
-  the settings file; it shows in the new-tab menu and on the sidebar row of every tab started
-  from that entry (restored tabs included). "Automatic" keeps the current detection
-  (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`), e.g. for a
-  wrapper script that `shell_icon` only sees as `Shell`.
 - Configurable tab background color: a color picked per tab from the tab menu (a small
   palette plus "Default") that tints the tab's sidebar row and its terminal background; saved
   with the tab in `tabs.json` and restored. The terminal's foreground colors stay unchanged,

@@ -7,8 +7,8 @@
 //! wide it is, the links in terminal output and documents, the
 //! shell commands run in the app (history), the shell integration marks (OSC 133) in a shell's
 //! output, the progress reports (OSC 9;4) in a program's output, how a running command is
-//! labeled and badged, how far the mouse wheel scrolls and the About dialog's version line. No
-//! UI dependency.
+//! labeled and badged, how far the mouse wheel scrolls, the About dialog's version line and the
+//! user's settings file. No UI dependency.
 
 mod about;
 mod attention;
@@ -27,6 +27,7 @@ pub mod pane_width;
 mod progress;
 mod running;
 mod search;
+mod settings;
 mod tab;
 mod tabs_state;
 mod wheel;
@@ -52,6 +53,7 @@ pub use running::{
     format_clock, running_badge,
 };
 pub use search::{SearchedTab, TabQuery, step_match};
+pub use settings::{Settings, SettingsFile, SettingsLoad, settings_backup_path};
 pub use tab::{TabColor, TabMeta};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};
 pub use wheel::{WheelScroll, notch_lines};
