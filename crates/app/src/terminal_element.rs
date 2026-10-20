@@ -245,7 +245,8 @@ impl Element for TerminalElement {
         );
         let link_color = to_hsla(palette.foreground);
         let link = view
-            .hovered_link
+            .link_hover
+            .link
             .iter()
             .flat_map(|link| &link.rows)
             .map(|row| {

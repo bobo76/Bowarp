@@ -1,10 +1,11 @@
+mod settings_pane;
 mod sidebar_rows;
+mod tab_card;
+mod tab_search;
 
-use std::collections::{HashMap, HashSet};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 use agent_status::HookMessage;
 use futures::StreamExt;
@@ -24,17 +25,20 @@ use term_core::{LaunchSpec, SessionKind};
 use workspace_model::layout::Direction;
 use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION};
 use workspace_model::{
-    Attention, DropTarget, GroupId, Layout, SearchedTab, TabColor, TabMeta, TabQuery, TabsState,
-    lines_added, next_attention, step_match, until_next_second, waiting_count,
+    Attention, DropTarget, GroupId, Layout, TabColor, TabMeta, TabsState, next_attention,
+    waiting_count,
 };
 
+use self::settings_pane::SettingsPane;
+use self::tab_card::TabCards;
+use self::tab_search::TabSearch;
 use crate::about;
 use crate::assets::FILES_ICON;
 use crate::file_explorer::{EXPLORER_WIDTH, ExplorerEvent, FileExplorer};
 use crate::file_viewer::{FilePlace, FileViewer, ViewerEvent};
 use crate::hooks::ClaudeHooks;
 use crate::launcher::{self, Launcher, launch_name};
-use crate::settings_file::{self, AppSettings};
+use crate::settings_file;
 use crate::settings_page;
 use crate::shell_integration;
 use crate::shortcuts::{self, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY};
@@ -45,9 +49,6 @@ use crate::terminal_view::{AgentExited, OpenFileRequest, TabChanged, TerminalVie
 use crate::window_bounds;
 
 const NEW_GROUP_NAME: &str = "New group";
-
-/// How long a hover card's `+N` is reused before `git diff` runs again.
-const DIFF_STAT_TTL: Duration = Duration::from_secs(5);
 
 /// The width of the strip on the file viewer's left edge that resizes it.
 const DIVIDER_WIDTH: f32 = 6.;
@@ -118,68 +119,6 @@ struct Rename {
     _events: Subscription,
 }
 
-/// The `+N` shown in a tab's hover card, for the folder it was computed in.
-struct DiffStat {
-    dir: PathBuf,
-    /// When `git diff` last answered for `dir`.
-    checked: Option<Instant>,
-    /// The run whose answer is awaited; an answer from an older run is stale.
-    generation: u64,
-    running: bool,
-    /// `None` until `git diff` answers, or when it cannot.
-    added: Option<u64>,
-}
-
-impl DiffStat {
-    fn new(dir: PathBuf) -> Self {
-        Self {
-            dir,
-            checked: None,
-            generation: 0,
-            running: false,
-            added: None,
-        }
-    }
-
-    /// Whether `git diff` should run for `dir`: not while a run for it is going, nor when one
-    /// answered within [`DIFF_STAT_TTL`].
-    fn needs_run(&self, dir: &Path, now: Instant) -> bool {
-        if self.dir != dir {
-            return true;
-        }
-        let fresh = self
-            .checked
-            .is_some_and(|checked| now.duration_since(checked) < DIFF_STAT_TTL);
-        !self.running && !fresh
-    }
-
-    /// Start a run for `dir` and return its generation. The last answer stays shown while it
-    /// runs, unless the folder changed.
-    fn start(&mut self, dir: &Path) -> u64 {
-        if self.dir != dir {
-            *self = Self {
-                generation: self.generation,
-                ..Self::new(dir.to_path_buf())
-            };
-        }
-        self.generation += 1;
-        self.running = true;
-        self.generation
-    }
-
-    /// Take the answer of run `generation`. Returns false, ignoring it, when a newer run
-    /// started since (the folder changed while it ran).
-    fn finish(&mut self, generation: u64, added: Option<u64>, now: Instant) -> bool {
-        if generation != self.generation {
-            return false;
-        }
-        self.running = false;
-        self.checked = Some(now);
-        self.added = added;
-        true
-    }
-}
-
 /// Window content: the title bar above the tab sidebar and the selected terminal.
 pub struct WorkspaceView {
     /// In sidebar order (`layout.tabs()`), so indices match Ctrl+1..9.
@@ -195,15 +134,8 @@ pub struct WorkspaceView {
     /// The file viewer's share of the window width, the same in every tab.
     viewer_fraction: f32,
     renaming: Option<Rename>,
-    /// The sidebar's "Search tabs..." field.
-    search: Entity<InputState>,
-    /// The tab (its id) Up/Down in the search field moved to last, so closing or moving tabs
-    /// does not shift it; cleared when the search changes or ends.
-    search_cursor: Option<u64>,
-    /// Lines added per tab, fetched when its hover card opens.
-    diff_stats: HashMap<u64, DiffStat>,
-    /// The tab whose hover card shows, and the task repainting its lap time each second.
-    card_clock: Option<(u64, Task<()>)>,
+    search: TabSearch,
+    cards: TabCards,
     /// Where the tab being dragged would land, from the last drag move over the sidebar.
     drop_hint: Option<DropTarget>,
     /// For shortening folders to `~` in the sidebar.
@@ -213,17 +145,9 @@ pub struct WorkspaceView {
     next_session_id: u64,
     launchers: Rc<[Launcher]>,
     hooks: Option<Rc<ClaudeHooks>>,
-    /// Whether the sidebar shows the Settings row (at most one, not saved in `tabs.json`).
-    settings_open: bool,
-    /// Whether the settings page shows in place of the selected tab's terminal (the Settings
-    /// row is selected). `active` keeps the tab shown again when the page goes.
-    settings_shown: bool,
-    /// The keyboard goes here while the settings page shows, not to the hidden terminal.
-    settings_focus: FocusHandle,
+    settings: SettingsPane,
     _hook_messages: Task<()>,
-    _search_events: Subscription,
     _explorer_events: Subscription,
-    _settings_changes: Subscription,
 }
 
 impl WorkspaceView {
@@ -245,34 +169,13 @@ impl WorkspaceView {
                 }
             }
         });
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search tabs..."));
-        let search_events =
-            cx.subscribe_in(
-                &search,
-                window,
-                |workspace, _, event, window, cx| match event {
-                    InputEvent::Change => {
-                        workspace.search_cursor = None;
-                        cx.notify();
-                    }
-                    InputEvent::PressEnter { .. } => workspace.select_first_match(window, cx),
-                    _ => {}
-                },
-            );
         let agents = launchers
             .iter()
             .filter(|launcher| launcher.kind != SessionKind::Shell)
             .cloned()
             .collect();
-        let explorer = cx.new(|cx| FileExplorer::new(agents, cx));
+        let explorer = cx.new(|cx| FileExplorer::new(agents, window, cx));
         let explorer_events = cx.subscribe_in(&explorer, window, Self::on_explorer_event);
-        // A change saved from the page (or its error) redraws it; rows read the settings when
-        // drawn.
-        let settings_changes = cx.observe_global::<AppSettings>(|workspace, cx| {
-            if workspace.settings_shown {
-                cx.notify();
-            }
-        });
         Self {
             tabs: Vec::new(),
             layout: Layout::default(),
@@ -283,23 +186,17 @@ impl WorkspaceView {
             explorer_visible: false,
             viewer_fraction: DEFAULT_VIEWER_FRACTION,
             renaming: None,
-            search,
-            search_cursor: None,
-            diff_stats: HashMap::new(),
-            card_clock: None,
+            search: TabSearch::new(window, cx),
+            cards: TabCards::default(),
             drop_hint: None,
             home: std::env::home_dir(),
             owns_tabs,
             next_session_id: 1,
             launchers,
             hooks,
-            settings_open: false,
-            settings_shown: false,
-            settings_focus: cx.focus_handle(),
+            settings: SettingsPane::new(cx),
             _hook_messages: hook_task,
-            _search_events: search_events,
             _explorer_events: explorer_events,
-            _settings_changes: settings_changes,
         }
     }
 
@@ -428,8 +325,8 @@ impl WorkspaceView {
         tab.view = view.clone();
         tab.spec = spec;
         tab._view_events = view_events;
-        self.diff_stats.remove(&tab_id);
-        if index == self.active && !self.settings_shown {
+        self.cards.forget(tab_id);
+        if index == self.active && !self.settings.shows_page() {
             view.update(cx, |view, cx| view.show(cx));
             if had_focus {
                 window.focus(&view.focus_handle(cx), cx);
@@ -630,15 +527,9 @@ impl WorkspaceView {
             return;
         };
         let (id, view) = (tab.id, tab.view.clone());
-        self.settings_shown = false;
+        self.settings.hide_page();
         self.layout.reveal(id);
-        if self
-            .search_matches(cx)
-            .is_some_and(|matches| !matches.contains(&id))
-        {
-            self.search
-                .update(cx, |search, cx| search.clean(window, cx));
-        }
+        self.clear_search_hiding(id, window, cx);
         if let Some(previous) = self.active_tab().filter(|_| self.active != index) {
             previous.view.update(cx, |view, _| view.hide());
         }
@@ -689,7 +580,7 @@ impl WorkspaceView {
                 .update(cx, |viewer, cx| viewer.forget_image(window, cx));
         }
         self.layout.remove(tab.id);
-        self.diff_stats.remove(&tab.id);
+        self.cards.forget(tab.id);
         if self.tabs.is_empty() {
             self.close_window(window, cx);
             return;
@@ -697,7 +588,7 @@ impl WorkspaceView {
         if index < self.active || self.active == self.tabs.len() {
             self.active -= 1;
         }
-        if self.settings_shown {
+        if self.settings.shows_page() {
             // The page stays; the tab now selected under it (hidden, as every other tab) shows
             // when the page goes.
             self.sync_explorer(cx);
@@ -890,7 +781,7 @@ impl WorkspaceView {
     /// Collapse or expand a group from its header. Not while searching: groups then show
     /// expanded whatever their state, so the change would only appear once the search ends.
     fn toggle_group(&mut self, id: GroupId, cx: &mut Context<Self>) {
-        if !self.search_query(cx).is_empty() {
+        if !self.search.query(cx).is_empty() {
             return;
         }
         if let Some(group) = self.layout.group_mut(id) {
@@ -979,101 +870,6 @@ impl WorkspaceView {
         Some(editor.into_any_element())
     }
 
-    fn search_query(&self, cx: &App) -> TabQuery {
-        TabQuery::parse(&self.search.read(cx).value())
-    }
-
-    /// Whether the tab shows while searching (see [`TabQuery::matches_tab`]).
-    fn tab_matches(&self, tab: &Tab, query: &TabQuery, cx: &App) -> bool {
-        let view = tab.view.read(cx);
-        let name = Self::tab_name(tab, cx);
-        let searched = SearchedTab {
-            name: &name,
-            title: view.name(),
-            location: view.location(),
-            group: self
-                .layout
-                .group_of(tab.id)
-                .map(|group| group.name.as_str()),
-        };
-        query.matches_tab(&searched, self.home.as_deref())
-    }
-
-    /// The tabs the search leaves in the sidebar; `None` when there is no search.
-    fn search_matches(&self, cx: &App) -> Option<HashSet<u64>> {
-        let query = self.search_query(cx);
-        if query.is_empty() {
-            return None;
-        }
-        Some(
-            self.tabs
-                .iter()
-                .filter(|tab| self.tab_matches(tab, &query, cx))
-                .map(|tab| tab.id)
-                .collect(),
-        )
-    }
-
-    /// Put the keyboard in the search field, showing the sidebar if it is hidden.
-    fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.sidebar_visible = true;
-        self.search.update(cx, |search, cx| {
-            search.select_all(window, cx);
-            search.focus(window, cx);
-        });
-        cx.notify();
-    }
-
-    /// Clear the search and give the keyboard back to the selected terminal.
-    fn end_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.search_cursor = None;
-        self.search
-            .update(cx, |search, cx| search.clean(window, cx));
-        self.focus_active(window, cx);
-        cx.notify();
-    }
-
-    /// Enter in the search field: keep the match Up/Down moved to, else select the first tab
-    /// shown, and end the search.
-    fn select_first_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let query = self.search_query(cx);
-        let first = (!query.is_empty())
-            .then(|| {
-                self.tabs
-                    .iter()
-                    .position(|tab| self.tab_matches(tab, &query, cx))
-            })
-            .flatten();
-        if self.search_cursor.is_none()
-            && let Some(index) = first
-        {
-            self.activate(index, window, cx);
-        }
-        self.end_search(window, cx);
-    }
-
-    /// Up/Down in the search field: select the previous or next tab the search shows, keeping
-    /// the keyboard in the field to type on or move again.
-    fn step_search(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let query = self.search_query(cx);
-        if query.is_empty() {
-            return;
-        }
-        let matching: Vec<bool> = self
-            .tabs
-            .iter()
-            .map(|tab| self.tab_matches(tab, &query, cx))
-            .collect();
-        let cursor = self.search_cursor.and_then(|id| self.tab_index(id));
-        let Some(index) = step_match(&matching, cursor, forward) else {
-            return;
-        };
-        self.activate(index, window, cx);
-        self.search_cursor = Some(self.tabs[index].id);
-        self.search
-            .update(cx, |search, cx| search.focus(window, cx));
-    }
-
     /// Each tab's attention, in sidebar order.
     fn attention(&self, cx: &App) -> Vec<Option<Attention>> {
         self.tabs
@@ -1085,7 +881,7 @@ impl WorkspaceView {
     /// The tab shown, left out of the attention count and jump: none while the settings page
     /// hides the selected tab.
     fn current_index(&self) -> Option<usize> {
-        (!self.settings_shown && self.active < self.tabs.len()).then_some(self.active)
+        (!self.settings.shows_page() && self.active < self.tabs.len()).then_some(self.active)
     }
 
     /// Select the next other tab needing attention; with none, the next one with a finished turn.
@@ -1098,73 +894,6 @@ impl WorkspaceView {
     /// How many other tabs than the selected one wait for a permission decision or an answer.
     fn attention_count(&self, cx: &App) -> usize {
         waiting_count(&self.attention(cx), self.current_index())
-    }
-
-    /// Start or stop repainting the lap time or running time in the tab's hover card. While
-    /// the card shows, the window repaints on each whole second of the time, and only while
-    /// the agent is working or a command runs; otherwise the task just checks once a second
-    /// whether one started. Closing a card stops the task, so nothing runs while no card
-    /// shows.
-    fn set_card_clock(&mut self, id: u64, open: bool, cx: &mut Context<Self>) {
-        if !open {
-            if self
-                .card_clock
-                .as_ref()
-                .is_some_and(|(shown, _)| *shown == id)
-            {
-                self.card_clock = None;
-            }
-            return;
-        }
-        let task = cx.spawn(async move |this, cx| {
-            loop {
-                let Ok(ticking) = this.read_with(cx, |workspace, cx| {
-                    let index = workspace.tab_index(id)?;
-                    let view = workspace.tabs[index].view.read(cx);
-                    let now = Instant::now();
-                    view.working_for(now).or_else(|| view.running_for(now))
-                }) else {
-                    return;
-                };
-                let delay = ticking.map_or(Duration::from_secs(1), until_next_second);
-                cx.background_executor().timer(delay).await;
-                if ticking.is_some() && this.update(cx, |_, cx| cx.notify()).is_err() {
-                    return;
-                }
-            }
-        });
-        self.card_clock = Some((id, task));
-    }
-
-    /// Run `git diff` for the tab's hover card unless a recent answer for its folder is cached.
-    fn refresh_diff_stat(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(location) = self
-            .tab_index(id)
-            .and_then(|index| self.tabs[index].view.read(cx).location())
-            .filter(|location| location.head.is_some())
-        else {
-            return;
-        };
-        let dir = location.dir.clone();
-        let stat = self
-            .diff_stats
-            .entry(id)
-            .or_insert_with(|| DiffStat::new(dir.clone()));
-        if !stat.needs_run(&dir, Instant::now()) {
-            return;
-        }
-        let generation = stat.start(&dir);
-        cx.spawn(async move |this, cx| {
-            let added = cx.background_spawn(async move { lines_added(&dir) }).await;
-            let _ = this.update(cx, |workspace, cx| {
-                if let Some(stat) = workspace.diff_stats.get_mut(&id)
-                    && stat.finish(generation, added, Instant::now())
-                {
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
     }
 
     fn cycle(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -1381,8 +1110,8 @@ impl WorkspaceView {
 
     /// Give the keyboard to the selected tab's terminal, or to the settings page while it shows.
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.settings_shown {
-            window.focus(&self.settings_focus, cx);
+        if self.settings.shows_page() {
+            window.focus(self.settings.focus(), cx);
         } else if let Some(tab) = self.active_tab() {
             window.focus(&tab.view.focus_handle(cx), cx);
         }
@@ -1406,7 +1135,7 @@ impl WorkspaceView {
             ("tab", shift) => self.cycle(!shift, window, cx),
             (NEW_TAB_KEY, true) => self.open_default_shell(window, cx),
             (DUPLICATE_TAB_KEY, true) => self.duplicate_tab(self.active, window, cx),
-            ("w", true) if self.settings_shown => self.close_settings(window, cx),
+            ("w", true) if self.settings.shows_page() => self.close_settings(window, cx),
             ("w", true) => self.close_tab(self.active, window, cx),
             ("b", true) => self.toggle_sidebar(cx),
             // GPUI drops Shift from a shifted symbol: Ctrl+Shift+\ arrives as Ctrl+|.
@@ -1420,57 +1149,6 @@ impl WorkspaceView {
             _ => return false,
         }
         true
-    }
-
-    /// Show the settings page in place of the selected tab's terminal, adding the sidebar's
-    /// Settings row if it isn't there (the title bar button, or selecting the row).
-    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // The file may have been edited by hand since: the page shows what it holds now.
-        settings_file::reload(cx);
-        self.settings_open = true;
-        if !self.settings_shown {
-            self.settings_shown = true;
-            if let Some(tab) = self.active_tab() {
-                tab.view.update(cx, |view, _| view.hide());
-            }
-        }
-        window.focus(&self.settings_focus, cx);
-        cx.notify();
-    }
-
-    /// Remove the Settings row; if its page showed, the tab selected before shows again.
-    fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.settings_open = false;
-        if self.settings_shown {
-            self.activate(self.active, window, cx);
-        }
-        cx.notify();
-    }
-
-    /// "Open settings file": settings.json (created with the current settings if missing) in
-    /// the selected tab's file viewer, beside the settings page.
-    fn open_settings_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = settings_file::file_to_open(cx) else {
-            // A failed write shows in the page's banner.
-            if settings_file::file(cx).path().is_none() {
-                let message = "There is no config folder (no home folder) to keep settings in";
-                window.push_notification(Notification::error(message), cx);
-            }
-            return;
-        };
-        if let Some(id) = self.active_tab().map(|tab| tab.id) {
-            self.open_file_in(id, path, FilePlace::default(), window, cx);
-        }
-    }
-
-    fn settings_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        Button::new("open-settings")
-            .icon(IconName::Settings)
-            .ghost()
-            .small()
-            .selected(self.settings_shown)
-            .tooltip("Settings")
-            .on_click(cx.listener(|workspace, _, window, cx| workspace.open_settings(window, cx)))
     }
 
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1516,8 +1194,8 @@ fn tab_number(key: &str) -> Option<usize> {
 
 impl Focusable for WorkspaceView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        if self.settings_shown {
-            return self.settings_focus.clone();
+        if self.settings.shows_page() {
+            return self.settings.focus().clone();
         }
         match self.active_tab() {
             Some(tab) => tab.view.focus_handle(cx),
@@ -1531,7 +1209,7 @@ impl Render for WorkspaceView {
         self.pulse_running = sidebar::pulse_allowed(window);
         let active = self
             .active_tab()
-            .filter(|_| !self.settings_shown)
+            .filter(|_| !self.settings.shows_page())
             .map(|tab| tab.view.clone());
         let viewer = self.active_viewer(cx);
         let viewer_width = pane_width::viewer_width(
@@ -1584,9 +1262,9 @@ impl Render for WorkspaceView {
                         content.child(self.explorer.clone())
                     })
                     .child(div().flex_1().min_w_0().h_full().children(active).when(
-                        self.settings_shown,
+                        self.settings.shows_page(),
                         |area| {
-                            area.track_focus(&self.settings_focus)
+                            area.track_focus(self.settings.focus())
                                 .child(settings_page::render(
                                     cx.listener(|workspace, _, window, cx| {
                                         workspace.open_settings_file(window, cx)
@@ -1611,51 +1289,6 @@ impl Render for WorkspaceView {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn diff_stat_is_reused_for_the_same_folder_only_briefly() {
-        let repo = Path::new("/repo");
-        let mut stat = DiffStat::new(repo.to_path_buf());
-        let now = Instant::now();
-        assert!(stat.needs_run(repo, now));
-        let generation = stat.start(repo);
-        assert!(stat.finish(generation, Some(3), now));
-
-        assert!(!stat.needs_run(repo, now + Duration::from_secs(1)));
-        assert!(stat.needs_run(repo, now + DIFF_STAT_TTL));
-        assert!(stat.needs_run(Path::new("/other"), now));
-    }
-
-    #[test]
-    fn diff_stat_runs_once_at_a_time_per_folder() {
-        let repo = Path::new("/repo");
-        let mut stat = DiffStat::new(repo.to_path_buf());
-        let now = Instant::now();
-        let generation = stat.start(repo);
-        // However long git takes, opening the card again does not start another one.
-        assert!(!stat.needs_run(repo, now + DIFF_STAT_TTL * 10));
-        assert!(stat.finish(generation, Some(3), now));
-        // A later run keeps showing the last answer until it has its own.
-        stat.start(repo);
-        assert_eq!(stat.added, Some(3));
-    }
-
-    #[test]
-    fn diff_stat_ignores_an_answer_for_a_folder_left_meanwhile() {
-        let mut stat = DiffStat::new(PathBuf::from("/repo"));
-        let now = Instant::now();
-        let old = stat.start(Path::new("/repo"));
-        let other = Path::new("/other");
-        assert!(stat.needs_run(other, now));
-        let new = stat.start(other);
-        assert_eq!(stat.added, None);
-
-        assert!(!stat.finish(old, Some(3), now));
-        assert_eq!(stat.added, None);
-        assert!(stat.running);
-        assert!(stat.finish(new, Some(7), now));
-        assert_eq!((stat.dir.as_path(), stat.added), (other, Some(7)));
-    }
 
     #[test]
     fn tab_numbers() {

@@ -2,17 +2,14 @@
 
 use std::path::Path;
 use std::rc::Rc;
-use std::time::Instant;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::hover_card::HoverCard;
-use gpui_kit::component::input::{Escape, Input, MoveDown, MoveUp};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
+use gpui_kit::component::{ActiveTheme, IconName, Sizable};
 use gpui_kit::{
-    Anchor, AnyElement, App, AppContext, ClickEvent, Context, Div, DragMoveEvent,
-    InteractiveElement, IntoElement, ParentElement, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, WeakEntity, Window, div, px,
+    AnyElement, App, AppContext, ClickEvent, Context, Div, DragMoveEvent, InteractiveElement,
+    IntoElement, ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled,
+    WeakEntity, Window, div, px,
 };
 use workspace_model::{DropTarget, Group, GroupId, Item, Location, display_path};
 
@@ -20,8 +17,8 @@ use super::{RenameTarget, WorkspaceView};
 use crate::launcher::{self, Launcher};
 use crate::shortcuts::{self, NEW_TAB_KEY};
 use crate::sidebar::{
-    self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabCard,
-    TabDetail, TabRow,
+    self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabDetail,
+    TabRow,
 };
 use crate::tab_menu;
 
@@ -65,18 +62,7 @@ impl WorkspaceView {
         if matches.is_some() && rows.is_empty() {
             rows.push(sidebar::no_matches_hint(cx).into_any_element());
         }
-        if self.settings_open {
-            let row = sidebar::settings_row(
-                self.settings_shown,
-                cx.listener(|workspace, _, window, cx| workspace.open_settings(window, cx)),
-                cx.listener(|workspace, _, window, cx| {
-                    cx.stop_propagation();
-                    workspace.close_settings(window, cx);
-                }),
-                cx,
-            );
-            rows.push(row.into_any_element());
-        }
+        rows.extend(self.render_settings_row(cx));
         let attention_button = self.attention_button(cx);
         let theme = cx.theme();
         div()
@@ -126,34 +112,6 @@ impl WorkspaceView {
                     )
                     .child(self.render_end_drop_zone(cx)),
             )
-    }
-
-    /// The "Search tabs..." field: Up/Down select the previous or next match, Enter selects
-    /// the first match (or keeps the one moved to), Escape clears it.
-    fn render_search(&self, cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .flex_1()
-            .min_w_0()
-            .on_action(
-                cx.listener(|workspace, _: &Escape, window, cx| workspace.end_search(window, cx)),
-            )
-            // Captured: the field itself would take Up/Down to move its caret.
-            .capture_action(cx.listener(|workspace, _: &MoveUp, window, cx| {
-                workspace.step_search(false, window, cx);
-                cx.stop_propagation();
-            }))
-            .capture_action(cx.listener(|workspace, _: &MoveDown, window, cx| {
-                workspace.step_search(true, window, cx);
-                cx.stop_propagation();
-            }))
-            .child(
-                Input::new(&self.search).small().cleanable(true).prefix(
-                    Icon::new(IconName::Search)
-                        .small()
-                        .text_color(cx.theme().muted_foreground),
-                ),
-            )
-            .into_any_element()
     }
 
     /// Shown while a tab needs attention: the count; clicking jumps to the next one.
@@ -238,7 +196,7 @@ impl WorkspaceView {
                 .map(|location| tab_detail(location, self.home.as_deref())),
             status: view.tab_status(),
             pulse: self.pulse_running && view.running_pulses(),
-            selected: index == self.active && !self.settings_shown,
+            selected: index == self.active && !self.settings.shows_page(),
             pinned: self.layout.is_pinned(id),
             color: self.tab_color(tab),
             name_editor,
@@ -290,68 +248,6 @@ impl WorkspaceView {
         Some(slot)
     }
 
-    /// The tab's details in a card next to the row, after hovering it for a moment. Opening it
-    /// runs `git diff` for the `+N` (cached for a few seconds) and, while it shows, ticks the
-    /// lap time of a working agent. No card while a tab is dragged. The card is built only
-    /// while it shows.
-    fn with_hover_card(&self, row: AnyElement, id: u64, cx: &Context<Self>) -> AnyElement {
-        if cx.has_active_drag() {
-            return row;
-        }
-        let workspace = cx.entity().downgrade();
-        let source = workspace.clone();
-        HoverCard::new(("tab-card", id as usize))
-            .anchor(Anchor::LeftCenter)
-            .ml_2()
-            .trigger(row)
-            .content(move |_, _, cx| {
-                let card = source
-                    .upgrade()
-                    .and_then(|workspace| workspace.read(cx).tab_card(id, cx));
-                match card {
-                    Some(card) => sidebar::tab_card(card, cx).into_any_element(),
-                    None => div().into_any_element(),
-                }
-            })
-            .on_open_change(move |open, _, cx| {
-                let _ = workspace.update(cx, |workspace, cx| {
-                    if *open {
-                        workspace.refresh_diff_stat(id, cx);
-                    }
-                    workspace.set_card_clock(id, *open, cx);
-                });
-            })
-            .into_any_element()
-    }
-
-    fn tab_card(&self, id: u64, cx: &App) -> Option<TabCard> {
-        let index = self.tab_index(id)?;
-        let tab = &self.tabs[index];
-        let view = tab.view.read(cx);
-        let location = view.location();
-        let now = Instant::now();
-        Some(TabCard {
-            index,
-            status: view.tab_status(),
-            working_for: view.working_for(now),
-            running_for: view.running_for(now),
-            running_label: view.running_label().map(|label| label.to_string().into()),
-            folder: location
-                .map(|location| display_path(&location.dir, self.home.as_deref()).into()),
-            branch: location
-                .and_then(|location| location.head.as_ref())
-                .map(|head| head.name().to_string().into()),
-            title: view.name().to_string().into(),
-            kind: view.kind(),
-            kind_label: launcher::default_name(&tab.spec).into(),
-            lines_added: self
-                .diff_stats
-                .get(&id)
-                .filter(|stat| location.is_some_and(|location| location.dir == stat.dir))
-                .and_then(|stat| stat.added),
-        })
-    }
-
     /// A group header: the upper half drops above the group, the lower half into it. While
     /// searching it shows expanded, since its matching tabs are listed below it.
     fn render_group_header(
@@ -366,7 +262,7 @@ impl WorkspaceView {
         // The settings page hides the selected tab: no group holds the selection then.
         let active_id = self
             .active_tab()
-            .filter(|_| !self.settings_shown)
+            .filter(|_| !self.settings.shows_page())
             .map(|tab| tab.id);
         let statuses = group.tabs().iter().filter_map(|&tab| {
             let index = self.tab_index(tab)?;

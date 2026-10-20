@@ -6,10 +6,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::Duration;
 
-use futures::StreamExt;
-use futures::channel::mpsc::{self, UnboundedReceiver};
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
@@ -19,10 +16,10 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, App, AppContext, ClipboardItem, Context, Entity, EventEmitter, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, Subscription, Task, WeakEntity, Window, div, px, uniform_list,
+    Styled, Subscription, WeakEntity, Window, div, px, uniform_list,
 };
+use notify::EventKind;
 use notify::event::ModifyKind;
-use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use workspace_model::file_tree::{
     self, DirEntry, ExpandedFolders, FileKind, TreeRow, entry_folder, parent_folder, relative_path,
     validate_name,
@@ -32,14 +29,13 @@ use crate::assets::{
     FILE_ARCHIVE_ICON, FILE_CODE_ICON, FILE_DATA_ICON, FILE_IMAGE_ICON, FILES_ICON, FOLDER_UP_ICON,
     MARKDOWN_ICON,
 };
+use crate::folder_watcher::{FolderWatcher, WatchedFolders, WatchesFolders};
 use crate::launcher::Launcher;
 use crate::sidebar;
 
 pub const EXPLORER_WIDTH: f32 = 300.;
 const ROW_HEIGHT: f32 = 24.;
 const INDENT: f32 = 14.;
-/// Changes arriving within this time are applied together.
-const CHANGE_BATCH: Duration = Duration::from_millis(100);
 
 /// What the explorer asks of the workspace.
 pub enum ExplorerEvent {
@@ -104,42 +100,43 @@ pub struct FileExplorer {
     listings: HashMap<PathBuf, Listing>,
     selected: Option<PathBuf>,
     editing: Option<NameEdit>,
-    /// `None` when the platform watcher could not start: folders then refresh only when
-    /// expanded again or changed from the explorer.
-    watcher: Option<RecommendedWatcher>,
-    /// The watched folders, each by its real path (what the watcher reports), with the
-    /// expanded folders showing it: a folder and a symlink to it share one watch.
-    watched: HashMap<PathBuf, Vec<PathBuf>>,
-    /// The real path of each open folder, so it is not looked up on every refresh.
-    real_paths: HashMap<PathBuf, PathBuf>,
+    /// The expanded folders. Without a platform watcher, folders refresh only when expanded
+    /// again or changed from the explorer.
+    watches: WatchedFolders,
     rows: Rc<[ListRow]>,
-    _changes: Task<()>,
 }
 
 impl EventEmitter<ExplorerEvent> for FileExplorer {}
 
+impl WatchesFolders for FileExplorer {
+    const OWNER: &'static str = "file explorer";
+
+    /// Only entries appearing, going or being renamed change a listing; reading a folder opens
+    /// it, which would otherwise report a change and read it again.
+    fn ignores(kind: &EventKind) -> bool {
+        matches!(
+            kind,
+            EventKind::Access(_) | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_))
+        )
+    }
+
+    /// Re-read the watched folders that changed.
+    fn on_folder_changes(&mut self, paths: Vec<PathBuf>, _: &mut Window, cx: &mut Context<Self>) {
+        let folders = file_tree::folders_to_reread(&paths, self.watches.watched());
+        if folders.is_empty() {
+            return;
+        }
+        // The refresh below watches a removed or replaced folder again.
+        self.watches.forget_reported(&paths);
+        for folder in folders {
+            self.listings.insert(folder.clone(), read_folder(&folder));
+        }
+        self.refresh(cx);
+    }
+}
+
 impl FileExplorer {
-    pub fn new(agents: Vec<Launcher>, cx: &mut Context<Self>) -> Self {
-        let (sender, receiver) = mpsc::unbounded();
-        let watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
-            let Ok(event) = result else {
-                return;
-            };
-            // Only entries appearing, going or being renamed change a listing; reading a
-            // folder opens it, which would otherwise report a change and read it again.
-            if matches!(
-                event.kind,
-                EventKind::Access(_)
-                    | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_))
-            ) {
-                return;
-            }
-            for path in event.paths {
-                let _ = sender.unbounded_send(path);
-            }
-        })
-        .inspect_err(|err| log::warn!("file explorer: no folder watcher: {err}"))
-        .ok();
+    pub fn new(agents: Vec<Launcher>, window: &Window, cx: &mut Context<Self>) -> Self {
         Self {
             root: None,
             can_cd: false,
@@ -148,49 +145,9 @@ impl FileExplorer {
             listings: HashMap::new(),
             selected: None,
             editing: None,
-            watcher,
-            watched: HashMap::new(),
-            real_paths: HashMap::new(),
+            watches: WatchedFolders::new(FolderWatcher::new(window, cx)),
             rows: Rc::new([]),
-            _changes: Self::apply_changes(receiver, cx),
         }
-    }
-
-    /// Re-read the watched folders that changed, a batch of changes at a time.
-    fn apply_changes(mut changes: UnboundedReceiver<PathBuf>, cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(async move |this, cx| {
-            while let Some(first) = changes.next().await {
-                cx.background_executor().timer(CHANGE_BATCH).await;
-                let mut paths = vec![first];
-                while let Ok(path) = changes.try_recv() {
-                    paths.push(path);
-                }
-                if this
-                    .update(cx, |explorer, cx| explorer.on_changes(paths, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-    }
-
-    fn on_changes(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
-        let folders = file_tree::folders_to_reread(&paths, &self.watched);
-        if folders.is_empty() {
-            return;
-        }
-        // A watched folder reported about itself was removed or replaced, and the watcher
-        // drops its watch then: forget it so the refresh below watches it again.
-        for path in &paths {
-            if self.watched.remove(path).is_some() {
-                self.real_paths.retain(|_, real| real != path);
-            }
-        }
-        for folder in folders {
-            self.listings.insert(folder.clone(), read_folder(&folder));
-        }
-        self.refresh(cx);
     }
 
     /// Show `root` (the selected tab's folder). `can_cd`: whether that tab runs a shell.
@@ -240,7 +197,7 @@ impl FileExplorer {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let Some(root) = self.root.clone() else {
             self.rows = Rc::new([]);
-            self.sync_watches(HashSet::new());
+            self.watches.sync(HashSet::new());
             cx.notify();
             return;
         };
@@ -267,7 +224,7 @@ impl FileExplorer {
         // Unwatched folders may change: read them again when they are shown again.
         self.listings.retain(|folder, _| open.contains(folder));
         self.rows = self.list_rows(rows).into();
-        self.sync_watches(open);
+        self.watches.sync(open);
         cx.notify();
     }
 
@@ -308,44 +265,6 @@ impl FileExplorer {
             }
         }
         list
-    }
-
-    fn sync_watches(&mut self, open: HashSet<PathBuf>) {
-        let Some(watcher) = self.watcher.as_mut() else {
-            return;
-        };
-        self.real_paths.retain(|folder, _| open.contains(folder));
-        let mut watched: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
-        for folder in open {
-            let real = match self.real_paths.get(&folder) {
-                Some(real) => real.clone(),
-                None => match fs::canonicalize(&folder) {
-                    Ok(real) => {
-                        self.real_paths.insert(folder.clone(), real.clone());
-                        real
-                    }
-                    // Not there (yet): look again next time.
-                    Err(_) => folder.clone(),
-                },
-            };
-            watched.entry(real).or_default().push(folder);
-        }
-        for real in self.watched.keys() {
-            if !watched.contains_key(real) {
-                let _ = watcher.unwatch(real);
-            }
-        }
-        // Only folders whose watch holds are recorded, so a failed one is tried again.
-        watched.retain(|real, _| {
-            self.watched.contains_key(real)
-                || watcher
-                    .watch(real, RecursiveMode::NonRecursive)
-                    .inspect_err(|err| {
-                        log::debug!("file explorer: not watching {}: {err}", real.display())
-                    })
-                    .is_ok()
-        });
-        self.watched = watched;
     }
 
     fn click(&mut self, path: PathBuf, is_dir: bool, cx: &mut Context<Self>) {

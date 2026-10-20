@@ -1,0 +1,125 @@
+//! The settings page, shown in place of the selected tab's terminal, and its row in the
+//! sidebar.
+
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::notification::Notification;
+use gpui_kit::component::{IconName, Selectable, Sizable, WindowExt};
+use gpui_kit::{AnyElement, Context, FocusHandle, IntoElement, Subscription, Window};
+
+use super::WorkspaceView;
+use crate::file_viewer::FilePlace;
+use crate::settings_file::{self, AppSettings};
+use crate::sidebar;
+
+pub(super) struct SettingsPane {
+    /// Whether the sidebar shows the Settings row (at most one, not saved in `tabs.json`).
+    open: bool,
+    /// Whether the page shows in place of the selected tab's terminal (the Settings row is
+    /// selected). The workspace's `active` keeps the tab shown again when the page goes.
+    shown: bool,
+    /// The keyboard goes here while the page shows, not to the hidden terminal.
+    focus: FocusHandle,
+    _changes: Subscription,
+}
+
+impl SettingsPane {
+    pub fn new(cx: &mut Context<WorkspaceView>) -> Self {
+        // A change saved from the page (or its error) redraws it; rows read the settings when
+        // drawn.
+        let changes = cx.observe_global::<AppSettings>(|workspace, cx| {
+            if workspace.settings.shown {
+                cx.notify();
+            }
+        });
+        Self {
+            open: false,
+            shown: false,
+            focus: cx.focus_handle(),
+            _changes: changes,
+        }
+    }
+
+    /// Whether the page hides the selected tab's terminal.
+    pub fn shows_page(&self) -> bool {
+        self.shown
+    }
+
+    /// Give the selected tab its place back; the Settings row stays.
+    pub fn hide_page(&mut self) {
+        self.shown = false;
+    }
+
+    pub fn focus(&self) -> &FocusHandle {
+        &self.focus
+    }
+}
+
+impl WorkspaceView {
+    /// Show the settings page in place of the selected tab's terminal, adding the sidebar's
+    /// Settings row if it isn't there (the title bar button, or selecting the row).
+    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The file may have been edited by hand since: the page shows what it holds now.
+        settings_file::reload(cx);
+        self.settings.open = true;
+        if !self.settings.shown {
+            self.settings.shown = true;
+            if let Some(tab) = self.active_tab() {
+                tab.view.update(cx, |view, _| view.hide());
+            }
+        }
+        window.focus(&self.settings.focus, cx);
+        cx.notify();
+    }
+
+    /// Remove the Settings row; if its page showed, the tab selected before shows again.
+    pub(super) fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings.open = false;
+        if self.settings.shown {
+            self.activate(self.active, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// "Open settings file": settings.json (created with the current settings if missing) in
+    /// the selected tab's file viewer, beside the settings page.
+    pub(super) fn open_settings_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = settings_file::file_to_open(cx) else {
+            // A failed write shows in the page's banner.
+            if settings_file::file(cx).path().is_none() {
+                let message = "There is no config folder (no home folder) to keep settings in";
+                window.push_notification(Notification::error(message), cx);
+            }
+            return;
+        };
+        if let Some(id) = self.active_tab().map(|tab| tab.id) {
+            self.open_file_in(id, path, FilePlace::default(), window, cx);
+        }
+    }
+
+    pub(super) fn settings_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("open-settings")
+            .icon(IconName::Settings)
+            .ghost()
+            .small()
+            .selected(self.settings.shown)
+            .tooltip("Settings")
+            .on_click(cx.listener(|workspace, _, window, cx| workspace.open_settings(window, cx)))
+    }
+
+    /// The sidebar's Settings row, while it is open.
+    pub(super) fn render_settings_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.settings.open {
+            return None;
+        }
+        let row = sidebar::settings_row(
+            self.settings.shown,
+            cx.listener(|workspace, _, window, cx| workspace.open_settings(window, cx)),
+            cx.listener(|workspace, _, window, cx| {
+                cx.stop_propagation();
+                workspace.close_settings(window, cx);
+            }),
+            cx,
+        );
+        Some(row.into_any_element())
+    }
+}

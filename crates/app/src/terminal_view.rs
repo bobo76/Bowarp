@@ -1,3 +1,7 @@
+mod agent_tracker;
+mod link_hover;
+mod pointer;
+
 use std::borrow::Cow;
 use std::fs;
 use std::io;
@@ -14,34 +18,33 @@ use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
     AnyElement, App, AppContext, Bounds, ClipboardItem, Context, CursorStyle, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyBinding, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NoAction, ParentElement, Pixels, Point, Render,
-    ScrollDelta, ScrollWheelEvent, Styled, Task, UTF16Selection, Window, actions, div, size,
+    KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    NoAction, ParentElement, Pixels, Point, Render, Styled, Task, UTF16Selection, Window, actions,
+    div, size,
 };
 use term_core::alacritty_terminal::grid::Scroll;
-use term_core::alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
-use term_core::alacritty_terminal::selection::SelectionType;
 use term_core::alacritty_terminal::term::TermMode;
 use term_core::{
     EventCallback, LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions,
 };
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
-    COMMAND_LABEL_CHARS, Lap, Location, ProgressState, RUNNING_AFTER, RunningBadge, WheelScroll,
-    command_label, notch_lines, running_badge,
+    COMMAND_LABEL_CHARS, Location, ProgressState, RUNNING_AFTER, RunningBadge, command_label,
+    running_badge,
 };
 
+use self::agent_tracker::AgentTracker;
+use self::link_hover::LinkHover;
+use self::pointer::PointerState;
 use crate::file_viewer::FilePlace;
 use crate::history;
 use crate::history_popup::HistoryPopup;
 use crate::keys;
 use crate::launcher;
-use crate::mouse::{self, Cell, MouseAction, ReportButton, WheelAction};
 use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
 use crate::shell_integration;
 use crate::sidebar::TabStatus;
 use crate::terminal_element::{TerminalElement, to_hsla};
-use crate::terminal_links::{self, LinkTarget, TerminalLink};
 
 const KEY_CONTEXT: &str = "Terminal";
 
@@ -139,9 +142,7 @@ pub struct TerminalView {
     pub(crate) shell: ShellSyntax,
     /// Status from Claude Code hooks, or from Copilot CLI's progress reports once it sent
     /// one; `None` for sessions without either.
-    agent: Option<AgentState>,
-    /// When the agent status last changed, for the hover card's lap time.
-    agent_lap: Lap<AgentStatus>,
+    agent: Option<AgentTracker>,
     /// The agent finished a turn while the tab was hidden; cleared when it is shown.
     finished_unseen: bool,
     /// The program rang the bell (BEL) while the tab was hidden; cleared when it is shown.
@@ -164,21 +165,9 @@ pub struct TerminalView {
     /// Where [`Self::change_dir`] leaves the folder for the shell's hidden cd key binding;
     /// `None` when the shell has none.
     cd_file: Option<PathBuf>,
-    wheel: WheelScroll,
-    selecting: bool,
-    /// Button whose press was reported to the program; its release and drags are reported too.
-    reported_button: Option<ReportButton>,
-    /// Last cell a motion report was sent for, so motion is reported once per cell.
-    last_motion_cell: Option<Cell>,
+    pointer: PointerState,
     pub(crate) scrollbar: ScrollbarState,
-    /// The link under the pointer while Ctrl is held, drawn underlined with a hand cursor.
-    pub(crate) hovered_link: Option<TerminalLink>,
-    /// Where the pointer was when Ctrl was last seen held over the terminal, so new output
-    /// under it is looked at again; `None` once Ctrl is released.
-    link_pointer: Option<Point<Pixels>>,
-    /// The cell (and scroll offset) `hovered_link` was last looked up for while Ctrl was held,
-    /// so moving within a cell does not look again; cleared when output arrives.
-    link_cell: Option<(Cell, usize)>,
+    pub(crate) link_hover: LinkHover,
     /// For links to `~/` paths.
     home: Option<PathBuf>,
     _session_events: Task<()>,
@@ -233,8 +222,7 @@ impl TerminalView {
             launch_cwd: spec.cwd.clone(),
             location: spec.cwd.clone().map(Location::read),
             shell: launcher::shell_syntax(spec),
-            agent: reports_status.then(AgentState::default),
-            agent_lap: Lap::new(AgentState::default().status(), Instant::now()),
+            agent: reports_status.then(|| AgentTracker::new(Instant::now())),
             finished_unseen: false,
             bell_unseen: false,
             visible: true,
@@ -251,14 +239,9 @@ impl TerminalView {
                 .env
                 .get(shell_integration::CD_FILE_ENV)
                 .map(PathBuf::from),
-            wheel: WheelScroll::default(),
-            selecting: false,
-            reported_button: None,
-            last_motion_cell: None,
+            pointer: PointerState::default(),
             scrollbar: ScrollbarState::default(),
-            hovered_link: None,
-            link_pointer: None,
-            link_cell: None,
+            link_hover: LinkHover::default(),
             home: std::env::home_dir(),
             _session_events: session_events,
         }
@@ -319,7 +302,7 @@ impl TerminalView {
         if self.bell_unseen && self.process == ProcessState::Running {
             return TabStatus::NeedsAttention;
         }
-        if let Some(agent) = self.agent {
+        if let Some(agent) = &self.agent {
             return match agent.status() {
                 AgentStatus::Idle if self.finished_unseen => TabStatus::Done,
                 AgentStatus::Idle => TabStatus::Idle,
@@ -374,17 +357,14 @@ impl TerminalView {
     /// How long the agent has been working on the current turn, or `None` when it is not
     /// working. Tool calls keep the lap running; waiting for a permission decision ends it.
     pub fn working_for(&self, now: Instant) -> Option<Duration> {
-        let working = self.agent?.status() == AgentStatus::Working;
-        working.then(|| self.agent_lap.elapsed(now))
+        self.agent.as_ref()?.working_for(now)
     }
 
     /// Stop painting the view; only the selected tab is painted.
     pub fn hide(&mut self) {
         self.visible = false;
         self.history_popup = None;
-        self.hovered_link = None;
-        self.link_pointer = None;
-        self.link_cell = None;
+        self.link_hover = LinkHover::default();
         // A wakeup sent before the next paint would never be acknowledged by `prepaint`.
         self.session.ack_wakeup();
     }
@@ -435,7 +415,7 @@ impl TerminalView {
         }
         let adopted = self.agent.is_none();
         if adopted {
-            self.agent = Some(AgentState::default());
+            self.agent = Some(AgentTracker::new(Instant::now()));
             self.activity_task = None;
         }
         let changed = self.update_agent(|agent| agent.apply_progress(state.is_shown()), cx);
@@ -453,13 +433,10 @@ impl TerminalView {
         let Some(agent) = self.agent.as_mut() else {
             return false;
         };
-        let before = agent.status();
-        change(agent);
-        let after = agent.status();
-        if !self.agent_lap.set(after, Instant::now()) {
+        let Some(change) = agent.update(change, Instant::now()) else {
             return false;
-        }
-        self.finished_unseen = finished_unseen(before, after, self.visible);
+        };
+        self.finished_unseen = finished_unseen(change.before, change.after, self.visible);
         self.emit_tab_changed(cx);
         true
     }
@@ -468,11 +445,7 @@ impl TerminalView {
         match event {
             SessionEvent::Wakeup => {
                 self.track_activity(cx);
-                // The text under a held Ctrl may have changed.
-                if let Some(pointer) = self.link_pointer {
-                    self.link_cell = self.link_key(pointer);
-                    self.set_hovered_link(self.link_under(pointer), cx);
-                }
+                self.refresh_link_hover(cx);
                 if !self.visible {
                     // Nothing paints, so re-arm here to keep hearing about output.
                     self.session.ack_wakeup();
@@ -530,8 +503,7 @@ impl TerminalView {
                 self.process = ProcessState::Exited(code);
                 self.running_command = None;
                 if let Some(agent) = self.agent.as_mut() {
-                    agent.exit();
-                    self.agent_lap.set(agent.status(), Instant::now());
+                    agent.exit(Instant::now());
                 }
                 cx.emit(TabChanged);
                 // A failed agent keeps its last screen, so its error can be read.
@@ -754,263 +726,10 @@ impl TerminalView {
     fn on_paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         self.paste(cx.read_from_clipboard().and_then(|item| item.text()), cx);
     }
-
-    fn on_scroll(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(geometry) = self.geometry else {
-            return;
-        };
-        let lines = match event.delta {
-            ScrollDelta::Lines(delta) => notch_lines(delta.y, cfg!(target_os = "linux")),
-            ScrollDelta::Pixels(delta) => f32::from(delta.y) / f32::from(geometry.line_height),
-        };
-        let whole = self.wheel.add(lines);
-        if whole == 0 {
-            return;
-        }
-
-        let Some((cell, _)) = self.viewport_cell(event.position) else {
-            return;
-        };
-        match mouse::wheel_action(whole, cell, &event.modifiers, self.mode()) {
-            WheelAction::Program(bytes) => self.session.write(bytes),
-            WheelAction::Scrollback(lines) => self.scroll_scrollback(Scroll::Delta(lines), cx),
-        }
-        cx.notify();
-        cx.stop_propagation();
-    }
-
-    /// The visible cell under `position`, clamped to the grid, and which half of it was hit.
-    fn viewport_cell(&self, position: Point<Pixels>) -> Option<(Cell, Side)> {
-        let geometry = self.geometry?;
-        let cell_width = f32::from(geometry.cell_width);
-        let line_height = f32::from(geometry.line_height);
-        let x = f32::from(position.x - geometry.origin.x).max(0.0);
-        let y = f32::from(position.y - geometry.origin.y).max(0.0);
-        let column = ((x / cell_width) as usize).min(geometry.columns.saturating_sub(1));
-        let line = ((y / line_height) as usize).min(geometry.lines.saturating_sub(1));
-        let side = if x - column as f32 * cell_width < cell_width / 2.0 {
-            Side::Left
-        } else {
-            Side::Right
-        };
-        Some((Cell { column, line }, side))
-    }
-
-    /// The visible cell under `position`, `None` outside the grid.
-    fn cell_under(&self, position: Point<Pixels>) -> Option<Cell> {
-        let geometry = self.geometry?;
-        let x = f32::from(position.x - geometry.origin.x);
-        let y = f32::from(position.y - geometry.origin.y);
-        if x < 0.0 || y < 0.0 {
-            return None;
-        }
-        let column = (x / f32::from(geometry.cell_width)) as usize;
-        let line = (y / f32::from(geometry.line_height)) as usize;
-        (column < geometry.columns && line < geometry.lines).then_some(Cell { column, line })
-    }
-
-    /// The link under `position`, if any.
-    fn link_under(&self, position: Point<Pixels>) -> Option<TerminalLink> {
-        let cell = self.cell_under(position)?;
-        let folder = self.current_folder();
-        terminal_links::link_at(&self.session, cell, folder.as_deref(), self.home.as_deref())
-    }
-
-    fn set_hovered_link(&mut self, link: Option<TerminalLink>, cx: &mut Context<Self>) {
-        if link != self.hovered_link {
-            self.hovered_link = link;
-            cx.notify();
-        }
-    }
-
-    /// Underline the link under the pointer while Ctrl is held (and nothing else is).
-    pub(crate) fn update_link_hover(
-        &mut self,
-        position: Point<Pixels>,
-        modifiers: &Modifiers,
-        cx: &mut Context<Self>,
-    ) {
-        if !is_link_modifier(modifiers) || !self.visible {
-            self.link_pointer = None;
-            self.link_cell = None;
-            self.set_hovered_link(None, cx);
-            return;
-        }
-        let key = self.link_key(position);
-        let unchanged = self.link_pointer.is_some() && key.is_some() && key == self.link_cell;
-        self.link_pointer = Some(position);
-        if unchanged {
-            return;
-        }
-        self.link_cell = key;
-        self.set_hovered_link(self.link_under(position), cx);
-    }
-
-    /// The cell under `position` with the scroll offset: the link there stays the same while
-    /// these do and no output arrives.
-    fn link_key(&self, position: Point<Pixels>) -> Option<(Cell, usize)> {
-        let cell = self.cell_under(position)?;
-        Some((cell, self.session.display_offset()))
-    }
-
-    fn on_modifiers_changed(
-        &mut self,
-        event: &ModifiersChangedEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.update_link_hover(window.mouse_position(), &event.modifiers, cx);
-    }
-
-    /// Open a Ctrl+clicked link: a URL in the browser, a file in the viewer.
-    fn open_link(&mut self, target: LinkTarget, cx: &mut Context<Self>) {
-        match target {
-            LinkTarget::Url(url) => cx.open_url(&url),
-            LinkTarget::File { path, place } => cx.emit(OpenFileRequest { path, place }),
-        }
-    }
-
-    fn grid_point(&self, position: Point<Pixels>) -> Option<(GridPoint, Side)> {
-        let (cell, side) = self.viewport_cell(position)?;
-        let display_offset = self.session.display_offset();
-        Some((
-            GridPoint::new(
-                Line(cell.line as i32 - display_offset as i32),
-                Column(cell.column),
-            ),
-            side,
-        ))
-    }
-
-    fn send_mouse_report(
-        &mut self,
-        button: ReportButton,
-        action: MouseAction,
-        position: Point<Pixels>,
-        modifiers: &Modifiers,
-    ) {
-        let Some((cell, _)) = self.viewport_cell(position) else {
-            return;
-        };
-        if action == MouseAction::Motion {
-            if self.last_motion_cell == Some(cell) {
-                return;
-            }
-            self.last_motion_cell = Some(cell);
-        }
-        if let Some(bytes) = mouse::report(button, action, cell, modifiers, self.mode()) {
-            self.session.write(bytes);
-        }
-    }
-
-    fn on_mouse_down(
-        &mut self,
-        event: &MouseDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        window.focus(&self.focus_handle, cx);
-        self.close_history_popup(cx);
-        // A link takes the click before the program's mouse reports and the selection.
-        if event.button == MouseButton::Left
-            && is_link_modifier(&event.modifiers)
-            && let Some(link) = self.link_under(event.position)
-        {
-            self.hovered_link = None;
-            self.link_cell = None;
-            self.open_link(link.target, cx);
-            cx.notify();
-            return;
-        }
-        let Some(button) = ReportButton::from_gpui(event.button) else {
-            return;
-        };
-        if mouse::is_reporting_to_program(self.mode(), &event.modifiers) {
-            self.send_mouse_report(button, MouseAction::Press, event.position, &event.modifiers);
-            self.reported_button = Some(button);
-            return;
-        }
-        match event.button {
-            MouseButton::Left => self.start_selection(event, cx),
-            #[cfg(target_os = "linux")]
-            MouseButton::Middle => {
-                self.paste(cx.read_from_primary().and_then(|item| item.text()), cx);
-            }
-            _ => {}
-        }
-    }
-
-    fn start_selection(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
-        let Some((point, side)) = self.grid_point(event.position) else {
-            return;
-        };
-        let selection_type = match event.click_count {
-            2 => SelectionType::Semantic,
-            3.. => SelectionType::Lines,
-            _ => SelectionType::Simple,
-        };
-        self.session.start_selection(selection_type, point, side);
-        self.selecting = true;
-        cx.notify();
-    }
-
-    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.reported_button.is_some()
-            || mouse::is_reporting_to_program(self.mode(), &event.modifiers)
-        {
-            let button = self.reported_button.unwrap_or(ReportButton::None);
-            self.send_mouse_report(
-                button,
-                MouseAction::Motion,
-                event.position,
-                &event.modifiers,
-            );
-            return;
-        }
-        if !self.selecting || event.pressed_button != Some(MouseButton::Left) {
-            return;
-        }
-        let Some((point, side)) = self.grid_point(event.position) else {
-            return;
-        };
-        self.session.update_selection(point, side);
-        cx.notify();
-    }
-
-    fn on_mouse_up(&mut self, event: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let button = ReportButton::from_gpui(event.button);
-        if button.is_some() && button == self.reported_button {
-            self.reported_button = None;
-            self.send_mouse_report(
-                button.unwrap_or(ReportButton::None),
-                MouseAction::Release,
-                event.position,
-                &event.modifiers,
-            );
-            return;
-        }
-        if !self.selecting || event.button != MouseButton::Left {
-            return;
-        }
-        self.selecting = false;
-        let text = self.session.finish_selection();
-        #[cfg(target_os = "linux")]
-        if let Some(text) = text.filter(|text| !text.is_empty()) {
-            cx.write_to_primary(ClipboardItem::new_string(text));
-        }
-        #[cfg(not(target_os = "linux"))]
-        let _ = text;
-        cx.notify();
-    }
 }
 
 fn is_shift_only(modifiers: &Modifiers) -> bool {
     modifiers.shift && !modifiers.control && !modifiers.alt
-}
-
-/// Ctrl (Cmd on macOS) alone: held over a link, it shows and opens the link.
-fn is_link_modifier(modifiers: &Modifiers) -> bool {
-    modifiers.secondary() && !modifiers.shift && !modifiers.alt
 }
 
 impl EventEmitter<TabChanged> for TerminalView {}

@@ -9,10 +9,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
 
-use futures::StreamExt;
-use futures::channel::mpsc::{self, UnboundedReceiver};
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariant, ButtonVariants};
 use gpui_kit::component::input::{Editor, EditorState, InputEvent, Position};
 use gpui_kit::component::notification::Notification;
@@ -22,17 +19,16 @@ use gpui_kit::{
     AnyElement, App, AppContext, ClickEvent, Context, DevicePixels, ElementId, Entity,
     EventEmitter, ImgResourceLoader, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
     ObjectFit, ParentElement, Render, RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR, SharedString,
-    Size, StatefulInteractiveElement, Styled, StyledImage, Subscription, Task, WeakEntity, Window,
-    div, img, px,
+    Size, StatefulInteractiveElement, Styled, StyledImage, Subscription, WeakEntity, Window, div,
+    img, px,
 };
 use image::{ImageError, ImageReader};
-use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::EventKind;
 use workspace_model::display_path;
 use workspace_model::file_view::{self, JsonError, ViewKind};
 use workspace_model::links;
 
-/// Changes arriving within this time are applied together.
-const CHANGE_BATCH: Duration = Duration::from_millis(100);
+use crate::folder_watcher::{FolderWatcher, WatchesFolders};
 
 /// Shown for an image (or an SVG drawing) that does not decode.
 const UNREADABLE_IMAGE: &str = "The image could not be read.";
@@ -94,39 +90,43 @@ enum Content {
 pub struct FileViewer {
     path: Option<PathBuf>,
     content: Option<Content>,
-    /// `None` when the platform watcher could not start: the file is then not reloaded.
-    watcher: Option<RecommendedWatcher>,
+    /// Without a platform watcher, the file is not reloaded.
+    watcher: FolderWatcher,
     watched_folder: Option<PathBuf>,
     /// For shortening the folder to `~` in the header.
     home: Option<PathBuf>,
-    _changes: Task<()>,
 }
 
 impl EventEmitter<ViewerEvent> for FileViewer {}
 
+impl WatchesFolders for FileViewer {
+    const OWNER: &'static str = "file viewer";
+
+    fn ignores(kind: &EventKind) -> bool {
+        matches!(kind, EventKind::Access(_))
+    }
+
+    /// Reload the file when it changed on disk.
+    fn on_folder_changes(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.path.as_ref().is_some_and(|open| paths.contains(open)) {
+            self.reload(window, cx);
+        }
+    }
+}
+
 impl FileViewer {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (sender, receiver) = mpsc::unbounded();
-        let watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
-            let Ok(event) = result else {
-                return;
-            };
-            if matches!(event.kind, EventKind::Access(_)) {
-                return;
-            }
-            for path in event.paths {
-                let _ = sender.unbounded_send(path);
-            }
-        })
-        .inspect_err(|err| log::warn!("file viewer: no file watcher: {err}"))
-        .ok();
         Self {
             path: None,
             content: None,
-            watcher,
+            watcher: FolderWatcher::new(window, cx),
             watched_folder: None,
             home: std::env::home_dir(),
-            _changes: Self::apply_changes(receiver, window, cx),
         }
     }
 
@@ -337,52 +337,18 @@ impl FileViewer {
     /// Watch the folder holding the file shown: a file's own watch would end when an editor
     /// replaces the file by renaming another over it.
     fn watch(&mut self, folder: Option<&Path>) {
-        if self.watched_folder.as_deref() == folder {
+        if self.watched_folder.as_deref() == folder || !self.watcher.is_available() {
             return;
         }
-        let Some(watcher) = self.watcher.as_mut() else {
-            return;
-        };
         if let Some(old) = self.watched_folder.take() {
-            let _ = watcher.unwatch(&old);
+            self.watcher.unwatch(&old);
         }
         if let Some(folder) = folder {
-            match watcher.watch(folder, RecursiveMode::NonRecursive) {
+            match self.watcher.watch(folder) {
                 Ok(()) => self.watched_folder = Some(folder.to_path_buf()),
                 Err(err) => log::warn!("file viewer: can't watch {}: {err}", folder.display()),
             }
         }
-    }
-
-    /// Reload the file when it changes on disk, a batch of changes at a time.
-    fn apply_changes(
-        mut changes: UnboundedReceiver<PathBuf>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<()> {
-        cx.spawn_in(window, async move |this, cx| {
-            while let Some(first) = changes.next().await {
-                cx.background_executor().timer(CHANGE_BATCH).await;
-                let mut paths = vec![first];
-                while let Ok(path) = changes.try_recv() {
-                    paths.push(path);
-                }
-                if this
-                    .update_in(cx, |viewer, window, cx| {
-                        if viewer
-                            .path
-                            .as_ref()
-                            .is_some_and(|open| paths.contains(open))
-                        {
-                            viewer.reload(window, cx);
-                        }
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
     }
 
     /// Show the file as it now is on disk, unless it has unsaved edits, which are kept.
