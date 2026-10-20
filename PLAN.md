@@ -168,6 +168,30 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   (`$BUFFER`, `.zshenv` `__agentws_report_line`) excludes it, so the Backspaces leave the
   accepted rest in front of the new command. Send a key that doesn't accept it, or clear
   `POSTDISPLAY` first.
+- Prompt at the bottom ([reference](docs/ui-reference/revers_command_line_order.png)): in a
+  shell tab the prompt stays on the last rows, the HISTORY panel (Up) opens just above it, and
+  the earlier commands and their output sit above the panel. Today a new tab or `clear` puts
+  the prompt at the top and the popup then opens below it. Shell tabs with shell integration
+  only; the alternate screen (vim, less, an agent's TUI) and agent tabs draw as today. Steps:
+  1. Bottom-anchored grid: while the rows below the cursor are empty, `terminal_element`
+     draws the screen shifted down by that many rows (blank space at the top), so the prompt
+     line is the last row. Selection, links, mouse reports, the IME box and the history popup
+     use the same offset (one `row_offset` in the geometry). No pty resize, so output and
+     `tput lines` are unchanged; scrollback and `display_offset` work as before. Unit-test the
+     offset (empty screen, full screen, cursor mid-screen after `tput cup`, alternate screen).
+  2. Docked HISTORY panel: always above the prompt (drop the below-the-prompt placement and
+     `MIN_ROWS_ABOVE`), full terminal width, newest row next to the prompt as now. It pushes
+     the rows above the prompt line up by its height instead of covering them, so the last
+     command's output stays readable right above it; closing it puts them back.
+  3. Command blocks: from the OSC 133 marks, record each finished command's prompt line (as
+     an absolute grid line, kept through scrolling and dropped when it leaves the scrollback),
+     folder and duration (`C` to `D`). Draw a thin separator above each prompt line and the
+     folder and duration ("~/.config/stock-watcher (0.02s)") right-aligned on it, dimmed; a
+     failed exit code tints the separator. A resize that reflows lines drops the blocks.
+  4. Setting "Prompt at the bottom" on the settings page's Terminal page (default on); off
+     keeps today's top-anchored layout.
+  Not planned from the screenshot: the separate input box with the folder chip (the prompt is
+  the shell's own, in the grid) and the panel's "Configure" button.
 - New-tab folder picker (currently the selected tab's folder).
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
