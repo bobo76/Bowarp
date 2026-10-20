@@ -14,6 +14,7 @@ mod launcher;
 mod mouse;
 mod scrollbar;
 mod settings_file;
+mod settings_page;
 mod shell_integration;
 mod shortcuts;
 mod sidebar;

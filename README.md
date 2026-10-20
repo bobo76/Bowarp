@@ -61,7 +61,7 @@ but disabled. New tabs start in the selected tab's folder.
 | Ctrl+1..9 | Select tab 1..9 |
 | Ctrl+Shift+T | New tab with the default shell, in the selected tab's folder |
 | Ctrl+Shift+D | Duplicate the selected tab: same program, its folder (also in the tab menu) |
-| Ctrl+Shift+W | Close the selected tab |
+| Ctrl+Shift+W | Close the selected tab (or the Settings row while it is selected) |
 | Ctrl+Shift+B | Hide or show the sidebar (also the title bar button) |
 | Ctrl+Shift+S | Search tabs (shows the sidebar if hidden) |
 | Ctrl+Shift+\| | Hide or show the file explorer (also the title bar button; the key that types `\|`) |
@@ -250,6 +250,19 @@ read." Files over 2 MB, other binary files and files that aren't UTF-8 are not s
 Opening another file or closing the panel with unsaved edits asks before dropping them. When
 the file changes on disk (an agent edits it), the panel reloads it where it was scrolled to,
 unless it has unsaved edits, which are kept.
+
+## Settings
+
+The gear button in the title bar (after the `i` button) opens the settings page in place of the
+terminal and adds a Settings row under the tabs; select a tab to go back, select the row to
+return, and close the row with its × or Ctrl+Shift+W. The row isn't reopened at the next start.
+The search box filters the rows by title, description and keywords. A change saves to
+`settings.json` in the config folder at once; "Reset to default" under a changed row (or the
+page's reset button) restores the default. "Open settings file" shows `settings.json` in the
+file viewer, creating it first if it doesn't exist. A banner on the page says when the file
+can't be read (the defaults apply until it is fixed or a change moves it to
+`settings.json.bak`) or a change couldn't be saved. The About page shows the version and the
+config folder.
 
 ## About
 

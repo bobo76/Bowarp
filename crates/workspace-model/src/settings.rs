@@ -127,9 +127,10 @@ impl SettingsFile {
         self.save_error.as_deref()
     }
 
-    /// Take the settings from the file again: a good file replaces them, a missing or broken
-    /// one keeps them (a broken one sets `load_error`).
-    fn reload(&mut self) {
+    /// Take the settings from the file again: a good file replaces them (and any change made
+    /// with `set_unsaved`), a missing or broken one keeps them (a broken one sets
+    /// `load_error`). For a file edited by hand while the app runs.
+    pub fn reload(&mut self) {
         let Some(path) = &self.path else {
             return;
         };
@@ -155,6 +156,27 @@ impl SettingsFile {
         let before = self.settings.clone();
         change(&mut self.settings);
         if self.settings == before {
+            return Ok(false);
+        }
+        self.save()?;
+        Ok(true)
+    }
+
+    /// Change the settings in memory only, without reading or writing the file: a value
+    /// previewed while a gesture lasts (a slider being dragged). The `update` that ends the
+    /// gesture re-reads the file and saves the final value; a `reload` or another `update`
+    /// first drops the unsaved change.
+    pub fn set_unsaved(&mut self, change: impl FnOnce(&mut Settings)) {
+        change(&mut self.settings);
+    }
+
+    /// Save the settings when there is no file yet, so that it can be opened (in the file
+    /// viewer); an existing file, broken or not, is left as it is. `Ok(true)` when it saved.
+    pub fn create_if_missing(&mut self) -> io::Result<bool> {
+        let Some(path) = &self.path else {
+            return Ok(false);
+        };
+        if SettingsLoad::read(path) != SettingsLoad::Missing {
             return Ok(false);
         }
         self.save()?;
@@ -266,6 +288,27 @@ mod tests {
     }
 
     #[test]
+    fn create_if_missing_writes_only_a_missing_file() {
+        let root = TempDir::new();
+        let path = root.0.join("settings.json");
+        let mut file = SettingsFile::load(path.clone());
+        assert!(file.create_if_missing().unwrap());
+        assert_eq!(
+            SettingsLoad::read(&path),
+            SettingsLoad::Loaded(Settings::default())
+        );
+        // An existing file keeps its text, broken or not.
+        fs::write(&path, r#"{"a": 1}"#).unwrap();
+        assert!(!file.create_if_missing().unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), r#"{"a": 1}"#);
+        fs::write(&path, "{ broken").unwrap();
+        assert!(!file.create_if_missing().unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{ broken");
+        assert!(!settings_backup_path(&path).exists());
+        assert!(!SettingsFile::default().create_if_missing().unwrap());
+    }
+
+    #[test]
     fn update_saves_only_a_change() {
         let root = TempDir::new();
         let path = root.0.join("settings.json");
@@ -337,6 +380,51 @@ mod tests {
             .unwrap()
         );
         assert_eq!(file.settings(), &with_extra("a", Value::from(1)));
+    }
+
+    #[test]
+    fn set_unsaved_changes_memory_only_until_the_update_saves() {
+        let root = TempDir::new();
+        let path = root.0.join("settings.json");
+        fs::write(&path, r#"{"a": 1}"#).unwrap();
+        let mut file = SettingsFile::load(path.clone());
+        file.set_unsaved(|settings| {
+            settings.extra.insert("a".into(), Value::from(2));
+        });
+        file.set_unsaved(|settings| {
+            settings.extra.insert("a".into(), Value::from(3));
+        });
+        assert_eq!(file.settings(), &with_extra("a", Value::from(3)));
+        assert_eq!(fs::read_to_string(&path).unwrap(), r#"{"a": 1}"#);
+        // Edited on disk meanwhile: the save at the end of the gesture keeps that edit.
+        fs::write(&path, r#"{"a": 1, "b": 2}"#).unwrap();
+        assert!(
+            file.update(|settings| {
+                settings.extra.insert("a".into(), Value::from(3));
+            })
+            .unwrap()
+        );
+        let mut expected = with_extra("a", Value::from(3));
+        expected.extra.insert("b".into(), Value::from(2));
+        assert_eq!(file.settings(), &expected);
+        assert_eq!(SettingsLoad::read(&path), SettingsLoad::Loaded(expected));
+    }
+
+    #[test]
+    fn reload_drops_unsaved_changes_and_clears_a_fixed_load_error() {
+        let root = TempDir::new();
+        let path = root.0.join("settings.json");
+        fs::write(&path, "{ broken").unwrap();
+        let mut file = SettingsFile::load(path.clone());
+        assert!(file.load_error().is_some());
+        file.set_unsaved(|settings| {
+            settings.extra.insert("a".into(), Value::from(2));
+        });
+        // Fixed by hand (in the file viewer).
+        fs::write(&path, r#"{"b": 1}"#).unwrap();
+        file.reload();
+        assert_eq!(file.load_error(), None);
+        assert_eq!(file.settings(), &with_extra("b", Value::from(1)));
     }
 
     #[test]

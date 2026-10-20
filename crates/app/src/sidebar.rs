@@ -639,6 +639,78 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
         )
 }
 
+/// The Settings row under the tabs, with a "Settings" heading: like a tab row, selected while
+/// the settings page shows, with a close button on hover or while selected.
+pub fn settings_row(
+    selected: bool,
+    on_select: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &App,
+) -> impl IntoElement {
+    let theme = cx.theme();
+    let (background, foreground) = if selected {
+        (theme.sidebar_accent, theme.sidebar_accent_foreground)
+    } else {
+        (theme.sidebar, theme.sidebar_foreground)
+    };
+    let hovered = if selected {
+        background
+    } else {
+        hover_background(cx)
+    };
+    let heading = div()
+        .flex()
+        .items_end()
+        .h(px(24.))
+        .pl_3()
+        .pb_1()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child("Settings");
+    let row = div()
+        .id("settings-row")
+        .group("settings-row")
+        .flex()
+        .items_center()
+        .gap_3()
+        .h(px(TAB_ROW_HEIGHT))
+        .pl_3()
+        .pr_2()
+        .bg(background)
+        .text_color(foreground)
+        .hover(|style| style.bg(hovered))
+        .on_click(on_select)
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .size(px(32.))
+                .rounded_md()
+                .bg(theme.secondary)
+                .child(Icon::new(IconName::Settings).size(px(18.))),
+        )
+        .child(div().flex_1().min_w_0().text_sm().child("Settings"))
+        .child(
+            div()
+                .when(!selected, |buttons| {
+                    buttons
+                        .invisible()
+                        .group_hover("settings-row", |style| style.visible())
+                })
+                .child(
+                    Button::new("close-settings")
+                        .icon(IconName::Close)
+                        .ghost()
+                        .xsmall()
+                        .tooltip("Close (Ctrl+Shift+W)")
+                        .on_click(on_close),
+                ),
+        );
+    div().flex().flex_col().child(heading).child(row)
+}
+
 /// Shown when the sidebar search matches no tab.
 pub fn no_matches_hint(cx: &App) -> impl IntoElement {
     div()

@@ -95,6 +95,9 @@ directly to model APIs.
   agent's conversation.
 - Keep preferences in a settings file that survives hand edits, other running windows and
   unknown or mistyped entries; a file that can't be read is set aside, never lost.
+- Edit preferences on a settings page opened from the title bar: searchable pages of
+  settings applied as they change, a reset per setting, the file's errors shown, and a
+  button to open the settings file itself.
 
 ## Performance and Usability
 

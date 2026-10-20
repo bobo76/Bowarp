@@ -34,6 +34,8 @@ use crate::file_explorer::{EXPLORER_WIDTH, ExplorerEvent, FileExplorer};
 use crate::file_viewer::{FilePlace, FileViewer, ViewerEvent};
 use crate::hooks::ClaudeHooks;
 use crate::launcher::{self, Launcher, launch_name};
+use crate::settings_file::{self, AppSettings};
+use crate::settings_page;
 use crate::shell_integration;
 use crate::shortcuts::{self, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY};
 use crate::sidebar::{self, NUMBERED_TABS, SIDEBAR_WIDTH};
@@ -211,9 +213,17 @@ pub struct WorkspaceView {
     next_session_id: u64,
     launchers: Rc<[Launcher]>,
     hooks: Option<Rc<ClaudeHooks>>,
+    /// Whether the sidebar shows the Settings row (at most one, not saved in `tabs.json`).
+    settings_open: bool,
+    /// Whether the settings page shows in place of the selected tab's terminal (the Settings
+    /// row is selected). `active` keeps the tab shown again when the page goes.
+    settings_shown: bool,
+    /// The keyboard goes here while the settings page shows, not to the hidden terminal.
+    settings_focus: FocusHandle,
     _hook_messages: Task<()>,
     _search_events: Subscription,
     _explorer_events: Subscription,
+    _settings_changes: Subscription,
 }
 
 impl WorkspaceView {
@@ -256,6 +266,13 @@ impl WorkspaceView {
             .collect();
         let explorer = cx.new(|cx| FileExplorer::new(agents, cx));
         let explorer_events = cx.subscribe_in(&explorer, window, Self::on_explorer_event);
+        // A change saved from the page (or its error) redraws it; rows read the settings when
+        // drawn.
+        let settings_changes = cx.observe_global::<AppSettings>(|workspace, cx| {
+            if workspace.settings_shown {
+                cx.notify();
+            }
+        });
         Self {
             tabs: Vec::new(),
             layout: Layout::default(),
@@ -276,9 +293,13 @@ impl WorkspaceView {
             next_session_id: 1,
             launchers,
             hooks,
+            settings_open: false,
+            settings_shown: false,
+            settings_focus: cx.focus_handle(),
             _hook_messages: hook_task,
             _search_events: search_events,
             _explorer_events: explorer_events,
+            _settings_changes: settings_changes,
         }
     }
 
@@ -408,7 +429,7 @@ impl WorkspaceView {
         tab.spec = spec;
         tab._view_events = view_events;
         self.diff_stats.remove(&tab_id);
-        if index == self.active {
+        if index == self.active && !self.settings_shown {
             view.update(cx, |view, cx| view.show(cx));
             if had_focus {
                 window.focus(&view.focus_handle(cx), cx);
@@ -609,6 +630,7 @@ impl WorkspaceView {
             return;
         };
         let (id, view) = (tab.id, tab.view.clone());
+        self.settings_shown = false;
         self.layout.reveal(id);
         if self
             .search_matches(cx)
@@ -674,6 +696,14 @@ impl WorkspaceView {
         }
         if index < self.active || self.active == self.tabs.len() {
             self.active -= 1;
+        }
+        if self.settings_shown {
+            // The page stays; the tab now selected under it (hidden, as every other tab) shows
+            // when the page goes.
+            self.sync_explorer(cx);
+            self.focus_active(window, cx);
+            cx.notify();
+            return;
         }
         self.activate(self.active, window, cx);
     }
@@ -926,9 +956,7 @@ impl WorkspaceView {
 
     /// Give the keyboard back to the selected terminal once the editor is gone.
     fn end_rename(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(tab) = self.active_tab() {
-            window.focus(&tab.view.focus_handle(cx), cx);
-        }
+        self.focus_active(window, cx);
         cx.notify();
     }
 
@@ -1001,9 +1029,7 @@ impl WorkspaceView {
         self.search_cursor = None;
         self.search
             .update(cx, |search, cx| search.clean(window, cx));
-        if let Some(tab) = self.active_tab() {
-            window.focus(&tab.view.focus_handle(cx), cx);
-        }
+        self.focus_active(window, cx);
         cx.notify();
     }
 
@@ -1056,8 +1082,10 @@ impl WorkspaceView {
             .collect()
     }
 
+    /// The tab shown, left out of the attention count and jump: none while the settings page
+    /// hides the selected tab.
     fn current_index(&self) -> Option<usize> {
-        (self.active < self.tabs.len()).then_some(self.active)
+        (!self.settings_shown && self.active < self.tabs.len()).then_some(self.active)
     }
 
     /// Select the next other tab needing attention; with none, the next one with a finished turn.
@@ -1272,6 +1300,11 @@ impl WorkspaceView {
     ) {
         match event {
             ViewerEvent::Opened => cx.notify(),
+            // The settings page reads the file again (its load error may be fixed).
+            ViewerEvent::Saved(path) if settings_file::is_file(cx, path) => {
+                settings_file::reload(cx);
+            }
+            ViewerEvent::Saved(_) => {}
             ViewerEvent::RevealFolder(folder) => {
                 if !self.explorer_visible {
                     self.toggle_explorer(cx);
@@ -1346,8 +1379,11 @@ impl WorkspaceView {
             )
     }
 
+    /// Give the keyboard to the selected tab's terminal, or to the settings page while it shows.
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(tab) = self.active_tab() {
+        if self.settings_shown {
+            window.focus(&self.settings_focus, cx);
+        } else if let Some(tab) = self.active_tab() {
             window.focus(&tab.view.focus_handle(cx), cx);
         }
     }
@@ -1370,6 +1406,7 @@ impl WorkspaceView {
             ("tab", shift) => self.cycle(!shift, window, cx),
             (NEW_TAB_KEY, true) => self.open_default_shell(window, cx),
             (DUPLICATE_TAB_KEY, true) => self.duplicate_tab(self.active, window, cx),
+            ("w", true) if self.settings_shown => self.close_settings(window, cx),
             ("w", true) => self.close_tab(self.active, window, cx),
             ("b", true) => self.toggle_sidebar(cx),
             // GPUI drops Shift from a shifted symbol: Ctrl+Shift+\ arrives as Ctrl+|.
@@ -1383,6 +1420,57 @@ impl WorkspaceView {
             _ => return false,
         }
         true
+    }
+
+    /// Show the settings page in place of the selected tab's terminal, adding the sidebar's
+    /// Settings row if it isn't there (the title bar button, or selecting the row).
+    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The file may have been edited by hand since: the page shows what it holds now.
+        settings_file::reload(cx);
+        self.settings_open = true;
+        if !self.settings_shown {
+            self.settings_shown = true;
+            if let Some(tab) = self.active_tab() {
+                tab.view.update(cx, |view, _| view.hide());
+            }
+        }
+        window.focus(&self.settings_focus, cx);
+        cx.notify();
+    }
+
+    /// Remove the Settings row; if its page showed, the tab selected before shows again.
+    fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_open = false;
+        if self.settings_shown {
+            self.activate(self.active, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// "Open settings file": settings.json (created with the current settings if missing) in
+    /// the selected tab's file viewer, beside the settings page.
+    fn open_settings_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = settings_file::file_to_open(cx) else {
+            // A failed write shows in the page's banner.
+            if settings_file::file(cx).path().is_none() {
+                let message = "There is no config folder (no home folder) to keep settings in";
+                window.push_notification(Notification::error(message), cx);
+            }
+            return;
+        };
+        if let Some(id) = self.active_tab().map(|tab| tab.id) {
+            self.open_file_in(id, path, FilePlace::default(), window, cx);
+        }
+    }
+
+    fn settings_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("open-settings")
+            .icon(IconName::Settings)
+            .ghost()
+            .small()
+            .selected(self.settings_shown)
+            .tooltip("Settings")
+            .on_click(cx.listener(|workspace, _, window, cx| workspace.open_settings(window, cx)))
     }
 
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1428,6 +1516,9 @@ fn tab_number(key: &str) -> Option<usize> {
 
 impl Focusable for WorkspaceView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if self.settings_shown {
+            return self.settings_focus.clone();
+        }
         match self.active_tab() {
             Some(tab) => tab.view.focus_handle(cx),
             None => cx.focus_handle(),
@@ -1438,7 +1529,10 @@ impl Focusable for WorkspaceView {
 impl Render for WorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.pulse_running = sidebar::pulse_allowed(window);
-        let active = self.active_tab().map(|tab| tab.view.clone());
+        let active = self
+            .active_tab()
+            .filter(|_| !self.settings_shown)
+            .map(|tab| tab.view.clone());
         let viewer = self.active_viewer(cx);
         let viewer_width = pane_width::viewer_width(
             self.viewer_fraction,
@@ -1469,7 +1563,8 @@ impl Render for WorkspaceView {
                             .occlude()
                             .child(self.sidebar_toggle(cx))
                             .child(self.explorer_toggle(cx))
-                            .child(about::about_button()),
+                            .child(about::about_button())
+                            .child(self.settings_button(cx)),
                     ),
             )
             .child(
@@ -1488,7 +1583,18 @@ impl Render for WorkspaceView {
                     .when(self.explorer_visible, |content| {
                         content.child(self.explorer.clone())
                     })
-                    .child(div().flex_1().min_w_0().h_full().children(active))
+                    .child(div().flex_1().min_w_0().h_full().children(active).when(
+                        self.settings_shown,
+                        |area| {
+                            area.track_focus(&self.settings_focus)
+                                .child(settings_page::render(
+                                    cx.listener(|workspace, _, window, cx| {
+                                        workspace.open_settings_file(window, cx)
+                                    }),
+                                    cx,
+                                ))
+                        },
+                    ))
                     .when_some(viewer, |content, viewer| {
                         content.child(self.viewer_divider(cx)).child(
                             div()

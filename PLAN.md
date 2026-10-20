@@ -5,7 +5,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
 ## Status (2026-10-19)
 
 [FEATURES.md](FEATURES.md) is the target; what is not built yet is in the milestones and the
-backlog below. Details of finished work are in the git history (300 tests).
+backlog below. Details of finished work are in the git history (303 tests).
 
 **Known limitations**
 
@@ -24,47 +24,37 @@ backlog below. Details of finished work are in the git history (300 tests).
   value is dropped at the next change. A file that isn't a JSON object is ignored (reason
   printed and kept for the settings page) and moved to `settings.json.bak` at the first
   change. Unknown fields are kept but rewritten in alphabetical order; JSON comments aren't
-  allowed. Edits made on disk while running apply only at the next change from the app.
+  allowed. Edits made on disk while running apply when the settings page opens, when the
+  file is saved in the file viewer, or at the next change from the app; edits made in another
+  editor while the page shows apply only then (no file watch).
 
 **Next steps (quick wins 3: settings)**
 
-1. Settings page ([reference](docs/ui-reference/settings.png)):
-   - A settings button in the title bar opens the page; it shows as a "Settings" row in the
-     sidebar and takes the terminal area (like a tab, not saved in `tabs.json`, one at most).
-   - Built on gpui-component's `setting` module: a search box over item titles and keywords,
-     pages on the left, groups of rows (title, description, control) on the right, a reset
-     per item, and an "Open settings file" button at the bottom (opens it in the file viewer).
-   - Pages for this step: About (version, config folder) and empty Appearance and Terminal
-     pages ready for rows; a banner shows the settings file's load or save error
-     (`SettingsFile::load_error` / `save_error`). Rows save at once (`settings_file::update`)
-     and apply live.
-   - Later steps add their rows here (font, shell, theme, opacity, shortcuts, launcher paths
-     and icons).
-2. Font family and size: from the settings file (today hard-coded), with rows on the
+1. Font family and size: from the settings file (today hard-coded), with rows on the
    Appearance page; a change applies live (the terminal re-measures its cells and resizes the
    pty).
-3. Default shell: from the settings file (a row on the Terminal page); the new-tab menu's
+2. Default shell: from the settings file (a row on the Terminal page); the new-tab menu's
    first entry and Ctrl+Shift+T use it; empty keeps the $SHELL / Git Bash default.
-4. File viewer width: saved in the settings file when it changes and restored at startup
+3. File viewer width: saved in the settings file when it changes and restored at startup
    (not shown on the settings page).
-5. Configurable terminal path: the executable path for each launcher entry (Terminal, Git
+4. Configurable terminal path: the executable path for each launcher entry (Terminal, Git
    Bash, `claude`, `copilot`) saved in the settings file and shown on the settings page, for
    programs that aren't on `PATH` or where the wrong copy is found first; an empty value keeps
    the current lookup.
-6. Configurable terminal icon: the icon for each launcher entry, picked from the bundled
+5. Configurable terminal icon: the icon for each launcher entry, picked from the bundled
    `LauncherIcon` set (Bash, PowerShell, Command Prompt, Zsh, Fish, Ubuntu, ...) and saved in
    the settings file (settings page row); it shows in the new-tab menu and on the sidebar row
    of every tab started from that entry (restored tabs included). "Automatic" keeps the
    current detection (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`),
    e.g. for a wrapper script that `shell_icon` only sees as `Shell`.
-7. Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
+6. Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
    and terminal color schemes: a few bundled schemes plus user schemes imported from
    base16/iTerm files, saved in the settings file and picked on the Appearance page. "System"
    follows the OS light/dark setting.
-8. Window opacity and background blur, set in the settings file (opacity applies to the
+7. Window opacity and background blur, set in the settings file (opacity applies to the
    terminal background only, text stays opaque); blur where the platform allows it (Windows
    acrylic/mica, KDE on X11).
-9. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
+8. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
    `cx.build_action`) from the settings file in place of `default_bindings`.
 
 **Fixed, not tested yet (built and unit-tested by the Windows CI, not run on a Windows machine)**
@@ -125,7 +115,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 
 | Element | Look | Milestone |
 |---|---|---|
-| Title bar | settings button | quick wins 3 |
 | Context menu | Save as new config (= save as a named workspace) | M4 |
 | Clipboard notice | banner above the terminal when a program writes the clipboard (OSC 52), with allow/deny | M5 |
 
@@ -176,6 +165,8 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   Enter / Shift+Enter to move, match count, case and whole-word toggles), Ctrl+H adds a
   replace field (replace one / all) in source mode; rendered Markdown only gets find.
 - File viewer: the `⋮` menu from the reference screenshot.
+- File viewer: the rendered JSON view ("Not valid JSON") is only worked out when the file
+  opens, so it stays stale after the file is fixed and saved in the viewer.
 - First-run tab on Windows opens Git Bash: with no saved tabs and no tab on the command line,
   `main.rs` starts `LaunchSpec::shell(cwd)` (no program), which alacritty runs as Windows
   PowerShell, while Ctrl+Shift+T and the `+` menu open `launcher::default_shell` (Git Bash).

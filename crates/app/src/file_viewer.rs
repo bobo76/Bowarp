@@ -45,6 +45,8 @@ pub enum ViewerEvent {
     Closed,
     /// A Markdown link to a folder was clicked: show it in the explorer.
     RevealFolder(PathBuf),
+    /// The file was saved (Ctrl+S).
+    Saved(PathBuf),
 }
 
 /// A place in a file to show: 1-based, as compilers print it.
@@ -328,6 +330,7 @@ impl FileViewer {
         }
         file.saved = text;
         file.dirty = false;
+        cx.emit(ViewerEvent::Saved(path));
         cx.notify();
     }
 

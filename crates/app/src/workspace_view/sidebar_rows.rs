@@ -65,6 +65,18 @@ impl WorkspaceView {
         if matches.is_some() && rows.is_empty() {
             rows.push(sidebar::no_matches_hint(cx).into_any_element());
         }
+        if self.settings_open {
+            let row = sidebar::settings_row(
+                self.settings_shown,
+                cx.listener(|workspace, _, window, cx| workspace.open_settings(window, cx)),
+                cx.listener(|workspace, _, window, cx| {
+                    cx.stop_propagation();
+                    workspace.close_settings(window, cx);
+                }),
+                cx,
+            );
+            rows.push(row.into_any_element());
+        }
         let attention_button = self.attention_button(cx);
         let theme = cx.theme();
         div()
@@ -226,7 +238,7 @@ impl WorkspaceView {
                 .map(|location| tab_detail(location, self.home.as_deref())),
             status: view.tab_status(),
             pulse: self.pulse_running && view.running_pulses(),
-            selected: index == self.active,
+            selected: index == self.active && !self.settings_shown,
             pinned: self.layout.is_pinned(id),
             color: self.tab_color(tab),
             name_editor,
@@ -351,7 +363,11 @@ impl WorkspaceView {
     ) -> AnyElement {
         let workspace = cx.entity().downgrade();
         let id = group.id;
-        let active_id = self.active_tab().map(|tab| tab.id);
+        // The settings page hides the selected tab: no group holds the selection then.
+        let active_id = self
+            .active_tab()
+            .filter(|_| !self.settings_shown)
+            .map(|tab| tab.id);
         let statuses = group.tabs().iter().filter_map(|&tab| {
             let index = self.tab_index(tab)?;
             Some(self.tabs[index].view.read(cx).tab_status())
