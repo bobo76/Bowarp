@@ -41,21 +41,33 @@ backlog below. Details of finished work are in the git history (303 tests).
    Bash, `claude`, `copilot`) saved in the settings file and shown on the settings page, for
    programs that aren't on `PATH` or where the wrong copy is found first; an empty value keeps
    the current lookup.
-5. Configurable terminal icon: the icon for each launcher entry, picked from the bundled
+5. Agent launch arguments: extra command-line arguments for the Claude Code and Copilot CLI
+   launcher entries (e.g. `--yolo` for `copilot`, `--dangerously-skip-permissions` or
+   `--model opus` for `claude`), saved in the settings file and shown on the settings page
+   next to the entry's path. Split like a shell command line (quotes group words) and added
+   after the app's own arguments (`claude` keeps the hooks' `--settings`); they apply to new
+   tabs started from that entry (the `+` menu, Ctrl+Shift+T). A restored tab keeps the
+   arguments it started with (saved with the tab in `tabs.json`), not the current setting.
+   Empty adds none.
+6. Configurable terminal icon: the icon for each launcher entry, picked from the bundled
    `LauncherIcon` set (Bash, PowerShell, Command Prompt, Zsh, Fish, Ubuntu, ...) and saved in
    the settings file (settings page row); it shows in the new-tab menu and on the sidebar row
    of every tab started from that entry (restored tabs included). "Automatic" keeps the
    current detection (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`),
    e.g. for a wrapper script that `shell_icon` only sees as `Shell`.
-6. Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
+7. Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
    and terminal color schemes: a few bundled schemes plus user schemes imported from
    base16/iTerm files, saved in the settings file and picked on the Appearance page. "System"
    follows the OS light/dark setting.
-7. Window opacity and background blur, set in the settings file (opacity applies to the
+8. Window opacity and background blur, set in the settings file (opacity applies to the
    terminal background only, text stays opaque); blur where the platform allows it (Windows
    acrylic/mica, KDE on X11).
-8. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
+9. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
    `cx.build_action`) from the settings file in place of `default_bindings`.
+10. Executable path on the settings page's About page: an "Executable" row under "Config
+   folder" (`about_groups` in `app/src/settings_page.rs`) showing `std::env::current_exe()`,
+   laid out vertically like the folder; "Unknown" when it can't be read. Tells which copy is
+   running when several are installed or a dev build sits next to a release.
 
 **Fixed, not tested yet (built and unit-tested by the Windows CI, not run on a Windows machine)**
 
@@ -149,6 +161,25 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
     may take only one; if so, document it).
   Needs shell integration, so it misses `npx`, an absolute path to `claude` and scripts that run
   it (a later Linux `/proc` child check could add the icon for those, without hooks).
+- `claude` / `copilot` typed at a shell prompt open an agent tab: instead of running in the
+  shell tab, the command opens a new tab exactly like the `+` menu's "Claude Code" / "Copilot
+  CLI" entry (`open_launcher` in `app/src/workspace_view.rs`, so hooks and status work), in the
+  shell's current folder, and selects it; the shell tab stays at its prompt. Steps:
+  - The shell integration scripts (bash, zsh, PowerShell) define `claude` and `copilot`
+    functions that print a new tokened mark, e.g. `ESC ] 133;N;aw=<token>;agent=claude;
+    args=<hex>;cwd=<hex> BEL`, and return 0 without starting the program. `Osc133Scanner`
+    accepts it, `PromptTracker` reports it as a new `PromptEvent`, and `TerminalView` asks
+    `WorkspaceView` to open the agent's launcher with the folder and the arguments
+    (`claude --resume` opens a tab running `claude --resume`).
+  - Run in place, not in a new tab: the non-interactive forms (`-p` / `--print`, `--version`,
+    `--help`, subcommands such as `claude mcp ...` / `claude update`), a command whose stdin or
+    stdout isn't a terminal (`echo x | claude -p`), and `command claude` / `\claude`, which skip
+    the function. Agent not found on `PATH` (no launcher program): run in place, so the shell
+    prints its own "command not found".
+  - Setting "Open agents typed at the prompt in a new tab" on the settings page's Terminal page
+    (default on); off, the functions aren't defined (the app passes a flag with the token).
+  - Mostly replaces the item above for interactive use; that item still matters for `claude`
+    run in place (`-p` in a script, a nested shell, cmd tabs, which get no functions).
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
 - Bell sound: with the M5 notification sound; rate-limited so a stream of bells doesn't
@@ -201,10 +232,37 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
      keeps today's top-anchored layout.
   Not planned from the screenshot: the separate input box with the folder chip (the prompt is
   the shell's own, in the grid) and the panel's "Configure" button.
+- Paste with Ctrl+V in the terminal, like Windows Terminal (today only Ctrl+Shift+V and
+  Shift+Insert, `default_bindings` in `app/src/terminal_view.rs`); Ctrl+V then no longer
+  reaches the program as `^V` (bash's quoted-insert, vim's visual block), until the
+  configurable keymap lets the user unbind it.
+- Zoom with Ctrl+scroll, like Windows Terminal: Ctrl+wheel up / down over the terminal makes
+  the font bigger / smaller one point per notch (clamped, e.g. 6-48 pt), also Ctrl+= / Ctrl+-
+  and Ctrl+0 to reset. Today the size is the hard-coded `FONT_SIZE` (14 pt,
+  `app/src/terminal_element.rs`); builds on Next steps 1 (font size from the settings file,
+  applied live by re-measuring the cells and resizing the pty). The zoom applies to every
+  terminal tab and isn't saved (Ctrl+0 and a restart go back to the settings size). Ctrl+wheel
+  is never sent to the program, even with mouse reporting on.
+- Copy from a Copilot CLI tab doesn't work (bug, seen on Windows): Copilot's right-click "Copy
+  to clipboard" puts nothing on the clipboard, and neither do Ctrl+Insert or Ctrl+C after
+  selecting text. Likely causes, unverified: Copilot copies through OSC 52, whose
+  `ClipboardStore` event `term-core/src/session.rs` drops (see "Answer OSC 52 clipboard
+  requests" below); and Copilot turns on mouse reporting, so a drag goes to Copilot instead of
+  making the app's own selection, leaving Ctrl+Insert (`Copy`, `terminal_view.rs`) nothing to
+  copy, while Ctrl+C reaches Copilot as `^C`. Check with a trace log of the dropped event;
+  fix by storing OSC 52 writes in the clipboard (with M5's clipboard notice later) and, if
+  needed, Shift+drag selecting even while mouse reporting is on.
+- Duplicate tab: insert the new tab right below the duplicated one, in its group or among the
+  ungrouped tabs (today `Layout::add` puts it at the end of the group, or of the list).
 - New-tab folder picker (currently the selected tab's folder).
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
   the window; Delete already runs in the background.
+- File explorer resize: drag the explorer's edge to change its width, like the file viewer's
+  divider (`pane_width`), between half (150 px) and twice (600 px) the default
+  `EXPLORER_WIDTH` (300 px, `app/src/file_explorer.rs`). The width also goes into the
+  pane layout in `workspace_view.rs`, and is saved in the settings file and restored at
+  startup, like the file viewer width.
 - Sidebar search: the filter/sort button from the reference screenshot.
 - Configurable tab background color: a color picked per tab from the tab menu (a small
   palette plus "Default") that tints the tab's sidebar row and its terminal background; saved
@@ -229,6 +287,16 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 - Cache the active TerminalView (`.cached(...)`) so sidebar animation frames and other
   WorkspaceView re-renders don't re-render the terminal; every input the view shows (focus,
   resize, selection, session wakeup) must notify it; check with Xvfb.
+- Dependency updates (checked 2026-10-20, toolchain 1.99.1):
+  - `rust-version = "1.88"` in `Cargo.toml` is already wrong: `Cargo.lock` has `uuid` 1.28,
+    `notify-rust` 4.18 and `ordered-float` 5.5, which need Rust 1.89-1.90, so `cargo update`
+    would downgrade them. Raise it (1.95 or newer) and run `cargo update` (about 10 compatible
+    updates, e.g. `tokio` 1.54, `cc` 1.9, `rustls-webpki`); it also unlocks `cosmic-text`,
+    `oo7`, `smol_str`, `serde-saphyr` and `tree-sitter-language`. Build and run the tests.
+  - Bigger updates, each on its own: `gpui-kit` 0.7.3 -> 0.8.0 (likely API changes in
+    GPUI / `gpui-component`), `windows-registry` 0.6 -> 0.100 (needs Rust 1.95). Update the
+    Crates table above afterwards.
+  - Pre-releases to watch, not adopt yet: `libc` 1.0 (alpha), `notify` 9.0 (rc).
 - PowerShell: the integration writes the `C` mark on Enter even when PSReadLine only adds a
   line to an unfinished command (`if ($x) {`), so the tab shows Running while typing; write it
   only for accepted lines (needs a machine with pwsh to check).

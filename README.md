@@ -2,7 +2,6 @@
 
 A terminal workspace for running Claude Code, Copilot CLI and shell sessions side by side, with
 per-tab agent status. Feature spec: [FEATURES.md](FEATURES.md). Plan and status: [PLAN.md](PLAN.md).
-Architecture: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Install on Windows
 
@@ -48,6 +47,8 @@ The first tab runs a shell by default. To start with an agent or in another fold
 ```
 cargo run -p agent-workspace -- [shell|claude|copilot] [project-dir]
 ```
+
+Linting with Clippy, locally and in CI: [docs/code-quality.md](docs/code-quality.md).
 
 ## Tabs
 
