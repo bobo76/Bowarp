@@ -5,7 +5,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
 ## Status (2026-10-19)
 
 [FEATURES.md](FEATURES.md) is the target; what is not built yet is in the milestones and the
-backlog below. Details of finished work are in the git history (324 tests).
+backlog below. Details of finished work are in the git history (328 tests).
 
 **Known limitations**
 
@@ -41,11 +41,22 @@ backlog below. Details of finished work are in the git history (324 tests).
   isn't listed, the first tab runs it but Ctrl+Shift+T opens the first listed shell (the
   page then says just "Automatic"). A first tab whose shell won't start falls back to
   `$SHELL` (Windows PowerShell on Windows) without telling the user why.
+- File viewer width: saved as a share of the window (`file_viewer_fraction`, 0-1 in the
+  file; the 240 px minimums for the viewer and the terminal still apply) when a divider drag
+  ends or the divider is double-clicked, not on the settings page. Another running instance
+  shows it only after it reloads the settings file (see above). While the file is broken the
+  width isn't saved (the file is left for the user to fix) and lasts until the file is read
+  again. A drag whose release the app misses (a right or middle button released outside the
+  window, or on Windows a focus change such as Alt+Tab mid-drag) keeps the dragged width and
+  saves it at the next mouse release anywhere; it is lost only if the app quits first.
 
 **Next steps (quick wins 3: settings)**
 
-1. File viewer width: saved in the settings file when it changes and restored at startup
-   (not shown on the settings page).
+1. File explorer resize: drag the explorer's edge to change its width, like the file viewer's
+   divider (`pane_width`), between half (150 px) and twice (600 px) the default
+   `EXPLORER_WIDTH` (300 px, `app/src/file_explorer.rs`). The width also goes into the
+   pane layout in `workspace_view.rs`, and is saved in the settings file and restored at
+   startup, like the file viewer width.
 2. Configurable terminal path: the executable path for each launcher entry (Terminal, Git
    Bash, `claude`, `copilot`) saved in the settings file and shown on the settings page, for
    programs that aren't on `PATH` or where the wrong copy is found first; an empty value keeps
@@ -262,11 +273,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
   the window; Delete already runs in the background.
-- File explorer resize: drag the explorer's edge to change its width, like the file viewer's
-  divider (`pane_width`), between half (150 px) and twice (600 px) the default
-  `EXPLORER_WIDTH` (300 px, `app/src/file_explorer.rs`). The width also goes into the
-  pane layout in `workspace_view.rs`, and is saved in the settings file and restored at
-  startup, like the file viewer width.
 - Sidebar search: the filter/sort button from the reference screenshot.
 - Configurable tab background color: a color picked per tab from the tab menu (a small
   palette plus "Default") that tints the tab's sidebar row and its terminal background; saved

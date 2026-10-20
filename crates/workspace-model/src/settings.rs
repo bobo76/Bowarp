@@ -14,6 +14,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
+use crate::pane_width::ViewerFraction;
 use crate::window_state::write_atomic;
 
 /// The settings. A new field gets a default (through `Default`, as `#[serde(default)]` asks
@@ -36,6 +37,10 @@ pub struct Settings {
     /// Windows). A shell that isn't installed gets the automatic one too (the app checks).
     #[serde(deserialize_with = "lenient")]
     pub default_shell: String,
+    /// The file viewer's share of the window width, set by dragging its divider (not on the
+    /// settings page).
+    #[serde(deserialize_with = "lenient")]
+    pub file_viewer_fraction: ViewerFraction,
     /// Fields this version doesn't know, written back as they were.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -208,6 +213,24 @@ impl SettingsFile {
     /// continuously (slider, pane width), call it once when the gesture ends, not per frame.
     pub fn update(&mut self, change: impl FnOnce(&mut Settings)) -> io::Result<bool> {
         self.reload();
+        self.change_and_save(change)
+    }
+
+    /// Like `update`, but while the file is broken the change applies in memory only (as with
+    /// `set_unsaved`, `Ok(false)`) and the file is left as it is. For layout changes (a pane
+    /// resized): the user isn't looking at the settings then, so the broken file they may be
+    /// fixing in an editor mustn't be moved to `settings_backup_path` under them. The change
+    /// lasts until the file is read again; the next save of a still broken file keeps it.
+    pub fn update_unless_broken(&mut self, change: impl FnOnce(&mut Settings)) -> io::Result<bool> {
+        self.reload();
+        if self.load_error.is_some() {
+            self.set_unsaved(change);
+            return Ok(false);
+        }
+        self.change_and_save(change)
+    }
+
+    fn change_and_save(&mut self, change: impl FnOnce(&mut Settings)) -> io::Result<bool> {
         let before = self.settings.clone();
         change(&mut self.settings);
         if self.settings == before {
@@ -434,6 +457,35 @@ mod tests {
         })
         .unwrap();
         assert_eq!(fs::read_to_string(&backup).unwrap(), "{ broken");
+    }
+
+    #[test]
+    fn update_unless_broken_leaves_a_broken_file_alone() {
+        let root = TempDir::new();
+        let path = root.0.join("settings.json");
+        fs::write(&path, "{ broken").unwrap();
+        let mut file = SettingsFile::load(path.clone());
+        let narrow = ViewerFraction::new(0.3);
+        let changed = file
+            .update_unless_broken(|settings| settings.file_viewer_fraction = narrow)
+            .unwrap();
+        assert!(!changed);
+        assert_eq!(file.settings().file_viewer_fraction, narrow);
+        assert!(file.load_error().is_some());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{ broken");
+        assert!(!settings_backup_path(&path).exists());
+
+        // Once the file is fixed, it saves like `update`.
+        fs::write(&path, "{}").unwrap();
+        assert!(
+            file.update_unless_broken(|settings| settings.file_viewer_fraction = narrow)
+                .unwrap()
+        );
+        assert_eq!(
+            SettingsLoad::read(&path),
+            SettingsLoad::Loaded(file.settings().clone())
+        );
+        assert_eq!(file.settings().file_viewer_fraction, narrow);
     }
 
     #[test]
@@ -692,6 +744,41 @@ mod tests {
         // Written back clamped.
         let settings = Settings::from_json(r#"{"font_size": 100}"#).unwrap();
         assert!(settings.to_json().unwrap().contains(r#""font_size": 72.0"#));
+    }
+
+    #[test]
+    fn file_viewer_fraction_is_read_clamped_and_defaults() {
+        let settings = Settings::default();
+        assert_eq!(settings.file_viewer_fraction, ViewerFraction::default());
+        for (text, fraction) in [
+            (r#"{"file_viewer_fraction": 0.3}"#, 0.3),
+            (r#"{"file_viewer_fraction": -1}"#, ViewerFraction::MIN),
+            (r#"{"file_viewer_fraction": 7}"#, ViewerFraction::MAX),
+            (
+                r#"{"file_viewer_fraction": "wide"}"#,
+                ViewerFraction::default().get(),
+            ),
+            (
+                r#"{"file_viewer_fraction": null}"#,
+                ViewerFraction::default().get(),
+            ),
+        ] {
+            let settings = Settings::from_json(text).unwrap();
+            assert_eq!(settings.file_viewer_fraction.get(), fraction, "{text}");
+        }
+        let settings = Settings::from_json(r#"{"file_viewer_fraction": 2}"#).unwrap();
+        assert!(
+            settings
+                .to_json()
+                .unwrap()
+                .contains(r#""file_viewer_fraction": 1.0"#)
+        );
+        assert!(
+            Settings::default()
+                .to_json()
+                .unwrap()
+                .contains(r#""file_viewer_fraction": 0.45"#)
+        );
     }
 
     #[derive(Debug, Default, PartialEq, Deserialize)]

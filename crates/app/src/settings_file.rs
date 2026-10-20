@@ -1,9 +1,10 @@
 //! The user's settings (`workspace_model::SettingsFile`), read from `settings.json` in the
 //! config folder at start and held as a global; a change re-reads the file and is saved at
 //! once. A broken file is reported and left as it is until the first change moves it to
-//! `settings.json.bak`.
+//! `settings.json.bak` (a layout change, `save_layout`, doesn't).
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use gpui_kit::{App, Global};
@@ -45,7 +46,22 @@ pub fn file(cx: &App) -> &SettingsFile {
 /// call this once when the gesture ends, not on every move.
 pub fn update(cx: &mut App, change: impl FnOnce(&mut Settings)) {
     let file = &mut cx.global_mut::<AppSettings>().0;
-    if let Err(err) = file.update(change) {
+    let result = file.update(change);
+    report_save_error(file, result);
+}
+
+/// `update` for a layout change (a pane resized), which the user makes without looking at the
+/// settings: while the file is broken, the change applies for this run only and the file is
+/// left as it is (see `SettingsFile::update_unless_broken`), instead of being moved to
+/// `settings.json.bak` while the user may be fixing it in an editor.
+pub fn save_layout(cx: &mut App, change: impl FnOnce(&mut Settings)) {
+    let file = &mut cx.global_mut::<AppSettings>().0;
+    let result = file.update_unless_broken(change);
+    report_save_error(file, result);
+}
+
+fn report_save_error(file: &SettingsFile, result: io::Result<bool>) {
+    if let Err(err) = result {
         let path = file.path().map(|path| path.display().to_string());
         eprintln!(
             "agent-workspace: failed to save settings to {}: {err}",

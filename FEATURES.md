@@ -86,8 +86,8 @@ directly to model APIs.
 
 ## Workspace Persistence
 
-- Reopen the window with its last size, position, and tabs (programs, folders, names,
-  colors, pins, groups, order, and selection), starting fresh sessions.
+- Reopen the window with its last size, position, file viewer width, and tabs (programs,
+  folders, names, colors, pins, groups, order, and selection), starting fresh sessions.
 - Save named workspaces with their groups, tab names, colors, icons, project
   folders, launch commands, and pane layouts.
 - Restore saved organization and offer to relaunch sessions when reopening a

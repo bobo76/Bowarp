@@ -23,7 +23,7 @@ use gpui_kit::{
 };
 use term_core::{LaunchSpec, SessionKind};
 use workspace_model::layout::Direction;
-use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION};
+use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION, ViewerFraction};
 use workspace_model::{
     Attention, DropTarget, GroupId, Layout, TabColor, TabMeta, TabsState, next_attention,
     waiting_count,
@@ -131,8 +131,9 @@ pub struct WorkspaceView {
     pulse_running: bool,
     explorer: Entity<FileExplorer>,
     explorer_visible: bool,
-    /// The file viewer's share of the window width, the same in every tab.
-    viewer_fraction: f32,
+    /// The file viewer's share of the window width while its divider is dragged; otherwise
+    /// the share saved in the settings (`viewer_fraction`), the same in every tab.
+    dragged_viewer_fraction: Option<f32>,
     renaming: Option<Rename>,
     search: TabSearch,
     cards: TabCards,
@@ -184,7 +185,7 @@ impl WorkspaceView {
             pulse_running: false,
             explorer,
             explorer_visible: false,
-            viewer_fraction: DEFAULT_VIEWER_FRACTION,
+            dragged_viewer_fraction: None,
             renaming: None,
             search: TabSearch::new(window, cx),
             cards: TabCards::default(),
@@ -1081,15 +1082,36 @@ impl WorkspaceView {
         sidebar + explorer
     }
 
+    /// The file viewer's share of the window width: the one being dragged, else the saved one
+    /// (which follows the settings file when it is reloaded).
+    fn viewer_fraction(&self, cx: &App) -> f32 {
+        self.dragged_viewer_fraction
+            .unwrap_or_else(|| settings_file::settings(cx).file_viewer_fraction.get())
+    }
+
+    /// Follow a divider drag in memory only: [`Self::end_divider_drag`] saves it.
     fn drag_divider(&mut self, event: &DragMoveEvent<ViewerDivider>, cx: &mut Context<Self>) {
         let row = event.bounds;
         let x = f32::from(event.event.position.x - row.origin.x);
         let fraction =
             pane_width::fraction_at(x, f32::from(row.size.width), self.fixed_panes_width());
-        if fraction != self.viewer_fraction {
-            self.viewer_fraction = fraction;
+        if fraction != self.viewer_fraction(cx) {
+            self.dragged_viewer_fraction = Some(fraction);
             cx.notify();
         }
+    }
+
+    /// On any mouse button release: save the width a divider drag left, once per drag.
+    fn end_divider_drag(&mut self, cx: &mut Context<Self>) {
+        if let Some(fraction) = self.dragged_viewer_fraction.take() {
+            Self::save_viewer_fraction(fraction, cx);
+        }
+    }
+
+    fn save_viewer_fraction(fraction: f32, cx: &mut Context<Self>) {
+        settings_file::save_layout(cx, |settings| {
+            settings.file_viewer_fraction = ViewerFraction::new(fraction);
+        });
     }
 
     /// The strip on the viewer's left edge: drag it to resize the viewer, double-click it for
@@ -1110,8 +1132,8 @@ impl WorkspaceView {
                 MouseButton::Left,
                 cx.listener(|workspace, event: &MouseDownEvent, _, cx| {
                     if event.click_count == 2 {
-                        workspace.viewer_fraction = DEFAULT_VIEWER_FRACTION;
-                        cx.notify();
+                        workspace.dragged_viewer_fraction = None;
+                        Self::save_viewer_fraction(DEFAULT_VIEWER_FRACTION, cx);
                     }
                 }),
             )
@@ -1222,7 +1244,7 @@ impl Render for WorkspaceView {
             .map(|tab| tab.view.clone());
         let viewer = self.active_viewer(cx);
         let viewer_width = pane_width::viewer_width(
-            self.viewer_fraction,
+            self.viewer_fraction(cx),
             f32::from(window.viewport_size().width),
             self.fixed_panes_width(),
         );
@@ -1235,6 +1257,15 @@ impl Render for WorkspaceView {
             .flex()
             .flex_col()
             .capture_key_down(cx.listener(Self::on_key_down_capture))
+            // Both halves of "any release": over this view, and outside it (an overlay, or
+            // past the window's edge).
+            .capture_any_mouse_up(cx.listener(|workspace, _, _, cx| {
+                workspace.end_divider_drag(cx);
+            }))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|workspace, _, _, cx| workspace.end_divider_drag(cx)),
+            )
             .child(
                 TitleBar::new()
                     .on_close_window(
