@@ -297,7 +297,10 @@ impl WorkspaceView {
         let Some(index) = self.tab_index(tab_id) else {
             return;
         };
-        let Some(shell) = launcher::default_shell(&self.launchers).cloned() else {
+        let Some(shell) =
+            launcher::default_shell(&self.launchers, settings_file::settings(cx).default_shell())
+                .cloned()
+        else {
             return;
         };
         // The child is gone: the last folder it reported, else the one it started in.
@@ -503,7 +506,10 @@ impl WorkspaceView {
 
     /// Open the default shell (the `+` menu's first entry) in the selected tab's folder.
     fn open_default_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(shell) = launcher::default_shell(&self.launchers).cloned() else {
+        let Some(shell) =
+            launcher::default_shell(&self.launchers, settings_file::settings(cx).default_shell())
+                .cloned()
+        else {
             window.push_notification(Notification::error("No shell found"), cx);
             return;
         };
@@ -999,7 +1005,10 @@ impl WorkspaceView {
             ExplorerEvent::OpenTab(folder, agent) => {
                 let launcher = match agent {
                     Some(agent) => agent.clone(),
-                    None => match launcher::default_shell(&self.launchers) {
+                    None => match launcher::default_shell(
+                        &self.launchers,
+                        settings_file::settings(cx).default_shell(),
+                    ) {
                         Some(shell) => shell.clone(),
                         None => {
                             window.push_notification(Notification::error("No shell found"), cx);
@@ -1266,6 +1275,7 @@ impl Render for WorkspaceView {
                         |area| {
                             area.track_focus(self.settings.focus())
                                 .child(settings_page::render(
+                                    self.launchers.clone(),
                                     cx.listener(|workspace, _, window, cx| {
                                         workspace.open_settings_file(window, cx)
                                     }),

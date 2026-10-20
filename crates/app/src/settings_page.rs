@@ -3,10 +3,10 @@
 //! descriptions and keywords, pages on the left, groups of rows on the right), with a banner
 //! for the settings file's load or save error and an "Open settings file" button.
 //!
-//! A row bound to a field of `Settings` ([`bound_row`], [`switch_row`], [`text_row`]) applies
-//! a change live and saves it once per gesture, and offers "Reset to default" while the value
-//! differs from the default. Rows go into the page functions below ([`appearance_groups`],
-//! [`terminal_groups`]).
+//! A row bound to a field of `Settings` ([`bound_row`], [`switch_row`], [`text_row`],
+//! [`slider_row`], [`dropdown_row`]) applies a change live and saves it once per gesture, and
+//! offers "Reset to default" while the value differs from the default. Rows go into the page
+//! functions below ([`appearance_groups`], [`terminal_groups`]).
 
 use std::rc::Rc;
 use std::sync::LazyLock;
@@ -15,26 +15,30 @@ use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::link::Link;
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::setting::{
     SettingField, SettingGroup, SettingItem, SettingPage, Settings as SettingsView,
 };
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
+use gpui_kit::component::{ActiveTheme, Icon, IconName, Side, Sizable};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, App, AppContext, Axis, ClickEvent, ClipboardItem, Entity, Focusable, IntoElement,
-    ParentElement, SharedString, Styled, Subscription, Window, div, px,
+    Anchor, AnyElement, App, AppContext, Axis, ClickEvent, ClipboardItem, Entity, Focusable,
+    IntoElement, ParentElement, SharedString, Styled, Subscription, Window, div, px,
 };
 use workspace_model::{FontSize, Settings};
 
 use crate::about;
 use crate::assets::CODE_ICON;
+use crate::launcher::{self, Launcher};
 use crate::settings_file;
+use crate::sidebar;
 use crate::terminal_element::DEFAULT_FONT_FAMILY;
 
 /// The settings page: the error banners, the pages, and the "Open settings file" button.
 pub fn render(
+    launchers: Rc<[Launcher]>,
     on_open_file: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     cx: &App,
 ) -> impl IntoElement {
@@ -51,7 +55,7 @@ pub fn render(
                 .min_h_0()
                 .child(SettingsView::new("settings-page").pages([
                     page("Appearance", appearance_groups()),
-                    page("Terminal", terminal_groups()),
+                    page("Terminal", terminal_groups(launchers)),
                     page("About", about_groups(cx)),
                 ])),
         )
@@ -108,25 +112,64 @@ const FONT_SIZE_SLIDER: SliderRange = SliderRange {
     step: 1.,
 };
 
-/// The Terminal page's groups. Later steps add their rows (shell, launcher paths and icons)
-/// here.
-fn terminal_groups() -> Vec<SettingGroup> {
-    Vec::new()
+/// The Terminal page's groups. Later steps add their rows (launcher paths and icons) here.
+fn terminal_groups(launchers: Rc<[Launcher]>) -> Vec<SettingGroup> {
+    vec![
+        SettingGroup::new()
+            .title("Shell")
+            .item(default_shell_row(launchers)),
+    ]
 }
 
-/// A page of `groups`. The setting module hides a page without a row, so a page with none yet
-/// gets a "nothing here yet" row instead (hidden while searching).
-fn page(title: &'static str, groups: Vec<SettingGroup>) -> SettingPage {
-    let groups = if groups.is_empty() {
-        vec![SettingGroup::new().item(SettingItem::render(|_, _, cx| {
-            div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("Nothing to set here yet.")
-        }))]
+/// The `default_shell` setting: "Automatic" (empty) or one of the installed shells, shown by
+/// its menu name and saved by its [`Launcher::id`]. A value typed in the file shows as the
+/// shell it picks (`Zsh` as Zsh), one that isn't installed as "(not found)".
+fn default_shell_row(launchers: Rc<[Launcher]>) -> SettingItem {
+    let automatic = launcher::automatic_shell(&launchers).map_or_else(
+        || SharedString::from("Automatic"),
+        |shell| format!("Automatic ({})", shell.label).into(),
+    );
+    let options: Vec<_> = std::iter::once(DropdownOption::new("", automatic))
+        .chain(launcher::installed_shells(&launchers).map(|shell| {
+            DropdownOption::new(shell.id.clone(), shell.label.clone())
+                .icon(sidebar::launcher_icon(shell.icon))
+        }))
+        .collect();
+    let automatic_is = if cfg!(windows) {
+        "Git Bash when installed"
     } else {
-        groups
+        "your login shell ($SHELL); when the list doesn't hold it, Ctrl+Shift+T opens the first \
+         shell listed"
     };
+    dropdown_row(
+        "Default shell",
+        format!(
+            "The shell the + menu lists first and Ctrl+Shift+T opens, also for the first tab \
+             when no tabs are saved. Automatic is {automatic_is}. Tabs already open keep their \
+             shell."
+        ),
+        options,
+        |name| format!("{name} (not found)").into(),
+        move |settings| {
+            settings.default_shell().map_or_else(String::new, |value| {
+                launcher::configured_shell(&launchers, value)
+                    .map_or_else(|| value.to_owned(), |shell| shell.id.clone())
+            })
+        },
+        |settings, id| settings.default_shell = id,
+    )
+    .keywords([
+        "terminal",
+        "bash",
+        "zsh",
+        "powershell",
+        "new tab",
+        "program",
+    ])
+}
+
+/// A page of `groups`. The setting module hides a page without a row: each page needs one.
+fn page(title: &'static str, groups: Vec<SettingGroup>) -> SettingPage {
     SettingPage::new(title).groups(groups)
 }
 
@@ -489,4 +532,74 @@ fn slider_field(
         .child(Slider::new(&slider).w_48())
         .child(div().w_8().text_sm().text_right().child(format!("{value}")))
         .into_any_element()
+}
+
+/// One choice of a [`dropdown_row`]: the value saved, the label shown, and an optional icon.
+#[derive(Clone)]
+pub struct DropdownOption {
+    pub value: SharedString,
+    pub label: SharedString,
+    pub icon: Option<Icon>,
+}
+
+impl DropdownOption {
+    pub fn new(value: impl Into<SharedString>, label: impl Into<SharedString>) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+            icon: None,
+        }
+    }
+
+    pub fn icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+}
+
+/// A dropdown row for a `String` field of `Settings` (see [`bound_row`]): a button showing the
+/// chosen option's label that opens a menu of `options`; picking one saves it at once. A
+/// value that isn't one of them (set in the file) shows as `unlisted(value)`.
+pub fn dropdown_row(
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
+    options: impl Into<Rc<[DropdownOption]>>,
+    unlisted: impl Fn(&str) -> SharedString + 'static,
+    get: impl Fn(&Settings) -> String + 'static,
+    set: impl Fn(&mut Settings, String) + 'static,
+) -> SettingItem {
+    let options: Rc<[DropdownOption]> = options.into();
+    bound_row(
+        title,
+        description,
+        get,
+        set,
+        Rc::new(move |value: String, binding, _, _| {
+            let chosen = options.iter().find(|option| option.value == value.as_str());
+            let label = chosen.map_or_else(|| unlisted(&value), |option| option.label.clone());
+            let (options, binding) = (options.clone(), binding.clone());
+            // The id keys the menu's open state: unique per row (see `Binding::state_key`).
+            Button::new(binding.state_key("dropdown"))
+                .label(label)
+                .when_some(chosen.and_then(|option| option.icon.clone()), Button::icon)
+                .dropdown_caret(true)
+                .outline()
+                .small()
+                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                    let menu = options.iter().fold(menu, |menu, option| {
+                        let binding = binding.clone();
+                        let picked = option.value.to_string();
+                        menu.item(
+                            PopupMenuItem::new(option.label.clone())
+                                .when_some(option.icon.clone(), PopupMenuItem::icon)
+                                .checked(option.value == value.as_str())
+                                .on_click(move |_, _, cx| binding.save(picked.clone(), cx)),
+                        )
+                    });
+                    // The check on the right: on the left an option's icon would hide it.
+                    menu.check_side(Side::Right).scrollable(true)
+                })
+                .into_any_element()
+        }),
+    )
 }

@@ -34,7 +34,7 @@ use std::rc::Rc;
 use futures::channel::mpsc;
 use gpui_kit::component::{Theme, ThemeMode, TitleBar};
 use gpui_kit::{AppContext, WindowDecorations, WindowOptions};
-use term_core::LaunchSpec;
+use term_core::{LaunchSpec, SessionKind};
 
 use crate::hooks::ClaudeHooks;
 use crate::instance_lock::InstanceLock;
@@ -139,28 +139,53 @@ fn main() {
                 app_id: Some("agent-workspace".into()),
                 ..TitleBar::window_options()
             };
+            // A `shell` tab named on the command line, or the first tab without saved tabs:
+            // the default shell (see `launcher::startup_shell`), in the folder asked for.
+            let shell_setting = settings_file::settings(cx)
+                .default_shell()
+                .map(str::to_owned);
+            let requested = requested.map(|spec| {
+                if spec.kind == SessionKind::Shell && spec.program.is_none() {
+                    launcher::startup_shell(&launchers, shell_setting.as_deref(), spec.cwd)
+                } else {
+                    spec
+                }
+            });
             gpui_kit::open_window(options, cx, move |window, cx| {
                 let workspace = cx.new(|cx| {
+                    let launchers = launchers.clone();
                     WorkspaceView::new(launchers, hooks, hook_messages, owns_tabs, window, cx)
                 });
                 // The tabs open at the last close come back; a tab named on the command line
-                // opens after them, at the top level. Without either, a shell opens in the
-                // current folder.
+                // opens after them, at the top level. Without either, the default shell opens in
+                // the current folder.
                 workspace.update(cx, |workspace, cx| {
                     let restored = owns_tabs
                         && tabs_file::load()
                             .is_some_and(|state| workspace.restore(state, window, cx));
                     if restored {
-                        if let Some(spec) = requested.clone() {
+                        if let Some(spec) = requested {
                             workspace.open_requested_tab(spec, window, cx);
                         }
                         return;
                     }
-                    let spec = requested
-                        .clone()
-                        .unwrap_or_else(|| LaunchSpec::shell(std::env::current_dir().ok()));
-                    if let Err(err) = workspace.open_tab(spec.clone(), window, cx) {
-                        let program = launcher::launch_name(&spec);
+                    let spec = requested.unwrap_or_else(|| {
+                        let cwd = std::env::current_dir().ok();
+                        launcher::startup_shell(&launchers, shell_setting.as_deref(), cwd)
+                    });
+                    // A default shell that won't start (a broken install, a bad configured
+                    // program) falls back to `$SHELL` (alacritty's Windows PowerShell on
+                    // Windows), which has no stderr to explain an exit there.
+                    let fallback = (spec.kind == SessionKind::Shell && spec.program.is_some())
+                        .then(|| LaunchSpec::shell(spec.cwd.clone()));
+                    let mut program = launcher::launch_name(&spec).to_owned();
+                    let mut started = workspace.open_tab(spec, window, cx);
+                    if let (Err(err), Some(fallback)) = (&started, fallback) {
+                        eprintln!("agent-workspace: failed to start {program}: {err}");
+                        program = launcher::launch_name(&fallback).to_owned();
+                        started = workspace.open_tab(fallback, window, cx);
+                    }
+                    if let Err(err) = started {
                         eprintln!("agent-workspace: failed to start {program}: {err}");
                         process::exit(1)
                     }

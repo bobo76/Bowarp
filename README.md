@@ -55,8 +55,8 @@ the Linux build and tests on a Windows machine (Docker or WSL):
 ## Tabs
 
 The `+` button above the tab list opens a new tab with one of the supported shells (Bash, Zsh,
-Fish, PowerShell) found on `PATH` (default shell first), Claude Code or Copilot CLI; agents that are not installed are listed
-but disabled. New tabs start in the selected tab's folder.
+Fish, PowerShell) found on `PATH` (the default shell first, see [Settings](#settings)), Claude
+Code or Copilot CLI; agents that are not installed are listed but disabled. New tabs start in the selected tab's folder.
 
 | Keys | Action |
 |---|---|
@@ -271,6 +271,18 @@ The Appearance page sets the terminal font: its family (an installed font's name
 font that isn't installed, uses DejaVu Sans Mono, Cascadia Mono on Windows) and size (the
 slider applies while dragged and saves when released; the file accepts 6 to 72 points). Each
 tab re-measures its cells and resizes its terminal when it is next shown.
+
+The Terminal page sets the default shell: the one the `+` menu lists first and Ctrl+Shift+T,
+"Open in new tab" and an agent tab that quits open, and the first tab when no tabs are saved.
+"Automatic" (the default) is `$SHELL` (Git Bash on Windows, when installed; when `$SHELL` isn't
+in the list, Ctrl+Shift+T opens the first shell listed); the list holds the shells found at
+startup. Tabs already open keep their shell. One that isn't found gets the automatic shell.
+
+`settings.json` saves the shell's launcher id, which later per-launcher settings use too:
+`bash`, `zsh`, `fish`, `pwsh` (PowerShell 7) on Linux and macOS; `pwsh`, `powershell`
+(Windows PowerShell), `cmd`, `git-bash` and `wsl:<distro>` (e.g. `wsl:Ubuntu`) on Windows; the
+agents are `claude` and `copilot`. Written by hand, the id's case doesn't matter, and a menu
+name (`Zsh`, `Git Bash`, `Ubuntu`) works too.
 
 ## About
 

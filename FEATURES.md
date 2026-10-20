@@ -11,8 +11,8 @@ directly to model APIs.
 
 - Run multiple interactive terminal sessions simultaneously.
 - Launch Copilot CLI, Claude Code, or a regular shell in a selected project folder,
-  from a new-tab menu listing the installed shells (default shell first) and agents, each
-  with its own icon.
+  from a new-tab menu listing the installed shells (the default shell, chosen in the settings,
+  first) and agents, each with its own icon.
 - Support normal interactive CLI behavior, including permission prompts,
   cancellation, multiline input, colors, and terminal resizing.
 - Provide copy/paste, text selection, scrollback, and terminal search.

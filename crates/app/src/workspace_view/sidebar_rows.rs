@@ -15,6 +15,7 @@ use workspace_model::{DropTarget, Group, GroupId, Item, Location, display_path};
 
 use super::{RenameTarget, WorkspaceView};
 use crate::launcher::{self, Launcher};
+use crate::settings_file;
 use crate::shortcuts::{self, NEW_TAB_KEY};
 use crate::sidebar::{
     self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabDetail,
@@ -339,7 +340,7 @@ impl WorkspaceView {
             .ghost()
             .xsmall()
             .tooltip(shortcuts::with_shortcut("New tab", NEW_TAB_KEY))
-            .dropdown_menu(move |mut menu, _, _| {
+            .dropdown_menu(move |mut menu, _, cx| {
                 let open = |launcher: &Launcher| {
                     let launcher = launcher.clone();
                     let workspace = workspace.clone();
@@ -349,7 +350,10 @@ impl WorkspaceView {
                         });
                     }
                 };
-                let (default, shells, agents) = launcher::menu_sections(&launchers);
+                let (default, shells, agents) = launcher::menu_sections(
+                    &launchers,
+                    settings_file::settings(cx).default_shell(),
+                );
                 if let Some(default) = default {
                     let label = default.label.clone();
                     menu = menu.item(

@@ -30,6 +30,12 @@ pub struct Settings {
     /// The terminal's font size.
     #[serde(deserialize_with = "lenient")]
     pub font_size: FontSize,
+    /// The shell the new-tab menu lists first and Ctrl+Shift+T opens, by its launcher id (`zsh`,
+    /// `pwsh`, `powershell`, `git-bash`, `wsl:Ubuntu`; see the app's `Launcher::id`) or menu
+    /// name (`Zsh`); empty (the default) for the automatic choice (`$SHELL`, Git Bash on
+    /// Windows). A shell that isn't installed gets the automatic one too (the app checks).
+    #[serde(deserialize_with = "lenient")]
+    pub default_shell: String,
     /// Fields this version doesn't know, written back as they were.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -39,6 +45,11 @@ impl Settings {
     /// The font family the user set, trimmed; `None` for the built-in one.
     pub fn font_family(&self) -> Option<&str> {
         Some(self.font_family.trim()).filter(|family| !family.is_empty())
+    }
+
+    /// The default shell the user set, trimmed; `None` for the automatic one.
+    pub fn default_shell(&self) -> Option<&str> {
+        Some(self.default_shell.trim()).filter(|shell| !shell.is_empty())
     }
 
     pub fn from_json(text: &str) -> serde_json::Result<Self> {
@@ -643,6 +654,24 @@ mod tests {
         assert_eq!(settings, Settings::default());
         let settings = Settings::from_json(r#"{"font_size": null}"#).unwrap();
         assert_eq!(settings.font_size, FontSize::default());
+    }
+
+    #[test]
+    fn default_shell_reads_a_name_and_blank_is_automatic() {
+        let settings = Settings::from_json(r#"{"default_shell": " Zsh "}"#).unwrap();
+        assert_eq!(settings.default_shell(), Some("Zsh"));
+        let again = Settings::from_json(&settings.to_json().unwrap()).unwrap();
+        assert_eq!(again, settings);
+        for text in [
+            r#"{}"#,
+            r#"{"default_shell": ""}"#,
+            r#"{"default_shell": " "}"#,
+        ] {
+            let settings = Settings::from_json(text).unwrap();
+            assert_eq!(settings.default_shell(), None, "{text}");
+        }
+        let settings = Settings::from_json(r#"{"default_shell": ["zsh"]}"#).unwrap();
+        assert_eq!(settings, Settings::default());
     }
 
     #[test]
