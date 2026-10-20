@@ -41,9 +41,28 @@ jobs:
           Copy-Item target/release/agent-workspace.exe, target/release/agentws-hook.exe $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
 
+      # Writes agent-workspace-windows-x64-setup.exe at the repository root.
+      - name: Installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $version = (cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).packages |
+            Where-Object name -eq 'agent-workspace' | Select-Object -ExpandProperty version
+          & $iscc "/DAppVersion=$version" crates/app/installer/agent-workspace.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - uses: actions/upload-artifact@v7
         with:
           path: agent-workspace-windows-x64.zip
+          archive: false
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: agent-workspace-windows-x64-setup.exe
           archive: false
 
   release:
@@ -58,7 +77,14 @@ jobs:
           name: agent-workspace-windows-x64.zip
           skip-decompress: true
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: agent-workspace-windows-x64-setup.exe
+          skip-decompress: true
+
       - uses: softprops/action-gh-release@v3
         with:
-          files: agent-workspace-windows-x64.zip
+          files: |
+            agent-workspace-windows-x64-setup.exe
+            agent-workspace-windows-x64.zip
           generate_release_notes: true

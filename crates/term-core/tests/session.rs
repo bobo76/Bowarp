@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use term_core::alacritty_terminal::index::{Column, Line, Point, Side};
 use term_core::alacritty_terminal::selection::SelectionType;
 use term_core::{LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions};
+use workspace_model::ProgressState;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -103,6 +104,24 @@ fn exit_code_is_reported() {
     assert_eq!(events.last(), Some(&SessionEvent::Exited(Some(3))));
     assert!(session.has_exited());
     assert_eq!(session.exit_code(), Some(3));
+}
+
+#[test]
+fn progress_changes_are_reported_once_each() {
+    let script = r"printf '\033]9;4;3\007\033]9;4;3\033\\'; sleep 0.2; printf '\033]9;4;0\007'";
+    let (_session, rx) = spawn_sh(script, TermDimensions::new(80, 24));
+    let progress: Vec<_> = wait_for_exit(&rx)
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::ProgressChanged(state) => Some(state),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        progress,
+        vec![ProgressState::Indeterminate, ProgressState::Hidden]
+    );
 }
 
 #[test]

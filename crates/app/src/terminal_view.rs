@@ -1,7 +1,12 @@
+mod agent_tracker;
+mod link_hover;
+mod pointer;
+
 use std::borrow::Cow;
+use std::fs;
 use std::io;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -9,26 +14,35 @@ use agent_status::{AgentState, AgentStatus, HookEvent};
 
 use futures::StreamExt;
 use futures::channel::mpsc;
+use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
-    App, AppContext, Bounds, ClipboardItem, Context, CursorStyle, Entity, EntityInputHandler,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding,
-    KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    NoAction, ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Styled, Task,
-    UTF16Selection, Window, actions, div, size,
+    AnyElement, App, AppContext, Bounds, ClipboardItem, Context, CursorStyle, Entity,
+    EntityInputHandler, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    NoAction, ParentElement, Pixels, Point, Render, Styled, Task, UTF16Selection, Window, actions,
+    div, size,
 };
 use term_core::alacritty_terminal::grid::Scroll;
-use term_core::alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
-use term_core::alacritty_terminal::selection::SelectionType;
 use term_core::alacritty_terminal::term::TermMode;
 use term_core::{
     EventCallback, LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions,
 };
-use workspace_model::{Lap, Location};
+use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
+use workspace_model::{
+    COMMAND_LABEL_CHARS, Location, ProgressState, RUNNING_AFTER, RunningBadge, command_label,
+    running_badge,
+};
 
+use self::agent_tracker::AgentTracker;
+use self::link_hover::LinkHover;
+use self::pointer::PointerState;
+use crate::file_viewer::FilePlace;
+use crate::history;
+use crate::history_popup::HistoryPopup;
 use crate::keys;
 use crate::launcher;
-use crate::mouse::{self, Cell, MouseAction, ReportButton, WheelAction};
 use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
+use crate::shell_integration;
 use crate::sidebar::TabStatus;
 use crate::terminal_element::{TerminalElement, to_hsla};
 
@@ -82,9 +96,39 @@ enum ProcessState {
     Exited(Option<i32>),
 }
 
+/// A command started at a shell's prompt (its `C` mark) that has not finished (`D` mark).
+struct RunningCommand {
+    /// The command line as the hover card shows it, when the shell reported it.
+    label: Option<String>,
+    started: Instant,
+    /// Tells the sidebar once the command has run for [`RUNNING_AFTER`]; dropped with the
+    /// command, so one that finishes sooner never shows.
+    _reveal: Task<()>,
+}
+
+impl RunningCommand {
+    fn badge(&self) -> RunningBadge {
+        running_badge(self.started.elapsed())
+    }
+}
+
+/// The key the shell integration scripts bind to their hidden cd (Ctrl+Alt+Shift+F12, which
+/// PowerShell reads as a key chord).
+const HIDDEN_CD_KEYS: &[u8] = b"\x1b[24;8~";
+
 /// Emitted when what the sidebar and title bar show changes: title, status, activity, folder
 /// or branch.
 pub struct TabChanged;
+
+/// Emitted when a Claude Code or Copilot CLI session's program exited: the tab goes on as a
+/// shell.
+pub struct AgentExited;
+
+/// Emitted when a file path is Ctrl+clicked: the file is to be shown in the viewer.
+pub struct OpenFileRequest {
+    pub path: PathBuf,
+    pub place: FilePlace,
+}
 
 /// One terminal session and its interaction state.
 pub struct TerminalView {
@@ -94,12 +138,15 @@ pub struct TerminalView {
     /// Folder the session was started in, used while the child's own cannot be read.
     launch_cwd: Option<PathBuf>,
     location: Option<Location>,
-    /// Status from Claude Code hooks; `None` for sessions without hooks.
-    agent: Option<AgentState>,
-    /// When the hook status last changed, for the hover card's lap time.
-    agent_lap: Lap<AgentStatus>,
-    /// Claude Code finished a turn while the tab was hidden; cleared when it is shown.
+    /// How the program parses typed paths.
+    pub(crate) shell: ShellSyntax,
+    /// Status from Claude Code hooks, or from Copilot CLI's progress reports once it sent
+    /// one; `None` for sessions without either.
+    agent: Option<AgentTracker>,
+    /// The agent finished a turn while the tab was hidden; cleared when it is shown.
     finished_unseen: bool,
+    /// The program rang the bell (BEL) while the tab was hidden; cleared when it is shown.
+    bell_unseen: bool,
     /// Hidden views do not paint, so they acknowledge wakeups themselves.
     visible: bool,
     /// Runs while the session counts as active, to report when it goes quiet.
@@ -108,15 +155,21 @@ pub struct TerminalView {
     pub(crate) geometry: Option<GridGeometry>,
     /// IME composition text not yet committed.
     pub(crate) marked_text: Option<String>,
+    /// The rest of a history command matching the typed text, drawn dimmed after the cursor.
+    pub(crate) ghost_text: Option<String>,
+    pub(crate) history_popup: Option<HistoryPopup>,
     title: Option<String>,
     process: ProcessState,
-    scroll_remainder: f32,
-    selecting: bool,
-    /// Button whose press was reported to the program; its release and drags are reported too.
-    reported_button: Option<ReportButton>,
-    /// Last cell a motion report was sent for, so motion is reported once per cell.
-    last_motion_cell: Option<Cell>,
+    /// Set by the shell integration marks; agent sessions keep their hook status instead.
+    running_command: Option<RunningCommand>,
+    /// Where [`Self::change_dir`] leaves the folder for the shell's hidden cd key binding;
+    /// `None` when the shell has none.
+    cd_file: Option<PathBuf>,
+    pointer: PointerState,
     pub(crate) scrollbar: ScrollbarState,
+    pub(crate) link_hover: LinkHover,
+    /// For links to `~/` paths.
+    home: Option<PathBuf>,
     _session_events: Task<()>,
 }
 
@@ -168,21 +221,28 @@ impl TerminalView {
             name: launcher::default_name(spec),
             launch_cwd: spec.cwd.clone(),
             location: spec.cwd.clone().map(Location::read),
-            agent: reports_status.then(AgentState::default),
-            agent_lap: Lap::new(AgentState::default().status(), Instant::now()),
+            shell: launcher::shell_syntax(spec),
+            agent: reports_status.then(|| AgentTracker::new(Instant::now())),
             finished_unseen: false,
+            bell_unseen: false,
             visible: true,
             activity_task: None,
             focus_handle: cx.focus_handle(),
             geometry: None,
             marked_text: None,
+            ghost_text: None,
+            history_popup: None,
             title: None,
             process: ProcessState::Running,
-            scroll_remainder: 0.0,
-            selecting: false,
-            reported_button: None,
-            last_motion_cell: None,
+            running_command: None,
+            cd_file: spec
+                .env
+                .get(shell_integration::CD_FILE_ENV)
+                .map(PathBuf::from),
+            pointer: PointerState::default(),
             scrollbar: ScrollbarState::default(),
+            link_hover: LinkHover::default(),
+            home: std::env::home_dir(),
             _session_events: session_events,
         }
     }
@@ -195,9 +255,41 @@ impl TerminalView {
         self.session.kind()
     }
 
+    /// Whether the shell waits at its prompt: no command runs per the shell integration marks
+    /// (always, without them) and the process is alive.
+    pub fn at_prompt(&self) -> bool {
+        self.running_command.is_none() && self.process == ProcessState::Running
+    }
+
+    /// Make the shell change to `folder`: through its hidden key binding when it has one and
+    /// reports its prompt (the typed line is kept and the prompt redrawn), else by typing a
+    /// `cd` line.
+    pub fn change_dir(&mut self, folder: &Path, cx: &mut Context<Self>) -> Result<(), TypeError> {
+        if let Some(file) = &self.cd_file
+            && self.session.prompt_input().is_some()
+        {
+            let text = file_tree::typeable(folder)?;
+            if fs::write(file, text).is_ok() {
+                self.send_input(Cow::Borrowed(HIDDEN_CD_KEYS), cx);
+                return Ok(());
+            }
+        }
+        let command = cd_command(folder, self.shell)?;
+        self.type_text(command, cx);
+        Ok(())
+    }
+
     /// Where the session works now, as of the last tab change.
     pub fn location(&self) -> Option<&Location> {
         self.location.as_ref()
+    }
+
+    /// The child's folder now, else the last one known, else the one it started in.
+    pub fn current_folder(&self) -> Option<PathBuf> {
+        self.session
+            .current_dir()
+            .or_else(|| self.location.as_ref().map(|location| location.dir.clone()))
+            .or_else(|| self.launch_cwd.clone())
     }
 
     /// The program's title, or the session's default name.
@@ -205,17 +297,12 @@ impl TerminalView {
         self.title.as_deref().unwrap_or(&self.name)
     }
 
-    pub fn display_title(&self) -> String {
-        let title = self.name();
-        match self.process {
-            ProcessState::Running => title.to_string(),
-            ProcessState::Exited(Some(code)) => format!("{title} [exited {code}]"),
-            ProcessState::Exited(None) => format!("{title} [exited]"),
-        }
-    }
-
     pub fn tab_status(&self) -> TabStatus {
-        if let Some(agent) = self.agent {
+        // A bell asks for the user like a waiting prompt, for programs without status hooks.
+        if self.bell_unseen && self.process == ProcessState::Running {
+            return TabStatus::NeedsAttention;
+        }
+        if let Some(agent) = &self.agent {
             return match agent.status() {
                 AgentStatus::Idle if self.finished_unseen => TabStatus::Done,
                 AgentStatus::Idle => TabStatus::Idle,
@@ -226,30 +313,68 @@ impl TerminalView {
         }
         match self.process {
             ProcessState::Exited(_) => TabStatus::Exited,
+            ProcessState::Running
+                if self
+                    .running_command
+                    .as_ref()
+                    .is_some_and(|running| running.badge() != RunningBadge::Hidden) =>
+            {
+                TabStatus::Running
+            }
             ProcessState::Running if self.activity_task.is_some() => TabStatus::Active,
             ProcessState::Running => TabStatus::Quiet,
         }
     }
 
-    /// How long Claude Code has been working on the current turn, or `None` when it is not
+    /// The running command's line for the hover card, while the status is
+    /// [`TabStatus::Running`] and the shell reported it.
+    pub fn running_label(&self) -> Option<&str> {
+        if self.tab_status() != TabStatus::Running {
+            return None;
+        }
+        self.running_command.as_ref()?.label.as_deref()
+    }
+
+    /// How long the running command has run (from its `C` mark), while the status is
+    /// [`TabStatus::Running`].
+    pub fn running_for(&self, now: Instant) -> Option<Duration> {
+        if self.tab_status() != TabStatus::Running {
+            return None;
+        }
+        let running = self.running_command.as_ref()?;
+        Some(now.saturating_duration_since(running.started))
+    }
+
+    /// Whether the Running badge pulses: only for the first seconds of a command.
+    pub fn running_pulses(&self) -> bool {
+        self.tab_status() == TabStatus::Running
+            && self
+                .running_command
+                .as_ref()
+                .is_some_and(|running| running.badge() == RunningBadge::Pulsing)
+    }
+
+    /// How long the agent has been working on the current turn, or `None` when it is not
     /// working. Tool calls keep the lap running; waiting for a permission decision ends it.
     pub fn working_for(&self, now: Instant) -> Option<Duration> {
-        let working = self.agent?.status() == AgentStatus::Working;
-        working.then(|| self.agent_lap.elapsed(now))
+        self.agent.as_ref()?.working_for(now)
     }
 
     /// Stop painting the view; only the selected tab is painted.
     pub fn hide(&mut self) {
         self.visible = false;
+        self.history_popup = None;
+        self.link_hover = LinkHover::default();
         // A wakeup sent before the next paint would never be acknowledged by `prepaint`.
         self.session.ack_wakeup();
     }
 
-    /// Paint the view again, clearing a finished turn it showed while hidden.
+    /// Paint the view again, clearing a finished turn or a bell it showed while hidden.
     pub fn show(&mut self, cx: &mut Context<Self>) {
         self.visible = true;
         let was_done = std::mem::take(&mut self.finished_unseen);
-        if self.refresh_location() || was_done {
+        let rang = std::mem::take(&mut self.bell_unseen);
+        if self.refresh_location() || was_done || rang {
             cx.emit(TabChanged);
         }
         cx.notify();
@@ -258,12 +383,7 @@ impl TerminalView {
     /// Re-read the child's folder and its git branch. Returns whether either changed. When the
     /// folder cannot be read (exited child, unsupported platform) the last known one is kept.
     fn refresh_location(&mut self) -> bool {
-        let Some(dir) = self
-            .session
-            .current_dir()
-            .or_else(|| self.location.as_ref().map(|location| location.dir.clone()))
-            .or_else(|| self.launch_cwd.clone())
-        else {
+        let Some(dir) = self.current_folder() else {
             return false;
         };
         let location = Some(Location::read(dir));
@@ -284,23 +404,48 @@ impl TerminalView {
 
     /// Apply a status event from this session's Claude Code hooks.
     pub fn apply_hook_event(&mut self, event: HookEvent, at: u64, cx: &mut Context<Self>) {
-        let Some(agent) = self.agent.as_mut() else {
-            return;
-        };
-        let before = agent.status();
-        agent.apply(event, at);
-        let after = agent.status();
-        if !self.agent_lap.set(after, Instant::now()) {
+        self.update_agent(|agent| agent.apply(event, at), cx);
+    }
+
+    /// Apply a progress report from Copilot CLI. Its first one switches the tab from output
+    /// activity to agent status, so a Copilot that never reports progress keeps the former.
+    fn apply_progress(&mut self, state: ProgressState, cx: &mut Context<Self>) {
+        if self.kind() != SessionKind::CopilotCli {
             return;
         }
-        self.finished_unseen = finished_unseen(before, after, self.visible);
+        let adopted = self.agent.is_none();
+        if adopted {
+            self.agent = Some(AgentTracker::new(Instant::now()));
+            self.activity_task = None;
+        }
+        let changed = self.update_agent(|agent| agent.apply_progress(state.is_shown()), cx);
+        if adopted && !changed {
+            cx.emit(TabChanged);
+        }
+    }
+
+    /// Change the agent status and tell the sidebar when it changed. Returns whether it did.
+    fn update_agent(
+        &mut self,
+        change: impl FnOnce(&mut AgentState),
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(agent) = self.agent.as_mut() else {
+            return false;
+        };
+        let Some(change) = agent.update(change, Instant::now()) else {
+            return false;
+        };
+        self.finished_unseen = finished_unseen(change.before, change.after, self.visible);
         self.emit_tab_changed(cx);
+        true
     }
 
     fn on_session_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
         match event {
             SessionEvent::Wakeup => {
                 self.track_activity(cx);
+                self.refresh_link_hover(cx);
                 if !self.visible {
                     // Nothing paints, so re-arm here to keep hearing about output.
                     self.session.ack_wakeup();
@@ -311,17 +456,82 @@ impl TerminalView {
                 self.title = title;
                 self.emit_tab_changed(cx);
             }
-            SessionEvent::Bell => return,
+            SessionEvent::Bell => {
+                // Claude Code's hooks already tell when it finished or waits.
+                let hooked = self.agent.is_some() && self.kind() == SessionKind::ClaudeCode;
+                if self.visible || self.bell_unseen || hooked {
+                    return;
+                }
+                self.bell_unseen = true;
+                cx.emit(TabChanged);
+            }
+            SessionEvent::CommandStarted(command) => {
+                let label =
+                    command.and_then(|command| command_label(&command, COMMAND_LABEL_CHARS));
+                match self.running_command.as_mut() {
+                    // A second C mark before a D mark: the same run goes on, with the new line.
+                    Some(running) => {
+                        running.label = label;
+                        if self.agent.is_none() {
+                            cx.emit(TabChanged);
+                        }
+                    }
+                    None => {
+                        self.running_command = Some(RunningCommand {
+                            label,
+                            started: Instant::now(),
+                            _reveal: self.reveal_running(cx),
+                        });
+                        // Not at the prompt any more: the explorer disables its cd entries.
+                        cx.emit(TabChanged);
+                    }
+                }
+            }
+            SessionEvent::CommandExecuted(command) => {
+                self.history_popup = None;
+                history::record(command, cx);
+            }
+            SessionEvent::CommandFinished => {
+                self.running_command = None;
+                if self.agent.is_none() {
+                    // The command may have changed the folder or the branch.
+                    self.emit_tab_changed(cx);
+                }
+            }
+            SessionEvent::ProgressChanged(state) => self.apply_progress(state, cx),
             SessionEvent::Exited(code) => {
                 self.process = ProcessState::Exited(code);
+                self.running_command = None;
                 if let Some(agent) = self.agent.as_mut() {
-                    agent.exit();
-                    self.agent_lap.set(agent.status(), Instant::now());
+                    agent.exit(Instant::now());
                 }
                 cx.emit(TabChanged);
+                // A failed agent keeps its last screen, so its error can be read.
+                if self.kind() != SessionKind::Shell && code == Some(0) {
+                    cx.emit(AgentExited);
+                }
             }
         }
         cx.notify();
+    }
+
+    /// Tell the sidebar once the running command has run for [`RUNNING_AFTER`], when its status
+    /// becomes Running.
+    fn reveal_running(&self, cx: &mut Context<Self>) -> Task<()> {
+        let started = Instant::now();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(RUNNING_AFTER).await;
+            // Should the timer fire a little early, the badge would stay hidden.
+            let left = RUNNING_AFTER.saturating_sub(started.elapsed());
+            if !left.is_zero() {
+                cx.background_executor().timer(left).await;
+            }
+            let _ = this.update(cx, |view, cx| {
+                if view.agent.is_none() {
+                    cx.emit(TabChanged);
+                }
+            });
+        })
     }
 
     /// Mark a session without status hooks active on output, and quiet again once no output
@@ -352,6 +562,11 @@ impl TerminalView {
         cx.emit(TabChanged);
     }
 
+    /// Type `text` into the program as if the user had.
+    pub fn type_text(&mut self, text: String, cx: &mut Context<Self>) {
+        self.send_input(Cow::Owned(text.into_bytes()), cx);
+    }
+
     /// Send user input to the program, snapping the view back to the live screen.
     fn send_input(&mut self, bytes: Cow<'static, [u8]>, cx: &mut Context<Self>) {
         self.session.scroll_display(Scroll::Bottom);
@@ -380,8 +595,9 @@ impl TerminalView {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let consumed =
-            self.handle_scrollback_shortcut(&event.keystroke, cx) || self.forward_key(event, cx);
+        let consumed = self.handle_history_key(&event.keystroke, cx)
+            || self.handle_scrollback_shortcut(&event.keystroke, cx)
+            || self.forward_key(event, cx);
         if consumed {
             cx.stop_propagation();
         }
@@ -510,170 +726,6 @@ impl TerminalView {
     fn on_paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         self.paste(cx.read_from_clipboard().and_then(|item| item.text()), cx);
     }
-
-    fn on_scroll(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(geometry) = self.geometry else {
-            return;
-        };
-        let lines = match event.delta {
-            ScrollDelta::Lines(delta) => delta.y,
-            ScrollDelta::Pixels(delta) => f32::from(delta.y) / f32::from(geometry.line_height),
-        };
-        self.scroll_remainder += lines;
-        let whole = self.scroll_remainder.trunc() as i32;
-        if whole == 0 {
-            return;
-        }
-        self.scroll_remainder -= whole as f32;
-
-        let Some((cell, _)) = self.viewport_cell(event.position) else {
-            return;
-        };
-        match mouse::wheel_action(whole, cell, &event.modifiers, self.mode()) {
-            WheelAction::Program(bytes) => self.session.write(bytes),
-            WheelAction::Scrollback(lines) => self.scroll_scrollback(Scroll::Delta(lines), cx),
-        }
-        cx.notify();
-        cx.stop_propagation();
-    }
-
-    /// The visible cell under `position`, clamped to the grid, and which half of it was hit.
-    fn viewport_cell(&self, position: Point<Pixels>) -> Option<(Cell, Side)> {
-        let geometry = self.geometry?;
-        let cell_width = f32::from(geometry.cell_width);
-        let line_height = f32::from(geometry.line_height);
-        let x = f32::from(position.x - geometry.origin.x).max(0.0);
-        let y = f32::from(position.y - geometry.origin.y).max(0.0);
-        let column = ((x / cell_width) as usize).min(geometry.columns.saturating_sub(1));
-        let line = ((y / line_height) as usize).min(geometry.lines.saturating_sub(1));
-        let side = if x - column as f32 * cell_width < cell_width / 2.0 {
-            Side::Left
-        } else {
-            Side::Right
-        };
-        Some((Cell { column, line }, side))
-    }
-
-    fn grid_point(&self, position: Point<Pixels>) -> Option<(GridPoint, Side)> {
-        let (cell, side) = self.viewport_cell(position)?;
-        let display_offset = self.session.display_offset();
-        Some((
-            GridPoint::new(
-                Line(cell.line as i32 - display_offset as i32),
-                Column(cell.column),
-            ),
-            side,
-        ))
-    }
-
-    fn send_mouse_report(
-        &mut self,
-        button: ReportButton,
-        action: MouseAction,
-        position: Point<Pixels>,
-        modifiers: &Modifiers,
-    ) {
-        let Some((cell, _)) = self.viewport_cell(position) else {
-            return;
-        };
-        if action == MouseAction::Motion {
-            if self.last_motion_cell == Some(cell) {
-                return;
-            }
-            self.last_motion_cell = Some(cell);
-        }
-        if let Some(bytes) = mouse::report(button, action, cell, modifiers, self.mode()) {
-            self.session.write(bytes);
-        }
-    }
-
-    fn on_mouse_down(
-        &mut self,
-        event: &MouseDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        window.focus(&self.focus_handle, cx);
-        let Some(button) = ReportButton::from_gpui(event.button) else {
-            return;
-        };
-        if mouse::is_reporting_to_program(self.mode(), &event.modifiers) {
-            self.send_mouse_report(button, MouseAction::Press, event.position, &event.modifiers);
-            self.reported_button = Some(button);
-            return;
-        }
-        match event.button {
-            MouseButton::Left => self.start_selection(event, cx),
-            #[cfg(target_os = "linux")]
-            MouseButton::Middle => {
-                self.paste(cx.read_from_primary().and_then(|item| item.text()), cx);
-            }
-            _ => {}
-        }
-    }
-
-    fn start_selection(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
-        let Some((point, side)) = self.grid_point(event.position) else {
-            return;
-        };
-        let selection_type = match event.click_count {
-            2 => SelectionType::Semantic,
-            3.. => SelectionType::Lines,
-            _ => SelectionType::Simple,
-        };
-        self.session.start_selection(selection_type, point, side);
-        self.selecting = true;
-        cx.notify();
-    }
-
-    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.reported_button.is_some()
-            || mouse::is_reporting_to_program(self.mode(), &event.modifiers)
-        {
-            let button = self.reported_button.unwrap_or(ReportButton::None);
-            self.send_mouse_report(
-                button,
-                MouseAction::Motion,
-                event.position,
-                &event.modifiers,
-            );
-            return;
-        }
-        if !self.selecting || event.pressed_button != Some(MouseButton::Left) {
-            return;
-        }
-        let Some((point, side)) = self.grid_point(event.position) else {
-            return;
-        };
-        self.session.update_selection(point, side);
-        cx.notify();
-    }
-
-    fn on_mouse_up(&mut self, event: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let button = ReportButton::from_gpui(event.button);
-        if button.is_some() && button == self.reported_button {
-            self.reported_button = None;
-            self.send_mouse_report(
-                button.unwrap_or(ReportButton::None),
-                MouseAction::Release,
-                event.position,
-                &event.modifiers,
-            );
-            return;
-        }
-        if !self.selecting || event.button != MouseButton::Left {
-            return;
-        }
-        self.selecting = false;
-        let text = self.session.finish_selection();
-        #[cfg(target_os = "linux")]
-        if let Some(text) = text.filter(|text| !text.is_empty()) {
-            cx.write_to_primary(ClipboardItem::new_string(text));
-        }
-        #[cfg(not(target_os = "linux"))]
-        let _ = text;
-        cx.notify();
-    }
 }
 
 fn is_shift_only(modifiers: &Modifiers) -> bool {
@@ -681,10 +733,21 @@ fn is_shift_only(modifiers: &Modifiers) -> bool {
 }
 
 impl EventEmitter<TabChanged> for TerminalView {}
+impl EventEmitter<AgentExited> for TerminalView {}
+impl EventEmitter<OpenFileRequest> for TerminalView {}
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+impl Drop for TerminalView {
+    fn drop(&mut self) {
+        // Left behind when the shell never read it.
+        if let Some(file) = &self.cd_file {
+            let _ = fs::remove_file(file);
+        }
     }
 }
 
@@ -700,6 +763,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::on_copy))
             .on_action(cx.listener(Self::on_paste))
             .on_key_down(cx.listener(Self::on_key_down))
+            .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .on_any_mouse_down(cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
@@ -710,7 +774,51 @@ impl Render for TerminalView {
             .on_mouse_up_out(MouseButton::Middle, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Right, cx.listener(Self::on_mouse_up));
 
-        view.child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
+        let history_popup = self.update_history(cx);
+        let exit_banner = self.exit_banner(cx);
+        // The banner sits below the grid, which shrinks by its height, so no output is hidden.
+        view.relative()
+            .flex()
+            .flex_col()
+            .child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
+            .children(exit_banner)
+            .children(history_popup)
+    }
+}
+
+impl TerminalView {
+    /// A bar below the terminal once the program exited, so a finished tab is told apart from
+    /// a quiet one without looking at the sidebar.
+    fn exit_banner(&self, cx: &App) -> Option<AnyElement> {
+        let ProcessState::Exited(code) = self.process else {
+            return None;
+        };
+        let message = match code {
+            Some(code) => format!("Process exited with code {code}"),
+            None => "Process exited".to_string(),
+        };
+        let theme = cx.theme();
+        let banner = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .px_3()
+            .py_1()
+            .text_sm()
+            .bg(theme.secondary)
+            .border_t_1()
+            .border_color(theme.border)
+            .text_color(theme.secondary_foreground)
+            .child(message)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child("Ctrl+Shift+W closes the tab"),
+            );
+        Some(banner.into_any_element())
     }
 }
 

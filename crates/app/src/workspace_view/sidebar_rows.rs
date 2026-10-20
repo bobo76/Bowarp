@@ -2,25 +2,23 @@
 
 use std::path::Path;
 use std::rc::Rc;
-use std::time::Instant;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::hover_card::HoverCard;
-use gpui_kit::component::input::{Escape, Input};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
+use gpui_kit::component::{ActiveTheme, IconName, Sizable};
 use gpui_kit::{
-    Anchor, AnyElement, App, AppContext, Context, Div, DragMoveEvent, InteractiveElement,
+    AnyElement, App, AppContext, ClickEvent, Context, Div, DragMoveEvent, InteractiveElement,
     IntoElement, ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled,
-    WeakEntity, div, px,
+    WeakEntity, Window, div, px,
 };
 use workspace_model::{DropTarget, Group, GroupId, Item, Location, display_path};
 
 use super::{RenameTarget, WorkspaceView};
-use crate::launcher;
+use crate::launcher::{self, Launcher};
+use crate::shortcuts::{self, NEW_TAB_KEY};
 use crate::sidebar::{
-    self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabCard,
-    TabDetail, TabRow,
+    self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabDetail,
+    TabRow,
 };
 use crate::tab_menu;
 
@@ -64,6 +62,7 @@ impl WorkspaceView {
         if matches.is_some() && rows.is_empty() {
             rows.push(sidebar::no_matches_hint(cx).into_any_element());
         }
+        rows.extend(self.render_settings_row(cx));
         let attention_button = self.attention_button(cx);
         let theme = cx.theme();
         div()
@@ -93,8 +92,6 @@ impl WorkspaceView {
                     .id("tabs")
                     .flex()
                     .flex_col()
-                    .gap_0p5()
-                    .px_1()
                     .flex_1()
                     .overflow_y_scroll()
                     // Leaving the list hides the marker; a drop applies the last marker shown.
@@ -108,27 +105,13 @@ impl WorkspaceView {
                     .on_drop(cx.listener(|workspace, dragged: &DraggedTab, _, cx| {
                         workspace.drop_dragged(dragged.id, cx)
                     }))
-                    .children(rows)
+                    // A divider under every row, the last one included.
+                    .children(
+                        rows.into_iter()
+                            .flat_map(|row| [row, sidebar::row_divider(cx).into_any_element()]),
+                    )
                     .child(self.render_end_drop_zone(cx)),
             )
-    }
-
-    /// The "Search tabs..." field: Enter selects the first match, Escape clears it.
-    fn render_search(&self, cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .flex_1()
-            .min_w_0()
-            .on_action(
-                cx.listener(|workspace, _: &Escape, window, cx| workspace.end_search(window, cx)),
-            )
-            .child(
-                Input::new(&self.search).small().cleanable(true).prefix(
-                    Icon::new(IconName::Search)
-                        .small()
-                        .text_color(cx.theme().muted_foreground),
-                ),
-            )
-            .into_any_element()
     }
 
     /// Shown while a tab needs attention: the count; clicking jumps to the next one.
@@ -212,7 +195,8 @@ impl WorkspaceView {
                 .location()
                 .map(|location| tab_detail(location, self.home.as_deref())),
             status: view.tab_status(),
-            selected: index == self.active,
+            pulse: self.pulse_running && view.running_pulses(),
+            selected: index == self.active && !self.settings.shows_page(),
             pinned: self.layout.is_pinned(id),
             color: self.tab_color(tab),
             name_editor,
@@ -264,65 +248,6 @@ impl WorkspaceView {
         Some(slot)
     }
 
-    /// The tab's details in a card next to the row, after hovering it for a moment. Opening it
-    /// runs `git diff` for the `+N` (cached for a few seconds) and, while it shows, ticks the
-    /// lap time of a working agent. No card while a tab is dragged. The card is built only
-    /// while it shows.
-    fn with_hover_card(&self, row: AnyElement, id: u64, cx: &Context<Self>) -> AnyElement {
-        if cx.has_active_drag() {
-            return row;
-        }
-        let workspace = cx.entity().downgrade();
-        let source = workspace.clone();
-        HoverCard::new(("tab-card", id as usize))
-            .anchor(Anchor::LeftCenter)
-            .ml_2()
-            .trigger(row)
-            .content(move |_, _, cx| {
-                let card = source
-                    .upgrade()
-                    .and_then(|workspace| workspace.read(cx).tab_card(id, cx));
-                match card {
-                    Some(card) => sidebar::tab_card(card, cx).into_any_element(),
-                    None => div().into_any_element(),
-                }
-            })
-            .on_open_change(move |open, _, cx| {
-                let _ = workspace.update(cx, |workspace, cx| {
-                    if *open {
-                        workspace.refresh_diff_stat(id, cx);
-                    }
-                    workspace.set_card_clock(id, *open, cx);
-                });
-            })
-            .into_any_element()
-    }
-
-    fn tab_card(&self, id: u64, cx: &App) -> Option<TabCard> {
-        let index = self.tab_index(id)?;
-        let tab = &self.tabs[index];
-        let view = tab.view.read(cx);
-        let location = view.location();
-        Some(TabCard {
-            index,
-            status: view.tab_status(),
-            working_for: view.working_for(Instant::now()),
-            folder: location
-                .map(|location| display_path(&location.dir, self.home.as_deref()).into()),
-            branch: location
-                .and_then(|location| location.head.as_ref())
-                .map(|head| head.name().to_string().into()),
-            title: view.name().to_string().into(),
-            kind: view.kind(),
-            kind_label: launcher::default_name(&tab.spec).into(),
-            lines_added: self
-                .diff_stats
-                .get(&id)
-                .filter(|stat| location.is_some_and(|location| location.dir == stat.dir))
-                .and_then(|stat| stat.added),
-        })
-    }
-
     /// A group header: the upper half drops above the group, the lower half into it. While
     /// searching it shows expanded, since its matching tabs are listed below it.
     fn render_group_header(
@@ -334,7 +259,11 @@ impl WorkspaceView {
     ) -> AnyElement {
         let workspace = cx.entity().downgrade();
         let id = group.id;
-        let active_id = self.active_tab().map(|tab| tab.id);
+        // The settings page hides the selected tab: no group holds the selection then.
+        let active_id = self
+            .active_tab()
+            .filter(|_| !self.settings.shows_page())
+            .map(|tab| tab.id);
         let statuses = group.tabs().iter().filter_map(|&tab| {
             let index = self.tab_index(tab)?;
             Some(self.tabs[index].view.read(cx).tab_status())
@@ -401,33 +330,57 @@ impl WorkspaceView {
             .into_any_element()
     }
 
+    /// The `+` menu: the default shell (with its shortcut), the other shells, then the agent
+    /// CLIs.
     fn new_tab_button(&self, workspace: WeakEntity<Self>) -> impl IntoElement {
         let launchers = self.launchers.clone();
         Button::new("new-tab")
             .icon(IconName::Plus)
             .ghost()
             .xsmall()
-            .tooltip("New tab")
+            .tooltip(shortcuts::with_shortcut("New tab", NEW_TAB_KEY))
             .dropdown_menu(move |mut menu, _, _| {
-                for launcher in launchers.iter() {
-                    let available = launcher.program.is_some();
-                    let label = if available {
-                        launcher.label.clone()
-                    } else {
-                        format!("{} (not installed)", launcher.label)
-                    };
+                let open = |launcher: &Launcher| {
                     let launcher = launcher.clone();
                     let workspace = workspace.clone();
+                    move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                        let _ = workspace.update(cx, |workspace, cx| {
+                            workspace.open_launcher(&launcher, window, cx)
+                        });
+                    }
+                };
+                let (default, shells, agents) = launcher::menu_sections(&launchers);
+                if let Some(default) = default {
+                    let label = default.label.clone();
                     menu = menu.item(
-                        PopupMenuItem::new(label)
-                            .icon(sidebar::kind_icon(launcher.kind))
-                            .disabled(!available)
-                            .on_click(move |_, window, cx| {
-                                let _ = workspace.update(cx, |workspace, cx| {
-                                    workspace.open_launcher(&launcher, window, cx)
-                                });
-                            }),
+                        PopupMenuItem::element(move |_, _| {
+                            shortcuts::menu_label_with_hint(
+                                "new-tab-default-shell",
+                                label.clone(),
+                                NEW_TAB_KEY,
+                            )
+                        })
+                        .icon(sidebar::launcher_icon(default.icon))
+                        .on_click(open(default)),
                     );
+                }
+                for (index, group) in [shells, agents].into_iter().enumerate() {
+                    if index > 0 {
+                        menu = menu.separator();
+                    }
+                    for launcher in group {
+                        let label = if launcher.program.is_some() {
+                            launcher.label.clone()
+                        } else {
+                            format!("{} (not installed)", launcher.label)
+                        };
+                        menu = menu.item(
+                            PopupMenuItem::new(label)
+                                .icon(sidebar::launcher_icon(launcher.icon))
+                                .disabled(launcher.program.is_none())
+                                .on_click(open(launcher)),
+                        );
+                    }
                 }
                 menu
             })

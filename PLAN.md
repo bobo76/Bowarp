@@ -2,205 +2,97 @@
 
 Feature spec: [FEATURES.md](FEATURES.md)
 
-## Status (2026-10-16)
+## Status (2026-10-19)
 
-**Done so far**
+[FEATURES.md](FEATURES.md) is the target; what is not built yet is in the milestones and the
+backlog below. Details of finished work are in the git history (303 tests).
 
-- Stack chosen (Rust + GPUI + `alacritty_terminal`), project scaffolded on Ubuntu, git initialized.
-- M1 step 1 - `term-core`: pty sessions, coalesced wakeups, exit after output drain, palette with
-  OSC 10/11 color replies. Committed (`5d39cfa`).
-- M1 step 2 - `app`: GPUI window rendering one session (shell or Claude Code) with keyboard,
-  IME, selection, copy/paste, resize, drawn title bar and window frame. Committed with the
-  scroll fix and palette.
-- Scroll fix: Claude Code (2.1.302) runs on the alternate screen with mouse tracking
-  (`?1049h`, `?1000/1002/1003h`, SGR `?1006h`), so the wheel had no scrollback to move and
-  sent nothing. Wheel, clicks and motion are now forwarded as xterm mouse reports when a
-  program enables tracking; Shift bypasses reporting for local selection (`app/src/mouse.rs`).
-  Verified under X11 (Xvfb): shell scrollback, Claude Code transcript scrolling, and exact
-  report bytes. Scrolling confirmed on Wayland by the user.
-- Scroll bar: overlay in the right padding (no column cost), shown while scrolling, hovered or
-  dragged, hidden after 1.2 s and whenever there is no history (alternate screen). Drag the thumb
-  (keeps tracking outside the window), click the track to center the thumb there
-  (`app/src/scrollbar.rs`, `Session::scroll_to`). Verified under X11 (Xvfb).
-- M1 step 3 - sidebar: tab list with session-type icon, name and status dot; `+` menu with the
-  shells found on PATH (default shell first), Claude Code and Copilot CLI; tab shortcuts.
-  Verified under X11 (Xvfb).
-- M1 step 4 - Claude Code status via hooks (`agent-status`, `agentws-hook`). Verified under X11
-  with Claude Code 2.1.302: Working, Needs attention (permission prompt) and Idle shown on an
-  unselected tab; activity dot on a background shell.
-- Copy/paste on GPUI actions: Ctrl+Insert added for copy; all clipboard keys are now key
-  bindings (ready for a configurable keymap). Verified under X11 (Xvfb): Ctrl+Insert copy,
-  Shift+Insert and Ctrl+Shift+V paste.
-- Tests: 74 passing (`term-core` session + palette, `agent-status` state machine + IPC,
-  `agentws-hook` round trip with the real binary, `app` key/paste translation, mouse reports,
-  wheel decision, render batching/colors, scroll bar geometry, launcher discovery).
-- Verified by driving the app under X11 (screenshots + simulated input). Wayland checked
-  manually by the user.
-- M1 "done when" check passed on Ubuntu (Wayland) on 2026-10-17: 3 Claude Code sessions +
-  1 shell; steps in [README.md](README.md#manual-check).
-- M2 parts A + B (branch `m2-sidebar`, 2026-10-17): two-line tab rows (title; branch or folder),
-  status badge on the session icon, warning triangle on Needs attention, Done status, bundled
-  Claude spark and git-branch icons, sidebar toggle (title bar button, Ctrl+Shift+B). Folder
-  follows `cd` via `/proc/<pid>/cwd`; branch read from `.git/HEAD` (`workspace-model`).
-  Verified under X11 (Xvfb) with fake hook events: Done / Needs attention / Working badges, Done
-  clearing on select, `~/.config` folder line, sidebar toggle. 83 tests passing.
-- M2 part C (2026-10-17): tab menu from `⋮` and right-click (`tab_menu.rs`): pin/unpin, copy
-  branch / pane title / working directory, inline rename, move up/down, close / close others /
-  close below, color swatches. Tab model (`TabMeta`: custom name, pinned, color) and ordering
-  rules (`workspace_model::order`: pinned block at the top, moves stay in their block, close
-  others/below spare pinned tabs). Menu actions address tabs by session id, so they hit the
-  right tab after moves. The window title stays the program's title; the custom name is the
-  sidebar's. Verified under X11 (Xvfb): every menu entry, disabled states, Escape cancelling a
-  rename, clipboard contents. 89 tests passing.
+**Known limitations**
 
-- M2 part D (2026-10-17): groups and drag & drop. `workspace_model::Layout` (replaces `order`)
-  holds the pinned block, then ungrouped tabs and groups; pinned tabs are never grouped, groups
-  stay when empty, new tabs join the selected tab's group. Tab menu: New group with tab (starts
-  an inline rename), Move to group › (other groups, Remove from group). Group header: chevron,
-  color dot, name, "N tabs", status chips when collapsed (attention / working / done), `⋮`
-  and right-click menu (rename, collapse, move group up/down, close tabs, ungroup / delete,
-  color). Tabs without their own color show the group's. Selecting a hidden tab expands its
-  group. Drag a tab row: the half of a row picks above/below in that row's block, a header's
-  upper half drops above the group and its lower half into it, the space below the list drops
-  ungrouped at the end; a marker line shows the spot. Verified under X11 (Xvfb): new group +
-  rename, drop into a group / an empty group / the end / the pinned block, collapse with
-  chips (fake hook events), Ctrl+3 into a collapsed group, group color inheritance, submenu,
-  move group up, ungroup. Not driven: "Close tabs in group". 98 tests passing.
-- M2 part E (2026-10-17): search, hover card, jump to next attention. "Search tabs..." field
-  in the sidebar header (Ctrl+Shift+S) filters by name, program title, folder (`~` form),
-  branch and group name; every whitespace-separated word must match, case-insensitive
-  (`workspace_model::TabQuery`). Groups with a match show expanded while searching; Enter
-  selects the first match and clears, Escape clears. Hover card (gpui-component `HoverCard`,
-  0.6 s delay) right of the row: status chip, Ctrl+N, full folder (wrapped), branch, program
-  title, session kind, `+N` from `git --no-optional-locks diff HEAD --numstat` run on the
-  background executor when the card opens, cached per tab and folder for 5 s
-  (`workspace_model::lines_added`). It replaces the status tooltip on the icon. Ctrl+Shift+A
-  and a "⚠ N" button next to the search field go to the next other tab needing attention,
-  else the next Done tab (`workspace_model::next_attention`). Verified under X11 (Xvfb) with a
-  stand-in `claude` script and fake hook events: card with Idle/Done/No recent output and
-  `+25` on a repo with 25 added lines, card for a shell outside a repo (no branch, no `+N`);
-  search by title, group name, folder, two words (`MAIN reload`), no match, Escape (focus back
-  in the terminal), Enter, clear button, Ctrl+Shift+S with the sidebar hidden; jump cycling
-  shell → attention → Done → attention, the button click, jump into a collapsed group
-  (expands it). Not driven: drag & drop while a search is active, a real Claude Code session.
-  109 tests passing.
-- In-progress lap time (2026-10-17): the hover card's status chip shows how long a Claude Code
-  session has been working on the current turn (`Working · 2m 14s`; `45s`, `1h 05m`). Tool
-  events keep the lap running; any other status (Needs attention, Idle, Exited) ends it and the
-  next Working starts from 0 (`workspace_model::Lap`, `format_lap`). While a card is open a task
-  repaints on each whole second of the lap, only while working; closing the card drops the
-  task. Verified under X11 (Xvfb) with fake hook events: the chip ticks with the card open
-  (1s -> 4s), `PostToolUse` keeps it running, `Stop` shows plain Idle, a new prompt restarts
-  at 0s. 123 tests passing.
-- Window bounds restore (2026-10-17): the window reopens with the size, position and
-  maximized/fullscreen state it closed with, saved as `window.json` in the config folder
-  (`directories`: `~/.config/agent-workspace`, `%APPDATA%\agent-workspace\config`). Saved
-  just before the window closes, from every close path: last tab closed, title bar `×`, the
-  window manager's close (`on_window_should_close`). Ignored (default 1000x650 centered) when
-  the file is missing, not valid JSON, smaller than 100 px or less than 48x48 px of it lies
-  on any connected display (`workspace_model::WindowState`). A maximized or fullscreen close
-  keeps the bounds already saved and updates only the mode (GPUI on X11 reports the maximized
-  size; the reported bounds are used only when nothing usable is saved yet). Sizes over
-  16384 px are ignored like damaged files. Verified under X11 (Xvfb, no window manager, separate `XDG_CONFIG_HOME`): resize +
-  move then close via the last tab and via `WM_DELETE_WINDOW` save the new bounds and the
-  relaunch opens there; off-display, partly-visible and corrupt files; an unwritable config
-  folder only prints an error. GPUI's X11 backend opens new windows 2 px right of the
-  requested x, so a restored window can creep 2 px right per restart under a window manager
-  that reports the real position. Not driven: maximize (no window manager under Xvfb: the
-  saved mode is not detected and `zoom` has no effect), the title bar `×` (no window controls
-  without a window manager), Wayland (position is up to the compositor), Windows. 134 tests
-  passing.
+- Not supported in the file viewer: AVIF images (GPUI's decoder lacks it: "The image could
+  not be read."), a `#heading` in a document link (the file opens at the top).
+- File viewer images: still WebP files share animated GIF/WebP's 2 MB limit (other images
+  50 MB), and images over 16384 pixels on a side are refused rather than scaled down.
+- An OSC 8 link spanning several lines: only its row is underlined.
+- An agent tab going on as a shell starts in the agent's last known folder: on Linux its
+  `/proc` folder as of its last title change or hook event, elsewhere the folder it started in.
+- F11 has no menu entry: the app has no window menu (a right-click on the title bar opens the
+  window manager's own).
+- No command history in cmd tabs: cmd's prompt prints only the `D` mark, not the `A` / `B`
+  marks that locate the prompt.
+- Settings file: a field with a value of the wrong type gets its default silently and the
+  value is dropped at the next change. A file that isn't a JSON object is ignored (reason
+  printed and kept for the settings page) and moved to `settings.json.bak` at the first
+  change. Unknown fields are kept but rewritten in alphabetical order; JSON comments aren't
+  allowed. Edits made on disk while running apply when the settings page opens, when the
+  file is saved in the file viewer, or at the next change from the app; edits made in another
+  editor while the page shows apply only then (no file watch).
 
-**Bugs to fix**
+**Next steps (quick wins 3: settings)**
 
-- Windows: the title bar's sidebar toggle button does nothing when clicked; Ctrl+Shift+B
-  works. Cause: gpui-component's `TitleBar` marks its whole child area
-  `WindowControlArea::Drag`, and GPUI's hit test lists every hitbox under the cursor, so
-  `WM_NCHITTEST` answers `HTCAPTION` over our button too. The mouse-down reaches GPUI as a
-  non-client event, `Button` does not stop it, so `DefWindowProc` starts the window-move loop,
-  which eats the mouse-up: no click. Fix: wrap the title bar buttons in a `div().occlude()`
-  (hitbox `BlockMouse` stops the hit test before the drag area, so they get `HTCLIENT` and
-  normal clicks); the explorer button goes in the same wrapper.
+1. Font family and size: from the settings file (today hard-coded), with rows on the
+   Appearance page; a change applies live (the terminal re-measures its cells and resizes the
+   pty).
+2. Default shell: from the settings file (a row on the Terminal page); the new-tab menu's
+   first entry and Ctrl+Shift+T use it; empty keeps the $SHELL / Git Bash default.
+3. File viewer width: saved in the settings file when it changes and restored at startup
+   (not shown on the settings page).
+4. Configurable terminal path: the executable path for each launcher entry (Terminal, Git
+   Bash, `claude`, `copilot`) saved in the settings file and shown on the settings page, for
+   programs that aren't on `PATH` or where the wrong copy is found first; an empty value keeps
+   the current lookup.
+5. Agent launch arguments: extra command-line arguments for the Claude Code and Copilot CLI
+   launcher entries (e.g. `--yolo` for `copilot`, `--dangerously-skip-permissions` or
+   `--model opus` for `claude`), saved in the settings file and shown on the settings page
+   next to the entry's path. Split like a shell command line (quotes group words) and added
+   after the app's own arguments (`claude` keeps the hooks' `--settings`); they apply to new
+   tabs started from that entry (the `+` menu, Ctrl+Shift+T). A restored tab keeps the
+   arguments it started with (saved with the tab in `tabs.json`), not the current setting.
+   Empty adds none.
+6. Configurable terminal icon: the icon for each launcher entry, picked from the bundled
+   `LauncherIcon` set (Bash, PowerShell, Command Prompt, Zsh, Fish, Ubuntu, ...) and saved in
+   the settings file (settings page row); it shows in the new-tab menu and on the sidebar row
+   of every tab started from that entry (restored tabs included). "Automatic" keeps the
+   current detection (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`),
+   e.g. for a wrapper script that `shell_icon` only sees as `Shell`.
+7. Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
+   and terminal color schemes: a few bundled schemes plus user schemes imported from
+   base16/iTerm files, saved in the settings file and picked on the Appearance page. "System"
+   follows the OS light/dark setting.
+8. Window opacity and background blur, set in the settings file (opacity applies to the
+   terminal background only, text stays opaque); blur where the platform allows it (Windows
+   acrylic/mica, KDE on X11).
+9. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
+   `cx.build_action`) from the settings file in place of `default_bindings`.
+10. Executable path on the settings page's About page: an "Executable" row under "Config
+   folder" (`about_groups` in `app/src/settings_page.rs`) showing `std::env::current_exe()`,
+   laid out vertically like the folder; "Unknown" when it can't be read. Tells which copy is
+   running when several are installed or a dev build sits next to a release.
 
-**Next steps, in priority order**
+**Fixed, not tested yet (built and unit-tested by the Windows CI, not run on a Windows machine)**
 
-1. Reopen with the same tabs: kind, program, folder, custom name, color, pin, groups and order
-   (`Layout` + `TabMeta` to serde), and the selected tab. Each tab is relaunched in its last
-   folder. This brings forward the save/restore part of M4 for the single window; named
-   workspaces stay in M4.
-2. `+` menu look ([reference](docs/ui-reference/new-tab-menu.png)): an icon per entry (PowerShell,
-   Windows PowerShell, Command Prompt, Git Bash, each WSL distro, Claude, Copilot) instead of
-   the shared terminal icon, a "Terminal" entry with its `Ctrl+Shift+T` hint, and separators
-   between shells and agents.
-3. Windows: "Bash" opened Ubuntu. `bash` on `PATH` resolves to `C:\Windows\System32\bash.exe`,
-   the WSL launcher, which starts the default distro; Git Bash is not on `PATH` (only
-   `Git\cmd` is). Code done in `launcher.rs`, not yet built or run on Windows: `bash` is no
-   longer looked up on `PATH`; "Git Bash" is `Git\bin\bash.exe -i -l` found from `git.exe` on
-   `PATH`, else `%ProgramFiles%\Git` / `%LOCALAPPDATA%\Programs\Git`; each WSL distro (from
-   `HKCU\...\Lxss`, so no `wsl.exe` runs at startup; `docker-desktop*` hidden) is its own entry
-   launching `wsl.exe -d <name>`, and its tab is named after the distro.
-4. Ctrl+Shift+T opens a new tab with the default launcher (in the selected tab's folder)
-   instead of duplicating the selected tab. The default is Bash for now: Git Bash on Windows,
-   `bash` on Linux; falls back to the first shell found. A configurable default comes with
-   settings. The `+` button's hover tooltip shows the shortcut ("New tab (Ctrl+Shift+T)"),
-   and the default entry in the `+` menu shows `Ctrl+Shift+T` on its right. Duplicating the
-   selected tab moves to Ctrl+Shift+D, also in the tab menu as "Duplicate tab" with its
-   shortcut shown.
-5. Taller tab rows with separators ([reference](docs/ui-reference/tab-row-spacing.png)): more vertical
-   padding per row (about 56 px instead of the current tight two lines), a larger session
-   icon, and a thin full-width divider line (`sidebar_border` color) between rows instead of
-   the 2 px gap. The selected/hovered background still fills the whole row; group headers and
-   indented group children keep the same rhythm.
-6. Collapsible file explorer ([reference](docs/ui-reference/file-explorer.png)): a panel
-   between the sidebar and the terminal, shown/hidden by a title bar button next to the
-   sidebar toggle and by Ctrl+Shift+| (bound as the key that produces `|`, so check it on
-   non-US layouts), closed with its `×`. Root is the selected tab's folder and
-   follows tab switches and `cd`. Tree with chevrons, folders first then files, sorted by
-   name, dotfiles shown; folder and file-type icons (Markdown, image, ...). Folders are read
-   only when expanded (no recursive scan); expanded state is kept per root. Header row with
-   the files view icon; the reference's comments and search views are out of scope for now.
-   Open questions: what clicking a file does (insert its path in the terminal, open in the
-   default app), and refreshing on file changes (`notify` watcher on expanded folders only).
-7. Command history in shell tabs (both need shell integration, below):
-   - **Inline autocomplete** ([reference](docs/ui-reference/history-autocomplete.png)): while
-     typing at the prompt, the most recent history entry starting with the typed text is drawn
-     dimmed after the cursor (ghost text, not sent to the shell); Right arrow / End at the end
-     of the line accepts it by sending the remaining characters.
-   - **History popup** ([reference](docs/ui-reference/history-popup.png)): "HISTORY" panel
-     above the prompt listing past commands that contain the prompt's current text, most
-     recent at the bottom next to the prompt, with the folder chip; Up/Down to move, Enter to
-     put the command on the prompt (replacing the typed text), Esc to dismiss.
-   - **History store:** commands executed in any shell tab of the app, with folder and time,
-     de-duplicated (latest wins), capped (e.g. 10 000), persisted in the config folder. Not
-     the shell's own history file.
-   - **Shell integration:** the app must know where the prompt's command line starts and when
-     a command runs: OSC 133 (A prompt start, B command start, C executed, D finished) emitted
-     by small scripts injected at launch for bash / zsh / pwsh (`--rcfile` / `ZDOTDIR` /
-     `-NoExit -Command`), sourcing the user's own config first. `alacritty_terminal` does not
-     parse OSC 133, so this needs the pty reader wrapper also planned for OSC 7. The command
-     text is read from the grid between the B mark and the cursor. Disabled on the alternate
-     screen and in Claude Code / Copilot tabs; cmd.exe and WSL shells without the script get
-     neither feature.
-   - **Opening the popup:** Up arrow at the prompt always opens it and is no longer sent to
-     the shell (the shell's own Up history is dropped where integration is active): all
-     history on an empty prompt, filtered by the typed text otherwise. The list has a max
-     height (about 10 rows) and scrolls, starting at the bottom with the most recent command
-     selected. Up still goes to programs (alternate screen, Claude Code, `less`, ...) and to
-     shells without integration.
-8. Finish M2: icon overrides per tab (tab menu), the sidebar filter/sort button.
-9. M3: split panes, adjustable sizes, pane shortcuts.
+- Command history in PowerShell: Enter on a HISTORY row printed `^E` before the command
+  (PSReadLine's Windows edit mode has no Ctrl+E); PowerShell tabs now get End (`ESC [ F`)
+  before the Backspaces (one per UTF-16 unit), bash/zsh still Ctrl+E. Check in pwsh and
+  Windows PowerShell: type part of a command, Up, Enter on a row: the line holds just that
+  command. Also with a grey inline prediction showing after the typed text (no leftover
+  text, no bell) and with an emoji on the line.
+- The explorer's `cd` into a WSL tab typed the Windows path (`cd 'C:\Users'`, refused by
+  bash); WSL tabs now get `ShellSyntax::Wsl`, which types `C:\x` as `/mnt/c/x` (default mount
+  root only) and `\\wsl$\<distro>\x` as `/x`. Check in an Ubuntu tab: the parent-folder button
+  and "cd to directory" move the shell, and `cd` updates the explorer and the title.
 
-**Deferred (needs a Windows machine):** Windows build and the same check (ConPTY, named pipe,
-hook command quoting).
+Checked on a desktop (2026-10-19): F11 full screen; on Windows: the parent-folder button in PowerShell, the
+explorer following `cd` in PowerShell, Windows PowerShell, Git Bash and cmd (and cmd's title),
+Copilot CLI status, no console window from the hover card's `git`, the title bar buttons,
+"Bash" opening Git Bash, and Claude Code hooks (`agentws-hook.exe` quoting, `claude.cmd`
+under ConPTY).
 
 ## Decisions
 
 - **Stack:** Rust + GPUI + `alacritty_terminal`.
   - Priorities: performance, then memory, then Windows, then Ubuntu.
   - Native GPU rendering, no browser engine, event-driven redraw (zero work when idle).
-- **Development platform:** start on Ubuntu; same code targets Windows (ConPTY) with regular Windows testing.
-- **Agent status scope for M1:** Claude Code only. Copilot CLI and plain shells show
-  "recent activity" based on output timestamps.
 - **Licensing:** Zed's `terminal` / `terminal_view` crates are GPL-3 - reference only, do not copy.
   `gpui` and `alacritty_terminal` are Apache-2.0.
 
@@ -221,181 +113,217 @@ agent-workspace/
 ├── crates/
 │   ├── term-core/        # session = pty + alacritty Term + event listener (UI-agnostic, testable)
 │   ├── agent-status/     # status state machine + IPC server for hook events
-│   ├── workspace-model/  # tab location (folder, git HEAD); groups/tabs/colors/layout + JSON persistence (M2+)
+│   ├── workspace-model/  # UI-free logic: tab location, layout, persistence, file tree/viewer, history
 │   ├── agentws-hook/     # tiny binary invoked by Claude Code hooks
 │   └── app/              # GPUI UI: sidebar, terminal element, panes
 ```
 
 Only `app` depends on GPUI. If GPUI proves too painful, only that crate is replaced (iced/egui).
 
-## Milestone 1 - One Window, Real Sessions, Real Status
-
-1. **Session core (`term-core`)** - done
-   - Spawn shell / `claude` / `copilot` in a chosen folder via `alacritty_terminal::tty`.
-   - One I/O thread per session.
-   - Child env sets `TERM`/`COLORTERM` per session (alacritty's `tty::setup_env` mutates the
-     process env and is not thread-safe).
-   - `Exited` is reported on alacritty's `Exit` (after the final output drain), preceded by a wakeup.
-   - Coalesce wakeups to at most one repaint per frame; no work while idle.
-2. **Terminal rendering (`app`)** - done
-   - Custom GPUI element painting the visible grid: cells, colors, cursor, selection.
-   - Keyboard input (incl. Ctrl-C, multiline), mouse scrollback, copy/paste.
-   - Resize propagated to both the pty and `Term`.
-   - Terminal lock held only to copy visible cells; shaping and painting happen after release.
-   - ASCII runs are batched per style; other characters are placed at their own column so wide,
-     fallback-font, and combining glyphs stay on the grid.
-   - IME via `EntityInputHandler`; special keys via `on_key_down` (`keys.rs`, unit-tested).
-   - The window root binds Tab, Shift+Tab, Ctrl+C; the `Terminal` key context overrides them
-     with `NoAction` so they reach the program.
-   - Copy/paste: Ctrl+Shift+C / Ctrl+Insert copy, Ctrl+Shift+V / Shift+Insert paste; Linux
-     primary selection on select + middle click. The keys are GPUI key bindings to `terminal::Copy`
-     / `terminal::Paste` actions in the `Terminal` context (`default_bindings` in
-     `terminal_view.rs`), so a user keymap can replace them later.
-   - Client-side decorations with `gpui-component`'s `TitleBar` (title, min/max/close, drag,
-     double-click to maximize) and window border; GNOME on Wayland has no server-side
-     decorations. The bundled icon assets must be registered for the control buttons to render.
-   - Programs' OSC 10/11 color queries are answered from the palette (`term-core/palette.rs`).
-   - Inherited Claude Code session markers (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, ...) are
-     stripped at startup so sessions are not treated as nested children.
-   - Overlay scroll bar for the scrollback, hidden on the alternate screen: the program scrolls
-     its own content there and the terminal cannot know its position.
-   - Mouse reporting (modes 1000/1002/1003, SGR/UTF-8/legacy encodings): wheel, clicks and
-     motion (once per cell) go to programs that enable tracking; Shift keeps local selection
-     and scrollback. Without tracking, the alternate screen gets arrow keys on wheel.
-3. **Sidebar** - done
-   - Flat tab list: session-type icon, name (program title, else kind/shell name), status dot,
-     close button on the selected or hovered row (`sidebar.rs`).
-   - `+` menu: shells found on PATH (default `$SHELL` first; PowerShell/cmd on Windows), Claude
-     Code, Copilot CLI (shown disabled when not installed). New tabs open in the selected tab's
-     folder (`launcher.rs`).
-   - Ctrl+Tab / Ctrl+Shift+Tab, Ctrl+1..9, Ctrl+Shift+T (another tab like the selected one),
-     Ctrl+Shift+W (close; the last tab closes the window). Handled in the workspace's key
-     capture phase so they never reach the terminal.
-   - Only the selected terminal paints; hidden ones re-arm their own wakeups and emit
-     `TabChanged` only when title/status/activity changes, so background output does not redraw
-     the window.
-4. **Agent status (Claude Code)** - done
-   - Claude Code tabs get `AGENTWS_SESSION=<session id>` and `AGENTWS_PIPE=agentws-<pid>.sock`,
-     and launch as `claude --settings <temp file>` (a file, not inline JSON, to avoid Windows
-     command-line quoting). The file is removed when the last window closes. The user's
-     `~/.claude/settings.json` is never modified; `--settings` hooks merge with the user's.
-   - `agentws-hook` (built next to the app; without it status is disabled with a warning) reads
-     the hook JSON, sends one line `<session> <start µs> <event> [notification_type]` over an
-     `interprocess` local socket (Unix socket / named pipe) and always exits 0 silently.
-   - The state machine (`agent-status`) orders events by hook start time, so a slow hook cannot
-     overwrite a newer status; Exited is final.
-
-     | Event | Status |
-     |---|---|
-     | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionDenied` | Working |
-     | `PermissionRequest`, `Notification` (`permission_prompt`, `elicitation_*dialog`, `agent_needs_input`) | Needs attention |
-     | `Stop`, `StopFailure`, `Notification` (`idle_prompt`) | Idle |
-     | `SessionEnd`, process exit | Exited |
-
-     `PostToolUse` returns an approved permission prompt to Working. `Stop` does not fire when
-     the user interrupts; the `idle_prompt` notification (about a minute later) returns it to Idle.
-   - Sessions without hooks show "recent output" for 2 s after output, then "quiet".
-5. **Tests**
-   - `term-core`: spawn `echo`, assert grid content; resize propagation.
-   - `agent-status`: all event sequences, including out-of-order events.
-   - `agentws-hook`: pipe round-trip.
-   - UI: manual verification.
-
-**Done when:** 3 Claude Code sessions + 1 shell run on Ubuntu (then Windows) with smooth typing and resizing,
-and unselected tabs show correct Working / Needs attention / Idle.
-
 ## Target UI
 
 Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-card.png),
-[tab context menu](docs/ui-reference/tab-context-menu.png). Elements and where they land:
+[tab context menu](docs/ui-reference/tab-context-menu.png). Still to do from them:
 
 | Element | Look | Milestone |
 |---|---|---|
-| Title bar | sidebar toggle (collapse/expand the sidebar) - done; settings button once there are settings | M2 |
-| Sidebar header | "Search tabs..." field (filters by title, folder, branch) - done; next-attention button - done; filter/sort button - not done; `+` | M2 |
-| Tab row, line 1 | session icon in a rounded square, title cut with a trailing ellipsis (as in the screenshot) - done | M2 |
-| Tab row, line 2 | git branch (`⑂ main`) when the folder is a repo, else the folder (`~/.config/...`), dimmed - done | M2 |
-| Status badge | small round badge on the icon's bottom-right corner (replaces the status dot); warning triangle before the title when it needs attention - done | M2 |
-| Selected row | raised background + border, `⋮` menu and `×` close on the selected/hovered row - done | M2 |
-| Hover card | status chip (`✓ Done`, `Working · 2m 14s`), full folder, branch, title, session kind with icon, `+N` (git lines added in the working tree, green) - done | M2 |
-| Groups | chevron, name, "N tabs" count, indented children; aggregate status when collapsed - done | M2 |
-| Drag & drop | drag a tab row to reorder or to drop it into/out of a group; insertion marker while dragging - done | M2 |
-| Context menu | see below | M2 / M3 / M4 |
+| Context menu | Save as new config (= save as a named workspace) | M4 |
 | Clipboard notice | banner above the terminal when a program writes the clipboard (OSC 52), with allow/deny | M5 |
 
-Context menu entries:
-
-- M2: Pin tab, New group with tab, Move to group ›, Copy branch name, Copy pane title, Copy working
-  directory, Rename tab, Move Tab Up / Down, Close tab, Close other tabs, Close Tabs Below,
-  color swatches (none + 7 colors). All done.
-  "Share session" from the screenshot is not planned.
-- M4: Save as new config (= save as a named workspace).
-
-New work the look needs:
-
-- **Working directory per tab:** done on Linux: the child's cwd (`/proc/<pid>/cwd`) re-read on
-  `TabChanged` and when the tab is shown, never polled; the last known folder is kept after
-  exit. Windows (`NtQueryInformationProcess` PEB read) shows the launch folder until then.
-  Not done: OSC 7 (`alacritty_terminal` does not parse it; needs a pty reader wrapper, only
-  useful for remote shells) and the `cwd` from Claude Code hook payloads (Claude's process cwd
-  is its project folder, which `/proc` already gives).
-- **Git branch:** done: read `<repo>/.git/HEAD` (walk up from the cwd, follow `gitdir:` for
-  worktrees), no `git` process; detached HEAD shows the short commit.
-- **Diff stat (`+N`):** done: `git diff HEAD --numstat` plus the lines of untracked files
-  (`git ls-files --others --exclude-standard`, files over 1 MiB skipped) run off the UI thread
-  only when the hover card opens, one run per tab at a time, killed after 10 s, cached per tab
-  for 5 s. On Windows the `git` child may need
-  `CREATE_NO_WINDOW` (untested).
-- **"Done" status:** done: a Claude tab that goes Working -> Idle while not selected shows Done
-  (check badge) until it is selected, then Idle.
-- **Tab model:** custom name and color (`TabMeta`); pinned block, groups and order (`Layout`)
-  - done. Persistence (serde) with M4.
-- **Icons:** done: our own Claude spark and Lucide's git-branch bundled (`app/src/assets.rs`);
-  Copilot and shells use the library's GitHub and terminal icons.
+"Share session" from the screenshot is not planned.
 
 ## Later Milestones
 
-- **M2:** the [Target UI](#target-ui) sidebar: two-line tab rows, status badges, hover card,
-  search, pinning, context menu; named collapsible groups, drag & drop of tabs, colors with tab inheritance, icon
-  overrides, aggregate status on collapsed groups, "jump to next session needing attention".
-- **M3:** split panes, adjustable sizes, pane shortcuts.
-- **M4:** named workspaces, save/restore layout, offer to relaunch; restored tabs clearly marked "not running".
+- **M4:** named workspaces (the single window's tabs are already restored), offer to relaunch; restored tabs clearly marked "not running".
 - **M5:** terminal search, close-with-running-process warnings, notifications + configurable sound.
-- **M6:** Copilot CLI status (if it gains a hook mechanism), Windows packaging, Ubuntu polish
+- **M6:** Copilot CLI NeedsAttention (progress reports only give Working / Idle; needs hooks or a
+  progress state for prompts), Windows packaging, Ubuntu polish
   (Wayland/X11, socket paths).
 
-## Backlog (found during M1)
+## Backlog
 
-- Draw box-drawing and block characters procedurally; font glyphs leave small gaps between
-  rows for heavy/double verticals (`┃`, `║`).
-- Report drags that leave the terminal area (GPUI only delivers moves while hovered).
-- Answer OSC 52 clipboard requests.
-- Show an "exited" banner in the terminal area (currently only in the title).
-- Tune wheel scroll speed (about 2 lines per notch on X11).
-- Configurable font family and size.
-- Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
-  `cx.build_action`) in place of `default_bindings`.
+- Claude Code typed at a shell prompt behaves like a Claude Code tab: today a `claude` started
+  from a shell tab shows "Running for" until it quits, even while it sits idle, because it gets
+  no hooks. Instead:
+  - Shell tabs also get `AGENTWS_SESSION`, the hook pipe name and a new
+    `AGENTWS_CLAUDE_SETTINGS` (the settings file `ClaudeHooks` writes, `crates/app/src/hooks.rs`).
+  - The shell integration scripts (bash, zsh, PowerShell) define a `claude` wrapper that runs
+    `command claude --settings "$AGENTWS_CLAUDE_SETTINGS" "$@"` when that variable is set.
+  - `TerminalView`: while the running command (OSC 133 `C` mark, `PromptEvent::Started`) has
+    `claude` as its first word (matched by file name, path and `.exe` / `.cmd` stripped, like
+    `shell_icon`), the tab shows the hook status (Working, Waiting, Done, with the "Working ·
+    2m 14s" lap) instead of Running, and the sidebar row shows the Claude icon; `copilot` gets
+    its icon only (no hooks). The prompt returning (`Finished`) clears the hook status and the
+    tab is a shell tab again.
+  - Nested shells and tmux clear the session variables, as they already clear
+    `AGENTWS_MARK_TOKEN`, so a `claude` started there doesn't report to this tab.
+  - Check that a `--settings` the user passes still works alongside the wrapper's (Claude Code
+    may take only one; if so, document it).
+  Needs shell integration, so it misses `npx`, an absolute path to `claude` and scripts that run
+  it (a later Linux `/proc` child check could add the icon for those, without hooks).
+- `claude` / `copilot` typed at a shell prompt open an agent tab: instead of running in the
+  shell tab, the command opens a new tab exactly like the `+` menu's "Claude Code" / "Copilot
+  CLI" entry (`open_launcher` in `app/src/workspace_view.rs`, so hooks and status work), in the
+  shell's current folder, and selects it; the shell tab stays at its prompt. Steps:
+  - The shell integration scripts (bash, zsh, PowerShell) define `claude` and `copilot`
+    functions that print a new tokened mark, e.g. `ESC ] 133;N;aw=<token>;agent=claude;
+    args=<hex>;cwd=<hex> BEL`, and return 0 without starting the program. `Osc133Scanner`
+    accepts it, `PromptTracker` reports it as a new `PromptEvent`, and `TerminalView` asks
+    `WorkspaceView` to open the agent's launcher with the folder and the arguments
+    (`claude --resume` opens a tab running `claude --resume`).
+  - Run in place, not in a new tab: the non-interactive forms (`-p` / `--print`, `--version`,
+    `--help`, subcommands such as `claude mcp ...` / `claude update`), a command whose stdin or
+    stdout isn't a terminal (`echo x | claude -p`), and `command claude` / `\claude`, which skip
+    the function. Agent not found on `PATH` (no launcher program): run in place, so the shell
+    prints its own "command not found".
+  - Setting "Open agents typed at the prompt in a new tab" on the settings page's Terminal page
+    (default on); off, the functions aren't defined (the app passes a flag with the token).
+  - Mostly replaces the item above for interactive use; that item still matters for `claude`
+    run in place (`-p` in a script, a nested shell, cmd tabs, which get no functions).
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
+- Bell sound: with the M5 notification sound; rate-limited so a stream of bells doesn't
+  repeat it (the bell already marks a hidden tab Needs attention).
+- Long command finished in a shell tab: when a command that ran longer than a threshold
+  (default 10 s, in the settings file) ends while its tab isn't selected, the tab is marked
+  done, or failed when the OSC 133 `D` exit code isn't 0, until it is viewed. Needs shell
+  integration. Same notification and sound as M5's agent notifications.
+- Command palette: Ctrl+Shift+P opens a fuzzy search over every action (the ones with
+  shortcuts and the menu-only ones such as Duplicate, Move to group or Copy branch), showing
+  each one's shortcut, plus the tabs by name ("go to tab"). Enter runs the action on the
+  selected tab.
+- File viewer find and replace: Ctrl+F searches the open file (highlight all matches,
+  Enter / Shift+Enter to move, match count, case and whole-word toggles), Ctrl+H adds a
+  replace field (replace one / all) in source mode; rendered Markdown only gets find.
+- File viewer: the `⋮` menu from the reference screenshot.
+- File viewer: the rendered JSON view ("Not valid JSON") is only worked out when the file
+  opens, so it stays stale after the file is fixed and saved in the viewer.
+- First-run tab on Windows opens Git Bash: with no saved tabs and no tab on the command line,
+  `main.rs` starts `LaunchSpec::shell(cwd)` (no program), which alacritty runs as Windows
+  PowerShell, while Ctrl+Shift+T and the `+` menu open `launcher::default_shell` (Git Bash).
+  Start the first tab from `default_shell(&launchers)` in the current folder instead, falling
+  back to `LaunchSpec::shell` when no shell is found; Unix keeps `$SHELL`.
+- Command history with zsh-autosuggestions (likely bug, unverified): Enter on a HISTORY row
+  sends Ctrl+E, which the plugin binds to accept the grey suggestion, but the reported line
+  (`$BUFFER`, `.zshenv` `__agentws_report_line`) excludes it, so the Backspaces leave the
+  accepted rest in front of the new command. Send a key that doesn't accept it, or clear
+  `POSTDISPLAY` first.
+- Prompt at the bottom ([reference](docs/ui-reference/revers_command_line_order.png)): in a
+  shell tab the prompt stays on the last rows, the HISTORY panel (Up) opens just above it, and
+  the earlier commands and their output sit above the panel. Today a new tab or `clear` puts
+  the prompt at the top and the popup then opens below it. Shell tabs with shell integration
+  only; the alternate screen (vim, less, an agent's TUI) and agent tabs draw as today. Steps:
+  1. Bottom-anchored grid: while the rows below the cursor are empty, `terminal_element`
+     draws the screen shifted down by that many rows (blank space at the top), so the prompt
+     line is the last row. Selection, links, mouse reports, the IME box and the history popup
+     use the same offset (one `row_offset` in the geometry). No pty resize, so output and
+     `tput lines` are unchanged; scrollback and `display_offset` work as before. Unit-test the
+     offset (empty screen, full screen, cursor mid-screen after `tput cup`, alternate screen).
+  2. Docked HISTORY panel: always above the prompt (drop the below-the-prompt placement and
+     `MIN_ROWS_ABOVE`), full terminal width, newest row next to the prompt as now. It pushes
+     the rows above the prompt line up by its height instead of covering them, so the last
+     command's output stays readable right above it; closing it puts them back.
+  3. Command blocks: from the OSC 133 marks, record each finished command's prompt line (as
+     an absolute grid line, kept through scrolling and dropped when it leaves the scrollback),
+     folder and duration (`C` to `D`). Draw a thin separator above each prompt line and the
+     folder and duration ("~/.config/stock-watcher (0.02s)") right-aligned on it, dimmed; a
+     failed exit code tints the separator. A resize that reflows lines drops the blocks.
+  4. Setting "Prompt at the bottom" on the settings page's Terminal page (default on); off
+     keeps today's top-anchored layout.
+  Not planned from the screenshot: the separate input box with the folder chip (the prompt is
+  the shell's own, in the grid) and the panel's "Configure" button.
+- Paste with Ctrl+V in the terminal, like Windows Terminal (today only Ctrl+Shift+V and
+  Shift+Insert, `default_bindings` in `app/src/terminal_view.rs`); Ctrl+V then no longer
+  reaches the program as `^V` (bash's quoted-insert, vim's visual block), until the
+  configurable keymap lets the user unbind it.
+- Zoom with Ctrl+scroll, like Windows Terminal: Ctrl+wheel up / down over the terminal makes
+  the font bigger / smaller one point per notch (clamped, e.g. 6-48 pt), also Ctrl+= / Ctrl+-
+  and Ctrl+0 to reset. Today the size is the hard-coded `FONT_SIZE` (14 pt,
+  `app/src/terminal_element.rs`); builds on Next steps 1 (font size from the settings file,
+  applied live by re-measuring the cells and resizing the pty). The zoom applies to every
+  terminal tab and isn't saved (Ctrl+0 and a restart go back to the settings size). Ctrl+wheel
+  is never sent to the program, even with mouse reporting on.
+- Copy from a Copilot CLI tab doesn't work (bug, seen on Windows): Copilot's right-click "Copy
+  to clipboard" puts nothing on the clipboard, and neither do Ctrl+Insert or Ctrl+C after
+  selecting text. Likely causes, unverified: Copilot copies through OSC 52, whose
+  `ClipboardStore` event `term-core/src/session.rs` drops (see "Answer OSC 52 clipboard
+  requests" below); and Copilot turns on mouse reporting, so a drag goes to Copilot instead of
+  making the app's own selection, leaving Ctrl+Insert (`Copy`, `terminal_view.rs`) nothing to
+  copy, while Ctrl+C reaches Copilot as `^C`. Check with a trace log of the dropped event;
+  fix by storing OSC 52 writes in the clipboard (with M5's clipboard notice later) and, if
+  needed, Shift+drag selecting even while mouse reporting is on.
+- Duplicate tab: insert the new tab right below the duplicated one, in its group or among the
+  ungrouped tabs (today `Layout::add` puts it at the end of the group, or of the list).
 - New-tab folder picker (currently the selected tab's folder).
+- File explorer: read folders off the UI thread (a "Loading..." row, results applied per
+  root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
+  the window; Delete already runs in the background.
+- File explorer resize: drag the explorer's edge to change its width, like the file viewer's
+  divider (`pane_width`), between half (150 px) and twice (600 px) the default
+  `EXPLORER_WIDTH` (300 px, `app/src/file_explorer.rs`). The width also goes into the
+  pane layout in `workspace_view.rs`, and is saved in the settings file and restored at
+  startup, like the file viewer width.
+- Sidebar search: the filter/sort button from the reference screenshot.
+- Configurable tab background color: a color picked per tab from the tab menu (a small
+  palette plus "Default") that tints the tab's sidebar row and its terminal background; saved
+  with the tab in `tabs.json` and restored. The terminal's foreground colors stay unchanged,
+  so the palette must keep text readable in light and dark themes.
+- Group hover card: hovering a group header for a moment opens a card next to it, like the
+  tab hover card (`with_hover_card` in `app/src/workspace_view/sidebar_rows.rs`), that sums up
+  the group's tabs. Most useful when the group is collapsed:
+  - Counts: "5 tabs · 2 Working · 1 Waiting · 1 Done", then one line per tab: kind icon,
+    name, status with its lap time ("Working · 2m 14s", "Running for 40s") and branch, in
+    sidebar order; tabs that need attention (Waiting, unviewed Done or failed) first.
+  - Common folder or branch shown once in the header when every tab shares it.
+  - Clicking a line selects that tab (expanding the group). The card ticks the lap times while
+    it shows (`set_card_clock` for each working tab) and is built only while it shows; no
+    card during a drag or over an empty group.
 - Drag group headers to reorder groups (the group menu's Move up / down does it for now).
-- Sidebar search: Up/Down to move through the matches from the search field; the filter/sort
-  button from the reference screenshot.
-- Untested on Windows: hook command quoting (`"C:\...\agentws-hook.exe"` run by Claude Code's
-  shell) and `.cmd` launchers (`claude.cmd` from npm) under ConPTY.
+- Draw box-drawing and block characters procedurally; font glyphs leave small gaps between rows for heavy/double verticals (`┃`, `║`).
+- Answer OSC 52 clipboard requests.
+- Report drags that leave the terminal area (GPUI only delivers moves while hovered).
+- Working directory from OSC 7 (only useful for remote shells): `alacritty_terminal` does not
+  parse it, but the pty reader wrapper (`term-core/src/prompt.rs`) could find it.
+- Cache the active TerminalView (`.cached(...)`) so sidebar animation frames and other
+  WorkspaceView re-renders don't re-render the terminal; every input the view shows (focus,
+  resize, selection, session wakeup) must notify it; check with Xvfb.
+- Dependency updates (checked 2026-10-20, toolchain 1.99.1):
+  - `rust-version = "1.88"` in `Cargo.toml` is already wrong: `Cargo.lock` has `uuid` 1.28,
+    `notify-rust` 4.18 and `ordered-float` 5.5, which need Rust 1.89-1.90, so `cargo update`
+    would downgrade them. Raise it (1.95 or newer) and run `cargo update` (about 10 compatible
+    updates, e.g. `tokio` 1.54, `cc` 1.9, `rustls-webpki`); it also unlocks `cosmic-text`,
+    `oo7`, `smol_str`, `serde-saphyr` and `tree-sitter-language`. Build and run the tests.
+  - Bigger updates, each on its own: `gpui-kit` 0.7.3 -> 0.8.0 (likely API changes in
+    GPUI / `gpui-component`), `windows-registry` 0.6 -> 0.100 (needs Rust 1.95). Update the
+    Crates table above afterwards.
+  - Pre-releases to watch, not adopt yet: `libc` 1.0 (alpha), `notify` 9.0 (rc).
+- PowerShell: the integration writes the `C` mark on Enter even when PSReadLine only adds a
+  line to an unfinished command (`if ($x) {`), so the tab shows Running while typing; write it
+  only for accepted lines (needs a machine with pwsh to check).
+
+## Maybe
+
+Ideas not committed to yet; not in [FEATURES.md](FEATURES.md) until picked.
+
+- Diff panel: the selected tab's working-tree changes (`git diff` against `HEAD`, untracked
+  files included) in the file viewer pane, one collapsible section per file with added and
+  removed lines colored, opened from the hover card's `+N` or a title bar button, and
+  refreshed when the file watcher sees a change. Shows what an agent changed without leaving
+  the app; read-only (no staging or reverting).
+- Git worktree and pull request on the sidebar row: a worktree marker when the tab's folder is
+  a linked worktree (`.git` is a file), with the main repository in the hover card; the open
+  PR's number and state for the branch, from `gh pr view --json` run off the UI thread and
+  cached per branch, skipped when `gh` is missing or not logged in.
+- Sticky command header: while scrolling back through a shell tab's output, the command that
+  produced the top visible line stays pinned above the terminal (from the OSC 133 marks);
+  clicking it scrolls to that command's prompt. Needs shell integration; not for agent tabs.
+- Secret redaction: text matching secret patterns (API keys such as `sk-...`, `ghp_...`,
+  AWS keys, `password=...`, plus user regexes from the settings file) is drawn masked in the
+  terminal and copied masked unless the copy is confirmed; hover or a toggle reveals it. Agents
+  often print `.env` contents. Display only, the program's output is unchanged.
 
 ## Risks
 
 - **GPUI API churn:** exact `gpui-pre` version; UI isolated in `app`.
 - **IME and clipboard edge cases** in a custom terminal element: test early in M1, especially on Windows.
 - **Claude Code `--settings` flag and hook payload shapes:** verify against current docs before relying on them.
-
-## Ubuntu Prerequisites
-
-- Rust toolchain via `rustup`.
-- GPUI build deps (Vulkan, X11/Wayland, fonts):
-
-  ```
-  sudo apt install build-essential pkg-config libvulkan-dev libwayland-dev libxkbcommon-x11-dev \
-    libx11-xcb-dev libxcb1-dev libfontconfig-dev libfreetype-dev libssl-dev clang cmake
-  ```

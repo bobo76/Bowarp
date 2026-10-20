@@ -17,9 +17,11 @@ use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{self, Term, TermMode};
 use alacritty_terminal::tty;
 use parking_lot::MutexGuard;
+use workspace_model::ProgressState;
 
 use crate::launch::{LaunchSpec, SessionKind};
 use crate::palette::Palette;
+use crate::prompt::{ExecutedCommand, MarkedPty, PromptEvent, PromptInput, PromptTracker};
 
 /// How long a closed session's child has to exit after SIGHUP before it is killed.
 const EXIT_GRACE: Duration = Duration::from_secs(2);
@@ -34,6 +36,16 @@ pub enum SessionEvent {
     Bell,
     /// The child process exited, with its exit code when one is available.
     Exited(Option<i32>),
+    /// A shell with integration started a command, with its command line when the shell
+    /// reported it.
+    CommandStarted(Option<String>),
+    /// A shell with integration is about to run this command line typed at its prompt.
+    CommandExecuted(ExecutedCommand),
+    /// The command a shell with integration ran finished: the prompt is back. Also sent when
+    /// the shell reports a new folder at a prompt without a command before it.
+    CommandFinished,
+    /// The program reported a new progress state (OSC 9;4).
+    ProgressChanged(ProgressState),
 }
 
 /// Called on the session's I/O thread, sometimes while it holds the terminal lock: it must
@@ -95,10 +107,16 @@ struct Shared {
     last_output_ms: AtomicU64,
     exited: AtomicBool,
     exit_code: Mutex<Option<i32>>,
+    prompt: Arc<PromptTracker>,
+    /// Writes to the program so far, and how many of them came before the latest output.
+    inputs: AtomicU64,
+    inputs_before_output: AtomicU64,
 }
 
 impl Shared {
     fn record_output(&self) {
+        let inputs = self.inputs.load(Ordering::Acquire);
+        self.inputs_before_output.store(inputs, Ordering::Release);
         let elapsed = self.started_at.elapsed().as_millis().max(1) as u64;
         self.last_output_ms.store(elapsed, Ordering::Relaxed);
     }
@@ -144,7 +162,11 @@ impl EventListener for SessionListener {
                 let code = *shared.exit_code.lock().unwrap();
                 (shared.callback)(SessionEvent::Exited(code));
             }
-            Event::PtyWrite(text) => shared.write(Cow::Owned(text.into_bytes())),
+            Event::PtyWrite(text) => {
+                if !shared.prompt.on_tag_reply(&text) {
+                    shared.write(Cow::Owned(text.into_bytes()));
+                }
+            }
             Event::TextAreaSizeRequest(format) => {
                 let size = *shared.size.lock().unwrap();
                 shared.write(Cow::Owned(format(size.window_size()).into_bytes()));
@@ -169,8 +191,10 @@ pub struct Session {
     child_pid: Option<u32>,
     term: Arc<FairMutex<Term<SessionListener>>>,
     shared: Arc<Shared>,
-    io_thread: Option<JoinHandle<(EventLoop<tty::Pty, SessionListener>, State)>>,
+    io_thread: Option<JoinHandle<(EventLoop<SessionPty, SessionListener>, State)>>,
 }
+
+type SessionPty = MarkedPty<tty::Pty, SessionListener>;
 
 impl Session {
     pub fn spawn(
@@ -180,6 +204,14 @@ impl Session {
         palette: Palette,
         callback: EventCallback,
     ) -> io::Result<Self> {
+        let prompt_callback = callback.clone();
+        let prompt = Arc::new(PromptTracker::new(move |event| {
+            prompt_callback(match event {
+                PromptEvent::Started(command) => SessionEvent::CommandStarted(command),
+                PromptEvent::Executed(command) => SessionEvent::CommandExecuted(command),
+                PromptEvent::Finished => SessionEvent::CommandFinished,
+            });
+        }));
         let shared = Arc::new(Shared {
             callback,
             palette,
@@ -190,6 +222,9 @@ impl Session {
             last_output_ms: AtomicU64::new(0),
             exited: AtomicBool::new(false),
             exit_code: Mutex::new(None),
+            prompt: prompt.clone(),
+            inputs: AtomicU64::new(0),
+            inputs_before_output: AtomicU64::new(0),
         });
         let listener = SessionListener(shared.clone());
         let term = Arc::new(FairMutex::new(Term::new(
@@ -198,17 +233,31 @@ impl Session {
             listener.clone(),
         )));
 
-        // Windows has an extra `escape_args` field; the struct update fills it there.
+        // Off Windows the struct update has nothing left to fill.
         #[allow(clippy::needless_update)]
         let options = tty::Options {
             shell: spec.shell_command(),
             working_directory: spec.cwd.clone(),
             drain_on_exit: true,
-            env: session_env(&spec.env),
+            env: session_env(spec.kind, &spec.env),
+            // Quote arguments holding spaces or quotes, so each reaches the program whole.
+            #[cfg(windows)]
+            escape_args: true,
             ..Default::default()
         };
         let pty = tty::new(&options, size.window_size(), id)?;
         let child_pid = child_pid(&pty);
+        if let Some(pid) = child_pid {
+            prompt.set_child_pid(pid);
+        }
+        let progress_callback = shared.callback.clone();
+        let pty = MarkedPty::new(
+            pty,
+            term.clone(),
+            prompt,
+            spec.mark_token.as_deref(),
+            Box::new(move |state| progress_callback(SessionEvent::ProgressChanged(state))),
+        );
         let event_loop = EventLoop::new(term.clone(), listener, pty, options.drain_on_exit, false)?;
         let _ = shared.sender.set(event_loop.channel());
         let io_thread = event_loop.spawn();
@@ -232,13 +281,14 @@ impl Session {
     }
 
     /// The child's current working directory, which follows `cd` in a shell. `None` when it
-    /// cannot be read: the child exited, or the platform is not supported yet (only Linux).
+    /// cannot be known: the child exited, or (off Linux) the shell has no integration script
+    /// to report it.
     pub fn current_dir(&self) -> Option<PathBuf> {
-        let pid = self.child_pid?;
-        if cfg!(target_os = "linux") {
-            return std::fs::read_link(format!("/proc/{pid}/cwd")).ok();
+        // The pid of an exited child may already belong to another process.
+        if self.has_exited() {
+            return None;
         }
-        None
+        self.shared.prompt.folder()
     }
 
     pub fn palette(&self) -> &Palette {
@@ -249,6 +299,17 @@ impl Session {
     /// thread blocks on it while parsing output.
     pub fn lock_term(&self) -> MutexGuard<'_, Term<SessionListener>> {
         self.term.lock()
+    }
+
+    /// What the user typed at the shell's prompt, when the shell reports its prompt (shell
+    /// integration) and is waiting at it on the normal screen.
+    pub fn prompt_input(&self) -> Option<PromptInput> {
+        let term = self.term.lock();
+        self.shared.prompt.resolve(&term);
+        if term.mode().contains(TermMode::ALT_SCREEN) {
+            return None;
+        }
+        self.shared.prompt.input(&term)
     }
 
     /// The terminal modes the program has set.
@@ -312,7 +373,15 @@ impl Session {
     }
 
     pub fn write(&self, bytes: impl Into<Cow<'static, [u8]>>) {
+        self.shared.inputs.fetch_add(1, Ordering::AcqRel);
         self.shared.write(bytes.into());
+    }
+
+    /// Whether input was written since the latest output: the screen may not show what was
+    /// typed yet.
+    pub fn awaiting_echo(&self) -> bool {
+        self.shared.inputs.load(Ordering::Acquire)
+            > self.shared.inputs_before_output.load(Ordering::Acquire)
     }
 
     pub fn resize(&self, size: TermDimensions) {
@@ -417,16 +486,65 @@ fn child_pid(pty: &tty::Pty) -> Option<u32> {
 
 /// Environment for every child: advertise a capable terminal without mutating our own
 /// process environment (alacritty's `tty::setup_env` does that, which is not thread-safe).
-fn session_env(extra: &HashMap<String, String>) -> HashMap<String, String> {
+fn session_env(kind: SessionKind, extra: &HashMap<String, String>) -> HashMap<String, String> {
     let mut env = HashMap::from([
         ("TERM".to_string(), "xterm-256color".to_string()),
         ("COLORTERM".to_string(), "truecolor".to_string()),
         ("TERM_PROGRAM".to_string(), "agent-workspace".to_string()),
     ]);
+    // Copilot CLI only reports progress (OSC 9;4) to terminals it recognizes; ConEmu's
+    // variable is the narrowest one that turns it on (checked with Copilot CLI 1.0.98).
+    if kind == SessionKind::CopilotCli {
+        env.insert("ConEmuANSI".to_string(), "ON".to_string());
+    }
     env.extend(
         extra
             .iter()
             .map(|(key, value)| (key.clone(), value.clone())),
     );
     env
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_copilot_sessions_get_the_progress_report_variable() {
+        let copilot = session_env(SessionKind::CopilotCli, &HashMap::new());
+        assert_eq!(copilot.get("ConEmuANSI").map(String::as_str), Some("ON"));
+        for kind in [SessionKind::Shell, SessionKind::ClaudeCode] {
+            assert!(!session_env(kind, &HashMap::new()).contains_key("ConEmuANSI"));
+        }
+    }
+
+    /// The real event loop over a real pty: output held back after a mark is read again once
+    /// the pty has nothing new (the wake socket must be polled under alacritty's pty key).
+    #[test]
+    fn output_after_a_mark_reaches_the_terminal() {
+        let script = r"printf '\033]133;A;aw=tok\007$ \033]133;B;aw=tok\007typed'; sleep 3";
+        let mut spec = LaunchSpec::new(
+            SessionKind::Shell,
+            Some("sh".into()),
+            vec!["-c".into(), script.into()],
+            None,
+        );
+        spec.mark_token = Some("tok".into());
+        let size = TermDimensions::new(40, 5);
+        let session = Session::spawn(1, &spec, size, Palette::default(), Arc::new(|_| {})).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if session
+                .prompt_input()
+                .is_some_and(|input| input.text == "typed")
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "output after the mark never arrived"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
 }

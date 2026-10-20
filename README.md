@@ -2,9 +2,37 @@
 
 A terminal workspace for running Claude Code, Copilot CLI and shell sessions side by side, with
 per-tab agent status. Feature spec: [FEATURES.md](FEATURES.md). Plan and status: [PLAN.md](PLAN.md).
-Architecture: [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Install on Windows
+
+Run `agent-workspace-windows-x64-setup.exe` from the latest GitHub release. It installs per user
+(no admin prompt) into `%LOCALAPPDATA%\Programs\Agent Workspace` and adds a Start Menu shortcut.
+Run a newer setup to upgrade: it closes the app and overwrites that folder, so a taskbar pin keeps
+opening the current version. The release zip is still there for a portable copy.
+
+## Install on Linux
+
+Unpack `agent-workspace-linux-x64.tar.gz` from the latest GitHub release and run its installer
+(per user, no sudo):
+
+```
+tar -xzf agent-workspace-linux-x64.tar.gz
+agent-workspace-linux-x64/install.sh
+```
+
+It puts the binaries in `~/.local/opt/agent-workspace` (linked from `~/.local/bin`), plus the
+desktop entry and icons under `~/.local/share`. Run a newer tarball's `install.sh` to upgrade in
+place, so a dock pin keeps opening the current version. `install.sh --uninstall` removes it.
 
 ## Build and run
+
+On Ubuntu, install the Rust toolchain via `rustup` and the GPUI build dependencies (Vulkan,
+X11/Wayland, fonts):
+
+```
+sudo apt install build-essential pkg-config libvulkan-dev libwayland-dev libxkbcommon-x11-dev \
+  libx11-xcb-dev libxcb1-dev libfontconfig-dev libfreetype-dev libssl-dev clang cmake
+```
 
 Build the whole workspace first: `agentws-hook` must sit next to the app binary, or agent
 status is disabled.
@@ -20,7 +48,9 @@ The first tab runs a shell by default. To start with an agent or in another fold
 cargo run -p agent-workspace -- [shell|claude|copilot] [project-dir]
 ```
 
-Ubuntu build dependencies are listed in [PLAN.md](PLAN.md#ubuntu-prerequisites).
+Linting with Clippy, locally and in CI: [docs/code-quality.md](docs/code-quality.md). Running
+the Linux build and tests on a Windows machine (Docker or WSL):
+[docs/linux-build-on-windows.md](docs/linux-build-on-windows.md).
 
 ## Tabs
 
@@ -32,11 +62,14 @@ but disabled. New tabs start in the selected tab's folder.
 |---|---|
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+1..9 | Select tab 1..9 |
-| Ctrl+Shift+T | New tab running what the selected tab runs, in its folder |
-| Ctrl+Shift+W | Close the selected tab |
+| Ctrl+Shift+T | New tab with the default shell, in the selected tab's folder |
+| Ctrl+Shift+D | Duplicate the selected tab: same program, its folder (also in the tab menu) |
+| Ctrl+Shift+W | Close the selected tab (or the Settings row while it is selected) |
 | Ctrl+Shift+B | Hide or show the sidebar (also the title bar button) |
 | Ctrl+Shift+S | Search tabs (shows the sidebar if hidden) |
+| Ctrl+Shift+\| | Hide or show the file explorer (also the title bar button; the key that types `\|`) |
 | Ctrl+Shift+A | Go to the next tab needing attention; with none, the next one that is Done |
+| F11 | Full screen on or off, also from a dialog (F11 is not sent to the program; on Linux the window manager applies it). Quitting in full screen starts maximized next time |
 
 ## Terminal
 
@@ -45,10 +78,61 @@ but disabled. New tabs start in the selected tab's folder.
 | Ctrl+Shift+C, Ctrl+Insert | Copy the selection |
 | Ctrl+Shift+V, Shift+Insert | Paste |
 | Shift+PageUp / Shift+PageDown | Scroll the history by a page |
+| Ctrl+click | Open the link under the pointer (also when the program tracks the mouse) |
 
 Ctrl+C, Tab and Shift+Tab always go to the program. When a program tracks the mouse (Claude
 Code does), clicks and the wheel go to it; hold Shift to select text locally. On Linux a
-selection is also copied to the primary selection, and middle-click pastes it.
+selection is also copied to the primary selection, and middle-click pastes it. A wheel notch
+scrolls 2 lines on Linux, and X11 touchpad scrolling is slowed the same way (Windows uses the
+system's lines-per-notch setting).
+
+Hold Ctrl over a link in the output to underline it (hand cursor), and Ctrl+click to open it:
+a URL (`http`, `https`, `ftp`) or an OSC 8 hyperlink in the browser, a file path or a `file://`
+URL naming a file in the file viewer. OSC 8 hyperlinks count only for `http`, `https`, `ftp`,
+`mailto` and `file`, as their text need not show where they go. Paths are resolved from the
+tab's folder (`~/` from home) and are links only when the file exists; `src/foo.rs:42` or
+`src/foo.rs:42:7` opens the file at that line, in its raw view. A link the program wrapped onto
+the next line counts as one.
+
+When the program exits, a bar below the terminal says so, with its exit code (the terminal
+gives up the bar's height, so no output is hidden); the history stays readable until the tab
+is closed. When Claude Code or Copilot CLI quits, the tab instead starts the default shell in
+the agent's last folder and becomes a shell tab (icon, status, saved as a shell); the agent's
+output is not kept.
+
+## Command history (bash, zsh, PowerShell tabs)
+
+| Keys | Action |
+|---|---|
+| Right / End | At the end of the command line: accept the dimmed suggestion |
+| Up | Open the history popup (instead of the shell's own Up history) |
+| Up / Down, Page Up / Page Down | Move through the popup |
+| Typing, Backspace | Edit the command line; the popup lists the commands that still match |
+| Enter | Put the selected command on the prompt, replacing the typed text (not run) |
+| Esc | Close the popup |
+
+Commands run in any bash, zsh or PowerShell tab are kept with their folder and time in
+`history.jsonl` in the config folder (latest use wins, newest 10 000). While you type, the newest
+command starting with the typed text shows dimmed after the cursor. The popup lists the commands
+containing the typed text (all of them on an empty prompt), newest at the bottom next to the
+prompt, each with its folder; click one to put it on the prompt. Commands starting with a space
+are not kept, nor bash commands that bash keeps out of its own history (`HISTCONTROL`,
+`HISTIGNORE`). Up still goes to the program in full-screen programs (`less`, editors), while a
+command runs, in Claude Code and Copilot tabs, and in shells without integration (fish, cmd,
+WSL shells other than bash, shells started with their own arguments other than Git Bash and
+WSL distros).
+
+These tabs start with a small script that loads your own `~/.bashrc` / zsh startup files /
+PowerShell profile and then marks the prompt (OSC 133); the scripts live in
+`shell-integration/` in the config folder. zsh reads your `.zprofile` and `.zshrc` itself, from
+your own `ZDOTDIR`. The marks carry a per-session token, so output that merely contains such
+marks (a file you `cat`, a remote shell over ssh) is not tracked. bash needs 4.4 or later;
+PowerShell needs PSReadLine. Git Bash's login shell gets the script too, which then loads your
+login files (`/etc/profile`, then `~/.bash_profile`) instead of `~/.bashrc`; so does a WSL
+distro whose login shell is bash (it reports Linux folders as `\\wsl.localhost\<distro>\...`).
+cmd gets no script: its `PROMPT` (yours, else `$P$G`) is prefixed with a mark that reports the
+folder and puts it in the title, so cmd tabs get the folder but no history and no Running
+status.
 
 The scroll bar sits in the right margin and shows while you scroll or hover it. Drag the
 thumb, or click the track to jump there. It is hidden when there is no history, as on a
@@ -71,11 +155,16 @@ files not yet added and not ignored, refreshed at most every 5 s).
 | orange, plus a warning triangle before the title | Needs attention |
 | green with a check | Done: finished while you were on another tab (until you select it) |
 | green | Idle |
+| teal, pulsing for the first 10 s | Running: a command typed at the prompt of a bash, zsh or PowerShell tab has run for half a second; the card shows it and how long it has run (`Running for 2:14`, ticking while the card is open; no pulse on a software-rendered GPU) |
 | light grey | Recent output (shell or Copilot) |
 | none | No recent output |
 | hollow ring | Exited |
 
-Right-click a row or use its `⋮` button for the tab menu: pin (pinned tabs stay at the top
+A tab whose program rings the bell (BEL: Copilot, scripts, anything without status hooks)
+while you are on another tab shows Needs attention until you select it. Claude Code tabs with
+hooks ignore the bell, since their hooks already report it.
+
+Right-click a row or use its `⋮` button for the tab menu: duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
 and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working
 directory, rename (Enter keeps, Escape cancels, an empty name goes back to the program's
 title), move up / down, close, and a color marker. "New group with tab" and "Move to group"
@@ -87,6 +176,8 @@ The "Search tabs..." field above the list (Ctrl+Shift+S) keeps the tabs whose na
 folder, branch or group name contain every word typed, ignoring case. Groups holding a match
 show expanded while searching (their headers do not collapse until the search ends). Enter
 selects the first match and clears the search; Escape clears it and returns to the terminal.
+Up / Down in the field select the previous / next match (wrapping around) and keep the keyboard
+in the field; Enter then keeps the tab moved to.
 Selecting a tab the search hides (Ctrl+1..9, Ctrl+Tab, the attention jump) also clears it.
 
 While a tab other than the selected one needs attention, a warning button with the number of
@@ -97,9 +188,9 @@ that is Done. A tab in a collapsed group is revealed.
 ## Groups
 
 Click a group header to collapse or expand it; a collapsed group shows how many of its tabs
-need attention, are working, or are done. Selecting a tab in a collapsed group (Ctrl+1..9,
-Ctrl+Tab) expands it. New tabs join the selected tab's group. A tab without its own color shows
-its group's color. Groups stay when their last tab leaves.
+need attention, are working, run a command, or are done. Selecting a tab in a collapsed group
+(Ctrl+1..9, Ctrl+Tab) expands it. New tabs join the selected tab's group. A tab without its own
+color shows its group's color. Groups stay when their last tab leaves.
 
 The group menu (right-click the header or its `⋮` button): rename, collapse, move up / down,
 close its tabs, ungroup (the tabs stay, the group goes; "Delete group" when empty), color.
@@ -107,6 +198,105 @@ close its tabs, ungroup (the tabs stay, the group goes; "Delete group" when empt
 Drag a tab row to move it: the upper or lower half of a row drops above or below it, in that
 row's block (dropping among pinned tabs pins it); the upper half of a group header drops above
 the group, the lower half into it; the space below the last row drops at the end, ungrouped.
+
+## File explorer
+
+The file explorer (Ctrl+Shift+|, the title bar button next to the sidebar toggle, closed with
+its `×`) sits between the sidebar and the terminal and shows the selected tab's folder; it
+follows tab switches and `cd` (off Linux, in bash, zsh and PowerShell tabs only: their script
+reports the folder at each prompt). Folders come first, then files, sorted by name, dotfiles
+included. Click a folder to expand or collapse it (each root keeps its own expanded folders);
+click a file to open it in the file viewer. Expanded folders refresh when their content changes.
+
+The folder-with-an-arrow button in the explorer's header ("Parent folder (cd ..)") moves a
+shell tab to the folder above the tree's, and the tree follows. zsh and PowerShell change
+folder through a key binding of their script, keeping a half-typed line and redrawing the
+prompt; other shells get a typed `cd` line. It is disabled while a command runs in the tab
+(bash, zsh and PowerShell tabs, whose script reports it: `cd` would be typed into the
+program), at a filesystem or drive root, and in Claude Code and Copilot tabs, whose tree shows
+the session's own folder.
+
+Right-click an entry for its menu: New file (in the entry's folder; Enter or clicking elsewhere
+creates it, Escape cancels), cd to directory (shell tabs, at the prompt), Open in new tab (the
+default shell), Open in new tab with (a submenu: Claude Code or Copilot CLI), Reveal in file
+manager, Rename, Delete (asks first; deletes for good, not to the trash), Copy path, Copy
+relative path (from the explorer's root). cd and the Open in new tab entries use the folder
+itself, or a file's parent folder.
+
+## File viewer
+
+A file clicked in the explorer (or a path Ctrl+clicked in the terminal) opens in a panel right
+of the terminal (closed with its `×`). Each tab has its own: selecting a tab shows the file it
+had open, or no panel. Drag the divider on the panel's left edge to resize it (both the panel
+and the terminal keep at least 240 px); double-click it for the default 45% of the window. The
+width is the same in every tab, follows window resizes and is not saved yet.
+
+Markdown, JSON and SVG have two views, picked in the panel's header:
+
+- **Rendered**: Markdown as a formatted page, whose links to other files open them in the
+  panel (folders in the explorer, web links in the browser); JSON laid out one member per
+  line, colored, with fold arrows by the line numbers (hover them) to collapse an object or
+  array. Keys keep their order and values stay as written. JSON that doesn't parse shows the
+  error's line and column above the source. SVG drawn as an image.
+- **Raw**: the file as written, colored and editable.
+
+Other files open in the raw view only, colored for JSON, JavaScript, TypeScript (and TSX),
+Markdown, TOML, YAML, Rust, Bash and Python, plain otherwise. Images (PNG, JPEG, GIF, BMP, WebP,
+ICO, TIFF) are drawn fit to the panel, never larger than their own size, with their pixel size
+in the header; one that does not decode (AVIF is not supported) shows "The image could not be
+read." Files over 2 MB, other binary files and files that aren't UTF-8 are not shown.
+
+| Keys | Action |
+|---|---|
+| Ctrl+S | Save the file (a `●` after its name marks unsaved edits) |
+
+Opening another file or closing the panel with unsaved edits asks before dropping them. When
+the file changes on disk (an agent edits it), the panel reloads it where it was scrolled to,
+unless it has unsaved edits, which are kept.
+
+## Settings
+
+The gear button in the title bar (after the `i` button) opens the settings page in place of the
+terminal and adds a Settings row under the tabs; select a tab to go back, select the row to
+return, and close the row with its × or Ctrl+Shift+W. The row isn't reopened at the next start.
+The search box filters the rows by title, description and keywords. A change saves to
+`settings.json` in the config folder at once; "Reset to default" under a changed row (or the
+page's reset button) restores the default. "Open settings file" shows `settings.json` in the
+file viewer, creating it first if it doesn't exist. A banner on the page says when the file
+can't be read (the defaults apply until it is fixed or a change moves it to
+`settings.json.bak`) or a change couldn't be saved. The About page shows the version and the
+config folder.
+
+## About
+
+The `i` button in the title bar (after the explorer button) shows the version, with the git
+commit it was built from when built from a checkout, and a link to the repository. Copy version
+copies the whole line for a bug report (or select part of it and press Ctrl+C); Escape or Close
+dismisses it.
+
+The version is the workspace `version` in `Cargo.toml`. `scripts/bump-version.sh
+[patch|minor|major]` (default `patch`) raises it, refreshes `Cargo.lock` and prints the new
+version; it refuses a `Cargo.toml` with uncommitted changes. Each pushed feature is one patch
+higher and tagged `v<version>`; finishing a milestone bumps `minor`.
+
+## Design decisions
+
+- **Quitting an agent:** when Claude Code or
+  Copilot CLI exits in its tab with code 0, the tab starts a new default shell in the agent's
+  last folder and becomes a shell tab; the agent's output is not kept. When it exits with an
+  error, the tab stays as it was ("Exited"), so the error can be read. The agent keeps
+  running directly (no shell around it), which:
+  - starts faster: no shell startup files (`.bashrc`, `nvm`, `conda`) run before it;
+  - uses less memory: no idle shell waiting behind every agent tab;
+  - works the same with every default shell, `cmd` and shells without integration included,
+    with no command quoting through a shell (fewer Windows pitfalls);
+  - keeps a tab's kind fixed while the agent runs, so status and icon need no tracking of what
+    runs in it.
+
+  Rejected: launching the agent inside
+  the default shell (as if typed at a bash prompt), which would keep the screen and the
+  `claude --resume <id>` line and give the agent your shell startup environment, but needs a
+  run-first step in every shell integration script and a tab kind that changes over time.
 
 ## Manual check
 

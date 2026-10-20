@@ -1,4 +1,5 @@
-/// What a Claude Code session is doing, as reported by its hooks.
+/// What an agent session is doing, as reported by its hooks (Claude Code) or its progress
+/// reports (Copilot CLI).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentStatus {
     Idle,
@@ -92,6 +93,20 @@ impl AgentState {
         self.last_event_at = at;
     }
 
+    /// Apply a progress report from the program's output, for an agent without hooks: it
+    /// works while it shows progress, and is idle once the progress is removed. Reports arrive
+    /// in order, and an exited session stays exited.
+    pub fn apply_progress(&mut self, shown: bool) {
+        if self.status == AgentStatus::Exited {
+            return;
+        }
+        self.status = if shown {
+            AgentStatus::Working
+        } else {
+            AgentStatus::Idle
+        };
+    }
+
     /// The process ended.
     pub fn exit(&mut self) {
         self.status = AgentStatus::Exited;
@@ -162,6 +177,23 @@ mod tests {
         state.apply(PromptSubmitted, 1);
         state.exit();
         state.apply(ToolStarted, 2);
+        assert_eq!(state.status(), AgentStatus::Exited);
+    }
+
+    #[test]
+    fn progress_shown_means_working_until_removed() {
+        let mut state = AgentState::default();
+        state.apply_progress(true);
+        assert_eq!(state.status(), AgentStatus::Working);
+        state.apply_progress(false);
+        assert_eq!(state.status(), AgentStatus::Idle);
+    }
+
+    #[test]
+    fn progress_after_exit_is_ignored() {
+        let mut state = AgentState::default();
+        state.exit();
+        state.apply_progress(true);
         assert_eq!(state.status(), AgentStatus::Exited);
     }
 

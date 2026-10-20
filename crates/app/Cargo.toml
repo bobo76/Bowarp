@@ -4,14 +4,46 @@ edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
 publish.workspace = true
+repository.workspace = true
 
 [dependencies]
 agent-status.workspace = true
 directories.workspace = true
 futures.workspace = true
-gpui-kit.workspace = true
+gpui-kit = { workspace = true, features = [
+    "tree-sitter",
+    "tree-sitter-bash",
+    "tree-sitter-javascript",
+    "tree-sitter-markdown",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-toml",
+    "tree-sitter-tsx",
+    "tree-sitter-typescript",
+    "tree-sitter-yaml",
+] }
+# Only to read an image's dimensions from its header. These are the formats GPUI decodes, so
+# nothing is compiled that GPUI doesn't already build.
+image = { version = "0.25.10", default-features = false, features = [
+    "bmp",
+    "dds",
+    "exr",
+    "ff",
+    "gif",
+    "hdr",
+    "ico",
+    "jpeg",
+    "png",
+    "pnm",
+    "qoi",
+    "tga",
+    "tiff",
+    "webp",
+] }
 log.workspace = true
+notify.workspace = true
 term-core.workspace = true
+unicode-width = "0.2"
 workspace-model.workspace = true
 
 [target.'cfg(windows)'.dependencies]

@@ -1,5 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 /// Colors a tab can be marked with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TabColor {
     Red,
     Orange,
@@ -35,11 +38,13 @@ impl TabColor {
 }
 
 /// What the user set on a tab, as opposed to what its session reports.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TabMeta {
     /// Replaces the program's title in the sidebar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_name: Option<String>,
     /// Wins over the group's color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<TabColor>,
 }
 

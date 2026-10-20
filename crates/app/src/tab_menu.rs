@@ -12,11 +12,13 @@ use workspace_model::GroupId;
 use workspace_model::TabColor;
 use workspace_model::layout::Direction;
 
+use crate::shortcuts::{self, DUPLICATE_TAB_KEY};
 use crate::sidebar::tab_color;
 
 /// What the tab menu (`⋮` button or right-click) does to its tab.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabCommand {
+    Duplicate,
     TogglePin,
     NewGroup,
     MoveToGroup(GroupId),
@@ -65,7 +67,14 @@ pub fn build(
     let pin_label = if state.pinned { "Unpin tab" } else { "Pin tab" };
     let groups_menu = group_choices(state.other_groups, state.in_group, run.clone());
     let pick_color = run.clone();
+    let duplicate = run.clone();
     menu.min_w(px(200.))
+        .item(
+            PopupMenuItem::element(|_, _| {
+                shortcuts::menu_label_with_hint("duplicate-tab", "Duplicate tab", DUPLICATE_TAB_KEY)
+            })
+            .on_click(move |_, window, cx| duplicate(TabCommand::Duplicate, window, cx)),
+        )
         .item(item(pin_label, TabCommand::TogglePin, true))
         .item(item("New group with tab", TabCommand::NewGroup, true))
         .submenu("Move to group", window, cx, move |menu, _, _| {

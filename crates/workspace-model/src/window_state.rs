@@ -71,16 +71,9 @@ impl WindowState {
         Self::from_json(&fs::read_to_string(path).ok()?)
     }
 
-    /// Write the state to `path`, creating its folder. Goes through a temporary file next to
-    /// it, so a crash mid-write never leaves a truncated file.
+    /// Write the state to `path`, creating its folder (see `write_atomic`).
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        // One temporary file per process, so two instances closing at once don't clash.
-        let temp = temp_path(path);
-        fs::write(&temp, self.to_json())?;
-        fs::rename(&temp, path)
+        write_atomic(path, &self.to_json())
     }
 
     pub fn to_json(&self) -> String {
@@ -104,10 +97,17 @@ impl WindowState {
     /// window keeps the saved bounds and changes only the mode: some platforms (X11) report the
     /// maximized size for it, which would leave a screen-sized window after un-maximizing at
     /// the next start. A maximized window can't move, so the saved restore bounds are still
-    /// the right ones. Without saved bounds, the reported ones are used.
+    /// the right ones. Without saved bounds, the reported ones are used. Full screen is saved
+    /// as maximized, so the next start is not full screen (without a window manager's title
+    /// bar, only F11 would leave it).
     pub fn keeping_saved_bounds(self, saved: Option<WindowState>) -> Self {
-        match (self.mode, saved) {
-            (WindowMode::Windowed, _) | (_, None) => self,
+        let mode = match self.mode {
+            WindowMode::Fullscreen => WindowMode::Maximized,
+            mode => mode,
+        };
+        match (mode, saved) {
+            (WindowMode::Windowed, _) => self,
+            (mode, None) => Self { mode, ..self },
             (mode, Some(saved)) => Self {
                 bounds: saved.bounds,
                 mode,
@@ -125,7 +125,19 @@ impl WindowState {
     }
 }
 
-fn temp_path(path: &Path) -> std::path::PathBuf {
+/// Write `text` to `path`, creating its folder, through a temporary file next to it so a crash
+/// mid-write never leaves a truncated file.
+pub(crate) fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    // One temporary file per process, so two instances closing at once don't clash.
+    let temp = temp_path(path);
+    fs::write(&temp, text)?;
+    fs::rename(&temp, path)
+}
+
+pub(crate) fn temp_path(path: &Path) -> std::path::PathBuf {
     path.with_extension(format!("json.{}.tmp", std::process::id()))
 }
 
@@ -212,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn maximized_keeps_the_saved_bounds() {
+    fn maximized_and_full_screen_keep_the_saved_bounds_and_save_as_maximized() {
         let saved = windowed(rect(30., 40., 900., 700.));
         let screen = rect(0., 0., 1920., 1080.);
         for mode in [WindowMode::Maximized, WindowMode::Fullscreen] {
@@ -222,11 +234,15 @@ mod tests {
             };
             let expected = WindowState {
                 bounds: saved.bounds,
-                mode,
+                mode: WindowMode::Maximized,
             };
             assert_eq!(closing.keeping_saved_bounds(Some(saved)), expected);
             // Nothing saved yet: what the platform reports is all there is.
-            assert_eq!(closing.keeping_saved_bounds(None), closing);
+            let reported = WindowState {
+                bounds: screen,
+                mode: WindowMode::Maximized,
+            };
+            assert_eq!(closing.keeping_saved_bounds(None), reported);
         }
     }
 

@@ -5,18 +5,24 @@ members = ["crates/*"]
 [workspace.package]
 edition = "2024"
 rust-version = "1.88"
-version = "0.1.0"
+version = "0.2.9"
+repository = "https://github.com/bobo76/Bowarp"
 publish = false
 
 [workspace.dependencies]
-alacritty_terminal = "0.26"
+# Pinned: `term-core/src/prompt.rs` mirrors its crate-private pty poll key
+# (`READ_WRITE_TOKEN`); check it on every bump (`session::tests` fails when it is wrong).
+alacritty_terminal = "=0.26.0"
 directories = "6"
 log = "0.4"
 parking_lot = "0.12"
+# Its types cross alacritty's `EventedReadWrite` API: keep the major version alacritty uses.
+polling = "3.8"
 futures = "0.3"
 gpui-kit = "0.7"
 interprocess = "2.4"
 libc = "0.2"
+notify = "8.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 agent-status = { path = "crates/agent-status" }
