@@ -5,7 +5,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
 ## Status (2026-10-19)
 
 [FEATURES.md](FEATURES.md) is the target; what is not built yet is in the milestones and the
-backlog below. Details of finished work are in the git history (331 tests).
+backlog below. Details of finished work are in the git history (334 tests).
 
 **Known limitations**
 
@@ -49,19 +49,19 @@ backlog below. Details of finished work are in the git history (331 tests).
   again. A drag whose release the app misses (a right or middle button released outside the
   window, or on Windows a focus change such as Alt+Tab mid-drag) keeps the dragged width and
   saves it at the next mouse release anywhere; it is lost only if the app quits first.
+- File explorer width: dragged by the 6 px strip on the explorer's right edge (double-click
+  for 300 px), kept between 150 and 600 px whatever the window size (a narrow window can
+  leave the terminal and viewer below their usual minimums), and saved in pixels
+  (`file_explorer_width`) with the same rules as the viewer width: once when the drag ends,
+  not on the settings page, not while the file is broken, other instances after a reload.
 
 **Next steps (quick wins 3: settings)**
 
-1. File explorer resize: drag the explorer's edge to change its width, like the file viewer's
-   divider (`pane_width`), between half (150 px) and twice (600 px) the default
-   `EXPLORER_WIDTH` (300 px, `app/src/file_explorer.rs`). The width also goes into the
-   pane layout in `workspace_view.rs`, and is saved in the settings file and restored at
-   startup, like the file viewer width.
-2. Configurable terminal path: the executable path for each launcher entry (Terminal, Git
+1. Configurable terminal path: the executable path for each launcher entry (Terminal, Git
    Bash, `claude`, `copilot`) saved in the settings file and shown on the settings page, for
    programs that aren't on `PATH` or where the wrong copy is found first; an empty value keeps
    the current lookup.
-3. Agent launch arguments: extra command-line arguments for the Claude Code and Copilot CLI
+2. Agent launch arguments: extra command-line arguments for the Claude Code and Copilot CLI
    launcher entries (e.g. `--yolo` for `copilot`, `--dangerously-skip-permissions` or
    `--model opus` for `claude`), saved in the settings file and shown on the settings page
    next to the entry's path. Split like a shell command line (quotes group words) and added
@@ -69,20 +69,20 @@ backlog below. Details of finished work are in the git history (331 tests).
    tabs started from that entry (the `+` menu, Ctrl+Shift+T). A restored tab keeps the
    arguments it started with (saved with the tab in `tabs.json`), not the current setting.
    Empty adds none.
-4. Configurable terminal icon: the icon for each launcher entry, picked from the bundled
+3. Configurable terminal icon: the icon for each launcher entry, picked from the bundled
    `LauncherIcon` set (Bash, PowerShell, Command Prompt, Zsh, Fish, Ubuntu, ...) and saved in
    the settings file (settings page row); it shows in the new-tab menu and on the sidebar row
    of every tab started from that entry (restored tabs included). "Automatic" keeps the
    current detection (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`),
    e.g. for a wrapper script that `shell_icon` only sees as `Shell`.
-5. Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
+4. Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
    and terminal color schemes: a few bundled schemes plus user schemes imported from
    base16/iTerm files, saved in the settings file and picked on the Appearance page. "System"
    follows the OS light/dark setting.
-6. Window opacity and background blur, set in the settings file (opacity applies to the
+5. Window opacity and background blur, set in the settings file (opacity applies to the
    terminal background only, text stays opaque); blur where the platform allows it (Windows
    acrylic/mica, KDE on X11).
-7. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
+6. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
    `cx.build_action`) from the settings file in place of `default_bindings`.
 
 **Fixed, not tested yet (built and unit-tested by the Windows CI, not run on a Windows machine)**

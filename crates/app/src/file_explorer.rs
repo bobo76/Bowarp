@@ -33,7 +33,6 @@ use crate::folder_watcher::{FolderWatcher, WatchedFolders, WatchesFolders};
 use crate::launcher::Launcher;
 use crate::sidebar;
 
-pub const EXPLORER_WIDTH: f32 = 300.;
 const ROW_HEIGHT: f32 = 24.;
 const INDENT: f32 = 14.;
 
@@ -717,9 +716,7 @@ impl Render for FileExplorer {
             .id("file-explorer")
             .flex()
             .flex_col()
-            .flex_none()
-            .w(px(EXPLORER_WIDTH))
-            .h_full()
+            .size_full()
             .bg(background)
             .border_r_1()
             .border_color(border)
