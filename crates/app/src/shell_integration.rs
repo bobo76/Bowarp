@@ -350,6 +350,11 @@ mod tests {
             .args(["-c", "exec \"$@\" 2>&1", "sh", program])
             .args(args)
             .env(MARK_TOKEN_ENV, "t0k")
+            // With a real terminal type (xterm-256color from the caller's shell), bash's
+            // readline loses the prompt when stdin is a pipe, and with it the A and B marks.
+            .env("TERM", "dumb")
+            // Run inside WSL, the bash script would report Windows folders (`wslpath -w`).
+            .env_remove("WSL_DISTRO_NAME")
             .env_remove(ZSH_DIR_ENV)
             .env_remove(USER_ZDOTDIR_ENV)
             .stdin(Stdio::piped())
