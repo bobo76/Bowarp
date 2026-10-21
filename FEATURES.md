@@ -21,7 +21,7 @@ directly to model APIs.
 - Shell command history shared by all shell tabs (with folder and time): an inline
   suggestion from history while typing and a history popup above the prompt (Up).
 - Open URLs and file paths printed in the output with Ctrl+click; a `path:line` opens in
-  the file viewer at that line.
+  the file viewer at that line. www.google.ca
 - When an agent (Claude Code, Copilot CLI) quits normally (exit code 0), its tab goes on as a
   shell in the agent's folder; when it fails, the tab keeps its last screen to read the error.
 - Support split panes, adjustable pane sizes, and quick switching between sessions.

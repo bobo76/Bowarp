@@ -78,7 +78,7 @@ Code or Copilot CLI; agents that are not installed are listed but disabled. New 
 | Ctrl+Shift+C, Ctrl+Insert | Copy the selection |
 | Ctrl+Shift+V, Shift+Insert | Paste |
 | Shift+PageUp / Shift+PageDown | Scroll the history by a page |
-| Ctrl+click | Open the link under the pointer (also when the program tracks the mouse) |
+| Click a link | Open it (use Ctrl/Cmd+click when the program tracks the mouse) |
 
 Ctrl+C, Tab and Shift+Tab always go to the program. When a program tracks the mouse (Claude
 Code does), clicks and the wheel go to it; hold Shift to select text locally. On Linux a
@@ -86,13 +86,14 @@ selection is also copied to the primary selection, and middle-click pastes it. A
 scrolls 2 lines on Linux, and X11 touchpad scrolling is slowed the same way (Windows uses the
 system's lines-per-notch setting).
 
-Hold Ctrl over a link in the output to underline it (hand cursor), and Ctrl+click to open it:
-a URL (`http`, `https`, `ftp`) or an OSC 8 hyperlink in the browser, a file path or a `file://`
-URL naming a file in the file viewer. OSC 8 hyperlinks count only for `http`, `https`, `ftp`,
-`mailto` and `file`, as their text need not show where they go. Paths are resolved from the
-tab's folder (`~/` from home) and are links only when the file exists; `src/foo.rs:42` or
-`src/foo.rs:42:7` opens the file at that line, in its raw view. A link the program wrapped onto
-the next line counts as one.
+Links in the output are underlined in blue with a hand cursor on hover. Click to open a URL
+(`http`, `https`, `ftp`) or an OSC 8 hyperlink in the browser, or a file path or `file://` URL
+naming a file in the file viewer. When a program tracks the mouse, ordinary clicks go to it;
+hold Ctrl (Cmd on macOS) to open a link instead. OSC 8 hyperlinks count only for `http`,
+`https`, `ftp`, `mailto` and `file`, as their text need not show where they go. Paths are
+resolved from the tab's folder (`~/` from home) and are links only when the file exists;
+`src/foo.rs:42` or `src/foo.rs:42:7` opens the file at that line, in its raw view. A link the
+program wrapped onto the next line counts as one.
 
 When the program exits, a bar below the terminal says so, with its exit code (the terminal
 gives up the bar's height, so no output is hidden); the history stays readable until the tab
