@@ -74,7 +74,7 @@ fn popup_key(keystroke: &Keystroke) -> PopupKey {
         "down" if plain => PopupKey::Newer(Rows::One),
         "pageup" if plain => PopupKey::Older(Rows::Page),
         "pagedown" if plain => PopupKey::Newer(Rows::Page),
-        "enter" if plain => PopupKey::Pick,
+        "enter" | "tab" if plain => PopupKey::Pick,
         "escape" if plain => PopupKey::Dismiss,
         "backspace" => PopupKey::Edit,
         _ if typing => PopupKey::Edit,
@@ -346,6 +346,7 @@ impl TerminalView {
                     .child(key_chip("↓", cx))
                     .child(div().mr_2().child("to navigate"))
                     .child(key_chip("enter", cx))
+                    .child(key_chip("tab", cx))
                     .child(div().mr_2().child("to select"))
                     .child(key_chip("esc", cx))
                     .child("to dismiss"),
@@ -453,6 +454,9 @@ mod tests {
         assert_eq!(key("up"), PopupKey::Older(Rows::One));
         assert_eq!(key("pagedown"), PopupKey::Newer(Rows::Page));
         assert_eq!(key("enter"), PopupKey::Pick);
+        assert_eq!(key("tab"), PopupKey::Pick);
+        // Shift+Tab is not Tab: it goes to the shell.
+        assert_eq!(key("shift-tab"), PopupKey::Other);
         assert_eq!(key("escape"), PopupKey::Dismiss);
         // Typing refilters: printable keys, with Shift too, and Backspace.
         assert_eq!(key("a->a"), PopupKey::Edit);

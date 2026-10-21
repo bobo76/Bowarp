@@ -109,7 +109,7 @@ output is not kept.
 | Up | Open the history popup (instead of the shell's own Up history) |
 | Up / Down, Page Up / Page Down | Move through the popup |
 | Typing, Backspace | Edit the command line; the popup lists the commands that still match |
-| Enter | Put the selected command on the prompt, replacing the typed text (not run) |
+| Enter, Tab | Put the selected command on the prompt, replacing the typed text (not run) |
 | Esc | Close the popup |
 
 Commands run in any bash, zsh or PowerShell tab are kept with their folder and time in

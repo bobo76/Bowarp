@@ -5,7 +5,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
 ## Status (2026-10-19)
 
 [FEATURES.md](FEATURES.md) is the target; what is not built yet is in the milestones and the
-backlog below. Details of finished work are in the git history (328 tests).
+backlog below. Details of finished work are in the git history (331 tests).
 
 **Known limitations**
 
