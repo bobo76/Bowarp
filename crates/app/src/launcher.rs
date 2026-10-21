@@ -24,6 +24,15 @@ pub struct Launcher {
 }
 
 impl Launcher {
+    /// The launcher name shown in menus, including why it cannot currently be opened.
+    pub fn display_label(&self) -> String {
+        if self.program.is_some() {
+            self.label.clone()
+        } else {
+            format!("{} (not installed)", self.label)
+        }
+    }
+
     pub fn spec(&self, cwd: Option<PathBuf>) -> Option<LaunchSpec> {
         let program = self.program.as_ref()?.to_string_lossy().into_owned();
         Some(LaunchSpec::new(

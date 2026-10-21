@@ -480,7 +480,7 @@ impl FileExplorer {
             };
             let (submenu_explorer, submenu_path) = (explorer.clone(), path.clone());
             let agents = agents.clone();
-            menu.min_w(px(200.))
+            menu.min_w(px(crate::ui_dimensions::MENU_WIDTH))
                 .item(item("New file", EntryCommand::NewFile, true))
                 .separator()
                 .item(item("cd to directory", EntryCommand::CdTo, can_cd))
@@ -491,11 +491,7 @@ impl FileExplorer {
                         .enumerate()
                         .fold(menu, |menu, (index, agent)| {
                             let installed = agent.program.is_some();
-                            let label = if installed {
-                                agent.label.clone()
-                            } else {
-                                format!("{} (not installed)", agent.label)
-                            };
+                            let label = agent.display_label();
                             menu.item(
                                 command_item(
                                     &submenu_explorer,
@@ -632,7 +628,7 @@ impl FileExplorer {
             .flex_none()
             .items_center()
             .justify_between()
-            .h(px(40.))
+            .h(px(crate::ui_dimensions::HEADER_HEIGHT))
             .pl_2()
             .pr_1()
             .child(

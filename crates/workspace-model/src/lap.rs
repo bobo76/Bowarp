@@ -3,6 +3,8 @@
 
 use std::time::{Duration, Instant};
 
+use crate::time::{SECONDS_PER_HOUR, SECONDS_PER_MINUTE};
+
 /// A status and when it started. Setting the same status again keeps the lap running; a
 /// different one starts a new lap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,10 +46,13 @@ pub fn until_next_second(elapsed: Duration) -> Duration {
 /// where they no longer matter.
 pub fn format_lap(elapsed: Duration) -> String {
     let seconds = elapsed.as_secs();
-    let (hours, minutes) = (seconds / 3600, seconds / 60 % 60);
+    let (hours, minutes) = (
+        seconds / SECONDS_PER_HOUR,
+        seconds % SECONDS_PER_HOUR / SECONDS_PER_MINUTE,
+    );
     match (hours, minutes) {
         (0, 0) => format!("{seconds}s"),
-        (0, _) => format!("{minutes}m {:02}s", seconds % 60),
+        (0, _) => format!("{minutes}m {:02}s", seconds % SECONDS_PER_MINUTE),
         _ => format!("{hours}h {minutes:02}m"),
     }
 }

@@ -68,7 +68,7 @@ pub fn build(
     let groups_menu = group_choices(state.other_groups, state.in_group, run.clone());
     let pick_color = run.clone();
     let duplicate = run.clone();
-    menu.min_w(px(200.))
+    menu.min_w(px(crate::ui_dimensions::MENU_WIDTH))
         .item(
             PopupMenuItem::element(|_, _| {
                 shortcuts::menu_label_with_hint("duplicate-tab", "Duplicate tab", DUPLICATE_TAB_KEY)
@@ -199,7 +199,7 @@ pub fn build_group(menu: PopupMenu, state: GroupMenuState, run: RunGroupCommand)
         "Delete group"
     };
     let pick_color = run.clone();
-    menu.min_w(px(200.))
+    menu.min_w(px(crate::ui_dimensions::MENU_WIDTH))
         .item(item("Rename group", GroupCommand::Rename, true))
         .item(item(collapse_label, GroupCommand::ToggleCollapsed, true))
         .separator()

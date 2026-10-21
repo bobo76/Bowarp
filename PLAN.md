@@ -217,6 +217,9 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
     (default on); off, the functions aren't defined (the app passes a flag with the token).
   - Mostly replaces the item above for interactive use; that item still matters for `claude`
     run in place (`-p` in a script, a nested shell, cmd tabs, which get no functions).
+- Settings button toggles the page: when the settings page is open and focused, clicking the
+  button that opened it closes the page (back to the previous tab) instead of doing nothing.
+  When the page is open but not focused, the click still focuses it.
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
 - Bell sound: with the M5 notification sound; rate-limited so a stream of bells doesn't

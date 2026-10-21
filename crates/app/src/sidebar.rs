@@ -18,6 +18,7 @@ use crate::assets::{
     AGENT_SPARK_ICON, BASH_ICON, COPILOT_ICON, DEBIAN_ICON, FISH_ICON, GIT_BRANCH_ICON, GIT_ICON,
     LINUX_ICON, PIN_ICON, POWERSHELL_ICON, PROMPT_ICON, UBUNTU_ICON, ZSH_ICON,
 };
+use crate::shortcuts::{self, CLOSE_TAB_KEY};
 
 pub const SIDEBAR_WIDTH: f32 = 240.;
 /// Tab rows are tall enough for the name, the detail line and a large session icon.
@@ -508,7 +509,7 @@ pub fn tab_row(
                         .icon(IconName::Close)
                         .ghost()
                         .xsmall()
-                        .tooltip("Close (Ctrl+Shift+W)")
+                        .tooltip(shortcuts::with_shortcut("Close", CLOSE_TAB_KEY))
                         .on_click(on_close),
                 ),
         )
@@ -579,6 +580,14 @@ fn status_chip(
         .children(running_label.map(|command| single_line(format!("· {command}").into())))
 }
 
+/// Whether the program's title only repeats the kind line below it, ignoring the status glyph
+/// some agents put before their title ("✳ Claude Code").
+fn repeats_kind_label(title: &str, kind_label: &str) -> bool {
+    title
+        .trim_start_matches(|c: char| !c.is_alphanumeric())
+        .eq_ignore_ascii_case(kind_label)
+}
+
 pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
     let muted = theme.muted_foreground;
@@ -620,7 +629,10 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
             card.branch
                 .map(|branch| detail_line(TabDetail::Branch(branch), theme.foreground)),
         )
-        .child(div().text_color(muted).child(single_line(card.title)))
+        .children(
+            (!repeats_kind_label(&card.title, &card.kind_label))
+                .then(|| div().text_color(muted).child(single_line(card.title))),
+        )
         .child(
             div()
                 .flex()
@@ -704,7 +716,7 @@ pub fn settings_row(
                         .icon(IconName::Close)
                         .ghost()
                         .xsmall()
-                        .tooltip("Close (Ctrl+Shift+W)")
+                        .tooltip(shortcuts::with_shortcut("Close", CLOSE_TAB_KEY))
                         .on_click(on_close),
                 ),
         );
@@ -935,5 +947,13 @@ mod tests {
             ]
         );
         assert_eq!(GroupSummary::of([TabStatus::Idle]).chips().count(), 0);
+    }
+
+    #[test]
+    fn card_hides_a_title_that_repeats_the_kind_label() {
+        assert!(repeats_kind_label("✳ Claude Code", "Claude Code"));
+        assert!(repeats_kind_label("Claude Code", "Claude Code"));
+        assert!(!repeats_kind_label("Review Rust Project", "Claude Code"));
+        assert!(!repeats_kind_label("bobo@bobo-pc: ~/dev", "bash"));
     }
 }

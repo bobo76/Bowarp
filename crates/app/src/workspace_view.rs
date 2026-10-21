@@ -43,7 +43,10 @@ use crate::launcher::{self, Launcher, launch_name};
 use crate::settings_file;
 use crate::settings_page;
 use crate::shell_integration;
-use crate::shortcuts::{self, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY};
+use crate::shortcuts::{
+    self, ATTENTION_KEY, CLOSE_TAB_KEY, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY, SEARCH_KEY,
+    SIDEBAR_KEY,
+};
 use crate::sidebar::{self, NUMBERED_TABS, SIDEBAR_WIDTH};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
@@ -1250,13 +1253,13 @@ impl WorkspaceView {
             ("tab", shift) => self.cycle(!shift, window, cx),
             (NEW_TAB_KEY, true) => self.open_default_shell(window, cx),
             (DUPLICATE_TAB_KEY, true) => self.duplicate_tab(self.active, window, cx),
-            ("w", true) if self.settings.shows_page() => self.close_settings(window, cx),
-            ("w", true) => self.close_tab(self.active, window, cx),
-            ("b", true) => self.toggle_sidebar(cx),
+            (CLOSE_TAB_KEY, true) if self.settings.shows_page() => self.close_settings(window, cx),
+            (CLOSE_TAB_KEY, true) => self.close_tab(self.active, window, cx),
+            (SIDEBAR_KEY, true) => self.toggle_sidebar(cx),
             // GPUI drops Shift from a shifted symbol: Ctrl+Shift+\ arrives as Ctrl+|.
             (EXPLORER_KEY, _) => self.toggle_explorer(cx),
-            ("s", true) => self.focus_search(window, cx),
-            ("a", true) => self.jump_to_attention(window, cx),
+            (SEARCH_KEY, true) => self.focus_search(window, cx),
+            (ATTENTION_KEY, true) => self.jump_to_attention(window, cx),
             (key, false) => match tab_number(key) {
                 Some(number) => self.activate(number - 1, window, cx),
                 None => return false,
@@ -1267,16 +1270,16 @@ impl WorkspaceView {
     }
 
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (icon, tooltip) = if self.sidebar_visible {
-            (IconName::PanelLeftClose, "Hide sidebar (Ctrl+Shift+B)")
+        let (icon, label) = if self.sidebar_visible {
+            (IconName::PanelLeftClose, "Hide sidebar")
         } else {
-            (IconName::PanelLeftOpen, "Show sidebar (Ctrl+Shift+B)")
+            (IconName::PanelLeftOpen, "Show sidebar")
         };
         Button::new("toggle-sidebar")
             .icon(icon)
             .ghost()
             .small()
-            .tooltip(tooltip)
+            .tooltip(shortcuts::with_shortcut(label, SIDEBAR_KEY))
             .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_sidebar(cx)))
     }
 

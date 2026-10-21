@@ -30,6 +30,7 @@ mod search;
 mod settings;
 mod tab;
 mod tabs_state;
+mod time;
 mod wheel;
 mod window_state;
 
