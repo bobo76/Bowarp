@@ -983,6 +983,6 @@ mod tests {
 
     #[test]
     fn default_bindings_parse() {
-        assert_eq!(default_bindings().len(), 4);
+        assert_eq!(default_bindings().len(), 5);
     }
 }
