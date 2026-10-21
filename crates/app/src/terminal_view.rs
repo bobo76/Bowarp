@@ -55,7 +55,7 @@ const ACTIVITY_WINDOW: Duration = Duration::from_secs(2);
 /// completion, Shift+Tab for Claude Code's mode cycling, Ctrl+C for interrupt.
 const PASSTHROUGH_KEYS: &[&str] = &["tab", "shift-tab", "ctrl-c"];
 
-actions!(terminal, [Copy, Paste]);
+actions!(terminal, [Copy, CopyOrSend, Paste, PasteOrSend]);
 
 pub fn init(cx: &mut App) {
     cx.bind_keys(
@@ -66,14 +66,16 @@ pub fn init(cx: &mut App) {
     cx.bind_keys(default_bindings());
 }
 
-/// Terminal shortcuts. Bindings match before `on_key_down`, so these keys never reach the
-/// program. Kept as data so a user keymap can replace them later.
+/// Terminal shortcuts. Bindings match before `on_key_down`, so these keys only reach the
+/// program when their action propagates (`CopyOrSend`, `PasteOrSend` with nothing to do).
+/// Kept as data so a user keymap can replace them later.
 fn default_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("ctrl-shift-c", Copy, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-insert", Copy, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-insert", CopyOrSend, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-shift-v", Paste, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-insert", Paste, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-v", PasteOrSend, Some(KEY_CONTEXT)),
     ]
 }
 
@@ -584,18 +586,39 @@ impl TerminalView {
     }
 
     fn on_copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let text = self.session.selection_text();
-        if let Some(text) = text.filter(|text| !text.is_empty()) {
-            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.copy_selection(cx);
+    }
+
+    /// Without a selection of ours, the key goes on to `on_key_down` and the program: programs
+    /// with mouse reporting on (Copilot CLI) keep their own selection and copy it on Ctrl+Insert.
+    /// Ctrl+Shift+C stays a plain `Copy`, since it would reach the program as `^C`.
+    fn on_copy_or_send(&mut self, _: &CopyOrSend, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.copy_selection(cx) {
+            cx.propagate();
         }
     }
 
-    fn paste(&mut self, text: Option<String>, cx: &mut Context<Self>) {
+    /// Copy the selection to the clipboard; false when there is nothing selected.
+    fn copy_selection(&self, cx: &mut Context<Self>) -> bool {
+        let Some(text) = self
+            .session
+            .selection_text()
+            .filter(|text| !text.is_empty())
+        else {
+            return false;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        true
+    }
+
+    /// Send text as a paste; false when there is no text to send.
+    fn paste(&mut self, text: Option<String>, cx: &mut Context<Self>) -> bool {
         let Some(text) = text.filter(|text| !text.is_empty()) else {
-            return;
+            return false;
         };
         let bytes = keys::paste_bytes(&text, self.mode());
         self.send_input(bytes.into(), cx);
+        true
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -728,7 +751,19 @@ impl TerminalView {
     }
 
     fn on_paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        self.paste(cx.read_from_clipboard().and_then(|item| item.text()), cx);
+        self.paste_clipboard(cx);
+    }
+
+    /// Without text on the clipboard, the key goes on to the program as `^V`: Claude Code then
+    /// reads a copied image from the clipboard itself.
+    fn on_paste_or_send(&mut self, _: &PasteOrSend, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.paste_clipboard(cx) {
+            cx.propagate();
+        }
+    }
+
+    fn paste_clipboard(&mut self, cx: &mut Context<Self>) -> bool {
+        self.paste(cx.read_from_clipboard().and_then(|item| item.text()), cx)
     }
 }
 
@@ -779,7 +814,9 @@ impl Render for TerminalView {
             .track_focus(&self.focus_handle)
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::on_copy))
+            .on_action(cx.listener(Self::on_copy_or_send))
             .on_action(cx.listener(Self::on_paste))
+            .on_action(cx.listener(Self::on_paste_or_send))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
             .on_scroll_wheel(cx.listener(Self::on_scroll))

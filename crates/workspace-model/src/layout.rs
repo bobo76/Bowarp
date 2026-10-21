@@ -204,6 +204,20 @@ impl Layout {
         }
     }
 
+    /// Add a new tab right below `after`, in its group or among the ungrouped tabs. Below a
+    /// pinned or unknown tab it goes ungrouped at the end of the list, like `add`.
+    pub fn add_after(&mut self, id: TabId, after: TabId) {
+        match self.place(after) {
+            Some(Place::Loose(index)) => self.items.insert(index + 1, Item::Tab(id)),
+            Some(Place::Grouped { item, index }) => {
+                if let Item::Group(group) = &mut self.items[item] {
+                    group.tabs.insert(index + 1, id);
+                }
+            }
+            Some(Place::Pinned(_)) | None => self.items.push(Item::Tab(id)),
+        }
+    }
+
     /// Take a closed tab out. Its group stays, even when empty.
     pub fn remove(&mut self, id: TabId) {
         self.take(id);
@@ -769,6 +783,30 @@ mod tests {
         layout.add(8, None);
         assert_eq!(layout.group(a).unwrap().tabs(), &[3, 4, 7]);
         assert_eq!(layout.tabs(), vec![1, 2, 3, 4, 7, 5, 6, 8]);
+    }
+
+    #[test]
+    fn tabs_added_after_another_go_right_below_it() {
+        let (mut layout, a, b) = sample();
+        // In a group, mid-group and at its end.
+        layout.add_after(7, 3);
+        layout.add_after(8, 6);
+        assert_eq!(layout.group(a).unwrap().tabs(), &[3, 7, 4]);
+        assert_eq!(layout.group(b).unwrap().tabs(), &[6, 8]);
+        // Ungrouped: right below, above the next group.
+        layout.add_after(9, 2);
+        assert!(matches!(layout.items()[1], Item::Tab(9)));
+        assert_eq!(layout.tabs(), vec![1, 2, 9, 3, 7, 4, 5, 6, 8]);
+    }
+
+    #[test]
+    fn tabs_added_after_a_pinned_or_unknown_tab_go_to_the_end() {
+        let (mut layout, _, _) = sample();
+        layout.add_after(7, 1);
+        layout.add_after(8, 42);
+        assert_eq!(layout.pinned(), &[1]);
+        assert_eq!(layout.tabs(), vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(layout.group_of(7), None);
     }
 
     #[test]

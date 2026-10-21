@@ -25,7 +25,7 @@ use term_core::{LaunchSpec, SessionKind};
 use workspace_model::layout::Direction;
 use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION, ViewerFraction};
 use workspace_model::{
-    Attention, DropTarget, GroupId, Layout, TabColor, TabMeta, TabsState, next_attention,
+    Attention, DropTarget, GroupId, Layout, TabColor, TabId, TabMeta, TabsState, next_attention,
     waiting_count,
 };
 
@@ -104,6 +104,15 @@ impl Render for ViewerDivider {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         Empty
     }
+}
+
+/// Where `open_tab_in` puts a new tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NewTabPlace {
+    /// At the end of the group (`None`: of the top level).
+    EndOf(Option<GroupId>),
+    /// Right below this tab (duplicates).
+    After(TabId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -212,19 +221,22 @@ impl WorkspaceView {
             .active_tab()
             .and_then(|tab| self.layout.group_of(tab.id))
             .map(|group| group.id);
-        self.open_tab_in(spec, group, window, cx)
+        self.open_tab_in(spec, NewTabPlace::EndOf(group), window, cx)
     }
 
-    /// Start `spec` in a new tab at the end of `group` (`None`: of the top level) and select it.
+    /// Start `spec` in a new tab at `place` and select it.
     fn open_tab_in(
         &mut self,
         spec: LaunchSpec,
-        group: Option<GroupId>,
+        place: NewTabPlace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> io::Result<()> {
         let id = self.spawn_tab(spec, TabMeta::default(), window, cx)?;
-        self.layout.add(id, group);
+        match place {
+            NewTabPlace::EndOf(group) => self.layout.add(id, group),
+            NewTabPlace::After(tab) => self.layout.add_after(id, tab),
+        }
         self.sync_order(cx);
         if let Some(index) = self.tab_index(id) {
             self.activate(index, window, cx);
@@ -454,7 +466,7 @@ impl WorkspaceView {
             .active_tab()
             .and_then(|tab| self.layout.group_of(tab.id))
             .map(|group| group.id);
-        self.open_tab_in_or_notify(spec, group, window, cx);
+        self.open_tab_in_or_notify(spec, NewTabPlace::EndOf(group), window, cx);
     }
 
     /// Open the tab named on the command line after the restored ones: at the end of the top
@@ -465,18 +477,18 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_tab_in_or_notify(spec, None, window, cx);
+        self.open_tab_in_or_notify(spec, NewTabPlace::EndOf(None), window, cx);
     }
 
     fn open_tab_in_or_notify(
         &mut self,
         spec: LaunchSpec,
-        group: Option<GroupId>,
+        place: NewTabPlace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let program = launch_name(&spec).to_string();
-        if let Err(err) = self.open_tab_in(spec, group, window, cx) {
+        if let Err(err) = self.open_tab_in(spec, place, window, cx) {
             log::error!("failed to start {program}: {err}");
             window.push_notification(
                 Notification::error(format!("Failed to start {program}: {err}")),
@@ -522,10 +534,9 @@ impl WorkspaceView {
         let Some(tab) = self.tabs.get(index) else {
             return;
         };
-        let mut spec = tab.spec.clone();
-        let group = self.layout.group_of(tab.id).map(|group| group.id);
+        let (mut spec, id) = (tab.spec.clone(), tab.id);
         spec.cwd = self.tab_cwd(index, cx);
-        self.open_tab_in_or_notify(spec, group, window, cx);
+        self.open_tab_in_or_notify(spec, NewTabPlace::After(id), window, cx);
     }
 
     /// Select a tab, expanding its group if it is collapsed and ending a search that hides it.

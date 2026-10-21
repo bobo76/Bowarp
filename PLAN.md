@@ -84,10 +84,6 @@ backlog below. Details of finished work are in the git history (328 tests).
    acrylic/mica, KDE on X11).
 7. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
    `cx.build_action`) from the settings file in place of `default_bindings`.
-8. Executable path on the settings page's About page: an "Executable" row under "Config
-   folder" (`about_groups` in `app/src/settings_page.rs`) showing `std::env::current_exe()`,
-   laid out vertically like the folder; "Unknown" when it can't be read. Tells which copy is
-   running when several are installed or a dev build sits next to a release.
 
 **Fixed, not tested yet (built and unit-tested by the Windows CI, not run on a Windows machine)**
 
@@ -105,8 +101,23 @@ backlog below. Details of finished work are in the git history (328 tests).
   clipboard" put nothing on the clipboard. Copilot's log showed why: it runs `clip.exe`, which
   exits with code 1 in the app's tabs ("clip.exe failed; relied on OSC 52"), and the app
   dropped OSC 52 writes. They now go to the clipboard (`SessionEvent::ClipboardStore`; the
-  primary selection on Linux). Check in a Copilot tab: select text and Ctrl+C, and right-click
-  "Copy to clipboard", then paste elsewhere. Why `clip.exe` fails is not known.
+  primary selection on Linux). Ctrl+Insert copied nothing: the app took it as its own Copy,
+  with no selection of its own since Copilot keeps the selection (mouse reporting); without
+  one, Ctrl+Insert now goes to the program (Ctrl+Shift+C still doesn't, it would be `^C`).
+  Check in a Copilot tab: select text and Ctrl+C, then Ctrl+Insert, and right-click "Copy to
+  clipboard", then paste elsewhere. Why `clip.exe` fails is not known.
+- Paste with Ctrl+V in the terminal, like Windows Terminal (before, only Ctrl+Shift+V and
+  Shift+Insert pasted, and Ctrl+V reached Copilot and Claude Code as `^V`). Without text on
+  the clipboard, Ctrl+V still goes to the program as `^V`, so Claude Code can paste a copied
+  image. With text, bash's quoted-insert and vim's visual block no longer get `^V`, until the
+  configurable keymap lets the user unbind it. Check in a Copilot and a Claude Code tab: Ctrl+V
+  pastes copied text, and in Claude Code a copied screenshot.
+- Executable path on the settings page's About page: an "Executable" row under "Config
+  folder" showing `std::env::current_exe()` ("Unknown" when it can't be read), to tell which
+  copy runs when several are installed. Check: the path shown is the running build.
+- Duplicate tab opens the copy right below the original, in its group or among the ungrouped
+  tabs (`Layout::add_after`); a pinned tab's copy still goes ungrouped at the end of the list.
+  Check: duplicate a tab mid-group, the last tab of a group and an ungrouped tab.
 
 Checked on a desktop (2026-10-19): F11 full screen; on Windows: the parent-folder button in PowerShell, the
 explorer following `cd` in PowerShell, Windows PowerShell, Git Bash and cmd (and cmd's title),
@@ -253,10 +264,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
      keeps today's top-anchored layout.
   Not planned from the screenshot: the separate input box with the folder chip (the prompt is
   the shell's own, in the grid) and the panel's "Configure" button.
-- Paste with Ctrl+V in the terminal, like Windows Terminal (today only Ctrl+Shift+V and
-  Shift+Insert, `default_bindings` in `app/src/terminal_view.rs`); Ctrl+V then no longer
-  reaches the program as `^V` (bash's quoted-insert, vim's visual block), until the
-  configurable keymap lets the user unbind it.
 - Zoom with Ctrl+scroll, like Windows Terminal: Ctrl+wheel up / down over the terminal makes
   the font bigger / smaller one point per notch (clamped, e.g. 6-48 pt), also Ctrl+= / Ctrl+-
   and Ctrl+0 to reset. Today the size is the hard-coded `FONT_SIZE` (14 pt,
@@ -266,8 +273,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   settings size, which acts as the default zoom. Zooming never changes the setting and isn't
   saved (Ctrl+0 and a restart go back to the settings size). Ctrl+wheel is never sent to the
   program, even with mouse reporting on.
-- Duplicate tab: insert the new tab right below the duplicated one, in its group or among the
-  ungrouped tabs (today `Layout::add` puts it at the end of the group, or of the list).
 - New-tab folder picker (currently the selected tab's folder).
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall

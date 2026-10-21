@@ -183,6 +183,9 @@ fn about_groups(cx: &App) -> Vec<SettingGroup> {
         .and_then(|path| path.parent())
         .map(|folder| SharedString::from(folder.display().to_string()))
         .unwrap_or_else(|| "None (no home folder): settings are not saved".into());
+    let executable: SharedString = std::env::current_exe()
+        .map(|path| path.display().to_string().into())
+        .unwrap_or_else(|_| "Unknown".into());
     vec![
         SettingGroup::new().title(about::APP_NAME).items([
             SettingItem::new(
@@ -219,6 +222,13 @@ fn about_groups(cx: &App) -> Vec<SettingGroup> {
             // Under the title: a path is too long to share the line.
             .layout(Axis::Vertical)
             .keywords(["path", "directory", "configuration"]),
+            SettingItem::new(
+                "Executable",
+                SettingField::render(move |_, _, _| div().text_sm().child(executable.clone())),
+            )
+            .description("The running copy, when several are installed.")
+            .layout(Axis::Vertical)
+            .keywords(["path", "binary", "exe", "install"]),
             SettingItem::new(
                 "Repository",
                 SettingField::render(|_, _, _| {
