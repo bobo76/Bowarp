@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use term_core::alacritty_terminal::index::{Column, Line, Point, Side};
 use term_core::alacritty_terminal::selection::SelectionType;
+use term_core::alacritty_terminal::term::ClipboardType;
 use term_core::{LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions};
 use workspace_model::ProgressState;
 
@@ -186,6 +187,21 @@ fn title_changes_are_forwarded() {
     let events = wait_for_exit(&rx);
 
     assert!(events.contains(&SessionEvent::TitleChanged(Some("agent title".into()))));
+}
+
+#[test]
+fn clipboard_writes_are_forwarded() {
+    // "copied" in base64.
+    let (_session, rx) = spawn_sh(
+        "printf '\\033]52;c;Y29waWVk\\007'",
+        TermDimensions::new(80, 24),
+    );
+    let events = wait_for_exit(&rx);
+
+    assert!(events.contains(&SessionEvent::ClipboardStore(
+        ClipboardType::Clipboard,
+        "copied".into()
+    )));
 }
 
 #[cfg(target_os = "linux")]

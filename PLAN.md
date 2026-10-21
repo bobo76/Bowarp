@@ -101,6 +101,12 @@ backlog below. Details of finished work are in the git history (328 tests).
   bash); WSL tabs now get `ShellSyntax::Wsl`, which types `C:\x` as `/mnt/c/x` (default mount
   root only) and `\\wsl$\<distro>\x` as `/x`. Check in an Ubuntu tab: the parent-folder button
   and "cd to directory" move the shell, and `cd` updates the explorer and the title.
+- Copy from a Copilot CLI tab: Ctrl+C on Copilot's own selection and its right-click "Copy to
+  clipboard" put nothing on the clipboard. Copilot's log showed why: it runs `clip.exe`, which
+  exits with code 1 in the app's tabs ("clip.exe failed; relied on OSC 52"), and the app
+  dropped OSC 52 writes. They now go to the clipboard (`SessionEvent::ClipboardStore`; the
+  primary selection on Linux). Check in a Copilot tab: select text and Ctrl+C, and right-click
+  "Copy to clipboard", then paste elsewhere. Why `clip.exe` fails is not known.
 
 Checked on a desktop (2026-10-19): F11 full screen; on Windows: the parent-folder button in PowerShell, the
 explorer following `cd` in PowerShell, Windows PowerShell, Git Bash and cmd (and cmd's title),
@@ -255,18 +261,11 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   the font bigger / smaller one point per notch (clamped, e.g. 6-48 pt), also Ctrl+= / Ctrl+-
   and Ctrl+0 to reset. Today the size is the hard-coded `FONT_SIZE` (14 pt,
   `app/src/terminal_element.rs`); builds on Next steps 1 (font size from the settings file,
-  applied live by re-measuring the cells and resizing the pty). The zoom applies to every
-  terminal tab and isn't saved (Ctrl+0 and a restart go back to the settings size). Ctrl+wheel
-  is never sent to the program, even with mouse reporting on.
-- Copy from a Copilot CLI tab doesn't work (bug, seen on Windows): Copilot's right-click "Copy
-  to clipboard" puts nothing on the clipboard, and neither do Ctrl+Insert or Ctrl+C after
-  selecting text. Likely causes, unverified: Copilot copies through OSC 52, whose
-  `ClipboardStore` event `term-core/src/session.rs` drops (see "Answer OSC 52 clipboard
-  requests" below); and Copilot turns on mouse reporting, so a drag goes to Copilot instead of
-  making the app's own selection, leaving Ctrl+Insert (`Copy`, `terminal_view.rs`) nothing to
-  copy, while Ctrl+C reaches Copilot as `^C`. Check with a trace log of the dropped event;
-  fix by storing OSC 52 writes in the clipboard (with M5's clipboard notice later) and, if
-  needed, Shift+drag selecting even while mouse reporting is on.
+  applied live by re-measuring the cells and resizing the pty). The zoom is per tab: it changes
+  only the tab under the mouse (or the focused one, for the keys), and a new tab starts at the
+  settings size, which acts as the default zoom. Zooming never changes the setting and isn't
+  saved (Ctrl+0 and a restart go back to the settings size). Ctrl+wheel is never sent to the
+  program, even with mouse reporting on.
 - Duplicate tab: insert the new tab right below the duplicated one, in its group or among the
   ungrouped tabs (today `Layout::add` puts it at the end of the group, or of the list).
 - New-tab folder picker (currently the selected tab's folder).
@@ -290,7 +289,8 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
     card during a drag or over an empty group.
 - Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - Draw box-drawing and block characters procedurally; font glyphs leave small gaps between rows for heavy/double verticals (`┃`, `║`).
-- Answer OSC 52 clipboard requests.
+- Answer OSC 52 clipboard reads (`ESC ] 52;c;? BEL`): refused today by alacritty's default
+  `Osc52::OnlyCopy`; writes are already stored.
 - Report drags that leave the terminal area (GPUI only delivers moves while hovered).
 - Working directory from OSC 7 (only useful for remote shells): `alacritty_terminal` does not
   parse it, but the pty reader wrapper (`term-core/src/prompt.rs`) could find it.

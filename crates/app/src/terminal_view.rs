@@ -23,7 +23,7 @@ use gpui_kit::{
     div, size,
 };
 use term_core::alacritty_terminal::grid::Scroll;
-use term_core::alacritty_terminal::term::TermMode;
+use term_core::alacritty_terminal::term::{ClipboardType, TermMode};
 use term_core::{
     EventCallback, LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions,
 };
@@ -499,6 +499,10 @@ impl TerminalView {
                 }
             }
             SessionEvent::ProgressChanged(state) => self.apply_progress(state, cx),
+            SessionEvent::ClipboardStore(clipboard, text) => {
+                store_clipboard(clipboard, text, cx);
+                return;
+            }
             SessionEvent::Exited(code) => {
                 self.process = ProcessState::Exited(code);
                 self.running_command = None;
@@ -725,6 +729,20 @@ impl TerminalView {
 
     fn on_paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         self.paste(cx.read_from_clipboard().and_then(|item| item.text()), cx);
+    }
+}
+
+/// Put text a program copied (OSC 52) on the clipboard. Copilot CLI on Windows sends it and
+/// also runs `clip.exe`, which exits with code 1 in this app's tabs, so its Ctrl+C and "Copy
+/// to clipboard" rely on it. The primary selection only exists on Linux; elsewhere such
+/// writes are dropped.
+fn store_clipboard(clipboard: ClipboardType, text: String, cx: &mut App) {
+    match clipboard {
+        ClipboardType::Clipboard => cx.write_to_clipboard(ClipboardItem::new_string(text)),
+        #[cfg(target_os = "linux")]
+        ClipboardType::Selection => cx.write_to_primary(ClipboardItem::new_string(text)),
+        #[cfg(not(target_os = "linux"))]
+        ClipboardType::Selection => {}
     }
 }
 

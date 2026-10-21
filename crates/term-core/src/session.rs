@@ -14,7 +14,7 @@ use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{self, Term, TermMode};
+use alacritty_terminal::term::{self, ClipboardType, Term, TermMode};
 use alacritty_terminal::tty;
 use parking_lot::MutexGuard;
 use workspace_model::ProgressState;
@@ -46,6 +46,8 @@ pub enum SessionEvent {
     CommandFinished,
     /// The program reported a new progress state (OSC 9;4).
     ProgressChanged(ProgressState),
+    /// The program wrote text to the clipboard or the primary selection (OSC 52).
+    ClipboardStore(ClipboardType, String),
 }
 
 /// Called on the session's I/O thread, sometimes while it holds the terminal lock: it must
@@ -177,7 +179,10 @@ impl EventListener for SessionListener {
                 let color = shared.palette.default_color(index);
                 shared.write(Cow::Owned(format(color).into_bytes()));
             }
-            // Clipboard (OSC 52) requests are wired up together with the renderer.
+            Event::ClipboardStore(clipboard, text) => {
+                (shared.callback)(SessionEvent::ClipboardStore(clipboard, text));
+            }
+            // Clipboard reads (OSC 52 `?`) are refused by `Osc52::OnlyCopy`, the default.
             other => log::trace!("unhandled terminal event: {other:?}"),
         }
     }
