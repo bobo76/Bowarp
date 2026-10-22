@@ -5,18 +5,18 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use agent_status::{
-    HookMessage, HookServer, PIPE_ENV, SESSION_ENV, claude_settings, default_pipe_name,
+    HOOK_ENV, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, claude_settings, default_pipe_name,
 };
 use term_core::{LaunchSpec, SessionKind};
 
 /// Hook binary installed next to the app executable.
 const HOOK_PROGRAM: &str = "agentws-hook";
 
-/// Lets Claude Code sessions report their status: the hook server plus the settings file that
-/// registers `agentws-hook` with Claude Code.
+/// Receives Claude Code status hooks and Copilot extension mode reports.
 pub struct ClaudeHooks {
     server: HookServer,
     settings_path: PathBuf,
+    hook_program: PathBuf,
 }
 
 impl ClaudeHooks {
@@ -41,20 +41,28 @@ impl ClaudeHooks {
         Ok(Self {
             server,
             settings_path,
+            hook_program,
         })
     }
 
-    /// Make a Claude Code launch report its hook events as session `session`. Other session
-    /// kinds are left unchanged; returns whether the session will report its status.
+    /// Attach status hooks to Claude Code or the mode bridge to Copilot. Only Claude Code
+    /// reports activity through hooks; Copilot keeps using terminal progress reports.
     pub fn attach(&self, session: u64, spec: &mut LaunchSpec) -> bool {
-        if spec.kind != SessionKind::ClaudeCode {
+        if spec.kind == SessionKind::Shell {
+            return false;
+        }
+        spec.env.insert(SESSION_ENV.into(), session.to_string());
+        spec.env
+            .insert(PIPE_ENV.into(), self.server.pipe_name().into());
+        if spec.kind == SessionKind::CopilotCli {
+            spec.env.insert(
+                HOOK_ENV.into(),
+                self.hook_program.to_string_lossy().into_owned(),
+            );
             return false;
         }
         let settings = self.settings_path.to_string_lossy().into_owned();
         spec.args.splice(0..0, ["--settings".to_string(), settings]);
-        spec.env.insert(SESSION_ENV.into(), session.to_string());
-        spec.env
-            .insert(PIPE_ENV.into(), self.server.pipe_name().into());
         true
     }
 
@@ -81,4 +89,39 @@ fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
     #[cfg(unix)]
     options.mode(0o600);
     options.open(path)?.write_all(contents)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copilot_gets_the_bridge_without_status_hooks_or_extra_arguments() {
+        let server = HookServer::start(
+            format!("agentws-attach-test-{}.sock", agent_status::now_micros()),
+            |_| {},
+        )
+        .unwrap();
+        let hooks = ClaudeHooks {
+            server,
+            settings_path: PathBuf::from("settings.json"),
+            hook_program: PathBuf::from("agentws-hook"),
+        };
+        let mut copilot = LaunchSpec::copilot_cli(None);
+        assert!(!hooks.attach(12, &mut copilot));
+        assert!(copilot.args.is_empty());
+        assert_eq!(copilot.env[SESSION_ENV], "12");
+        assert_eq!(copilot.env[PIPE_ENV], hooks.server.pipe_name());
+        assert_eq!(copilot.env[HOOK_ENV], "agentws-hook");
+
+        let mut shell = LaunchSpec::shell(None);
+        assert!(!hooks.attach(13, &mut shell));
+        assert!(shell.env.is_empty());
+
+        let mut claude = LaunchSpec::claude_code(None);
+        assert!(hooks.attach(14, &mut claude));
+        assert_eq!(claude.args, ["--settings", "settings.json"]);
+        assert_eq!(claude.env[SESSION_ENV], "14");
+        assert!(!claude.env.contains_key(HOOK_ENV));
+    }
 }

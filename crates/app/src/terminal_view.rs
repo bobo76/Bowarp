@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use agent_status::{AgentState, AgentStatus, HookEvent};
+use agent_status::{AgentEvent, AgentMode, AgentModeState, AgentState, AgentStatus};
 
 use futures::StreamExt;
 use futures::channel::mpsc;
@@ -153,6 +153,7 @@ pub struct TerminalView {
     /// Status from Claude Code hooks, or from Copilot CLI's progress reports once it sent
     /// one; `None` for sessions without either.
     agent: Option<AgentTracker>,
+    mode: AgentModeState,
     /// The agent finished a turn while the tab was hidden; cleared when it is shown.
     finished_unseen: bool,
     /// The program rang the bell (BEL) while the tab was hidden; cleared when it is shown.
@@ -235,6 +236,7 @@ impl TerminalView {
             location: spec.cwd.clone().map(Location::read),
             shell: launcher::shell_syntax(spec),
             agent: reports_status.then(|| AgentTracker::new(Instant::now())),
+            mode: AgentModeState::default(),
             finished_unseen: false,
             bell_unseen: false,
             visible: true,
@@ -416,9 +418,26 @@ impl TerminalView {
         cx.emit(TabChanged);
     }
 
-    /// Apply a status event from this session's Claude Code hooks.
-    pub fn apply_hook_event(&mut self, event: HookEvent, at: u64, cx: &mut Context<Self>) {
-        self.update_agent(|agent| agent.apply(event, at), cx);
+    pub fn agent_mode(&self) -> Option<AgentMode> {
+        self.mode.mode()
+    }
+
+    /// Mode reports must not change activity, lap time or the unseen-finished badge.
+    pub fn apply_hook_event(&mut self, event: AgentEvent, at: u64, cx: &mut Context<Self>) {
+        if self.process != ProcessState::Running {
+            return;
+        }
+        match event {
+            AgentEvent::Hook(event) if self.kind() == SessionKind::ClaudeCode => {
+                self.update_agent(|agent| agent.apply(event, at), cx);
+            }
+            AgentEvent::ModeChanged(mode)
+                if self.kind() == SessionKind::CopilotCli && self.mode.apply(mode, at) =>
+            {
+                cx.emit(TabChanged);
+            }
+            _ => {}
+        }
     }
 
     /// Apply a progress report from Copilot CLI. Its first one switches the tab from output

@@ -2,6 +2,7 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use agent_status::AgentMode;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu};
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
@@ -526,6 +527,7 @@ pub fn tab_shortcut(index: usize) -> Option<String> {
 pub struct TabCard {
     pub index: usize,
     pub status: TabStatus,
+    pub mode: Option<AgentMode>,
     /// How long the agent has been working on the current turn, shown in the status chip.
     pub working_for: Option<Duration>,
     /// How long the shell's command has run, shown below the chip ("Running for 2:14").
@@ -617,6 +619,12 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
                         .child(shortcut)
                 })),
         )
+        .children(card.mode.map(|mode| {
+            div()
+                .text_xs()
+                .text_color(muted)
+                .child(format!("Mode: {}", mode.label()))
+        }))
         .children(card.running_for.map(|running| {
             div()
                 .text_xs()

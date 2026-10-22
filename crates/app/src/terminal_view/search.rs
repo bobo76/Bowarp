@@ -172,13 +172,14 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use std::sync::Arc;
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
 
     use gpui_kit::component::Root;
     use gpui_kit::{Task, TestAppContext, VisualTestContext};
     use term_core::alacritty_terminal::index::{Column, Point};
     use term_core::alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
-    use term_core::{LaunchSpec, Palette, Session, SessionKind, TermDimensions};
+    use term_core::{LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions};
 
     fn draw(cx: &mut VisualTestContext) {
         cx.run_until_parked();
@@ -193,36 +194,41 @@ mod tests {
             crate::terminal_element::init(cx);
             super::super::init(cx);
         });
+        #[cfg(windows)]
+        let (program, args) = (
+            "powershell",
+            vec!["-NoProfile", "-NonInteractive", "-Command", "exit 0"],
+        );
+        #[cfg(not(windows))]
+        let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+        let spec = LaunchSpec::new(
+            SessionKind::Shell,
+            Some(program.into()),
+            args.into_iter().map(String::from).collect(),
+            None,
+        );
+        let (exited, exit_events) = mpsc::channel();
+        let session = Session::spawn(
+            1,
+            &spec,
+            TermDimensions::new(80, 24),
+            Palette::default(),
+            Arc::new(move |event| {
+                if let SessionEvent::Exited(_) = event {
+                    exited.send(()).expect("test must wait for the child to exit");
+                }
+            }),
+        )
+        .unwrap();
+        // Drain ConPTY startup output before seeding a grid that only the test can mutate.
+        exit_events
+            .recv_timeout(Duration::from_secs(30))
+            .expect("test child did not exit and drain its terminal output");
+        Processor::<StdSyncHandler>::new()
+            .advance(&mut *session.lock_term(), b"\x1bcone one");
         let captured = Rc::new(RefCell::new(None));
         let capture = captured.clone();
         let window = cx.add_window(move |window, cx| {
-            #[cfg(windows)]
-            let (program, args) = (
-                "powershell",
-                vec![
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    "Start-Sleep 60",
-                ],
-            );
-            #[cfg(not(windows))]
-            let (program, args) = ("/bin/sh", vec!["-c", "sleep 60"]);
-            let spec = LaunchSpec::new(
-                SessionKind::Shell,
-                Some(program.into()),
-                args.into_iter().map(String::from).collect(),
-                None,
-            );
-            let session = Session::spawn(
-                1,
-                &spec,
-                TermDimensions::new(80, 24),
-                Palette::default(),
-                Arc::new(|_| {}),
-            )
-            .unwrap();
-            Processor::<StdSyncHandler>::new().advance(&mut *session.lock_term(), b"one one");
             let view = cx.new(|cx| TerminalView::new(session, &spec, false, Task::ready(()), cx));
             view.update(cx, |view, cx| window.focus(&view.focus_handle, cx));
             *capture.borrow_mut() = Some(view.clone());
@@ -247,12 +253,14 @@ mod tests {
             view.read_with(&cx, |view, _| view.search.current()),
             Some(1)
         );
+        assert!(!view.read_with(&cx, |view, _| view.session.awaiting_echo()));
         cx.simulate_keystrokes("shift-enter");
         draw(&mut cx);
         assert_eq!(
             view.read_with(&cx, |view, _| view.search.current()),
             Some(0)
         );
+        assert!(!view.read_with(&cx, |view, _| view.session.awaiting_echo()));
         cx.simulate_keystrokes("ctrl-shift-f");
         draw(&mut cx);
         cx.simulate_input("absent");
@@ -279,14 +287,7 @@ mod tests {
         });
         cx.simulate_input("x");
         view.read_with(&cx, |view, _| {
-            assert!(
-                view.session.awaiting_echo()
-                    || view
-                        .session
-                        .visible_text()
-                        .iter()
-                        .any(|line| line == "one onex")
-            );
+            assert!(view.session.awaiting_echo());
         });
     }
 }

@@ -81,6 +81,13 @@ it stays, under "Fixed, not tested yet" if only the manual check is missing.
    tabs started from that entry (the `+` menu, Ctrl+Shift+T). A restored tab keeps the
    arguments it started with (saved with the tab in `tabs.json`), not the current setting.
    Empty adds none.
+   - Claude Code mode: `--permission-mode <default|acceptEdits|plan|bypassPermissions>`
+     (`--dangerously-skip-permissions` is `bypassPermissions`); `permissions.defaultMode` in
+     the hooks' `--settings` file would also work. The hook input's `permission_mode` reports
+     the current mode, but only when a hook fires (a Shift+Tab switch while idle shows at the
+     next event).
+   - Copilot CLI mode: `--mode autopilot` (or `--autopilot`), `--mode interactive`, or
+     `--mode plan`. Mode selection is separate from permission bypass (`--yolo`).
 5. Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
    and terminal color schemes: a few bundled schemes plus user schemes imported from
    base16/iTerm files, saved in the settings file and picked on the Appearance page. "System"

@@ -164,6 +164,34 @@ the full folder, the branch, the program's title, the session kind and, in a rep
 lines added in the working tree (`+N`: changes to tracked files from `git diff HEAD` plus new
 files not yet added and not ignored, refreshed at most every 5 s).
 
+### Copilot mode extension
+
+The optional Copilot CLI extension adds `Mode: Interactive`, `Mode: Plan` or `Mode: Autopilot`
+to the tab's hover card. Mode is independent of activity: progress reports still determine
+whether Copilot is working. This requires a Copilot CLI version exposing the extension SDK's
+`session.rpc.mode.get()` and `session.mode_changed` event (available in 1.0.103).
+
+Install it user-wide from this checkout in PowerShell:
+
+```powershell
+$destination = Join-Path $HOME '.copilot\extensions\bowarp'
+New-Item -ItemType Directory -Force $destination | Out-Null
+Copy-Item .\crates\app\copilot-extension\extension.mjs, .\crates\app\copilot-extension\bridge.mjs $destination
+```
+
+With a custom Copilot configuration directory, use its `extensions\bowarp` folder instead.
+On Linux, copy those same two files into `~/.copilot/extensions/bowarp/`. No npm install is
+needed: Copilot supplies its SDK. Restart Copilot to discover the extension. A project-local
+extension with the same name takes precedence over the user-wide one.
+
+Build and restart Agent Workspace before opening a new Copilot tab. It provides the local
+pipe, tab session ID and `agentws-hook` path to the extension via `AGENTWS_PIPE`,
+`AGENTWS_SESSION` and `AGENTWS_HOOK`. Outside those tabs the extension does nothing; it does
+not change Copilot's mode or add agent tools. Delivery or SDK errors appear in the extension
+log. Remove the two installed files to uninstall it.
+
+Run the extension's tests with `node --test .\crates\app\copilot-extension\bridge.test.mjs`.
+
 | Badge | Status |
 |---|---|
 | blue | Working |

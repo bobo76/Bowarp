@@ -97,7 +97,7 @@ fn main() {
     }) {
         Ok(hooks) => Some(Rc::new(hooks)),
         Err(err) => {
-            eprintln!("agent-workspace: Claude Code status disabled: {err}");
+            eprintln!("agent-workspace: agent hooks and Copilot mode bridge disabled: {err}");
             None
         }
     };

@@ -1,6 +1,7 @@
 //! Hook IPC: `agentws-hook` opens one local socket connection per hook event (a Unix socket on
 //! Linux, a named pipe on Windows) and sends a single line:
 //! `<session id> <hook start time in µs since the Unix epoch> <hook_event_name> [notification_type]`.
+//! Copilot mode reports use `CopilotMode` with the interaction mode as `notification_type`.
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::sync::Arc;
@@ -12,12 +13,14 @@ use interprocess::local_socket::prelude::*;
 use interprocess::local_socket::{GenericNamespaced, ListenerOptions, Stream};
 use serde_json::Value;
 
-use crate::status::HookEvent;
+use crate::{AgentMode, status::HookEvent};
 
 /// Environment variable holding the session id a hook reports for.
 pub const SESSION_ENV: &str = "AGENTWS_SESSION";
 /// Environment variable holding the socket name of the app's [`HookServer`].
 pub const PIPE_ENV: &str = "AGENTWS_PIPE";
+/// Path to the hook helper used by the Copilot extension to reach the local socket.
+pub const HOOK_ENV: &str = "AGENTWS_HOOK";
 
 /// Longest line a hook may send; anything longer is not a hook message.
 const MAX_LINE: u64 = 512;
@@ -27,13 +30,19 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// misbehaving peer keeps one open; past this, new connections are dropped.
 const MAX_READERS: usize = 16;
 
-/// A status-changing hook event for one session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentEvent {
+    Hook(HookEvent),
+    ModeChanged(AgentMode),
+}
+
+/// A status or mode event for one session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HookMessage {
     pub session: u64,
     /// When the hook started, in microseconds since the Unix epoch.
     pub at: u64,
-    pub event: HookEvent,
+    pub event: AgentEvent,
 }
 
 pub fn now_micros() -> u64 {
@@ -75,7 +84,12 @@ fn parse_line(line: &str) -> Option<HookMessage> {
     let session = fields.next()?.parse().ok()?;
     let at = fields.next()?.parse().ok()?;
     let event_name = fields.next()?;
-    let event = HookEvent::from_hook(event_name, fields.next())?;
+    let detail = fields.next();
+    let event = if event_name == "CopilotMode" {
+        AgentEvent::ModeChanged(AgentMode::parse(detail?)?)
+    } else {
+        AgentEvent::Hook(HookEvent::from_hook(event_name, detail)?)
+    };
     Some(HookMessage { session, at, event })
 }
 
@@ -199,13 +213,19 @@ mod tests {
             Some(HookMessage {
                 session: 7,
                 at: 1000,
-                event: HookEvent::ToolStarted
+                event: AgentEvent::Hook(HookEvent::ToolStarted)
             })
         );
         assert_eq!(
             parse_line("7 1000 Notification permission_prompt\n").map(|m| m.event),
-            Some(HookEvent::InputRequested)
+            Some(AgentEvent::Hook(HookEvent::InputRequested))
         );
+        assert_eq!(
+            parse_line("7 1000 CopilotMode autopilot\n").map(|m| m.event),
+            Some(AgentEvent::ModeChanged(AgentMode::Autopilot))
+        );
+        assert_eq!(parse_line("7 1000 CopilotMode unknown\n"), None);
+        assert_eq!(parse_line("7 1000 CopilotMode\n"), None);
         assert_eq!(parse_line("7 1000 SessionStart\n"), None);
         assert_eq!(parse_line("x 1000 Stop\n"), None);
         assert_eq!(parse_line("7 Stop\n"), None);
@@ -251,7 +271,7 @@ mod tests {
             HookMessage {
                 session: 3,
                 at: 42,
-                event: HookEvent::Stopped
+                event: AgentEvent::Hook(HookEvent::Stopped)
             }
         );
     }

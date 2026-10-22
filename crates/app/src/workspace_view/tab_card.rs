@@ -177,6 +177,7 @@ impl WorkspaceView {
         Some(TabCard {
             index,
             status: view.tab_status(),
+            mode: view.agent_mode(),
             working_for: view.working_for(now),
             running_for: view.running_for(now),
             running_label: view.running_label().map(|label| label.to_string().into()),
