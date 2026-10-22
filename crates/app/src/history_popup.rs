@@ -12,7 +12,7 @@ use gpui_kit::{
 use term_core::{PromptInput, SessionKind};
 use workspace_model::{HistoryEntry, HistorySelection, display_path};
 
-use crate::history::History;
+use crate::history::{self, History};
 use crate::terminal_element;
 use crate::terminal_view::TerminalView;
 
@@ -51,6 +51,8 @@ enum PopupKey {
     Newer(Rows),
     /// Put the selected command on the prompt.
     Pick,
+    /// Remove the selected command from the history.
+    Forget,
     Dismiss,
     /// Typing and Backspace go to the shell; the list refilters on the new command line.
     Edit,
@@ -75,6 +77,7 @@ fn popup_key(keystroke: &Keystroke) -> PopupKey {
         "pageup" if plain => PopupKey::Older(Rows::Page),
         "pagedown" if plain => PopupKey::Newer(Rows::Page),
         "enter" | "tab" if plain => PopupKey::Pick,
+        "delete" if plain => PopupKey::Forget,
         "escape" if plain => PopupKey::Dismiss,
         "backspace" => PopupKey::Edit,
         _ if typing => PopupKey::Edit,
@@ -110,7 +113,7 @@ impl TerminalView {
                 cx.notify();
                 true
             }
-            "right" | "end" => self.accept_suggestion(cx),
+            "right" | "end" | "tab" => self.accept_suggestion(cx),
             _ => false,
         }
     }
@@ -141,6 +144,16 @@ impl TerminalView {
                 self.close_history_popup(cx);
                 if let Some(index) = index {
                     self.put_history_command(&input, index, cx);
+                }
+            }
+            PopupKey::Forget => {
+                let command = popup.selection.index(total).and_then(|index| {
+                    let history = cx.global::<History>().commands();
+                    let matches = history.matching(&input.text);
+                    matches.get(index).map(|entry| entry.command.clone())
+                });
+                if let Some(command) = command {
+                    history::forget(&command, cx);
                 }
             }
             PopupKey::Dismiss => self.close_history_popup(cx),
@@ -348,6 +361,8 @@ impl TerminalView {
                     .child(key_chip("enter", cx))
                     .child(key_chip("tab", cx))
                     .child(div().mr_2().child("to select"))
+                    .child(key_chip("del", cx))
+                    .child(div().mr_2().child("to remove"))
                     .child(key_chip("esc", cx))
                     .child("to dismiss"),
             )
@@ -457,6 +472,8 @@ mod tests {
         assert_eq!(key("tab"), PopupKey::Pick);
         // Shift+Tab is not Tab: it goes to the shell.
         assert_eq!(key("shift-tab"), PopupKey::Other);
+        assert_eq!(key("delete"), PopupKey::Forget);
+        assert_eq!(key("shift-delete"), PopupKey::Other);
         assert_eq!(key("escape"), PopupKey::Dismiss);
         // Typing refilters: printable keys, with Shift too, and Backspace.
         assert_eq!(key("a->a"), PopupKey::Edit);

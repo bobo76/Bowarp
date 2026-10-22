@@ -39,6 +39,7 @@ pub use attention::{Attention, next_attention, waiting_count};
 pub use git::{GitHead, lines_added};
 pub use history::{
     CommandHistory, HistoryEntry, HistorySelection, append_entry, entry_line, is_recordable,
+    remove_command,
 };
 pub use instance_lock::{held_by_other, lock_pid, lock_text};
 pub use lap::{Lap, format_lap, until_next_second};
