@@ -1,6 +1,7 @@
 mod agent_tracker;
 mod link_hover;
 mod pointer;
+mod search;
 
 use std::borrow::Cow;
 use std::fs;
@@ -26,6 +27,7 @@ use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::term::{ClipboardType, TermMode};
 use term_core::{
     EventCallback, LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions,
+    TerminalSearch,
 };
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
@@ -56,7 +58,10 @@ const ACTIVITY_WINDOW: Duration = Duration::from_secs(2);
 /// completion, Shift+Tab for Claude Code's mode cycling, Ctrl+C for interrupt.
 const PASSTHROUGH_KEYS: &[&str] = &["tab", "shift-tab", "ctrl-c"];
 
-actions!(terminal, [Copy, CopyOrSend, Paste, PasteOrSend]);
+actions!(
+    terminal,
+    [Copy, CopyOrSend, Paste, PasteOrSend, Find, CloseFind]
+);
 
 pub fn init(cx: &mut App) {
     cx.bind_keys(
@@ -77,6 +82,8 @@ fn default_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-shift-v", Paste, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-insert", Paste, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-v", PasteOrSend, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-shift-f", Find, Some(KEY_CONTEXT)),
+        KeyBinding::new("escape", CloseFind, Some(KEY_CONTEXT)),
     ]
 }
 
@@ -161,6 +168,8 @@ pub struct TerminalView {
     /// The rest of a history command matching the typed text, drawn dimmed after the cursor.
     pub(crate) ghost_text: Option<String>,
     pub(crate) history_popup: Option<HistoryPopup>,
+    pub(crate) search: TerminalSearch,
+    search_bar: Option<search::SearchBar>,
     title: Option<String>,
     process: ProcessState,
     /// Set by the shell integration marks; agent sessions keep their hook status instead.
@@ -235,6 +244,8 @@ impl TerminalView {
             marked_text: None,
             ghost_text: None,
             history_popup: None,
+            search: TerminalSearch::default(),
+            search_bar: None,
             title: None,
             process: ProcessState::Running,
             running_command: None,
@@ -447,6 +458,7 @@ impl TerminalView {
     fn on_session_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
         match event {
             SessionEvent::Wakeup => {
+                self.search.invalidate();
                 self.track_activity(cx);
                 self.refresh_link_hover(cx);
                 if !self.visible {
@@ -810,8 +822,8 @@ impl Render for TerminalView {
         let background = self.session.palette().background;
         let view = div()
             .size_full()
+            .min_h_0()
             .bg(to_hsla(background))
-            .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::on_copy))
@@ -832,13 +844,24 @@ impl Render for TerminalView {
 
         let history_popup = self.update_history(cx);
         let exit_banner = self.exit_banner(cx);
+        let search_bar = self.render_terminal_search(cx);
         // The banner sits below the grid, which shrinks by its height, so no output is hidden.
-        view.relative()
+        div()
+            .size_full()
+            .key_context(KEY_CONTEXT)
+            .on_action(cx.listener(Self::on_find))
+            .on_action(cx.listener(Self::on_close_find))
             .flex()
             .flex_col()
-            .child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
-            .children(exit_banner)
-            .children(history_popup)
+            .children(search_bar)
+            .child(
+                view.relative()
+                    .flex()
+                    .flex_col()
+                    .child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
+                    .children(exit_banner)
+                    .children(history_popup),
+            )
     }
 }
 
@@ -984,6 +1007,6 @@ mod tests {
 
     #[test]
     fn default_bindings_parse() {
-        assert_eq!(default_bindings().len(), 5);
+        assert_eq!(default_bindings().len(), 7);
     }
 }

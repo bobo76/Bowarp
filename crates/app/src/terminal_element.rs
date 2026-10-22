@@ -18,7 +18,7 @@ use term_core::alacritty_terminal::grid::Dimensions;
 use term_core::alacritty_terminal::term::cell::Flags;
 use term_core::alacritty_terminal::term::{RenderableContent, TermMode};
 use term_core::alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Rgb};
-use term_core::{Palette, Session, TermDimensions, dim};
+use term_core::{Palette, TermDimensions, TerminalSearch, dim};
 use unicode_width::UnicodeWidthChar;
 use workspace_model::installed_font_family;
 
@@ -41,6 +41,21 @@ const SELECTION_BACKGROUND: Rgb = Rgb {
     r: 0x26,
     g: 0x4f,
     b: 0x78,
+};
+const SEARCH_BACKGROUND: Rgb = Rgb {
+    r: 0xe6,
+    g: 0xc0,
+    b: 0x70,
+};
+const ACTIVE_SEARCH_BACKGROUND: Rgb = Rgb {
+    r: 0xff,
+    g: 0x96,
+    b: 0x40,
+};
+const SEARCH_FOREGROUND: Rgb = Rgb {
+    r: 0x18,
+    g: 0x18,
+    b: 0x18,
 };
 
 pub struct TerminalElement {
@@ -198,16 +213,17 @@ impl Element for TerminalElement {
         let (columns, screen_lines) = fit_grid(grid_bounds, cell_width, line_height);
         let focused = self.focus_handle.is_focused(window);
 
-        let view = self.view.read(cx);
-        let session = &view.session;
-        session.resize(TermDimensions {
-            columns,
-            lines: screen_lines,
-            cell_width: f32::from(cell_width) as u16,
-            cell_height: f32::from(line_height) as u16,
+        let (snapshot, scroll_metrics) = self.view.update(cx, |view, cx| {
+            view.session.resize(TermDimensions {
+                columns,
+                lines: screen_lines,
+                cell_width: f32::from(cell_width) as u16,
+                cell_height: f32::from(line_height) as u16,
+            });
+            take_snapshot(view, focused, cx)
         });
-        let (snapshot, scroll_metrics) = take_snapshot(session, focused);
-        let palette = session.palette();
+        let view = self.view.read(cx);
+        let palette = view.session.palette();
         let grid = CellGrid {
             origin: grid_bounds.origin,
             cell_width,
@@ -509,18 +525,30 @@ fn fit_grid(bounds: Bounds<Pixels>, cell_width: Pixels, line_height: Pixels) -> 
     (columns, lines)
 }
 
-/// Copy the visible grid and its scroll position, holding the terminal lock only for the copy.
-fn take_snapshot(session: &Session, focused: bool) -> (GridSnapshot, ScrollMetrics) {
+/// Refresh search and copy the visible grid under one lock, keeping match coordinates aligned.
+fn take_snapshot(
+    view: &mut TerminalView,
+    focused: bool,
+    cx: &mut gpui_kit::Context<TerminalView>,
+) -> (GridSnapshot, ScrollMetrics) {
     // Re-arm before reading so output arriving mid-frame schedules another frame.
-    session.ack_wakeup();
-    let term = session.lock_term();
+    view.session.ack_wakeup();
+    let mut term = view.session.lock_term();
+    if view.search.refresh(&mut term) {
+        cx.notify();
+    }
     let grid = term.grid();
     let scroll_metrics = ScrollMetrics {
         history: grid.history_size(),
         display_offset: grid.display_offset(),
         screen_lines: grid.screen_lines(),
     };
-    let snapshot = snapshot(term.renderable_content(), session.palette(), focused);
+    let snapshot = snapshot(
+        term.renderable_content(),
+        view.session.palette(),
+        focused,
+        &view.search,
+    );
     (snapshot, scroll_metrics)
 }
 
@@ -618,7 +646,12 @@ fn inset(bounds: Bounds<Pixels>, x: Pixels, y: Pixels) -> Bounds<Pixels> {
 }
 
 /// Copy the visible cells into paint batches. Runs under the terminal lock: no shaping here.
-fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) -> GridSnapshot {
+fn snapshot(
+    content: RenderableContent<'_>,
+    palette: &Palette,
+    focused: bool,
+    search: &TerminalSearch,
+) -> GridSnapshot {
     let colors = content.colors;
     let display_offset = content.display_offset as i32;
     let default_background = palette.resolve_index(NamedColor::Background as usize, colors);
@@ -664,6 +697,18 @@ fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) ->
             palette.resolve(cell.bg, colors),
             selected,
         );
+        if !selected && let Some(active) = search.highlight(indexed.point) {
+            background = if active {
+                ACTIVE_SEARCH_BACKGROUND
+            } else {
+                SEARCH_BACKGROUND
+            };
+            foreground = if cell.flags.contains(Flags::HIDDEN) {
+                background
+            } else {
+                SEARCH_FOREGROUND
+            };
+        }
         if show_cursor && indexed.point == cursor_point {
             if cursor_shape == CursorShape::Block {
                 foreground = background;
@@ -887,6 +932,89 @@ fn fit_columns(text: &str, columns: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use term_core::alacritty_terminal::event::VoidListener;
+    use term_core::alacritty_terminal::index::{Column, Point as GridPoint, Side};
+    use term_core::alacritty_terminal::selection::{Selection, SelectionType};
+    use term_core::alacritty_terminal::term::{Config, Term};
+    use term_core::alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+
+    fn searchable_term(text: &str) -> (Term<VoidListener>, TerminalSearch) {
+        let mut term = Term::new(Config::default(), &TermDimensions::new(30, 3), VoidListener);
+        Processor::<StdSyncHandler>::new().advance(&mut term, text.as_bytes());
+        let mut search = TerminalSearch::default();
+        search.set_query("one").unwrap();
+        search.refresh(&mut term);
+        (term, search)
+    }
+
+    #[test]
+    fn search_paints_all_matches_and_distinguishes_the_active_match() {
+        let (mut term, mut search) = searchable_term("one one");
+        let palette = Palette::default();
+        let painted = snapshot(term.renderable_content(), &palette, false, &search);
+        let colors: Vec<_> = painted
+            .backgrounds
+            .iter()
+            .map(|rect| (rect.column, rect.cells, rect.color))
+            .collect();
+        assert_eq!(
+            colors,
+            [(0, 3, ACTIVE_SEARCH_BACKGROUND), (4, 3, SEARCH_BACKGROUND)]
+        );
+        search.step(true);
+        search.refresh(&mut term);
+        let painted = snapshot(term.renderable_content(), &palette, false, &search);
+        let colors: Vec<_> = painted
+            .backgrounds
+            .iter()
+            .map(|rect| (rect.column, rect.cells, rect.color))
+            .collect();
+        assert_eq!(
+            colors,
+            [(0, 3, SEARCH_BACKGROUND), (4, 3, ACTIVE_SEARCH_BACKGROUND)]
+        );
+        let painted = snapshot(
+            term.renderable_content(),
+            &palette,
+            false,
+            &TerminalSearch::default(),
+        );
+        assert!(painted.backgrounds.0.is_empty());
+    }
+
+    #[test]
+    fn selection_takes_precedence_over_search_highlights() {
+        let (mut term, search) = searchable_term("one one");
+        let mut selection = Selection::new(
+            SelectionType::Simple,
+            GridPoint::new(0.into(), Column(0)),
+            Side::Left,
+        );
+        selection.update(GridPoint::new(0.into(), Column(2)), Side::Right);
+        term.selection = Some(selection);
+        let painted = snapshot(
+            term.renderable_content(),
+            &Palette::default(),
+            false,
+            &search,
+        );
+        assert_eq!(painted.backgrounds.0[0].color, SELECTION_BACKGROUND);
+        assert_eq!(painted.backgrounds.0[1].color, SEARCH_BACKGROUND);
+    }
+
+    #[test]
+    fn search_does_not_reveal_hidden_text() {
+        let (term, search) = searchable_term("\x1b[8mone\x1b[0m");
+        let painted = snapshot(
+            term.renderable_content(),
+            &Palette::default(),
+            false,
+            &search,
+        );
+        let matched = &painted.batches[0];
+        assert_eq!(matched.text.trim_end(), "one");
+        assert_eq!(matched.style.foreground, ACTIVE_SEARCH_BACKGROUND);
+    }
 
     const RED: Rgb = Rgb {
         r: 0xff,

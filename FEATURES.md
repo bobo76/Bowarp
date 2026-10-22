@@ -16,6 +16,9 @@ directly to model APIs.
 - Support normal interactive CLI behavior, including permission prompts,
   cancellation, multiline input, colors, and terminal resizing.
 - Provide copy/paste, text selection, scrollback, and terminal search.
+- Search terminal output and retained scrollback with Ctrl+Shift+F: case-insensitive literal
+  matching, visible match highlights, a current/total count, Enter/Shift+Enter navigation
+  with wrapping, and Escape to close.
 - Pass mouse wheel, clicks and motion to programs that ask for them (scrolling a Claude Code
   transcript), with a modifier to keep local selection.
 - Shell command history shared by all shell tabs (with folder and time): an inline

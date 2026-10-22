@@ -77,6 +77,9 @@ Code or Copilot CLI; agents that are not installed are listed but disabled. New 
 |---|---|
 | Ctrl+Shift+C, Ctrl+Insert | Copy the selection |
 | Ctrl+Shift+V, Shift+Insert | Paste |
+| Ctrl+Shift+F | Search terminal output and scrollback |
+| Enter / Shift+Enter (in terminal search) | Next / previous match, wrapping around |
+| Esc (while terminal search is open) | Close search and return to the terminal |
 | Shift+PageUp / Shift+PageDown | Scroll the history by a page |
 | Click a link | Open it (use Ctrl/Cmd+click when the program tracks the mouse) |
 
@@ -85,6 +88,16 @@ Code does), clicks and the wheel go to it; hold Shift to select text locally. On
 selection is also copied to the primary selection, and middle-click pastes it. A wheel notch
 scrolls 2 lines on Linux, and X11 touchpad scrolling is slowed the same way (Windows uses the
 system's lines-per-notch setting).
+
+Terminal search matches literal text, ignoring case, across the current screen and retained
+scrollback, including soft-wrapped lines. All visible matches are highlighted, with the active
+match in a different color and its position shown as, for example, `3 of 17`. Enter and
+Shift+Enter (or the arrow buttons) scroll to the next and previous matches. Each tab keeps its
+own search; Ctrl+Shift+F refocuses it and selects the query for replacement. Closing search
+removes highlights without resetting the scroll position. Results update as output arrives
+and the terminal resizes. Search cannot retrieve output already evicted from scrollback or
+transcript text held internally by a program; alternate-screen programs search their current
+screen.
 
 Links in the output are underlined in blue with a hand cursor on hover. Click to open a URL
 (`http`, `https`, `ftp`) or an OSC 8 hyperlink in the browser, or a file path or `file://` URL

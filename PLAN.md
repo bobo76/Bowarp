@@ -88,39 +88,6 @@ it stays, under "Fixed, not tested yet" if only the manual check is missing.
 6. Window opacity and background blur, set in the settings file (opacity applies to the
    terminal background only, text stays opaque); blur where the platform allows it (Windows
    acrylic/mica, KDE on X11).
-**Fixed, not tested yet (built and unit-tested by the Windows CI, not run on a Windows machine)**
-
-- Command history in PowerShell: Enter on a HISTORY row printed `^E` before the command
-  (PSReadLine's Windows edit mode has no Ctrl+E); PowerShell tabs now get End (`ESC [ F`)
-  before the Backspaces (one per UTF-16 unit), bash/zsh still Ctrl+E. Check in pwsh and
-  Windows PowerShell: type part of a command, Up, Enter on a row: the line holds just that
-  command. Also with a grey inline prediction showing after the typed text (no leftover
-  text, no bell) and with an emoji on the line.
-- The explorer's `cd` into a WSL tab typed the Windows path (`cd 'C:\Users'`, refused by
-  bash); WSL tabs now get `ShellSyntax::Wsl`, which types `C:\x` as `/mnt/c/x` (default mount
-  root only) and `\\wsl$\<distro>\x` as `/x`. Check in an Ubuntu tab: the parent-folder button
-  and "cd to directory" move the shell, and `cd` updates the explorer and the title.
-- Copy from a Copilot CLI tab: Ctrl+C on Copilot's own selection and its right-click "Copy to
-  clipboard" put nothing on the clipboard. Copilot's log showed why: it runs `clip.exe`, which
-  exits with code 1 in the app's tabs ("clip.exe failed; relied on OSC 52"), and the app
-  dropped OSC 52 writes. They now go to the clipboard (`SessionEvent::ClipboardStore`; the
-  primary selection on Linux). Ctrl+Insert copied nothing: the app took it as its own Copy,
-  with no selection of its own since Copilot keeps the selection (mouse reporting); without
-  one, Ctrl+Insert now goes to the program (Ctrl+Shift+C still doesn't, it would be `^C`).
-  Check in a Copilot tab: select text and Ctrl+C, then Ctrl+Insert, and right-click "Copy to
-  clipboard", then paste elsewhere. Why `clip.exe` fails is not known.
-- Paste with Ctrl+V in the terminal, like Windows Terminal (before, only Ctrl+Shift+V and
-  Shift+Insert pasted, and Ctrl+V reached Copilot and Claude Code as `^V`). Without text on
-  the clipboard, Ctrl+V still goes to the program as `^V`, so Claude Code can paste a copied
-  image. With text, bash's quoted-insert and vim's visual block no longer get `^V`, until the
-  configurable keymap lets the user unbind it. Check in a Copilot and a Claude Code tab: Ctrl+V
-  pastes copied text, and in Claude Code a copied screenshot.
-- Executable path on the settings page's About page: an "Executable" row under "Config
-  folder" showing `std::env::current_exe()` ("Unknown" when it can't be read), to tell which
-  copy runs when several are installed. Check: the path shown is the running build.
-- Duplicate tab opens the copy right below the original, in its group or among the ungrouped
-  tabs (`Layout::add_after`); a pinned tab's copy still goes ungrouped at the end of the list.
-  Check: duplicate a tab mid-group, the last tab of a group and an ungrouped tab.
 
 ## Decisions
 
@@ -253,6 +220,18 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   settings size, which acts as the default zoom. Zooming never changes the setting and isn't
   saved (Ctrl+0 and a restart go back to the settings size). Ctrl+wheel is never sent to the
   program, even with mouse reporting on.
+- Restore a shell tab's last command: each shell tab (shell integration only; not agent tabs,
+  not cmd tabs, which report no commands) keeps the last command it ran, saved with the tab in
+  `tabs.json` (a `last_command` field in `SavedTab`, written when the window closes like
+  `folder`). Taken from the `ExecutedCommand` that `TerminalView` already passes to
+  `history::record`, so unrecordable commands (leading space, control characters) are never
+  saved. When the restored tab shows its first prompt with an empty line, the command is drawn
+  as the dimmed inline suggestion and accepted with the same keys (Right, End, Tab); it is
+  never typed into the line, so an Enter can't rerun `git push` or `rm` by accident. It goes
+  away once something is typed (the normal history suggestion takes over) or a command runs.
+  `tabs.json` must then be written owner-only like `history.jsonl` (commands may hold
+  secrets). Unit-test the `SavedTab` round trip (field missing, present) and the empty-line
+  suggestion.
 - New-tab folder picker (currently the selected tab's folder).
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
