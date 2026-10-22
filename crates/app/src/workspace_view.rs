@@ -1,3 +1,4 @@
+mod divider_drag;
 mod settings_pane;
 mod sidebar_rows;
 mod tab_card;
@@ -23,25 +24,29 @@ use gpui_kit::{
 };
 use term_core::{LaunchSpec, SessionKind};
 use workspace_model::layout::Direction;
-use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION, ViewerFraction};
+use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION, ExplorerWidth, ViewerFraction};
 use workspace_model::{
     Attention, DropTarget, GroupId, Layout, TabColor, TabId, TabMeta, TabsState, next_attention,
     waiting_count,
 };
 
+use self::divider_drag::DividerDrag;
 use self::settings_pane::SettingsPane;
 use self::tab_card::TabCards;
 use self::tab_search::TabSearch;
 use crate::about;
 use crate::assets::FILES_ICON;
-use crate::file_explorer::{EXPLORER_WIDTH, ExplorerEvent, FileExplorer};
+use crate::file_explorer::{ExplorerEvent, FileExplorer};
 use crate::file_viewer::{FilePlace, FileViewer, ViewerEvent};
 use crate::hooks::ClaudeHooks;
 use crate::launcher::{self, Launcher, launch_name};
 use crate::settings_file;
 use crate::settings_page;
 use crate::shell_integration;
-use crate::shortcuts::{self, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY};
+use crate::shortcuts::{
+    self, ATTENTION_KEY, CLOSE_TAB_KEY, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY, SEARCH_KEY,
+    SIDEBAR_KEY,
+};
 use crate::sidebar::{self, NUMBERED_TABS, SIDEBAR_WIDTH};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
@@ -106,6 +111,15 @@ impl Render for ViewerDivider {
     }
 }
 
+/// Dragged when the file explorer's right edge is.
+struct ExplorerDivider;
+
+impl Render for ExplorerDivider {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
 /// Where `open_tab_in` puts a new tab.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NewTabPlace {
@@ -142,7 +156,9 @@ pub struct WorkspaceView {
     explorer_visible: bool,
     /// The file viewer's share of the window width while its divider is dragged; otherwise
     /// the share saved in the settings (`viewer_fraction`), the same in every tab.
-    dragged_viewer_fraction: Option<f32>,
+    viewer_drag: DividerDrag<f32>,
+    /// The same for the explorer's width, in pixels (`explorer_width`).
+    explorer_drag: DividerDrag<ExplorerWidth>,
     renaming: Option<Rename>,
     search: TabSearch,
     cards: TabCards,
@@ -194,7 +210,8 @@ impl WorkspaceView {
             pulse_running: false,
             explorer,
             explorer_visible: false,
-            dragged_viewer_fraction: None,
+            viewer_drag: DividerDrag::new(Self::save_viewer_fraction),
+            explorer_drag: DividerDrag::new(Self::save_explorer_width),
             renaming: None,
             search: TabSearch::new(window, cx),
             cards: TabCards::default(),
@@ -1079,25 +1096,28 @@ impl WorkspaceView {
     }
 
     /// The width the sidebar and the explorer take from the row of panes.
-    fn fixed_panes_width(&self) -> f32 {
-        let sidebar = if self.sidebar_visible {
+    fn fixed_panes_width(&self, cx: &App) -> f32 {
+        let explorer = if self.explorer_visible {
+            self.explorer_width(cx)
+        } else {
+            0.
+        };
+        self.sidebar_width() + explorer
+    }
+
+    fn sidebar_width(&self) -> f32 {
+        if self.sidebar_visible {
             SIDEBAR_WIDTH
         } else {
             0.
-        };
-        let explorer = if self.explorer_visible {
-            EXPLORER_WIDTH
-        } else {
-            0.
-        };
-        sidebar + explorer
+        }
     }
 
     /// The file viewer's share of the window width: the one being dragged, else the saved one
     /// (which follows the settings file when it is reloaded).
     fn viewer_fraction(&self, cx: &App) -> f32 {
-        self.dragged_viewer_fraction
-            .unwrap_or_else(|| settings_file::settings(cx).file_viewer_fraction.get())
+        self.viewer_drag
+            .current(|| settings_file::settings(cx).file_viewer_fraction.get())
     }
 
     /// Follow a divider drag in memory only: [`Self::end_divider_drag`] saves it.
@@ -1105,21 +1125,78 @@ impl WorkspaceView {
         let row = event.bounds;
         let x = f32::from(event.event.position.x - row.origin.x);
         let fraction =
-            pane_width::fraction_at(x, f32::from(row.size.width), self.fixed_panes_width());
-        if fraction != self.viewer_fraction(cx) {
-            self.dragged_viewer_fraction = Some(fraction);
+            pane_width::fraction_at(x, f32::from(row.size.width), self.fixed_panes_width(cx));
+        if self.viewer_drag.follow(fraction, self.viewer_fraction(cx)) {
+            cx.notify();
+        }
+    }
+
+    /// The explorer's width in pixels: the one being dragged, else the saved one.
+    fn explorer_width(&self, cx: &App) -> f32 {
+        self.explorer_drag
+            .current(|| settings_file::settings(cx).file_explorer_width)
+            .get()
+    }
+
+    /// Follow a drag of the explorer's edge in memory only, like [`Self::drag_divider`].
+    fn drag_explorer_edge(
+        &mut self,
+        event: &DragMoveEvent<ExplorerDivider>,
+        cx: &mut Context<Self>,
+    ) {
+        let x = f32::from(event.event.position.x - event.bounds.origin.x);
+        let width = ExplorerWidth::at(x, self.sidebar_width());
+        let shown = ExplorerWidth::new(self.explorer_width(cx));
+        if self.explorer_drag.follow(width, shown) {
             cx.notify();
         }
     }
 
     /// On any mouse button release: save the width a divider drag left, once per drag.
     fn end_divider_drag(&mut self, cx: &mut Context<Self>) {
-        if let Some(fraction) = self.dragged_viewer_fraction.take() {
-            Self::save_viewer_fraction(fraction, cx);
-        }
+        self.viewer_drag.finish(cx);
+        self.explorer_drag.finish(cx);
     }
 
-    fn save_viewer_fraction(fraction: f32, cx: &mut Context<Self>) {
+    fn save_explorer_width(width: ExplorerWidth, cx: &mut App) {
+        settings_file::save_layout(cx, |settings| settings.file_explorer_width = width);
+    }
+
+    /// The explorer in a box of its width, with a strip on its right edge: drag it to resize
+    /// the explorer, double-click it for the default width.
+    fn explorer_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let hovered = cx.theme().border;
+        div()
+            .relative()
+            .flex_none()
+            .w(px(self.explorer_width(cx)))
+            .h_full()
+            .child(self.explorer.clone())
+            .child(
+                div()
+                    .id("explorer-divider")
+                    // Keeps presses on the strip from reaching the explorer rows under it.
+                    .occlude()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .h_full()
+                    .w(px(DIVIDER_WIDTH))
+                    .hover(move |style| style.bg(hovered))
+                    .cursor(CursorStyle::ResizeLeftRight)
+                    .on_drag(ExplorerDivider, |_, _, _, cx| cx.new(|_| ExplorerDivider))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|workspace, event: &MouseDownEvent, _, cx| {
+                            if event.click_count == 2 {
+                                workspace.explorer_drag.reset(ExplorerWidth::default(), cx);
+                            }
+                        }),
+                    ),
+            )
+    }
+
+    fn save_viewer_fraction(fraction: f32, cx: &mut App) {
         settings_file::save_layout(cx, |settings| {
             settings.file_viewer_fraction = ViewerFraction::new(fraction);
         });
@@ -1143,8 +1220,7 @@ impl WorkspaceView {
                 MouseButton::Left,
                 cx.listener(|workspace, event: &MouseDownEvent, _, cx| {
                     if event.click_count == 2 {
-                        workspace.dragged_viewer_fraction = None;
-                        Self::save_viewer_fraction(DEFAULT_VIEWER_FRACTION, cx);
+                        workspace.viewer_drag.reset(DEFAULT_VIEWER_FRACTION, cx);
                     }
                 }),
             )
@@ -1177,13 +1253,13 @@ impl WorkspaceView {
             ("tab", shift) => self.cycle(!shift, window, cx),
             (NEW_TAB_KEY, true) => self.open_default_shell(window, cx),
             (DUPLICATE_TAB_KEY, true) => self.duplicate_tab(self.active, window, cx),
-            ("w", true) if self.settings.shows_page() => self.close_settings(window, cx),
-            ("w", true) => self.close_tab(self.active, window, cx),
-            ("b", true) => self.toggle_sidebar(cx),
+            (CLOSE_TAB_KEY, true) if self.settings.shows_page() => self.close_settings(window, cx),
+            (CLOSE_TAB_KEY, true) => self.close_tab(self.active, window, cx),
+            (SIDEBAR_KEY, true) => self.toggle_sidebar(cx),
             // GPUI drops Shift from a shifted symbol: Ctrl+Shift+\ arrives as Ctrl+|.
             (EXPLORER_KEY, _) => self.toggle_explorer(cx),
-            ("s", true) => self.focus_search(window, cx),
-            ("a", true) => self.jump_to_attention(window, cx),
+            (SEARCH_KEY, true) => self.focus_search(window, cx),
+            (ATTENTION_KEY, true) => self.jump_to_attention(window, cx),
             (key, false) => match tab_number(key) {
                 Some(number) => self.activate(number - 1, window, cx),
                 None => return false,
@@ -1194,16 +1270,16 @@ impl WorkspaceView {
     }
 
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (icon, tooltip) = if self.sidebar_visible {
-            (IconName::PanelLeftClose, "Hide sidebar (Ctrl+Shift+B)")
+        let (icon, label) = if self.sidebar_visible {
+            (IconName::PanelLeftClose, "Hide sidebar")
         } else {
-            (IconName::PanelLeftOpen, "Show sidebar (Ctrl+Shift+B)")
+            (IconName::PanelLeftOpen, "Show sidebar")
         };
         Button::new("toggle-sidebar")
             .icon(icon)
             .ghost()
             .small()
-            .tooltip(tooltip)
+            .tooltip(shortcuts::with_shortcut(label, SIDEBAR_KEY))
             .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_sidebar(cx)))
     }
 
@@ -1257,7 +1333,7 @@ impl Render for WorkspaceView {
         let viewer_width = pane_width::viewer_width(
             self.viewer_fraction(cx),
             f32::from(window.viewport_size().width),
-            self.fixed_panes_width(),
+            self.fixed_panes_width(cx),
         );
         if window.window_title() != about::APP_NAME {
             window.set_window_title(about::APP_NAME);
@@ -1306,11 +1382,16 @@ impl Render for WorkspaceView {
                             workspace.drag_divider(event, cx);
                         },
                     ))
+                    .on_drag_move(cx.listener(
+                        |workspace, event: &DragMoveEvent<ExplorerDivider>, _, cx| {
+                            workspace.drag_explorer_edge(event, cx);
+                        },
+                    ))
                     .when(self.sidebar_visible, |content| {
                         content.child(self.render_sidebar(cx))
                     })
                     .when(self.explorer_visible, |content| {
-                        content.child(self.explorer.clone())
+                        content.child(self.explorer_panel(cx))
                     })
                     .child(div().flex_1().min_w_0().h_full().children(active).when(
                         self.settings.shows_page(),

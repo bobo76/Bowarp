@@ -109,11 +109,12 @@ output is not kept.
 | Up | Open the history popup (instead of the shell's own Up history) |
 | Up / Down, Page Up / Page Down | Move through the popup |
 | Typing, Backspace | Edit the command line; the popup lists the commands that still match |
-| Enter | Put the selected command on the prompt, replacing the typed text (not run) |
+| Enter, Tab | Put the selected command on the prompt, replacing the typed text (not run) |
+| Delete | Remove the selected command from the history (and from `history.jsonl`) |
 | Esc | Close the popup |
 
 Commands run in any bash, zsh or PowerShell tab are kept with their folder and time in
-`history.jsonl` in the config folder (latest use wins, newest 10 000). While you type, the newest
+`history.jsonl` in the config folder (latest use wins, newest 2 000). While you type, the newest
 command starting with the typed text shows dimmed after the cursor. The popup lists the commands
 containing the typed text (all of them on an empty prompt), newest at the bottom next to the
 prompt, each with its folder; click one to put it on the prompt. Commands starting with a space

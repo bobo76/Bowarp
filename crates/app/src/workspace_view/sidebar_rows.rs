@@ -16,7 +16,7 @@ use workspace_model::{DropTarget, Group, GroupId, Item, Location, display_path};
 use super::{RenameTarget, WorkspaceView};
 use crate::launcher::{self, Launcher};
 use crate::settings_file;
-use crate::shortcuts::{self, NEW_TAB_KEY};
+use crate::shortcuts::{self, ATTENTION_KEY, NEW_TAB_KEY};
 use crate::sidebar::{
     self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabDetail,
     TabRow,
@@ -81,7 +81,7 @@ impl WorkspaceView {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .h(px(40.))
+                    .h(px(crate::ui_dimensions::HEADER_HEIGHT))
                     .pl_2()
                     .pr_1()
                     .child(self.render_search(cx))
@@ -121,10 +121,11 @@ impl WorkspaceView {
         if count == 0 {
             return None;
         }
-        let tooltip = match count {
-            1 => "1 tab needs attention: go to it (Ctrl+Shift+A)".to_string(),
-            count => format!("{count} tabs need attention: go to the next (Ctrl+Shift+A)"),
+        let label = match count {
+            1 => "1 tab needs attention: go to it".to_string(),
+            count => format!("{count} tabs need attention: go to the next"),
         };
+        let tooltip = shortcuts::with_shortcut(&label, ATTENTION_KEY);
         let button = Button::new("next-attention")
             .icon(IconName::TriangleAlert)
             .label(count.to_string())
@@ -373,11 +374,7 @@ impl WorkspaceView {
                         menu = menu.separator();
                     }
                     for launcher in group {
-                        let label = if launcher.program.is_some() {
-                            launcher.label.clone()
-                        } else {
-                            format!("{} (not installed)", launcher.label)
-                        };
+                        let label = launcher.display_label();
                         menu = menu.item(
                             PopupMenuItem::new(label)
                                 .icon(sidebar::launcher_icon(launcher.icon))

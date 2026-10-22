@@ -543,7 +543,7 @@ impl FileViewer {
             .flex_none()
             .items_center()
             .gap_2()
-            .h(px(40.))
+            .h(px(crate::ui_dimensions::HEADER_HEIGHT))
             .pl_3()
             .pr_1()
             .border_b_1()

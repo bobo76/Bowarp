@@ -53,7 +53,7 @@ directly to model APIs.
 ## Project Files
 
 - Browse the selected session's folder in a collapsible file tree that follows the
-  session's current folder and refreshes when files change.
+  session's current folder and refreshes when files change. The tree's width is resizable.
 - Act on files and folders from the tree: create, rename, delete, open a shell or an agent
   session or `cd` there (or to the parent folder), and copy paths.
 - View and edit a clicked file beside the terminal: Markdown rendered or as source, JSON
@@ -86,7 +86,7 @@ directly to model APIs.
 
 ## Workspace Persistence
 
-- Reopen the window with its last size, position, file viewer width, and tabs (programs,
+- Reopen the window with its last size, position, file explorer and viewer widths, and tabs (programs,
   folders, names, colors, pins, groups, order, and selection), starting fresh sessions.
 - Save named workspaces with their groups, tab names, colors, icons, project
   folders, launch commands, and pane layouts.

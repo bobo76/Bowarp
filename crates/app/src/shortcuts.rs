@@ -11,6 +11,14 @@ use gpui_kit::{
 pub const NEW_TAB_KEY: &str = "t";
 /// Ctrl+Shift+D: another tab like the selected one.
 pub const DUPLICATE_TAB_KEY: &str = "d";
+/// Ctrl+Shift+W: close the selected tab.
+pub const CLOSE_TAB_KEY: &str = "w";
+/// Ctrl+Shift+B: show or hide the sidebar.
+pub const SIDEBAR_KEY: &str = "b";
+/// Ctrl+Shift+S: search tabs.
+pub const SEARCH_KEY: &str = "s";
+/// Ctrl+Shift+A: jump to the next tab needing attention.
+pub const ATTENTION_KEY: &str = "a";
 /// Ctrl+Shift+|: show or hide the file explorer. Bound as the key that produces `|`, whatever
 /// the layout; GPUI reports it without Shift (Ctrl+|).
 pub const EXPLORER_KEY: &str = "|";

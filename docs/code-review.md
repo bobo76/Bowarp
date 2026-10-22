@@ -7,10 +7,6 @@ entities are treated like Spring components for OC-8, and GPUI's `cx` and protoc
 (`Element::prepaint`/`paint`, `EntityInputHandler`) are exempt from CC-7. Line numbers are as of
 commit `ca4e82e`.
 
-Problems 1-3 (CC-5: `WorkspaceView`, `TerminalView`, and the duplicated folder watcher of
-`FileExplorer`/`FileViewer`) were fixed after the review; the rest are open. Numbers are kept
-from the review.
-
 ## 🔴 Need to follow
 
 **Problem 4: 🔴 [CC-10]** Render code mutates state.

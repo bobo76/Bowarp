@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
-use crate::pane_width::ViewerFraction;
+use crate::pane_width::{ExplorerWidth, ViewerFraction};
 use crate::window_state::write_atomic;
 
 /// The settings. A new field gets a default (through `Default`, as `#[serde(default)]` asks
@@ -41,6 +41,10 @@ pub struct Settings {
     /// settings page).
     #[serde(deserialize_with = "lenient")]
     pub file_viewer_fraction: ViewerFraction,
+    /// The file explorer's width in pixels (150-600), set by dragging its edge (not on the
+    /// settings page).
+    #[serde(deserialize_with = "lenient")]
+    pub file_explorer_width: ExplorerWidth,
     /// Fields this version doesn't know, written back as they were.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -778,6 +782,37 @@ mod tests {
                 .to_json()
                 .unwrap()
                 .contains(r#""file_viewer_fraction": 0.45"#)
+        );
+    }
+
+    #[test]
+    fn file_explorer_width_is_read_clamped_and_defaults() {
+        assert_eq!(
+            Settings::default().file_explorer_width,
+            ExplorerWidth::default()
+        );
+        for (text, width) in [
+            (r#"{"file_explorer_width": 420}"#, 420.),
+            (r#"{"file_explorer_width": 20}"#, ExplorerWidth::MIN),
+            (r#"{"file_explorer_width": 5000}"#, ExplorerWidth::MAX),
+            (r#"{"file_explorer_width": "wide"}"#, 300.),
+            (r#"{"file_explorer_width": null}"#, 300.),
+        ] {
+            let settings = Settings::from_json(text).unwrap();
+            assert_eq!(settings.file_explorer_width.get(), width, "{text}");
+        }
+        let settings = Settings::from_json(r#"{"file_explorer_width": 5000}"#).unwrap();
+        assert!(
+            settings
+                .to_json()
+                .unwrap()
+                .contains(r#""file_explorer_width": 600.0"#)
+        );
+        assert!(
+            Settings::default()
+                .to_json()
+                .unwrap()
+                .contains(r#""file_explorer_width": 300.0"#)
         );
     }
 

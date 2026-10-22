@@ -43,6 +43,7 @@ use crate::keys;
 use crate::launcher;
 use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
 use crate::shell_integration;
+use crate::shortcuts::{self, CLOSE_TAB_KEY};
 use crate::sidebar::TabStatus;
 use crate::terminal_element::{TerminalElement, to_hsla};
 
@@ -871,7 +872,7 @@ impl TerminalView {
                 div()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child("Ctrl+Shift+W closes the tab"),
+                    .child(shortcuts::with_shortcut("Close the tab", CLOSE_TAB_KEY)),
             );
         Some(banner.into_any_element())
     }

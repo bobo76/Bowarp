@@ -61,7 +61,7 @@ impl Default for CommandHistory {
 }
 
 impl CommandHistory {
-    pub const DEFAULT_CAP: usize = 10_000;
+    pub const DEFAULT_CAP: usize = 2_000;
 
     pub fn new(cap: usize) -> Self {
         Self {
@@ -123,6 +123,13 @@ impl CommandHistory {
             self.entries.drain(..excess);
         }
         true
+    }
+
+    /// Forget `command`. Returns whether it was in the history.
+    pub fn remove(&mut self, command: &str) -> bool {
+        let before = self.entries.len();
+        self.entries.retain(|entry| entry.command != command);
+        self.entries.len() != before
     }
 
     /// Oldest first.
@@ -199,7 +206,7 @@ impl CommandHistory {
         }
         let (history, lines) = Self::from_jsonl(&text, cap);
         if history.needs_compaction(lines)
-            && let Err(err) = compact(path, &history.to_jsonl(), bytes.len() as u64)
+            && let Err(err) = compact(path, history.to_jsonl().as_bytes(), bytes.len() as u64)
         {
             eprintln!(
                 "agent-workspace: failed to compact {}: {err}",
@@ -275,7 +282,8 @@ fn private_file() -> OpenOptions {
 
 /// Rewrite the history file at `path` with `text`, unless it is no longer `read_len` bytes
 /// long: another instance appended a line since it was read, which the rewrite would lose.
-fn compact(path: &Path, text: &str, read_len: u64) -> io::Result<()> {
+/// Returns whether the file was rewritten.
+fn compact(path: &Path, text: &[u8], read_len: u64) -> io::Result<bool> {
     let temp = path.with_extension(format!("jsonl.{}.tmp", std::process::id()));
     // A leftover from a crash keeps its mode when reopened.
     let _ = fs::remove_file(&temp);
@@ -283,11 +291,45 @@ fn compact(path: &Path, text: &str, read_len: u64) -> io::Result<()> {
         .write(true)
         .truncate(true)
         .open(&temp)?
-        .write_all(text.as_bytes())?;
+        .write_all(text)?;
     if fs::metadata(path)?.len() != read_len {
-        return fs::remove_file(&temp);
+        fs::remove_file(&temp)?;
+        return Ok(false);
     }
-    fs::rename(&temp, path)
+    fs::rename(&temp, path)?;
+    Ok(true)
+}
+
+/// How often [`remove_command`] reads the file again after another instance appended to it.
+const REMOVE_ATTEMPTS: usize = 3;
+
+/// Drop every line of the history file at `path` that holds `command`, keeping the other lines
+/// as they are (damaged ones too). A missing file is fine.
+pub fn remove_command(path: &Path, command: &str) -> io::Result<()> {
+    for _ in 0..REMOVE_ATTEMPTS {
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(err),
+        };
+        let kept: Vec<&[u8]> = bytes
+            .split(|&byte| byte == b'\n')
+            .filter(|line| !line.is_empty() && !holds_command(line, command))
+            .collect();
+        let text = kept.iter().fold(Vec::new(), |mut text, line| {
+            text.extend_from_slice(line);
+            text.push(b'\n');
+            text
+        });
+        if compact(path, &text, bytes.len() as u64)? {
+            return Ok(());
+        }
+    }
+    Err(io::Error::other("the history file kept changing"))
+}
+
+fn holds_command(line: &[u8], command: &str) -> bool {
+    serde_json::from_slice::<HistoryEntry>(line).is_ok_and(|entry| entry.command == command)
 }
 
 /// Append `entry` to the history file at `path`, creating it and its folder.
@@ -499,6 +541,36 @@ mod tests {
             let mode = fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600, "compacted file is owner-only");
         }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn removed_commands_leave_the_history_and_the_file() {
+        let mut history = CommandHistory::new(10);
+        history.add(entry("ls", 1));
+        history.add(entry("cd src", 2));
+        assert!(history.remove("ls"));
+        assert!(!history.remove("ls"));
+        assert_eq!(commands(&history), ["cd src"]);
+
+        let dir = std::env::temp_dir().join(format!("agentws-remove-{}", std::process::id()));
+        let path = dir.join("history.jsonl");
+        let _ = fs::remove_dir_all(&dir);
+        remove_command(&path, "ls").unwrap();
+        // Earlier uses of the command are in the file too; a damaged line stays.
+        for (time, command) in [(1, "ls"), (2, "cd src"), (3, "ls")] {
+            append_entry(&path, &entry(command, time)).unwrap();
+        }
+        fs::write(
+            &path,
+            [fs::read(&path).unwrap(), b"{\"cmd\":\"pw\n".to_vec()].concat(),
+        )
+        .unwrap();
+        remove_command(&path, "ls").unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert_eq!(text.lines().count(), 2, "{text}");
+        assert!(text.contains("cd src") && text.contains("pw") && !text.contains("\"ls\""));
+        assert_eq!(commands(&CommandHistory::load(&path, 10)), ["cd src"]);
         fs::remove_dir_all(&dir).unwrap();
     }
 

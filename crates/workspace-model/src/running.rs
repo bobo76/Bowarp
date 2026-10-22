@@ -3,6 +3,8 @@
 
 use std::time::Duration;
 
+use crate::time::{SECONDS_PER_HOUR, SECONDS_PER_MINUTE};
+
 /// A command shows as Running only once it has run this long, so quick ones (`ls`, `cd`) never
 /// flash the badge.
 pub const RUNNING_AFTER: Duration = Duration::from_millis(500);
@@ -34,11 +36,14 @@ pub fn running_badge(elapsed: Duration) -> RunningBadge {
 /// only from an hour on).
 pub fn format_clock(elapsed: Duration) -> String {
     let seconds = elapsed.as_secs();
-    let (hours, minutes) = (seconds / 3600, seconds / 60 % 60);
+    let (hours, minutes) = (
+        seconds / SECONDS_PER_HOUR,
+        seconds % SECONDS_PER_HOUR / SECONDS_PER_MINUTE,
+    );
     if hours == 0 {
-        format!("{minutes}:{:02}", seconds % 60)
+        format!("{minutes}:{:02}", seconds % SECONDS_PER_MINUTE)
     } else {
-        format!("{hours}:{minutes:02}:{:02}", seconds % 60)
+        format!("{hours}:{minutes:02}:{:02}", seconds % SECONDS_PER_MINUTE)
     }
 }
 

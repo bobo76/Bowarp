@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::{App, Global};
 use term_core::ExecutedCommand;
-use workspace_model::{CommandHistory, HistoryEntry, append_entry};
+use workspace_model::{CommandHistory, HistoryEntry, append_entry, remove_command};
 
 use crate::window_bounds::config_file;
 
@@ -52,6 +52,22 @@ pub fn record(command: ExecutedCommand, cx: &mut App) {
     if let Err(err) = append_entry(path, &entry) {
         eprintln!(
             "agent-workspace: failed to save command history to {}: {err}",
+            path.display()
+        );
+    }
+}
+
+/// Forget `command`, in this run and in the history file. A failed save is only reported: the
+/// command is gone from this run's history.
+pub fn forget(command: &str, cx: &mut App) {
+    let history = cx.global_mut::<History>();
+    history.commands.remove(command);
+    let Some(path) = &history.path else {
+        return;
+    };
+    if let Err(err) = remove_command(path, command) {
+        eprintln!(
+            "agent-workspace: failed to remove a command from {}: {err}",
             path.display()
         );
     }

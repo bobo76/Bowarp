@@ -1,6 +1,7 @@
 //! The file viewer's width beside the terminal: a share of the window, so it follows window
 //! resizes, kept within limits that leave both panes usable. The share is saved in the
-//! settings file as a [`ViewerFraction`].
+//! settings file as a [`ViewerFraction`]. The file explorer's width ([`ExplorerWidth`]) is
+//! here too.
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -68,6 +69,51 @@ impl<'de> Deserialize<'de> for ViewerFraction {
     }
 }
 
+/// The explorer's width in pixels until it is dragged, and after a double-click on its edge.
+pub const DEFAULT_EXPLORER_WIDTH: f32 = 300.;
+
+/// The explorer's width in pixels as saved in the settings file, kept within
+/// [`ExplorerWidth::MIN`]..=[`ExplorerWidth::MAX`] (half to twice the default): a value outside
+/// is clamped when read, a value of the wrong type gives [`DEFAULT_EXPLORER_WIDTH`].
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct ExplorerWidth(f32);
+
+impl ExplorerWidth {
+    pub const MIN: f32 = DEFAULT_EXPLORER_WIDTH / 2.;
+    pub const MAX: f32 = DEFAULT_EXPLORER_WIDTH * 2.;
+
+    /// `width` clamped to the range; not a number gives the default.
+    pub fn new(width: f32) -> Self {
+        if width.is_nan() {
+            return Self::default();
+        }
+        Self(width.clamp(Self::MIN, Self::MAX))
+    }
+
+    /// The width when the explorer's edge is dragged to `x`, measured from the left edge of the
+    /// row of panes, with `left` pixels (the sidebar) before the explorer.
+    pub fn at(x: f32, left: f32) -> Self {
+        Self::new(x - left)
+    }
+
+    pub fn get(self) -> f32 {
+        self.0
+    }
+}
+
+impl Default for ExplorerWidth {
+    fn default() -> Self {
+        Self(DEFAULT_EXPLORER_WIDTH)
+    }
+}
+
+impl<'de> Deserialize<'de> for ExplorerWidth {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        f32::deserialize(deserializer).map(Self::new)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +164,29 @@ mod tests {
                 assert_eq!(ViewerFraction::new(fraction).get(), fraction, "{row} {x}");
             }
         }
+    }
+
+    #[test]
+    fn explorer_width_is_clamped() {
+        assert_eq!(ExplorerWidth::MIN, 150.);
+        assert_eq!(ExplorerWidth::MAX, 600.);
+        assert_eq!(ExplorerWidth::new(400.).get(), 400.);
+        assert_eq!(ExplorerWidth::new(10.).get(), 150.);
+        assert_eq!(ExplorerWidth::new(-3.).get(), 150.);
+        assert_eq!(ExplorerWidth::new(9000.).get(), 600.);
+        assert_eq!(ExplorerWidth::new(f32::INFINITY).get(), 600.);
+        assert_eq!(ExplorerWidth::new(f32::NAN), ExplorerWidth::default());
+        assert_eq!(ExplorerWidth::default().get(), DEFAULT_EXPLORER_WIDTH);
+    }
+
+    #[test]
+    fn dragging_the_explorer_edge_sets_its_width() {
+        // The edge at 540 px with the 240 px sidebar before it.
+        assert_eq!(ExplorerWidth::at(540., 240.).get(), 300.);
+        assert_eq!(ExplorerWidth::at(640., 240.).get(), 400.);
+        assert_eq!(ExplorerWidth::at(250., 240.).get(), 150.);
+        assert_eq!(ExplorerWidth::at(2000., 240.).get(), 600.);
+        // No sidebar.
+        assert_eq!(ExplorerWidth::at(200., 0.).get(), 200.);
     }
 }

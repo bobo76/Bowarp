@@ -33,7 +33,6 @@ use crate::folder_watcher::{FolderWatcher, WatchedFolders, WatchesFolders};
 use crate::launcher::Launcher;
 use crate::sidebar;
 
-pub const EXPLORER_WIDTH: f32 = 300.;
 const ROW_HEIGHT: f32 = 24.;
 const INDENT: f32 = 14.;
 
@@ -481,7 +480,7 @@ impl FileExplorer {
             };
             let (submenu_explorer, submenu_path) = (explorer.clone(), path.clone());
             let agents = agents.clone();
-            menu.min_w(px(200.))
+            menu.min_w(px(crate::ui_dimensions::MENU_WIDTH))
                 .item(item("New file", EntryCommand::NewFile, true))
                 .separator()
                 .item(item("cd to directory", EntryCommand::CdTo, can_cd))
@@ -492,11 +491,7 @@ impl FileExplorer {
                         .enumerate()
                         .fold(menu, |menu, (index, agent)| {
                             let installed = agent.program.is_some();
-                            let label = if installed {
-                                agent.label.clone()
-                            } else {
-                                format!("{} (not installed)", agent.label)
-                            };
+                            let label = agent.display_label();
                             menu.item(
                                 command_item(
                                     &submenu_explorer,
@@ -633,7 +628,7 @@ impl FileExplorer {
             .flex_none()
             .items_center()
             .justify_between()
-            .h(px(40.))
+            .h(px(crate::ui_dimensions::HEADER_HEIGHT))
             .pl_2()
             .pr_1()
             .child(
@@ -717,9 +712,7 @@ impl Render for FileExplorer {
             .id("file-explorer")
             .flex()
             .flex_col()
-            .flex_none()
-            .w(px(EXPLORER_WIDTH))
-            .h_full()
+            .size_full()
             .bg(background)
             .border_r_1()
             .border_color(border)

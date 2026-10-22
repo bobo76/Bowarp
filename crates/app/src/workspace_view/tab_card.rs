@@ -159,8 +159,10 @@ impl WorkspaceView {
                 let _ = workspace.update(cx, |workspace, cx| {
                     if *open {
                         workspace.refresh_diff_stat(id, cx);
+                        workspace.start_card_clock(id, cx);
+                    } else {
+                        workspace.stop_card_clock(id);
                     }
-                    workspace.set_card_clock(id, *open, cx);
                 });
             })
             .into_any_element()
@@ -190,23 +192,22 @@ impl WorkspaceView {
         })
     }
 
-    /// Start or stop repainting the lap time or running time in the tab's hover card. While
-    /// the card shows, the window repaints on each whole second of the time, and only while
-    /// the agent is working or a command runs; otherwise the task just checks once a second
-    /// whether one started. Closing a card stops the task, so nothing runs while no card
-    /// shows.
-    fn set_card_clock(&mut self, id: u64, open: bool, cx: &mut Context<Self>) {
-        if !open {
-            if self
-                .cards
-                .clock
-                .as_ref()
-                .is_some_and(|(shown, _)| *shown == id)
-            {
-                self.cards.clock = None;
-            }
-            return;
+    /// Stop the clock when this tab's card closes.
+    fn stop_card_clock(&mut self, id: u64) {
+        if self
+            .cards
+            .clock
+            .as_ref()
+            .is_some_and(|(shown, _)| *shown == id)
+        {
+            self.cards.clock = None;
         }
+    }
+
+    /// Repaint the hover card while it shows. The window repaints on each whole second while
+    /// the agent is working or a command runs; otherwise the task checks once a second whether
+    /// one started.
+    fn start_card_clock(&mut self, id: u64, cx: &mut Context<Self>) {
         let task = cx.spawn(async move |this, cx| {
             loop {
                 let Ok(ticking) = this.read_with(cx, |workspace, cx| {

@@ -4,8 +4,12 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 ## Status (2026-10-19)
 
-[FEATURES.md](FEATURES.md) is the target; what is not built yet is in the milestones and the
-backlog below. Details of finished work are in the git history (328 tests).
+[FEATURES.md](FEATURES.md) is the target; what is not built yet is in the next steps and the
+backlog below. Details of finished work are in the git history (334 tests).
+
+**Keeping this file current:** when something is completely done (built, tested and checked
+where it has to be), remove it from this file; the git history keeps the record. Until then
+it stays, under "Fixed, not tested yet" if only the manual check is missing.
 
 **Known limitations**
 
@@ -49,19 +53,27 @@ backlog below. Details of finished work are in the git history (328 tests).
   again. A drag whose release the app misses (a right or middle button released outside the
   window, or on Windows a focus change such as Alt+Tab mid-drag) keeps the dragged width and
   saves it at the next mouse release anywhere; it is lost only if the app quits first.
+- File explorer width: dragged by the 6 px strip on the explorer's right edge (double-click
+  for 300 px), kept between 150 and 600 px whatever the window size (a narrow window can
+  leave the terminal and viewer below their usual minimums), and saved in pixels
+  (`file_explorer_width`) with the same rules as the viewer width: once when the drag ends,
+  not on the settings page, not while the file is broken, other instances after a reload.
 
-**Next steps (quick wins 3: settings)**
+**Next steps**
 
-1. File explorer resize: drag the explorer's edge to change its width, like the file viewer's
-   divider (`pane_width`), between half (150 px) and twice (600 px) the default
-   `EXPLORER_WIDTH` (300 px, `app/src/file_explorer.rs`). The width also goes into the
-   pane layout in `workspace_view.rs`, and is saved in the settings file and restored at
-   startup, like the file viewer width.
-2. Configurable terminal path: the executable path for each launcher entry (Terminal, Git
+1. Notifications and close warnings:
+   - Close-with-running-process warnings.
+   - Notifications + configurable sound for agent events (Waiting, Done).
+   - Clipboard notice: a banner above the terminal when a program writes the clipboard
+     (OSC 52), with allow/deny.
+2. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
+   `cx.build_action`) from the settings file in place of `default_bindings`. First so the user
+   can unbind Ctrl+V (paste) and get `^V` back for bash's quoted-insert and vim's visual block.
+3. Configurable terminal path: the executable path for each launcher entry (Terminal, Git
    Bash, `claude`, `copilot`) saved in the settings file and shown on the settings page, for
    programs that aren't on `PATH` or where the wrong copy is found first; an empty value keeps
    the current lookup.
-3. Agent launch arguments: extra command-line arguments for the Claude Code and Copilot CLI
+4. Agent launch arguments: extra command-line arguments for the Claude Code and Copilot CLI
    launcher entries (e.g. `--yolo` for `copilot`, `--dangerously-skip-permissions` or
    `--model opus` for `claude`), saved in the settings file and shown on the settings page
    next to the entry's path. Split like a shell command line (quotes group words) and added
@@ -69,12 +81,6 @@ backlog below. Details of finished work are in the git history (328 tests).
    tabs started from that entry (the `+` menu, Ctrl+Shift+T). A restored tab keeps the
    arguments it started with (saved with the tab in `tabs.json`), not the current setting.
    Empty adds none.
-4. Configurable terminal icon: the icon for each launcher entry, picked from the bundled
-   `LauncherIcon` set (Bash, PowerShell, Command Prompt, Zsh, Fish, Ubuntu, ...) and saved in
-   the settings file (settings page row); it shows in the new-tab menu and on the sidebar row
-   of every tab started from that entry (restored tabs included). "Automatic" keeps the
-   current detection (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`),
-   e.g. for a wrapper script that `shell_icon` only sees as `Shell`.
 5. Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
    and terminal color schemes: a few bundled schemes plus user schemes imported from
    base16/iTerm files, saved in the settings file and picked on the Appearance page. "System"
@@ -82,9 +88,6 @@ backlog below. Details of finished work are in the git history (328 tests).
 6. Window opacity and background blur, set in the settings file (opacity applies to the
    terminal background only, text stays opaque); blur where the platform allows it (Windows
    acrylic/mica, KDE on X11).
-7. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
-   `cx.build_action`) from the settings file in place of `default_bindings`.
-
 **Fixed, not tested yet (built and unit-tested by the Windows CI, not run on a Windows machine)**
 
 - Command history in PowerShell: Enter on a HISTORY row printed `^E` before the command
@@ -118,12 +121,6 @@ backlog below. Details of finished work are in the git history (328 tests).
 - Duplicate tab opens the copy right below the original, in its group or among the ungrouped
   tabs (`Layout::add_after`); a pinned tab's copy still goes ungrouped at the end of the list.
   Check: duplicate a tab mid-group, the last tab of a group and an ungrouped tab.
-
-Checked on a desktop (2026-10-19): F11 full screen; on Windows: the parent-folder button in PowerShell, the
-explorer following `cd` in PowerShell, Windows PowerShell, Git Bash and cmd (and cmd's title),
-Copilot CLI status, no console window from the hover card's `git`, the title bar buttons,
-"Bash" opening Git Bash, and Claude Code hooks (`agentws-hook.exe` quoting, `claude.cmd`
-under ConPTY).
 
 ## Decisions
 
@@ -162,42 +159,22 @@ Only `app` depends on GPUI. If GPUI proves too painful, only that crate is repla
 Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-card.png),
 [tab context menu](docs/ui-reference/tab-context-menu.png). Still to do from them:
 
-| Element | Look | Milestone |
+| Element | Look | Where |
 |---|---|---|
-| Context menu | Save as new config (= save as a named workspace) | M4 |
-| Clipboard notice | banner above the terminal when a program writes the clipboard (OSC 52), with allow/deny | M5 |
+| Context menu | Save as new config (= save as a named workspace) | Backlog: named workspaces |
+| Clipboard notice | banner above the terminal when a program writes the clipboard (OSC 52), with allow/deny | Next step 1 |
 
 "Share session" from the screenshot is not planned.
 
-## Later Milestones
-
-- **M4:** named workspaces (the single window's tabs are already restored), offer to relaunch; restored tabs clearly marked "not running".
-- **M5:** terminal search, close-with-running-process warnings, notifications + configurable sound.
-- **M6:** Copilot CLI NeedsAttention (progress reports only give Working / Idle; needs hooks or a
-  progress state for prompts), Windows packaging, Ubuntu polish
-  (Wayland/X11, socket paths).
-
 ## Backlog
 
-- Claude Code typed at a shell prompt behaves like a Claude Code tab: today a `claude` started
-  from a shell tab shows "Running for" until it quits, even while it sits idle, because it gets
-  no hooks. Instead:
-  - Shell tabs also get `AGENTWS_SESSION`, the hook pipe name and a new
-    `AGENTWS_CLAUDE_SETTINGS` (the settings file `ClaudeHooks` writes, `crates/app/src/hooks.rs`).
-  - The shell integration scripts (bash, zsh, PowerShell) define a `claude` wrapper that runs
-    `command claude --settings "$AGENTWS_CLAUDE_SETTINGS" "$@"` when that variable is set.
-  - `TerminalView`: while the running command (OSC 133 `C` mark, `PromptEvent::Started`) has
-    `claude` as its first word (matched by file name, path and `.exe` / `.cmd` stripped, like
-    `shell_icon`), the tab shows the hook status (Working, Waiting, Done, with the "Working ·
-    2m 14s" lap) instead of Running, and the sidebar row shows the Claude icon; `copilot` gets
-    its icon only (no hooks). The prompt returning (`Finished`) clears the hook status and the
-    tab is a shell tab again.
-  - Nested shells and tmux clear the session variables, as they already clear
-    `AGENTWS_MARK_TOKEN`, so a `claude` started there doesn't report to this tab.
-  - Check that a `--settings` the user passes still works alongside the wrapper's (Claude Code
-    may take only one; if so, document it).
-  Needs shell integration, so it misses `npx`, an absolute path to `claude` and scripts that run
-  it (a later Linux `/proc` child check could add the icon for those, without hooks).
+- Named workspaces (the single window's tabs are already restored): save and open named
+  workspaces, offer to relaunch their tabs; restored tabs clearly marked "not running".
+- Copilot CLI NeedsAttention via its hooks (progress reports only give Working / Idle;
+  Copilot's `cli-main.js` has a `hooks` config and a `PermissionRequest` event: per-tab hooks
+  config like `ClaudeHooks`, event through `agentws-hook` to `agent-status`, fall back to the
+  progress status without hooks; pin the Copilot version tested). Re-run the manual checks 6-9
+  (README) on Ubuntu, Wayland and X11.
 - `claude` / `copilot` typed at a shell prompt open an agent tab: instead of running in the
   shell tab, the command opens a new tab exactly like the `+` menu's "Claude Code" / "Copilot
   CLI" entry (`open_launcher` in `app/src/workspace_view.rs`, so hooks and status work), in the
@@ -215,8 +192,11 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
     prints its own "command not found".
   - Setting "Open agents typed at the prompt in a new tab" on the settings page's Terminal page
     (default on); off, the functions aren't defined (the app passes a flag with the token).
-  - Mostly replaces the item above for interactive use; that item still matters for `claude`
-    run in place (`-p` in a script, a nested shell, cmd tabs, which get no functions).
+  - A `claude` run in place (`-p` in a script, a nested shell, cmd tabs, which get no functions)
+    gets no hooks and shows "Running for" until it quits. Accepted.
+- Settings button toggles the page: when the settings page is open and focused, clicking the
+  button that opened it closes the page (back to the previous tab) instead of doing nothing.
+  When the page is open but not focused, the click still focuses it.
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
 - Bell sound: with the M5 notification sound; rate-limited so a stream of bells doesn't
@@ -282,6 +262,23 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   palette plus "Default") that tints the tab's sidebar row and its terminal background; saved
   with the tab in `tabs.json` and restored. The terminal's foreground colors stay unchanged,
   so the palette must keep text readable in light and dark themes.
+- Tab hover card settings: a "Tab hover card" switch (default on) on the settings page that
+  turns the card on the sidebar rows off or on, and one switch per piece of information it
+  shows (all on by default), saved in the settings file:
+  - Status: the colored chip, with the lap time ("Working · 2m 14s") or the running command,
+    and the "Running for 2:14" line.
+  - Shortcut: the tab's Ctrl+number shortcut.
+  - Folder: the full folder, home shortened to `~`.
+  - Branch: the git branch.
+  - Program title: the program's title, when the row's custom name hides it.
+  - Session kind: the kind icon and name (or the shell's name).
+  - Lines added: the `+N` from `git diff`.
+  Applies live. Card off: `with_hover_card` returns the bare row, so no card is built, no
+  `git diff` runs and no clock ticks. Lines added off: `refresh_diff_stat` doesn't run
+  `git diff` either. Every piece off is the same as the card off. `sidebar::tab_card` skips
+  the unchecked parts (a `TabCardFields` set in `workspace-model/src/settings.rs`, read in
+  `tab_card.rs`); unit-test the settings read (missing, wrong type) and which parts a set
+  keeps.
 - Group hover card: hovering a group header for a moment opens a card next to it, like the
   tab hover card (`with_hover_card` in `app/src/workspace_view/sidebar_rows.rs`), that sums up
   the group's tabs. Most useful when the group is collapsed:
@@ -303,11 +300,8 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   WorkspaceView re-renders don't re-render the terminal; every input the view shows (focus,
   resize, selection, session wakeup) must notify it; check with Xvfb.
 - Dependency updates (checked 2026-10-20, toolchain 1.99.1):
-  - `rust-version = "1.88"` in `Cargo.toml` is already wrong: `Cargo.lock` has `uuid` 1.28,
-    `notify-rust` 4.18 and `ordered-float` 5.5, which need Rust 1.89-1.90, so `cargo update`
-    would downgrade them. Raise it (1.95 or newer) and run `cargo update` (about 10 compatible
-    updates, e.g. `tokio` 1.54, `cc` 1.9, `rustls-webpki`); it also unlocks `cosmic-text`,
-    `oo7`, `smol_str`, `serde-saphyr` and `tree-sitter-language`. Build and run the tests.
+  - Still behind (major versions): `gpui-kit`, `windows-registry`, `parking_lot` 0.13,
+    `generic-array`.
   - Bigger updates, each on its own: `gpui-kit` 0.7.3 -> 0.8.0 (likely API changes in
     GPUI / `gpui-component`), `windows-registry` 0.6 -> 0.100 (needs Rust 1.95). Update the
     Crates table above afterwards.
@@ -315,6 +309,12 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 - PowerShell: the integration writes the `C` mark on Enter even when PSReadLine only adds a
   line to an unfinished command (`if ($x) {`), so the tab shows Running while typing; write it
   only for accepted lines (needs a machine with pwsh to check).
+- Configurable terminal icon: the icon for each launcher entry, picked from the bundled
+  `LauncherIcon` set (Bash, PowerShell, Command Prompt, Zsh, Fish, Ubuntu, ...) and saved in
+  the settings file (settings page row); it shows in the new-tab menu and on the sidebar row
+  of every tab started from that entry (restored tabs included). "Automatic" keeps the
+  current detection (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`),
+  e.g. for a wrapper script that `shell_icon` only sees as `Shell`.
 
 ## Maybe
 
