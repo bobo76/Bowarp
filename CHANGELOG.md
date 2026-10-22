@@ -3,6 +3,16 @@
 User-visible changes are listed by release. Maintenance work and internal refactors are
 omitted unless they affect how the app is used.
 
+## 0.2.16
+
+- Close a focused Settings page from the gear button, or focus it first from another pane.
+- Add a file viewer overflow menu for Save and Raw/Rendered, keeping the existing controls.
+- Show a persistent warning with the failure reason when startup uses a fallback shell.
+- Show tab counts and Working/Waiting/Done totals when hovering a group, including empty groups.
+- Show silent in-app toasts when background agents need attention, finish a turn, or exit;
+  click a toast to select its tab.
+- Persist a light/dark UI choice and apply it live without changing terminal colors.
+
 ## 0.2.15
 
 - Show Copilot CLI's interaction mode in the tab hover card through an optional extension.

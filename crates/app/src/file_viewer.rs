@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariant, ButtonVariants};
 use gpui_kit::component::input::{Editor, EditorState, InputEvent, Position};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme, IconName, Selectable, Sizable, WindowExt};
@@ -566,6 +567,49 @@ impl FileViewer {
                 pixel_size.map(|size| div().flex_none().text_xs().text_color(muted).child(size)),
             )
             .children(toggle)
+            .child(
+                Button::new("viewer-menu")
+                    .icon(IconName::EllipsisVertical)
+                    .ghost()
+                    .xsmall()
+                    .tooltip("File actions")
+                    .dropdown_menu({
+                        let viewer = cx.entity().downgrade();
+                        move |mut menu, _, cx| {
+                            let Some(entity) = viewer.upgrade() else {
+                                return menu;
+                            };
+                            let file = entity.read(cx).open_file();
+                            let save = viewer.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new("Save")
+                                    .disabled(!file.is_some_and(|file| file.dirty))
+                                    .on_click(move |_, window, cx| {
+                                        let _ =
+                                            save.update(cx, |viewer, cx| viewer.save(window, cx));
+                                    }),
+                            );
+                            if let Some(file) = file.filter(|file| file.kind.has_rendered_view()) {
+                                menu = menu.separator();
+                                for (label, mode) in
+                                    [("Rendered", Mode::Rendered), ("Raw", Mode::Raw)]
+                                {
+                                    let viewer = viewer.clone();
+                                    menu = menu.item(
+                                        PopupMenuItem::new(label)
+                                            .checked(file.mode == mode)
+                                            .on_click(move |_, window, cx| {
+                                                let _ = viewer.update(cx, |viewer, cx| {
+                                                    viewer.set_mode(mode, window, cx);
+                                                });
+                                            }),
+                                    );
+                                }
+                            }
+                            menu
+                        }
+                    }),
+            )
             .child(
                 Button::new("close-viewer")
                     .icon(IconName::Close)

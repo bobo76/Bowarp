@@ -134,6 +134,27 @@ pub struct TabChanged;
 /// shell.
 pub struct AgentExited;
 
+/// A background agent changed to a status the user should see.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentNotice {
+    NeedsAttention,
+    Finished,
+    Exited(Option<i32>),
+}
+
+impl AgentNotice {
+    fn for_change(before: AgentStatus, after: AgentStatus, visible: bool) -> Option<Self> {
+        if visible || before == after {
+            return None;
+        }
+        match after {
+            AgentStatus::NeedsAttention => Some(Self::NeedsAttention),
+            AgentStatus::Idle if before == AgentStatus::Working => Some(Self::Finished),
+            _ => None,
+        }
+    }
+}
+
 /// Emitted when a file path is Ctrl+clicked: the file is to be shown in the viewer.
 pub struct OpenFileRequest {
     pub path: PathBuf,
@@ -470,6 +491,9 @@ impl TerminalView {
             return false;
         };
         self.finished_unseen = finished_unseen(change.before, change.after, self.visible);
+        if let Some(notice) = AgentNotice::for_change(change.before, change.after, self.visible) {
+            cx.emit(notice);
+        }
         self.emit_tab_changed(cx);
         true
     }
@@ -497,6 +521,9 @@ impl TerminalView {
                     return;
                 }
                 self.bell_unseen = true;
+                if self.kind() != SessionKind::Shell {
+                    cx.emit(AgentNotice::NeedsAttention);
+                }
                 cx.emit(TabChanged);
             }
             SessionEvent::CommandStarted(command) => {
@@ -538,6 +565,12 @@ impl TerminalView {
                 return;
             }
             SessionEvent::Exited(code) => {
+                if self.kind() != SessionKind::Shell
+                    && !self.visible
+                    && (code != Some(0) || !self.finished_unseen)
+                {
+                    cx.emit(AgentNotice::Exited(code));
+                }
                 self.process = ProcessState::Exited(code);
                 self.running_command = None;
                 if let Some(agent) = self.agent.as_mut() {
@@ -819,6 +852,7 @@ fn is_shift_only(modifiers: &Modifiers) -> bool {
 
 impl EventEmitter<TabChanged> for TerminalView {}
 impl EventEmitter<AgentExited> for TerminalView {}
+impl EventEmitter<AgentNotice> for TerminalView {}
 impl EventEmitter<OpenFileRequest> for TerminalView {}
 
 impl Focusable for TerminalView {
@@ -1022,6 +1056,83 @@ mod tests {
         assert!(!finished_unseen(NeedsAttention, Idle, false));
         assert!(!finished_unseen(Working, NeedsAttention, false));
         assert!(!finished_unseen(Working, Exited, false));
+    }
+
+    #[test]
+    fn agent_notices_require_a_background_status_transition() {
+        use AgentStatus::*;
+        for before in [Idle, Working, NeedsAttention, Exited] {
+            for after in [Idle, Working, NeedsAttention, Exited] {
+                assert_eq!(AgentNotice::for_change(before, after, true), None);
+                let expected = match (before, after) {
+                    (Working, Idle) => Some(AgentNotice::Finished),
+                    (before, NeedsAttention) if before != NeedsAttention => {
+                        Some(AgentNotice::NeedsAttention)
+                    }
+                    _ => None,
+                };
+                assert_eq!(AgentNotice::for_change(before, after, false), expected);
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn repeated_hooks_titles_and_output_do_not_repeat_agent_notices(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        use agent_status::HookEvent;
+
+        #[cfg(windows)]
+        let (program, args) = ("cmd", vec!["/C", "exit 0"]);
+        #[cfg(not(windows))]
+        let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+        let spec = LaunchSpec::new(
+            SessionKind::ClaudeCode,
+            Some(program.into()),
+            args.into_iter().map(String::from).collect(),
+            None,
+        );
+        let session = Session::spawn(
+            1,
+            &spec,
+            TermDimensions::new(80, 24),
+            Palette::default(),
+            Arc::new(|_| {}),
+        )
+        .unwrap();
+        let view = cx.new(|cx| TerminalView::new(session, &spec, true, Task::ready(()), cx));
+        let notices = Rc::new(RefCell::new(Vec::new()));
+        let captured = notices.clone();
+        let _events = cx.update(|cx| {
+            cx.subscribe(&view, move |_, notice: &AgentNotice, _| {
+                captured.borrow_mut().push(*notice);
+            })
+        });
+        view.update(cx, |view, cx| {
+            view.hide();
+            for (event, at) in [
+                (HookEvent::PromptSubmitted, 1),
+                (HookEvent::InputRequested, 2),
+                (HookEvent::InputRequested, 3),
+                (HookEvent::ToolStarted, 4),
+                (HookEvent::Stopped, 5),
+                (HookEvent::Stopped, 6),
+            ] {
+                view.apply_hook_event(AgentEvent::Hook(event), at, cx);
+                view.on_session_event(SessionEvent::TitleChanged(Some("Agent".into())), cx);
+                view.on_session_event(SessionEvent::Wakeup, cx);
+            }
+            // A clean exit must not repeat the already reported finished turn.
+            view.on_session_event(SessionEvent::Exited(Some(0)), cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            *notices.borrow(),
+            [AgentNotice::NeedsAttention, AgentNotice::Finished]
+        );
     }
 
     #[test]

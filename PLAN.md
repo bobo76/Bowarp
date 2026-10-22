@@ -2,10 +2,14 @@
 
 Feature spec: [FEATURES.md](FEATURES.md)
 
-## Status (2026-10-19)
+## Status (0.2.16, 2026-10-22)
 
 [FEATURES.md](FEATURES.md) is the target; what is not built yet is in the next steps and the
-backlog below. Details of finished work are in the git history (334 tests).
+backlog below. Details of finished work are in the git history and [CHANGELOG.md](CHANGELOG.md).
+
+Version 0.2.16 includes the six UX improvements below. Keep them under "Fixed, not tested
+yet" until the native Windows UI checks have passed; publishing a version does not mark
+those checks complete.
 
 **Keeping this file current:** when something is completely done (built, tested and checked
 where it has to be), remove it from this file; the git history keeps the record. Until then
@@ -43,8 +47,7 @@ it stays, under "Fixed, not tested yet" if only the manual check is missing.
   found shows as "(not found)" and the automatic shell opens instead. A change applies to new
   tabs only: open and restored tabs keep the shell they started with. On Unix, when `$SHELL`
   isn't listed, the first tab runs it but Ctrl+Shift+T opens the first listed shell (the
-  page then says just "Automatic"). A first tab whose shell won't start falls back to
-  `$SHELL` (Windows PowerShell on Windows) without telling the user why.
+  page then says just "Automatic").
 - File viewer width: saved as a share of the window (`file_viewer_fraction`, 0-1 in the
   file; the 240 px minimums for the viewer and the terminal still apply) when a divider drag
   ends or the divider is double-clicked, not on the settings page. Another running instance
@@ -63,7 +66,8 @@ it stays, under "Fixed, not tested yet" if only the manual check is missing.
 
 1. Notifications and close warnings:
    - Close-with-running-process warnings.
-   - Notifications + configurable sound for agent events (Waiting, Done).
+   - Configurable sound for agent events (Waiting, Done); basic silent
+     in-app toasts are implemented, awaiting the manual checks below.
    - Clipboard notice: a banner above the terminal when a program writes the clipboard
      (OSC 52), with allow/deny.
 2. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
@@ -88,13 +92,28 @@ it stays, under "Fixed, not tested yet" if only the manual check is missing.
      next event).
    - Copilot CLI mode: `--mode autopilot` (or `--autopilot`), `--mode interactive`, or
      `--mode plan`. Mode selection is separate from permission bypass (`--yolo`).
-5. Themes: light and dark UI (gpui-component's `ThemeMode`, hard-coded to dark in `main.rs`)
-   and terminal color schemes: a few bundled schemes plus user schemes imported from
-   base16/iTerm files, saved in the settings file and picked on the Appearance page. "System"
-   follows the OS light/dark setting.
+5. Terminal color schemes: a few bundled schemes plus user schemes imported from base16/iTerm
+   files, saved in the settings file and picked on the Appearance page. "System" follows the
+   OS light/dark setting. The persisted light/dark UI choice is implemented, awaiting manual
+   checks below.
 6. Window opacity and background blur, set in the settings file (opacity applies to the
    terminal background only, text stays opaque); blur where the platform allows it (Windows
    acrylic/mica, KDE on X11).
+
+## Fixed, not tested yet
+
+Six UX improvements are implemented in 0.2.16. All 360 workspace tests, the build and Clippy
+pass in Linux Docker. Native Windows builds and visual checks remain pending: the MSVC
+linker is not available locally. See README's "Six UX improvements" manual checklist.
+
+- Settings gear: focus an unfocused Settings page; close a focused page and remove its row.
+- File viewer overflow menu: existing Save and Raw/Rendered actions; toolbar controls stay.
+- Initial shell fallback: a persistent warning retains the requested shell's failure reason.
+- Group hover card: whole-group tab count and Working/Waiting/Done totals, including empty
+  groups; no timer, per-tab rows or card during dragging.
+- Background agent toasts: status-transition based, silent, in-app only; click to select,
+  dismiss or auto-hide, replacing an earlier notice for the same tab.
+- Persisted Light theme switch: live UI changes, dark by default, terminal palette unchanged.
 
 ## Decisions
 
@@ -168,9 +187,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
     (default on); off, the functions aren't defined (the app passes a flag with the token).
   - A `claude` run in place (`-p` in a script, a nested shell, cmd tabs, which get no functions)
     gets no hooks and shows "Running for" until it quits. Accepted.
-- Settings button toggles the page: when the settings page is open and focused, clicking the
-  button that opened it closes the page (back to the previous tab) instead of doing nothing.
-  When the page is open but not focused, the click still focuses it.
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
 - Bell sound: with the M5 notification sound; rate-limited so a stream of bells doesn't
@@ -186,7 +202,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 - File viewer find and replace: Ctrl+F searches the open file (highlight all matches,
   Enter / Shift+Enter to move, match count, case and whole-word toggles), Ctrl+H adds a
   replace field (replace one / all) in source mode; rendered Markdown only gets find.
-- File viewer: the `⋮` menu from the reference screenshot.
 - File viewer: the rendered JSON view ("Not valid JSON") is only worked out when the file
   opens, so it stays stale after the file is fixed and saved in the viewer.
 - Command history with zsh-autosuggestions (likely bug, unverified): Enter on a HISTORY row
@@ -265,16 +280,13 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   the unchecked parts (a `TabCardFields` set in `workspace-model/src/settings.rs`, read in
   `tab_card.rs`); unit-test the settings read (missing, wrong type) and which parts a set
   keeps.
-- Group hover card: hovering a group header for a moment opens a card next to it, like the
-  tab hover card (`with_hover_card` in `app/src/workspace_view/sidebar_rows.rs`), that sums up
-  the group's tabs. Most useful when the group is collapsed:
-  - Counts: "5 tabs · 2 Working · 1 Waiting · 1 Done", then one line per tab: kind icon,
-    name, status with its lap time ("Working · 2m 14s", "Running for 40s") and branch, in
-    sidebar order; tabs that need attention (Waiting, unviewed Done or failed) first.
+- Extended group hover card (basic counts are implemented): one line per tab with kind icon,
+    name, status and lap time ("Working · 2m 14s", "Running for 40s") and branch, in sidebar
+    order; tabs that need attention (Waiting, unviewed Done or failed) first.
   - Common folder or branch shown once in the header when every tab shares it.
   - Clicking a line selects that tab (expanding the group). The card ticks the lap times while
     it shows (`set_card_clock` for each working tab) and is built only while it shows; no
-    card during a drag or over an empty group.
+    card during a drag. Empty groups keep their basic zero-count card.
 - Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - Draw box-drawing and block characters procedurally; font glyphs leave small gaps between rows for heavy/double verticals (`┃`, `║`).
 - Answer OSC 52 clipboard reads (`ESC ] 52;c;? BEL`): refused today by alacritty's default

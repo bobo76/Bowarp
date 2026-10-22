@@ -24,6 +24,9 @@ use crate::window_state::write_atomic;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// The application UI theme; terminal colors are independent.
+    #[serde(deserialize_with = "lenient")]
+    pub ui_theme: UiTheme,
     /// The terminal's font family; empty (the default) for the built-in one. A family that
     /// isn't installed falls back to the built-in one too (the app checks).
     #[serde(deserialize_with = "lenient")]
@@ -48,6 +51,14 @@ pub struct Settings {
     /// Fields this version doesn't know, written back as they were.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UiTheme {
+    Light,
+    #[default]
+    Dark,
 }
 
 impl Settings {
@@ -680,6 +691,45 @@ mod tests {
         let settings = Settings::default();
         assert_eq!(settings.font_family(), None);
         assert_eq!(settings.font_size.points(), FontSize::DEFAULT);
+    }
+
+    #[test]
+    fn ui_theme_defaults_to_dark_and_reads_known_choices_only() {
+        for text in [
+            "{}",
+            r#"{"ui_theme": null}"#,
+            r#"{"ui_theme": 1}"#,
+            r#"{"ui_theme": "system"}"#,
+        ] {
+            assert_eq!(Settings::from_json(text).unwrap().ui_theme, UiTheme::Dark);
+        }
+        for theme in [UiTheme::Light, UiTheme::Dark] {
+            let settings = Settings {
+                ui_theme: theme,
+                ..Settings::default()
+            };
+            assert_eq!(
+                Settings::from_json(&settings.to_json().unwrap()).unwrap(),
+                settings
+            );
+        }
+    }
+
+    #[test]
+    fn ui_theme_is_saved_and_reloaded_without_losing_other_fields() {
+        let root = TempDir::new();
+        let path = root.0.join("settings.json");
+        fs::write(&path, r#"{"font_size": 18, "future": true}"#).unwrap();
+        let mut file = SettingsFile::load(path.clone());
+        file.update(|settings| settings.ui_theme = UiTheme::Light)
+            .unwrap();
+        let saved = SettingsFile::load(path.clone());
+        assert_eq!(saved.settings().ui_theme, UiTheme::Light);
+        assert_eq!(saved.settings().font_size.points(), 18.);
+        assert_eq!(saved.settings().extra["future"], true);
+        fs::write(&path, r#"{"ui_theme": "dark"}"#).unwrap();
+        file.reload();
+        assert_eq!(file.settings().ui_theme, UiTheme::Dark);
     }
 
     #[test]

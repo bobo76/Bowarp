@@ -13,7 +13,7 @@ use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
-use gpui_kit::component::notification::Notification;
+use gpui_kit::component::notification::{Notification, NotificationDelivery};
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Selectable, Sizable, TitleBar, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
@@ -50,7 +50,7 @@ use crate::shortcuts::{
 use crate::sidebar::{self, NUMBERED_TABS, SIDEBAR_WIDTH};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
-use crate::terminal_view::{AgentExited, OpenFileRequest, TabChanged, TerminalView};
+use crate::terminal_view::{AgentExited, AgentNotice, OpenFileRequest, TabChanged, TerminalView};
 use crate::window_bounds;
 
 const NEW_GROUP_NAME: &str = "New group";
@@ -93,7 +93,7 @@ struct Tab {
     meta: TabMeta,
     /// The file the tab shows beside its terminal; `None` when the viewer is closed.
     viewer: Option<TabViewer>,
-    _view_events: [Subscription; 3],
+    _view_events: [Subscription; 4],
 }
 
 struct TabViewer {
@@ -177,6 +177,19 @@ pub struct WorkspaceView {
 }
 
 impl WorkspaceView {
+    pub fn warn_shell_fallback(
+        &self,
+        failure: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let message = format!("{failure}. Started a fallback shell instead.");
+        // Startup runs before the notification layer's root exists.
+        cx.defer_in(window, move |_, window, cx| {
+            window.push_notification(Notification::warning(message).autohide(false), cx);
+        });
+    }
+
     pub fn new(
         launchers: Rc<[Launcher]>,
         hooks: Option<Rc<ClaudeHooks>>,
@@ -289,7 +302,7 @@ impl WorkspaceView {
         spec: &LaunchSpec,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> io::Result<(Entity<TerminalView>, [Subscription; 3])> {
+    ) -> io::Result<(Entity<TerminalView>, [Subscription; 4])> {
         let session_id = self.next_session_id;
         let mut launch = spec.clone();
         let reports_status = self
@@ -317,7 +330,51 @@ impl WorkspaceView {
                 workspace.open_file_in(tab_id, request.path.clone(), request.place, window, cx);
             },
         );
-        Ok((view, [changed, exited, open_file]))
+        let notice = cx.subscribe_in(
+            &view,
+            window,
+            move |workspace, _, notice: &AgentNotice, window, cx| {
+                workspace.notify_agent(tab_id, *notice, window, cx);
+            },
+        );
+        Ok((view, [changed, exited, open_file, notice]))
+    }
+
+    fn notify_agent(
+        &self,
+        tab_id: u64,
+        notice: AgentNotice,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.tab_index(tab_id) else {
+            return;
+        };
+        let name = Self::tab_name(&self.tabs[index], cx);
+        let notification = match notice {
+            AgentNotice::NeedsAttention => Notification::warning("Needs attention"),
+            AgentNotice::Finished => Notification::success("Finished"),
+            AgentNotice::Exited(Some(0)) => Notification::success("Agent finished"),
+            AgentNotice::Exited(Some(code)) => {
+                Notification::error(format!("Agent exited with code {code}"))
+            }
+            AgentNotice::Exited(None) => Notification::error("Agent exited without an exit code"),
+        };
+        let workspace = cx.entity().downgrade();
+        window.push_notification(
+            notification
+                .id1::<AgentNotice>(("agent-notice", tab_id as usize))
+                .title(name)
+                .delivery(NotificationDelivery::InApp)
+                .on_click(move |_, window, cx| {
+                    let _ = workspace.update(cx, |workspace, cx| {
+                        if let Some(index) = workspace.tab_index(tab_id) {
+                            workspace.activate(index, window, cx);
+                        }
+                    });
+                }),
+            cx,
+        );
     }
 
     /// Go on with the default shell in tab `tab_id` once its agent exited, in the agent's last
@@ -1429,5 +1486,33 @@ mod tests {
         assert_eq!(tab_number("9"), Some(9));
         assert_eq!(tab_number("0"), None);
         assert_eq!(tab_number("a"), None);
+    }
+
+    #[gpui::test]
+    fn startup_fallback_warning_is_deferred_until_the_root_exists(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use gpui_kit::VisualTestContext;
+        use gpui_kit::component::Root;
+
+        cx.update(gpui_kit::init);
+        cx.update(settings_file::init);
+        let window = cx.add_window(move |window, cx| {
+            let (_, messages) = futures::channel::mpsc::unbounded();
+            let workspace =
+                cx.new(|cx| WorkspaceView::new(Rc::from([]), None, messages, false, window, cx));
+            workspace.update(cx, |workspace, cx| {
+                workspace.warn_shell_fallback(
+                    "Could not start broken-shell: executable not found".into(),
+                    window,
+                    cx,
+                );
+            });
+            Root::new(workspace, window, cx)
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| assert_eq!(window.notifications(cx).len(), 1));
+        assert!(cx.shown_system_notifications().is_empty());
     }
 }

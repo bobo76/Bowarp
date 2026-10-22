@@ -27,7 +27,7 @@ use gpui_kit::{
     Anchor, AnyElement, App, AppContext, Axis, ClickEvent, ClipboardItem, Entity, Focusable,
     IntoElement, ParentElement, SharedString, Styled, Subscription, Window, div, px,
 };
-use workspace_model::{FontSize, Settings};
+use workspace_model::{FontSize, Settings, UiTheme};
 
 use crate::about;
 use crate::assets::CODE_ICON;
@@ -78,9 +78,20 @@ pub fn render(
         )
 }
 
-/// The Appearance page's groups. Later steps add their rows (theme, opacity) here.
+/// The Appearance page's UI theme and terminal font.
 fn appearance_groups() -> Vec<SettingGroup> {
     vec![
+        SettingGroup::new().title("Theme").item(
+            switch_row(
+                "Light theme",
+                "Use the light UI instead of dark. Terminal colors stay unchanged.",
+                |settings| settings.ui_theme == UiTheme::Light,
+                |settings, light| {
+                    settings.ui_theme = if light { UiTheme::Light } else { UiTheme::Dark };
+                },
+            )
+            .keywords(["appearance", "dark", "colors"]),
+        ),
         SettingGroup::new().title("Font").items([
             text_row(
                 "Font family",
@@ -389,7 +400,6 @@ pub fn bound_row<T: Clone + PartialEq + 'static>(
 }
 
 /// A switch row for a `bool` field of `Settings` (see [`bound_row`]); each click saves.
-#[expect(dead_code, reason = "rows come with the next steps")]
 pub fn switch_row(
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,

@@ -3,6 +3,15 @@
 A terminal workspace for running Claude Code, Copilot CLI and shell sessions side by side, with
 per-tab agent status. Feature spec: [FEATURES.md](FEATURES.md). Plan and status: [PLAN.md](PLAN.md).
 
+## What's new in 0.2.16
+
+Settings now toggles closed from the gear button, the file viewer has an overflow menu, and
+startup shell fallback shows its failure reason. This version also adds basic group hover
+cards, silent background-agent toasts, and a persisted light/dark UI choice. See the
+[changelog](CHANGELOG.md#0216) for release notes.
+
+Native Windows UI checks remain pending; see the [manual checklist](#six-ux-improvements-manual-checks-pending).
+
 ## Install on Windows
 
 Run `agent-workspace-windows-x64-setup.exe` from the latest GitHub release. It installs per user
@@ -207,6 +216,14 @@ A tab whose program rings the bell (BEL: Copilot, scripts, anything without stat
 while you are on another tab shows Needs attention until you select it. Claude Code tabs with
 hooks ignore the bell, since their hooks already report it.
 
+Background Claude Code and Copilot tabs show an in-app toast when they need attention, finish
+a turn, or exit (an unsuccessful exit includes its code when available). Background means the
+terminal is hidden: another tab is selected or Settings is shown, not just that the keyboard
+is in another pane. Repeated status reports, titles and output do not repeat the toast.
+Click a toast to select its tab, expanding its group; click its close button to dismiss it
+without switching tabs, or let it disappear automatically. A newer notice for the same tab
+replaces the previous one. There is no sound or OS notification.
+
 Right-click a row or use its `⋮` button for the tab menu: duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
 and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working
 directory, rename (Enter keeps, Escape cancels, an empty name goes back to the program's
@@ -234,6 +251,10 @@ Click a group header to collapse or expand it; a collapsed group shows how many 
 need attention, are working, run a command, or are done. Selecting a tab in a collapsed group
 (Ctrl+1..9, Ctrl+Tab) expands it. New tabs join the selected tab's group. A tab without its own
 color shows its group's color. Groups stay when their last tab leaves.
+
+Hover any group header for its tab count and Working, Waiting and Done totals, including
+zero totals for an empty group. Counts cover the whole group even while searching. The card
+does not show individual tabs or run a timer, and is suppressed while dragging a tab.
 
 The group menu (right-click the header or its `⋮` button): rename, collapse, move up / down,
 close its tabs, ungroup (the tabs stay, the group goes; "Delete group" when empty), color.
@@ -289,6 +310,9 @@ ICO, TIFF) are drawn fit to the panel, never larger than their own size, with th
 in the header; one that does not decode (AVIF is not supported) shows "The image could not be
 read." Files over 2 MB, other binary files and files that aren't UTF-8 are not shown.
 
+The header's overflow menu provides Save (enabled for unsaved edits) and, for Markdown, JSON
+and SVG, checked Raw/Rendered choices. The existing mode buttons and Ctrl+S still work.
+
 | Keys | Action |
 |---|---|
 | Ctrl+S | Save the file (a `●` after its name marks unsaved edits) |
@@ -302,6 +326,10 @@ unless it has unsaved edits, which are kept.
 The gear button in the title bar (after the `i` button) opens the settings page in place of the
 terminal and adds a Settings row under the tabs; select a tab to go back, select the row to
 return, and close the row with its × or Ctrl+Shift+W. The row isn't reopened at the next start.
+Clicking the gear again while the page or one of its controls has focus closes the page and
+removes its row, returning focus to the terminal. If another pane has focus, the first click
+focuses Settings instead.
+
 The search box filters the rows by title, description and keywords. A change saves to
 `settings.json` in the config folder at once; "Reset to default" under a changed row (or the
 page's reset button) restores the default. "Open settings file" shows `settings.json` in the
@@ -310,16 +338,23 @@ can't be read (the defaults apply until it is fixed or a change moves it to
 `settings.json.bak`) or a change couldn't be saved. The About page shows the version and the
 config folder.
 
-The Appearance page sets the terminal font: its family (an installed font's name; empty, or a
-font that isn't installed, uses DejaVu Sans Mono, Cascadia Mono on Windows) and size (the
-slider applies while dragged and saves when released; the file accepts 6 to 72 points). Each
-tab re-measures its cells and resizes its terminal when it is next shown.
+The Appearance page's Light theme switch changes the UI live and persists the choice
+(`"ui_theme": "light"` or `"dark"` in `settings.json`, default dark). Terminal colors are
+unchanged; terminal color schemes and following the OS theme are not included.
+
+The Appearance page also sets the terminal font: its family (an installed font's name;
+empty, or a font that isn't installed, uses DejaVu Sans Mono, Cascadia Mono on Windows) and
+size (the slider applies while dragged and saves when released; the file accepts 6 to 72
+points). Each tab re-measures its cells and resizes its terminal when it is next shown.
 
 The Terminal page sets the default shell: the one the `+` menu lists first and Ctrl+Shift+T,
 "Open in new tab" and an agent tab that quits open, and the first tab when no tabs are saved.
 "Automatic" (the default) is `$SHELL` (Git Bash on Windows, when installed; when `$SHELL` isn't
 in the list, Ctrl+Shift+T opens the first shell listed); the list holds the shells found at
 startup. Tabs already open keep their shell. One that isn't found gets the automatic shell.
+If the first tab's requested shell cannot start but the fallback does, a warning identifies
+the requested shell, retains the original failure reason and says a fallback started; it
+stays until dismissed.
 
 `settings.json` saves the shell's launcher id, which later per-launcher settings use too:
 `bash`, `zsh`, `fish`, `pwsh` (PowerShell 7) on Linux and macOS; `pwsh`, `powershell`
@@ -391,3 +426,25 @@ Open 3 Claude Code tabs and 1 shell tab, then check:
    a row in a repository with local changes: the card shows `+N`.
 
 Last passed: Ubuntu, Wayland, 2026-10-17 (checks 1–5; checks 6–9 were added later and are not recorded yet).
+
+### Six UX improvements (manual checks pending)
+
+1. Open Settings, focus a field, then click the gear: its row disappears and terminal input
+   works again. With Settings shown, focus the file viewer; the first gear click focuses
+   Settings, and the second closes it.
+2. Open a Markdown, JSON or SVG file. Use the overflow menu to switch Raw/Rendered, edit in
+   Raw, and Save. Confirm the check marks, disabled Save for a clean file, the existing mode
+   buttons and Ctrl+S; images must not offer Raw/Rendered or an enabled Save.
+3. Configure a discovered startup shell whose executable cannot start, with a working
+   automatic fallback. Start with no restored tabs: the fallback opens, and the persistent
+   warning identifies the requested shell and original error, and says a fallback started.
+4. Switch Light theme on and off; check sidebar, Settings, menus, viewer and hover-card
+   contrast while the terminal palette stays unchanged. Restart to check persistence; also
+   edit `ui_theme` in the settings file and save it in the viewer.
+5. Hover expanded, collapsed and empty groups, including while filtering tabs. Confirm total
+   tab count and Working/Waiting/Done counts, and no group card during a tab drag.
+6. Run Claude Code and Copilot in background tabs through waiting and finished states.
+   Confirm one toast per transition, none for foreground turns or ordinary output, notices
+   while Settings hides the terminal, click-to-select (including collapsed groups), close
+   without selecting, auto-hide, and no sound or OS notices. Check successful and failed
+   agent exits too.

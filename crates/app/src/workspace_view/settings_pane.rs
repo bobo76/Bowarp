@@ -52,6 +52,14 @@ impl SettingsPane {
 }
 
 impl WorkspaceView {
+    fn toggle_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings.shown && self.settings.focus.contains_focused(window, cx) {
+            self.close_settings(window, cx);
+        } else {
+            self.open_settings(window, cx);
+        }
+    }
+
     /// Show the settings page in place of the selected tab's terminal, adding the sidebar's
     /// Settings row if it isn't there (the title bar button, or selecting the row).
     fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -100,7 +108,7 @@ impl WorkspaceView {
             .small()
             .selected(self.settings.shown)
             .tooltip("Settings")
-            .on_click(cx.listener(|workspace, _, window, cx| workspace.open_settings(window, cx)))
+            .on_click(cx.listener(|workspace, _, window, cx| workspace.toggle_settings(window, cx)))
     }
 
     /// The sidebar's Settings row, while it is open.
@@ -118,5 +126,71 @@ impl WorkspaceView {
             cx,
         );
         Some(row.into_any_element())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use futures::channel::mpsc;
+    use gpui_kit::component::Root;
+    use gpui_kit::{AppContext, Focusable, TestAppContext, VisualTestContext};
+    use term_core::{LaunchSpec, SessionKind};
+
+    use super::*;
+
+    #[gpui::test]
+    fn settings_toggle_focuses_then_closes_and_restores_the_terminal(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            settings_file::init(cx);
+            crate::terminal_element::init(cx);
+        });
+        let captured = Rc::new(RefCell::new(None));
+        let capture = captured.clone();
+        let window = cx.add_window(move |window, cx| {
+            let (_, messages) = mpsc::unbounded();
+            let workspace =
+                cx.new(|cx| WorkspaceView::new(Rc::from([]), None, messages, false, window, cx));
+            workspace.update(cx, |workspace, cx| {
+                #[cfg(windows)]
+                let (program, args) = ("cmd", vec!["/C", "exit 0"]);
+                #[cfg(not(windows))]
+                let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+                let spec = LaunchSpec::new(
+                    SessionKind::Shell,
+                    Some(program.into()),
+                    args.into_iter().map(String::from).collect(),
+                    None,
+                );
+                workspace.open_tab(spec, window, cx).unwrap();
+                workspace.toggle_settings(window, cx);
+            });
+            *capture.borrow_mut() = Some(workspace.clone());
+            Root::new(workspace, window, cx)
+        });
+        let workspace = captured.borrow().clone().unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            workspace.update(cx, |workspace, cx| {
+                assert!(workspace.settings.shown);
+                assert!(workspace.settings.open);
+                assert!(workspace.settings.focus.contains_focused(window, cx));
+                let terminal = workspace.tabs[0].view.focus_handle(cx);
+                window.focus(&terminal, cx);
+                workspace.toggle_settings(window, cx);
+                assert!(workspace.settings.shown);
+                assert!(workspace.settings.open);
+                assert!(workspace.settings.focus.is_focused(window));
+                workspace.toggle_settings(window, cx);
+                assert!(!workspace.settings.shown);
+                assert!(!workspace.settings.open);
+                assert!(terminal.is_focused(window));
+            });
+        });
     }
 }

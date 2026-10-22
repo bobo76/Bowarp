@@ -33,7 +33,7 @@ use std::process;
 use std::rc::Rc;
 
 use futures::channel::mpsc;
-use gpui_kit::component::{Theme, ThemeMode, TitleBar};
+use gpui_kit::component::TitleBar;
 use gpui_kit::{AppContext, WindowDecorations, WindowOptions};
 use term_core::{LaunchSpec, SessionKind};
 
@@ -116,7 +116,6 @@ fn main() {
             terminal_view::init(cx);
             workspace_view::init(cx);
             history::init(cx);
-            Theme::change(ThemeMode::Dark, None, cx);
             let quit_hooks = hooks.clone();
             cx.on_window_closed(move |cx, _| {
                 if cx.windows().is_empty() {
@@ -183,8 +182,12 @@ fn main() {
                     let mut started = workspace.open_tab(spec, window, cx);
                     if let (Err(err), Some(fallback)) = (&started, fallback) {
                         eprintln!("agent-workspace: failed to start {program}: {err}");
+                        let failure = format!("Could not start {program}: {err}");
                         program = launcher::launch_name(&fallback).to_owned();
                         started = workspace.open_tab(fallback, window, cx);
+                        if started.is_ok() {
+                            workspace.warn_shell_fallback(failure, window, cx);
+                        }
                     }
                     if let Err(err) = started {
                         eprintln!("agent-workspace: failed to start {program}: {err}");

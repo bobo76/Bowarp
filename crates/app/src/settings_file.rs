@@ -7,8 +7,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use gpui_kit::component::{ActiveTheme, Theme, ThemeMode};
 use gpui_kit::{App, Global};
-use workspace_model::{Settings, SettingsFile};
+use workspace_model::{Settings, SettingsFile, UiTheme};
 
 use crate::window_bounds::config_file;
 
@@ -28,6 +29,18 @@ pub fn init(cx: &mut App) {
         );
     }
     cx.set_global(AppSettings(file));
+    apply_theme(cx);
+    cx.observe_global::<AppSettings>(apply_theme).detach();
+}
+
+fn apply_theme(cx: &mut App) {
+    let mode = match settings(cx).ui_theme {
+        UiTheme::Light => ThemeMode::Light,
+        UiTheme::Dark => ThemeMode::Dark,
+    };
+    if cx.theme().mode != mode {
+        Theme::change(mode, None, cx);
+    }
 }
 
 pub fn settings(cx: &App) -> &Settings {
@@ -108,4 +121,32 @@ pub fn file_to_open(cx: &mut App) -> Option<PathBuf> {
         return None;
     }
     Some(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::TestAppContext;
+
+    use super::*;
+
+    #[gpui::test]
+    fn theme_changes_apply_live_without_restarting(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            cx.set_global(AppSettings(SettingsFile::default()));
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(cx.theme().mode, ThemeMode::Dark);
+            update(cx, |settings| settings.ui_theme = UiTheme::Light);
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(cx.theme().mode, ThemeMode::Light);
+            preview(cx, |settings| settings.ui_theme = UiTheme::Dark);
+        });
+        cx.run_until_parked();
+        cx.update(|cx| assert_eq!(cx.theme().mode, ThemeMode::Dark));
+    }
 }

@@ -4,12 +4,13 @@ use std::path::Path;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme, IconName, Sizable};
 use gpui_kit::{
-    AnyElement, App, AppContext, ClickEvent, Context, Div, DragMoveEvent, InteractiveElement,
-    IntoElement, ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled,
-    WeakEntity, Window, div, px,
+    Anchor, AnyElement, App, AppContext, ClickEvent, Context, Div, DragMoveEvent,
+    InteractiveElement, IntoElement, ParentElement, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, WeakEntity, Window, div, px,
 };
 use workspace_model::{DropTarget, Group, GroupId, Item, Location, display_path};
 
@@ -266,17 +267,13 @@ impl WorkspaceView {
             .active_tab()
             .filter(|_| !self.settings.shows_page())
             .map(|tab| tab.id);
-        let statuses = group.tabs().iter().filter_map(|&tab| {
-            let index = self.tab_index(tab)?;
-            Some(self.tabs[index].view.read(cx).tab_status())
-        });
         let row = GroupRow {
             slot,
             name: group.name.clone().into(),
             color: group.color,
             collapsed: group.collapsed && !searching,
             tab_count: group.tabs().len(),
-            summary: GroupSummary::of(statuses),
+            summary: self.group_summary(group, cx),
             holds_selected: group.collapsed
                 && !searching
                 && active_id.is_some_and(|active| group.tabs().contains(&active)),
@@ -291,6 +288,33 @@ impl WorkspaceView {
             Self::group_menu_builder(workspace, id),
             cx,
         );
+        let header = header.into_any_element();
+        let header = if cx.has_active_drag() {
+            header
+        } else {
+            let workspace = cx.entity().downgrade();
+            HoverCard::new(("group-card", slot))
+                .anchor(Anchor::LeftCenter)
+                .ml_2()
+                .trigger(header)
+                .content(move |_, _, cx| {
+                    let card = workspace.upgrade().and_then(|workspace| {
+                        let workspace = workspace.read(cx);
+                        let group = workspace.layout.groups().find(|group| group.id == id)?;
+                        Some(
+                            sidebar::group_card(
+                                group.name.clone().into(),
+                                group.tabs().len(),
+                                workspace.group_summary(group, cx),
+                                cx,
+                            )
+                            .into_any_element(),
+                        )
+                    });
+                    card.unwrap_or_else(|| div().into_any_element())
+                })
+                .into_any_element()
+        };
         let marker = self.drop_marker(DropTarget::IntoGroup(id), cx);
         sidebar::drop_slot(header, marker, cx)
             .id(("group-slot", slot))
@@ -308,6 +332,13 @@ impl WorkspaceView {
                 },
             ))
             .into_any_element()
+    }
+
+    fn group_summary(&self, group: &Group, cx: &App) -> GroupSummary {
+        GroupSummary::of(group.tabs().iter().filter_map(|&id| {
+            let index = self.tab_index(id)?;
+            Some(self.tabs[index].view.read(cx).tab_status())
+        }))
     }
 
     /// The placeholder under an expanded empty group; drops on it go into the group.

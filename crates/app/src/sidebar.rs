@@ -780,6 +780,29 @@ impl GroupSummary {
     }
 }
 
+pub fn group_card(
+    name: SharedString,
+    count: usize,
+    summary: GroupSummary,
+    cx: &App,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .w(px(240.))
+        .text_sm()
+        .text_color(cx.theme().foreground)
+        .child(single_line(name))
+        .child(format!(
+            "{count} {}",
+            if count == 1 { "tab" } else { "tabs" }
+        ))
+        .child(format!("Working: {}", summary.working))
+        .child(format!("Waiting: {}", summary.needs_attention))
+        .child(format!("Done: {}", summary.done))
+}
+
 /// What a sidebar row shows for one group.
 pub struct GroupRow {
     /// Unique among the sidebar's group rows, for element ids.
@@ -955,6 +978,11 @@ mod tests {
             ]
         );
         assert_eq!(GroupSummary::of([TabStatus::Idle]).chips().count(), 0);
+    }
+
+    #[test]
+    fn empty_groups_have_zero_totals() {
+        assert_eq!(GroupSummary::of([]), GroupSummary::default());
     }
 
     #[test]
