@@ -3,6 +3,11 @@
 User-visible changes are listed by release. Maintenance work and internal refactors are
 omitted unless they affect how the app is used.
 
+## 0.2.15
+
+- Show Copilot CLI's interaction mode in the tab hover card through an optional extension.
+- Search terminal output and scrollback with Ctrl+Shift+F.
+
 ## 0.2.12
 
 - Remember the file viewer width between app launches.
