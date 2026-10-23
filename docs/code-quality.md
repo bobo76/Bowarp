@@ -19,6 +19,9 @@ mod tests;
 Put `use super::*;` and the `#[test]` functions in the child module's `tests.rs`.
 For a module defined in `mod.rs`, put `tests.rs` beside that file.
 Prefer this arrangement when inline tests make production code harder to navigate.
+Large suites now follow this layout, for example in
+`crates\workspace-model\src\settings\tests.rs` and `crates\term-core\src\prompt\tests.rs`.
+Small unit-test modules can stay inline.
 
 Use integration tests for behavior exercised through a library's public API. A function
 must be reachable through public modules or a `pub use` export; `pub fn` inside a private
