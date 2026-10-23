@@ -1,22 +1,24 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 #[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use agent_status::{
-    HOOK_ENV, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, claude_settings, default_pipe_name,
+    HOOK_ENV, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, claude_settings, copilot_hooks,
+    default_pipe_name,
 };
 use term_core::{LaunchSpec, SessionKind};
 
 /// Hook binary installed next to the app executable.
 const HOOK_PROGRAM: &str = "agentws-hook";
 
-/// Receives Claude Code status hooks and Copilot extension mode reports.
+/// Receives Claude Code status hooks, Copilot permission hooks and extension mode reports.
 pub struct ClaudeHooks {
     server: HookServer,
     settings_path: PathBuf,
     hook_program: PathBuf,
+    copilot_plugins_dir: PathBuf,
 }
 
 impl ClaudeHooks {
@@ -42,11 +44,17 @@ impl ClaudeHooks {
             server,
             settings_path,
             hook_program,
+            copilot_plugins_dir: settings_dir().join(format!(
+                "agentws-{}-{}-copilot",
+                std::process::id(),
+                agent_status::now_micros()
+            )),
         })
     }
 
     /// Attach status hooks to Claude Code or the mode bridge to Copilot. Only Claude Code
-    /// reports activity through hooks; Copilot keeps using terminal progress reports.
+    /// reports activity through hooks; Copilot adds only permission requests and keeps using
+    /// terminal progress for Working/Idle. The result selects Claude's hooks-only reporting.
     pub fn attach(&self, session: u64, spec: &mut LaunchSpec) -> bool {
         if spec.kind == SessionKind::Shell {
             return false;
@@ -59,6 +67,17 @@ impl ClaudeHooks {
                 HOOK_ENV.into(),
                 self.hook_program.to_string_lossy().into_owned(),
             );
+            match self.copilot_plugin(session) {
+                Ok(plugin) => {
+                    spec.args.splice(
+                        0..0,
+                        ["--plugin-dir".into(), plugin.to_string_lossy().into_owned()],
+                    );
+                }
+                Err(error) => {
+                    eprintln!("Copilot permission hooks unavailable; using progress: {error}");
+                }
+            }
             return false;
         }
         let settings = self.settings_path.to_string_lossy().into_owned();
@@ -66,9 +85,35 @@ impl ClaudeHooks {
         true
     }
 
-    /// Delete the settings file. Running Claude Code sessions have already read it.
+    fn copilot_plugin(&self, session: u64) -> io::Result<PathBuf> {
+        create_private_dir(&self.copilot_plugins_dir)?;
+        let plugin = self.copilot_plugins_dir.join(session.to_string());
+        create_private_dir(&plugin)?;
+        write_private(
+            &plugin.join("plugin.json"),
+            br#"{"name":"bowarp-attention","version":"1.0.0","hooks":"hooks.json"}"#,
+        )?;
+        write_private(
+            &plugin.join("hooks.json"),
+            copilot_hooks(&self.hook_program).as_bytes(),
+        )?;
+        Ok(plugin)
+    }
+
+    /// Delete the app-owned settings and plugins when all sessions are shutting down.
     pub fn remove_settings(&self) {
         let _ = fs::remove_file(&self.settings_path);
+        let _ = fs::remove_dir_all(&self.copilot_plugins_dir);
+    }
+}
+
+fn create_private_dir(path: &Path) -> io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    builder.mode(0o700);
+    match builder.create(path) {
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
+        result => result,
     }
 }
 
@@ -96,9 +141,78 @@ mod tests {
     use super::*;
 
     #[test]
-    fn copilot_gets_the_bridge_without_status_hooks_or_extra_arguments() {
+    fn copilot_gets_a_per_tab_permission_plugin_before_user_arguments() {
         let server = HookServer::start(
             format!("agentws-attach-test-{}.sock", agent_status::now_micros()),
+            |_| {},
+        )
+        .unwrap();
+        let copilot_plugins_dir = std::env::current_dir()
+            .unwrap()
+            .join(format!("agentws-hooks-test-{}", agent_status::now_micros()));
+        let hooks = ClaudeHooks {
+            server,
+            settings_path: copilot_plugins_dir.join("claude-settings.json"),
+            hook_program: PathBuf::from("agentws-hook"),
+            copilot_plugins_dir,
+        };
+        let mut copilot = LaunchSpec::copilot_cli(None);
+        copilot.args = vec!["--mode".into(), "plan".into()];
+        assert!(!hooks.attach(12, &mut copilot));
+        let plugin = hooks.copilot_plugins_dir.join("12");
+        assert_eq!(
+            copilot.args,
+            ["--plugin-dir", plugin.to_str().unwrap(), "--mode", "plan"]
+        );
+        assert!(plugin.join("plugin.json").is_file());
+        assert!(plugin.join("hooks.json").is_file());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for path in [
+                &hooks.copilot_plugins_dir,
+                &plugin,
+                &plugin.join("plugin.json"),
+                &plugin.join("hooks.json"),
+            ] {
+                assert_eq!(fs::metadata(path).unwrap().permissions().mode() & 0o077, 0);
+            }
+        }
+        assert!(!copilot.env.contains_key("COPILOT_HOME"));
+        assert_eq!(copilot.env[SESSION_ENV], "12");
+        assert_eq!(copilot.env[PIPE_ENV], hooks.server.pipe_name());
+        assert_eq!(copilot.env[HOOK_ENV], "agentws-hook");
+        let mut other = LaunchSpec::copilot_cli(None);
+        assert!(!hooks.attach(15, &mut other));
+        assert_ne!(other.args[1], copilot.args[1]);
+        assert_eq!(other.env[SESSION_ENV], "15");
+
+        let mut shell = LaunchSpec::shell(None);
+        assert!(!hooks.attach(13, &mut shell));
+        assert!(shell.env.is_empty());
+
+        let mut claude = LaunchSpec::claude_code(None);
+        claude.args = vec!["--settings".into(), "user.json".into()];
+        assert!(hooks.attach(14, &mut claude));
+        assert_eq!(
+            claude.args,
+            [
+                "--settings",
+                hooks.settings_path.to_str().unwrap(),
+                "--settings",
+                "user.json"
+            ]
+        );
+        assert_eq!(claude.env[SESSION_ENV], "14");
+        assert!(!claude.env.contains_key(HOOK_ENV));
+        hooks.remove_settings();
+        assert!(!plugin.exists());
+    }
+
+    #[test]
+    fn unavailable_copilot_plugin_keeps_progress_and_the_mode_bridge() {
+        let server = HookServer::start(
+            format!("agentws-fallback-test-{}.sock", agent_status::now_micros()),
             |_| {},
         )
         .unwrap();
@@ -106,22 +220,12 @@ mod tests {
             server,
             settings_path: PathBuf::from("settings.json"),
             hook_program: PathBuf::from("agentws-hook"),
+            copilot_plugins_dir: PathBuf::from("nonexistent-parent").join("plugins"),
         };
         let mut copilot = LaunchSpec::copilot_cli(None);
+        copilot.args = vec!["--yolo".into()];
         assert!(!hooks.attach(12, &mut copilot));
-        assert!(copilot.args.is_empty());
-        assert_eq!(copilot.env[SESSION_ENV], "12");
-        assert_eq!(copilot.env[PIPE_ENV], hooks.server.pipe_name());
+        assert_eq!(copilot.args, ["--yolo"]);
         assert_eq!(copilot.env[HOOK_ENV], "agentws-hook");
-
-        let mut shell = LaunchSpec::shell(None);
-        assert!(!hooks.attach(13, &mut shell));
-        assert!(shell.env.is_empty());
-
-        let mut claude = LaunchSpec::claude_code(None);
-        assert!(hooks.attach(14, &mut claude));
-        assert_eq!(claude.args, ["--settings", "settings.json"]);
-        assert_eq!(claude.env[SESSION_ENV], "14");
-        assert!(!claude.env.contains_key(HOOK_ENV));
     }
 }

@@ -66,9 +66,9 @@ fn exited_is_final() {
 #[test]
 fn progress_shown_means_working_until_removed() {
     let mut state = AgentState::default();
-    state.apply_progress(ProgressState::Indeterminate);
+    state.apply_progress(ProgressState::Indeterminate, 1);
     assert_eq!(state.status(), AgentStatus::Working);
-    state.apply_progress(ProgressState::Hidden);
+    state.apply_progress(ProgressState::Hidden, 2);
     assert_eq!(state.status(), AgentStatus::Idle);
 }
 
@@ -76,8 +76,50 @@ fn progress_shown_means_working_until_removed() {
 fn progress_after_exit_is_ignored() {
     let mut state = AgentState::default();
     state.exit();
-    state.apply_progress(ProgressState::Indeterminate);
+    state.apply_progress(ProgressState::Indeterminate, 1);
     assert_eq!(state.status(), AgentStatus::Exited);
+}
+
+#[test]
+fn copilot_permission_waits_until_progress_resumes_or_finishes() {
+    for progress in [ProgressState::Indeterminate, ProgressState::Hidden] {
+        let mut state = AgentState::default();
+        state.apply_progress(ProgressState::Indeterminate, 1);
+        state.apply(HookEvent::InputRequested, 2);
+        assert_eq!(state.status(), AgentStatus::NeedsAttention);
+        state.apply_progress(progress, 3);
+        assert_eq!(
+            state.status(),
+            if progress.is_shown() {
+                AgentStatus::Working
+            } else {
+                AgentStatus::Idle
+            }
+        );
+    }
+}
+
+#[test]
+fn delayed_copilot_permission_hook_cannot_override_newer_progress() {
+    let mut state = AgentState::default();
+    state.apply_progress(ProgressState::Hidden, 2);
+    state.apply(HookEvent::InputRequested, 1);
+    assert_eq!(state.status(), AgentStatus::Idle);
+}
+
+#[test]
+fn queued_progress_does_not_hide_a_newer_permission_request() {
+    for progress in [ProgressState::Indeterminate, ProgressState::Hidden] {
+        let mut state = AgentState::default();
+        state.apply_progress(progress, 1);
+        state.apply(HookEvent::InputRequested, 2);
+        assert_eq!(state.status(), AgentStatus::NeedsAttention);
+
+        let mut state = AgentState::default();
+        state.apply(HookEvent::InputRequested, 2);
+        state.apply_progress(progress, 1);
+        assert_eq!(state.status(), AgentStatus::NeedsAttention);
+    }
 }
 
 #[test]

@@ -1,5 +1,5 @@
 //! An agent session's status: from Claude Code hooks, or from Copilot CLI's progress reports
-//! once it sent one.
+//! once it sent one (or a permission hook requested attention).
 
 use std::time::{Duration, Instant};
 
@@ -72,7 +72,7 @@ mod tests {
 
         let later = start + Duration::from_secs(3);
         let change = agent.update(
-            |state| state.apply_progress(ProgressState::Indeterminate),
+            |state| state.apply_progress(ProgressState::Indeterminate, 1),
             later,
         );
         assert_eq!(
@@ -93,12 +93,12 @@ mod tests {
         let now = Instant::now();
         let mut agent = AgentTracker::new(now);
         agent.update(
-            |state| state.apply_progress(ProgressState::Indeterminate),
+            |state| state.apply_progress(ProgressState::Indeterminate, 1),
             now,
         );
         assert_eq!(
             agent.update(
-                |state| state.apply_progress(ProgressState::Indeterminate),
+                |state| state.apply_progress(ProgressState::Indeterminate, 2),
                 now
             ),
             None
@@ -110,7 +110,7 @@ mod tests {
         let now = Instant::now();
         let mut agent = AgentTracker::new(now);
         agent.update(
-            |state| state.apply_progress(ProgressState::Indeterminate),
+            |state| state.apply_progress(ProgressState::Indeterminate, 1),
             now,
         );
         agent.exit(now);

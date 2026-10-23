@@ -15,6 +15,83 @@ fn empty_object_gives_the_defaults() {
 }
 
 #[test]
+fn tab_card_defaults_each_missing_or_wrong_typed_field_independently() {
+    assert_eq!(
+        Settings::from_json(r#"{"tab_card":{"changes":false}}"#)
+            .unwrap()
+            .tab_card,
+        TabCardFields {
+            changes: false,
+            ..TabCardFields::default()
+        },
+    );
+    for value in ["null", "false", "[]", "42", r#""off""#] {
+        let settings = Settings::from_json(&format!(r#"{{"tab_card": {value}}}"#)).unwrap();
+        assert_eq!(settings.tab_card, TabCardFields::default());
+    }
+    let settings = Settings::from_json(
+        r#"{"tab_card":{"enabled":false,"status":"false","location":false,
+        "changes":null,"program_title":42,"session_kind":[]},
+        "claude_args":"--model 'opus'","copilot_args":false}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        settings.tab_card,
+        TabCardFields {
+            enabled: false,
+            location: false,
+            ..TabCardFields::default()
+        }
+    );
+    assert_eq!(settings.claude_args, "--model 'opus'");
+    assert_eq!(settings.copilot_args, "");
+    assert_eq!(
+        Settings::from_json(&settings.to_json().unwrap()).unwrap(),
+        settings
+    );
+}
+
+#[test]
+fn tab_card_set_keeps_only_checked_pieces_without_computing_the_rest() {
+    let fields = [
+        TabCardField::Status,
+        TabCardField::Location,
+        TabCardField::Changes,
+        TabCardField::ProgramTitle,
+        TabCardField::SessionKind,
+    ];
+    let none = TabCardFields {
+        status: false,
+        location: false,
+        changes: false,
+        program_title: false,
+        session_kind: false,
+        ..TabCardFields::default()
+    };
+    assert!(!none.active());
+    for (index, selected) in fields.iter().enumerate() {
+        let mut one = none;
+        match selected {
+            TabCardField::Status => one.status = true,
+            TabCardField::Location => one.location = true,
+            TabCardField::Changes => one.changes = true,
+            TabCardField::ProgramTitle => one.program_title = true,
+            TabCardField::SessionKind => one.session_kind = true,
+        }
+        assert!(one.active());
+        for (other, field) in fields.iter().enumerate() {
+            assert_eq!(one.keep(*field, || 7), (index == other).then_some(7));
+        }
+        one.enabled = false;
+        assert!(!one.active());
+        assert_eq!(
+            one.keep(*selected, || panic!("disabled piece was computed")),
+            None::<()>
+        );
+    }
+}
+
+#[test]
 fn unknown_fields_survive_a_round_trip() {
     let text = r#"{"future": {"nested": [1, 2]}, "fontSize": 14}"#;
     let settings = Settings::from_json(text).unwrap();

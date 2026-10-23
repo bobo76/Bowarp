@@ -27,7 +27,10 @@ impl SettingsPane {
         // A change (from the page, or the file reloaded after a hand edit) redraws the page or
         // the terminal: both read the settings when drawn, and the terminal measures its cells
         // and resizes its pty then (a hidden tab does when it shows).
-        let changes = cx.observe_global::<AppSettings>(|_, cx| cx.notify());
+        let changes = cx.observe_global::<AppSettings>(|workspace, cx| {
+            workspace.update_card_settings(cx);
+            cx.notify();
+        });
         Self {
             open: false,
             shown: false,

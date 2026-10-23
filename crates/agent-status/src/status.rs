@@ -10,7 +10,7 @@ pub enum AgentStatus {
     Exited,
 }
 
-/// A Claude Code hook event that changes the status.
+/// A status-changing hook event (Copilot uses only `InputRequested`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HookEvent {
     PromptSubmitted,
@@ -67,7 +67,7 @@ impl HookEvent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AgentState {
     status: AgentStatus,
-    /// Start time of the hook whose event set `status`, in microseconds since the Unix epoch.
+    /// Hook start or progress observation time, in microseconds since the Unix epoch.
     last_event_at: u64,
 }
 
@@ -95,11 +95,11 @@ impl AgentState {
         self.last_event_at = at;
     }
 
-    /// Apply a progress report from the program's output, for an agent without hooks: it
-    /// works while it shows progress, and is idle once the progress is removed. Reports arrive
-    /// in order, and an exited session stays exited.
-    pub fn apply_progress(&mut self, progress: ProgressState) {
-        if self.status == AgentStatus::Exited {
+    /// Apply Copilot's progress: it works while progress is shown, and is idle once removed.
+    /// A later progress report also clears Waiting; delayed older hooks cannot override it.
+    /// `at` is the I/O observation time, not the time a queued report is processed.
+    pub fn apply_progress(&mut self, progress: ProgressState, at: u64) {
+        if self.status == AgentStatus::Exited || at < self.last_event_at {
             return;
         }
         self.status = if progress.is_shown() {
@@ -107,6 +107,7 @@ impl AgentState {
         } else {
             AgentStatus::Idle
         };
+        self.last_event_at = at;
     }
 
     /// The process ended.

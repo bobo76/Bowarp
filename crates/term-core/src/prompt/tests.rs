@@ -104,6 +104,35 @@ impl Harness {
 const TOKEN: &str = "t0k";
 const PROMPT: &str = "\x1b]133;D;aw=t0k\x07\x1b]133;A;aw=t0k\x07user@host:~$ \x1b]133;B;aw=t0k\x07";
 
+#[test]
+fn repeated_progress_reports_are_forwarded() {
+    let harness = Harness::new(40, 5);
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let captured = reports.clone();
+    let mut pty = MarkedPty::new(
+        (),
+        harness.term,
+        harness.tracker,
+        None,
+        Box::new(move |state| captured.lock().unwrap().push(state)),
+    );
+    pty.report_progress(b"\x1b]9;4;3\x07");
+    pty.report_progress(b"ordinary output");
+    pty.report_progress(b"\x1b]9;4;");
+    pty.report_progress(b"3\x1b\\");
+    pty.report_progress(b"\x1b]9;4;0\x07");
+    pty.report_progress(b"\x1b]9;4;0\x07");
+    assert_eq!(
+        *reports.lock().unwrap(),
+        [
+            ProgressState::Indeterminate,
+            ProgressState::Indeterminate,
+            ProgressState::Hidden,
+            ProgressState::Hidden,
+        ]
+    );
+}
+
 /// Enter on `command`: the shell moves to a new line and sends the C mark.
 fn executed(command: &str) -> String {
     let hex: String = command.bytes().map(|byte| format!("{byte:02x}")).collect();

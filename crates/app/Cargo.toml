@@ -42,6 +42,7 @@ image = { version = "0.25.10", default-features = false, features = [
 ] }
 log.workspace = true
 notify.workspace = true
+shell-words = "1.1"
 term-core.workspace = true
 unicode-width = "0.2"
 workspace-model.workspace = true

@@ -161,6 +161,8 @@ pub struct OpenFileRequest {
     pub place: FilePlace,
 }
 
+pub struct LastCommandChanged;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StatusReporting {
     Hooks,
@@ -197,6 +199,8 @@ pub struct TerminalView {
     /// IME composition text not yet committed.
     pub(crate) marked_text: Option<String>,
     pub(crate) history_popup: Option<HistoryPopup>,
+    pub(crate) last_command: workspace_model::LastCommand,
+    last_command_supported: bool,
     pub(crate) search: TerminalSearch,
     search_bar: Option<search::SearchBar>,
     title: Option<String>,
@@ -257,6 +261,11 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe_global::<history::History>(|view, cx| {
+            if let Some(command) = cx.global::<history::History>().forgotten()
+                && view.last_command.forget(command)
+            {
+                cx.emit(LastCommandChanged);
+            }
             view.refresh_history(cx);
             cx.notify();
         })
@@ -277,6 +286,13 @@ impl TerminalView {
             geometry: None,
             marked_text: None,
             history_popup: None,
+            last_command: workspace_model::LastCommand::default(),
+            last_command_supported: spec.kind == SessionKind::Shell
+                && spec.mark_token.is_some()
+                && matches!(
+                    launcher::shell_syntax(spec),
+                    ShellSyntax::Posix | ShellSyntax::Wsl
+                ),
             search: TerminalSearch::default(),
             search_bar: None,
             title: None,
@@ -478,6 +494,21 @@ impl TerminalView {
         self.mode.mode()
     }
 
+    fn supports_last_command(&self) -> bool {
+        self.last_command_supported
+    }
+
+    pub fn restore_last_command(&mut self, command: Option<String>, cx: &mut Context<Self>) {
+        if self.supports_last_command() {
+            self.last_command.restore(command);
+            cx.notify();
+        }
+    }
+
+    pub fn last_command(&self) -> Option<&str> {
+        self.last_command.saved()
+    }
+
     /// Mode reports must not change activity, lap time or the unseen-finished badge.
     pub fn apply_hook_event(&mut self, event: AgentEvent, at: u64, cx: &mut Context<Self>) {
         if self.process != ProcessState::Running {
@@ -486,6 +517,19 @@ impl TerminalView {
         match event {
             AgentEvent::Hook(event) if self.kind() == SessionKind::ClaudeCode => {
                 self.update_agent(|agent| agent.apply(event, at), cx);
+            }
+            AgentEvent::Hook(agent_status::HookEvent::InputRequested)
+                if self.kind() == SessionKind::CopilotCli =>
+            {
+                // Permission hooks can arrive before the first terminal progress report.
+                if self.agent.is_none() {
+                    self.agent = Some(AgentTracker::new(Instant::now()));
+                    self.activity_task = None;
+                }
+                self.update_agent(
+                    |agent| agent.apply(agent_status::HookEvent::InputRequested, at),
+                    cx,
+                );
             }
             AgentEvent::ModeChanged(mode)
                 if self.kind() == SessionKind::CopilotCli && self.mode.apply(mode, at) =>
@@ -498,7 +542,7 @@ impl TerminalView {
 
     /// Apply a progress report from Copilot CLI. Its first one switches the tab from output
     /// activity to agent status, so a Copilot that never reports progress keeps the former.
-    fn apply_progress(&mut self, state: ProgressState, cx: &mut Context<Self>) {
+    fn apply_progress(&mut self, state: ProgressState, at: u64, cx: &mut Context<Self>) {
         if self.kind() != SessionKind::CopilotCli {
             return;
         }
@@ -507,7 +551,7 @@ impl TerminalView {
             self.agent = Some(AgentTracker::new(Instant::now()));
             self.activity_task = None;
         }
-        let changed = self.update_agent(|agent| agent.apply_progress(state), cx);
+        let changed = self.update_agent(|agent| agent.apply_progress(state, at), cx);
         if adopted && !changed {
             cx.emit(TabChanged);
         }
@@ -554,6 +598,9 @@ impl TerminalView {
             SessionEvent::CommandStarted(command) => self.on_command_started(command, cx),
             SessionEvent::CommandExecuted(command) => {
                 self.history_popup = None;
+                if self.supports_last_command() && self.last_command.record(&command.command) {
+                    cx.emit(LastCommandChanged);
+                }
                 history::record(command, cx);
             }
             SessionEvent::CommandFinished => {
@@ -563,7 +610,7 @@ impl TerminalView {
                     self.refresh_location_and_notify(cx);
                 }
             }
-            SessionEvent::ProgressChanged(state) => self.apply_progress(state, cx),
+            SessionEvent::ProgressChanged { state, at } => self.apply_progress(state, at, cx),
             SessionEvent::ClipboardStore(clipboard, text) => {
                 store_clipboard(clipboard, text, cx);
                 return;
@@ -689,6 +736,7 @@ impl TerminalView {
 
     /// Send user input to the program, snapping the view back to the live screen.
     fn send_input(&mut self, bytes: Cow<'static, [u8]>, cx: &mut Context<Self>) {
+        self.last_command.dismiss();
         self.session.scroll_display(Scroll::Bottom);
         self.session.clear_selection();
         self.session.write(bytes);
@@ -903,6 +951,7 @@ impl EventEmitter<TabChanged> for TerminalView {}
 impl EventEmitter<AgentExited> for TerminalView {}
 impl EventEmitter<AgentNotice> for TerminalView {}
 impl EventEmitter<OpenFileRequest> for TerminalView {}
+impl EventEmitter<LastCommandChanged> for TerminalView {}
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -1059,6 +1108,7 @@ impl EntityInputHandler for TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.last_command.dismiss();
         self.marked_text = (!text.is_empty()).then(|| text.to_string());
         cx.notify();
     }

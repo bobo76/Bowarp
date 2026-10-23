@@ -15,6 +15,7 @@ use crate::window_bounds::config_file;
 pub struct History {
     commands: CommandHistory,
     path: Option<PathBuf>,
+    forgotten: Option<String>,
 }
 
 impl Global for History {}
@@ -22,6 +23,10 @@ impl Global for History {}
 impl History {
     pub fn commands(&self) -> &CommandHistory {
         &self.commands
+    }
+
+    pub fn forgotten(&self) -> Option<&str> {
+        self.forgotten.as_deref()
     }
 }
 
@@ -32,7 +37,11 @@ pub fn init(cx: &mut App) {
         .map_or_else(CommandHistory::default, |path| {
             CommandHistory::load(path, CommandHistory::DEFAULT_CAP)
         });
-    cx.set_global(History { commands, path });
+    cx.set_global(History {
+        commands,
+        path,
+        forgotten: None,
+    });
 }
 
 #[cfg(test)]
@@ -40,6 +49,7 @@ pub fn init_in_memory(cx: &mut App) {
     cx.set_global(History {
         commands: CommandHistory::default(),
         path: None,
+        forgotten: None,
     });
 }
 
@@ -51,6 +61,7 @@ pub fn record(command: ExecutedCommand, cx: &mut App) {
         .map_or(0, |since| since.as_secs());
     let entry = HistoryEntry::new(command.command, command.folder, time);
     let history = cx.global_mut::<History>();
+    history.forgotten = None;
     if !history.commands.add(entry.clone()) {
         return;
     }
@@ -69,6 +80,7 @@ pub fn record(command: ExecutedCommand, cx: &mut App) {
 /// command is gone from this run's history.
 pub fn forget(command: &str, cx: &mut App) {
     let history = cx.global_mut::<History>();
+    history.forgotten = Some(command.to_owned());
     history.commands.remove(command);
     let Some(path) = &history.path else {
         return;

@@ -40,6 +40,13 @@ pub struct Settings {
     /// Windows). A shell that isn't installed gets the automatic one too (the app checks).
     #[serde(deserialize_with = "lenient")]
     pub default_shell: String,
+    /// Extra shell-style words for new Claude Code and Copilot CLI tabs.
+    #[serde(deserialize_with = "lenient")]
+    pub claude_args: String,
+    #[serde(deserialize_with = "lenient")]
+    pub copilot_args: String,
+    #[serde(deserialize_with = "lenient")]
+    pub tab_card: TabCardFields,
     /// The file viewer's share of the window width, set by dragging its divider (not on the
     /// settings page).
     #[serde(deserialize_with = "lenient")]
@@ -59,6 +66,77 @@ pub enum UiTheme {
     Light,
     #[default]
     Dark,
+}
+
+/// Optional pieces of a sidebar tab hover card. The name and shortcut are unconditional.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabCardField {
+    Status,
+    Location,
+    Changes,
+    ProgramTitle,
+    SessionKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TabCardFields {
+    #[serde(deserialize_with = "lenient_enabled")]
+    pub enabled: bool,
+    #[serde(deserialize_with = "lenient_enabled")]
+    pub status: bool,
+    #[serde(deserialize_with = "lenient_enabled")]
+    pub location: bool,
+    #[serde(deserialize_with = "lenient_enabled")]
+    pub changes: bool,
+    #[serde(deserialize_with = "lenient_enabled")]
+    pub program_title: bool,
+    #[serde(deserialize_with = "lenient_enabled")]
+    pub session_kind: bool,
+}
+
+impl Default for TabCardFields {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            status: true,
+            location: true,
+            changes: true,
+            program_title: true,
+            session_kind: true,
+        }
+    }
+}
+
+impl TabCardFields {
+    pub fn active(self) -> bool {
+        self.enabled
+            && (self.status
+                || self.location
+                || self.changes
+                || self.program_title
+                || self.session_kind)
+    }
+
+    pub fn keeps(self, field: TabCardField) -> bool {
+        self.active()
+            && match field {
+                TabCardField::Status => self.status,
+                TabCardField::Location => self.location,
+                TabCardField::Changes => self.changes,
+                TabCardField::ProgramTitle => self.program_title,
+                TabCardField::SessionKind => self.session_kind,
+            }
+    }
+
+    /// Do not even compute a piece that is unchecked or whose card is disabled.
+    pub fn keep<T>(self, field: TabCardField, value: impl FnOnce() -> T) -> Option<T> {
+        self.keeps(field).then(value)
+    }
+}
+
+fn lenient_enabled<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    Ok(Value::deserialize(deserializer)?.as_bool().unwrap_or(true))
 }
 
 impl Settings {

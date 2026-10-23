@@ -762,8 +762,6 @@ pub(crate) struct MarkedPty<T, L: EventListener> {
     pty: T,
     filter: MarkFilter<L>,
     progress: ProgressScanner,
-    /// The last progress state reported, so a program repeating it is not reported again.
-    last_progress: Option<ProgressState>,
     on_progress: ProgressCallback,
     #[cfg(unix)]
     wake: Option<Wake>,
@@ -793,7 +791,6 @@ impl<T, L: EventListener> MarkedPty<T, L> {
             pty,
             filter: MarkFilter::new(term, tracker, token.unwrap_or_default(), PROMPT_TRACKING),
             progress: ProgressScanner::new(),
-            last_progress: None,
             on_progress,
             #[cfg(unix)]
             wake,
@@ -803,18 +800,17 @@ impl<T, L: EventListener> MarkedPty<T, L> {
             scans: token.is_some(),
         }
     }
-}
 
-impl<T: EventedReadWrite, L: EventListener> MarkedPty<T, L> {
     fn report_progress(&mut self, output: &[u8]) {
         let Some(state) = self.progress.scan(output) else {
             return;
         };
-        if self.last_progress.replace(state) != Some(state) {
-            (self.on_progress)(state);
-        }
+        // A repeated state can resume work after a permission hook on the IPC channel.
+        (self.on_progress)(state);
     }
+}
 
+impl<T: EventedReadWrite, L: EventListener> MarkedPty<T, L> {
     #[cfg(unix)]
     fn read_marked(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let Some(wake) = self.wake.as_mut() else {

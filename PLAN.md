@@ -2,6 +2,17 @@
 
 Feature spec: [FEATURES.md](FEATURES.md)
 
+## Top priority: Ready for review
+
+- Background agent completion status: when an unfocused agent tab transitions from Working
+  to Idle, show **Ready for review** instead of Idle until the user focuses that tab.
+  - Focusing the tab acknowledges the completed work and clears the status back to Idle;
+    a Working-to-Idle transition in an already focused tab stays Idle.
+  - This is an unread-completion indicator, not confirmation that the work is correct.
+    New Working or Waiting events replace it with the agent's current status.
+  - Show it consistently in the sidebar, tab hover cards and group summaries; align existing
+    Done notifications with this status rather than introducing duplicate completion notices.
+
 ## Status (0.2.16, 2026-10-22)
 
 [FEATURES.md](FEATURES.md) is the target; what is not built yet is in the next steps and the
@@ -65,40 +76,106 @@ it stays, under "Fixed, not tested yet" if only the manual check is missing.
 **Next steps**
 
 1. Notifications and close warnings:
-   - Close-with-running-process warnings.
-   - Configurable sound for agent events (Waiting, Done); basic silent
-     in-app toasts are implemented, awaiting the manual checks below.
+   - Close-with-running-process warnings: a tab is busy when a shell command runs (OSC 133
+     `C` without `D`) or an agent is Working or Waiting; idle prompts and idle agents close
+     silently. Applies to closing a tab, closing a group and quitting the window (one dialog
+     listing every busy tab).
+   - Sound for agent events (Waiting, Done): one bundled sound for both events, with an on/off
+     switch and a volume setting. Basic silent in-app toasts are implemented, awaiting the
+     manual checks below.
    - Clipboard notice: a banner above the terminal when a program writes the clipboard
-     (OSC 52), with allow/deny.
+     (OSC 52). The write is held until Allow (applied then) or Deny (dropped); a newer write
+     replaces the pending one. "Always for this tab" allows later writes until the tab closes
+     (not saved).
 2. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
    `cx.build_action`) from the settings file in place of `default_bindings`. First so the user
    can unbind Ctrl+V (paste) and get `^V` back for bash's quoted-insert and vim's visual block.
+   - Overlay: `"keybindings": {"ctrl-v": null, "ctrl-shift-v": "Paste"}` adds to or overrides
+     the defaults key by key; `null` removes a default, and the key then goes to the terminal.
+   - Full editor on a "Keyboard" settings page: one row per action showing its keys, click to
+     record a keystroke, a reset to the default, and a way to unbind it.
+   - An invalid entry (unknown action, keystroke that can't be parsed) is skipped and the rest
+     still apply; the reasons are listed on the settings page, like a broken settings file.
 3. Configurable terminal path: the executable path for each launcher entry (Terminal, Git
    Bash, `claude`, `copilot`) saved in the settings file and shown on the settings page, for
    programs that aren't on `PATH` or where the wrong copy is found first; an empty value keeps
    the current lookup.
-4. Agent launch arguments: extra command-line arguments for the Claude Code and Copilot CLI
-   launcher entries (e.g. `--yolo` for `copilot`, `--dangerously-skip-permissions` or
-   `--model opus` for `claude`), saved in the settings file and shown on the settings page
-   next to the entry's path. Split like a shell command line (quotes group words) and added
-   after the app's own arguments (`claude` keeps the hooks' `--settings`); they apply to new
-   tabs started from that entry (the `+` menu, Ctrl+Shift+T). A restored tab keeps the
-   arguments it started with (saved with the tab in `tabs.json`), not the current setting.
-   Empty adds none.
-   - Claude Code mode: `--permission-mode <default|acceptEdits|plan|bypassPermissions>`
-     (`--dangerously-skip-permissions` is `bypassPermissions`); `permissions.defaultMode` in
-     the hooks' `--settings` file would also work. The hook input's `permission_mode` reports
-     the current mode, but only when a hook fires (a Shift+Tab switch while idle shows at the
-     next event).
-   - Copilot CLI mode: `--mode autopilot` (or `--autopilot`), `--mode interactive`, or
-     `--mode plan`. Mode selection is separate from permission bypass (`--yolo`).
-5. Terminal color schemes: a few bundled schemes plus user schemes imported from base16/iTerm
-   files, saved in the settings file and picked on the Appearance page. "System" follows the
-   OS light/dark setting. The persisted light/dark UI choice is implemented, awaiting manual
-   checks below.
-6. Window opacity and background blur, set in the settings file (opacity applies to the
+   - Every detected `+` menu entry gets one (PowerShell, cmd, Git Bash, zsh, `claude`,
+     `copilot`, ...), except WSL distros, which are always started through `wsl.exe -d`.
+   - A path that doesn't exist or can't be run: the settings row shows "(not found)", the entry
+     uses the normal `PATH` lookup, and the tab shows a persistent warning, like the initial
+     shell fallback.
+   - Input: a text field with a Browse button (native file picker); the placeholder shows the
+     path the `PATH` lookup finds now.
+4. Terminal color schemes: a few bundled schemes plus user schemes from base16/iTerm files,
+   picked on the Appearance page. "System" follows the OS light/dark setting. The persisted
+   light/dark UI choice is implemented, awaiting manual checks below.
+   - Two pickers: one scheme for the Light theme, one for Dark; the active UI theme (or the OS,
+     for "System") decides which applies. The terminal scheme never colors the UI itself.
+   - Bundled, written in code (no asset files): the current default (dark), a matching default
+     light, Solarized Dark / Light, One Dark / Light, Dracula.
+   - User schemes: base16 (YAML) and iTerm (`.itermcolors`) files placed in a `schemes/`
+     folder next to `settings.json`, read when the Appearance page opens. The settings file
+     stores only the chosen scheme names.
+5. Window opacity and background blur, set in the settings file (opacity applies to the
    terminal background only, text stays opaque); blur where the platform allows it (Windows
    acrylic/mica, KDE on X11).
+   - Also on the Appearance page: an opacity slider (30-100 %) and a blur dropdown, applied
+     live and saved in the settings file.
+   - Windows blur: None / Acrylic / Mica, where Mica falls back to Acrylic on Windows 10.
+   - Without blur support (Wayland, GNOME on X11) the opacity still applies; the blur control
+     is disabled and says "Not available on this system".
+6. Major feature options: add the switches in [Feature options](#feature-options) to the
+   settings page and settings file, alongside the existing appearance and terminal controls.
+   These are planned options, not features already implemented.
+
+### Feature options
+
+UI/UX review recommendation: make major optional behavior configurable, rather than adding
+a switch for every action. Defaults keep current or explicitly planned behavior; notification
+sound starts off to keep today's silent default. Each row is an independent switch unless a
+dependency is stated.
+
+| Settings page | Option | Default | When off |
+|---|---|---|---|
+| Appearance | Tab hover cards (implemented; manual checks pending) | On | No cards over sidebar tabs; retain sidebar status. Keep the detailed field switches described under Fixed, not tested yet. |
+| Appearance | Group hover cards | On | No basic or extended group cards; retain collapsed-group status. Independent of tab cards. |
+| Appearance | Activity animations | On | Static Working indicators for both Claude and Copilot; no animation timers. Status still updates. |
+| Terminal | Command history | On | Stop collecting commands into Bowarp history, in memory and on disk; no history popup, inline suggestions or last-command capture/restoration. Does not change the shell's own history. |
+| Terminal | History popup | On | No Bowarp HISTORY panel or popup key interception; Up goes to the shell. With command history on, recording continues, stated beside this switch. |
+| Terminal | Inline suggestions | On | No Bowarp ghost text or suggestion-acceptance key interception, including last-session suggestions; shell plugins are unchanged. |
+| Terminal | Prompt at the bottom | On when built | Keep today's top-anchored terminal layout. Independent of history; with the history popup off, no docked panel is built. |
+| Terminal | Command separators and details | On when built | No command-block separators, folder or duration labels; prompt placement is unchanged. |
+| Terminal | Open agents typed at the prompt in a new tab | On when built | Run typed `claude` / `copilot` normally in the shell. Applies to newly started shells, as the integration functions are installed at startup. |
+| Workspace | Restore previous tabs | On | Start with a fresh default tab; do not load or update the automatic tab snapshot. Keep ordinary preferences and explicitly saved named workspaces. |
+| Workspace | Remember last shell command | On when built | Do not capture or save new `last_command` values or offer saved ones. Requires command history and automatic tab restoration; showing the suggestion also requires inline suggestions. |
+| Workspace | File explorer and viewer | On | Hide both panes and disable their app entry points after resolving unsaved edits. File links offer Open externally; preserve pane widths and saved file associations without loading files. |
+| Notifications | In-app notifications | On | No agent or long-command toasts; status and attention badges remain. Sound is independently controlled. |
+| Notifications | Notification sounds | Off | No agent, long-command or bell sound; retain the volume slider for when enabled. Does not suppress visual status. |
+| Notifications | Long-command completion status | On when built | Do not mark background shell tabs Done/failed or send completion notifications. Keep command tracking for busy-close protection; retain the duration threshold setting. |
+
+- Persist switches in `settings.json`; missing or wrongly typed values use their documented
+  defaults. Apply live except where noted. Show dependent controls disabled, retaining their
+  values, with a caption explaining which parent option is required.
+- Command history is the master switch for Bowarp's history features. Turning it off closes
+  the popup and removes suggestions immediately, but does not disable shell integration used
+  for working-directory tracking, agent status or busy-close protection.
+- Distinguish disabling from deleting: existing history and saved session commands are not
+  erased or used while their feature is off. Provide explicit Clear history and Clear saved
+  session commands actions, covering both history storage and saved tab/workspace command
+  fields where applicable; never rerun saved commands automatically.
+- Disabled UI must stop work done solely for it: card clocks/diffs, suggestion searches,
+  command-block metadata, toast queues, audio initialization, animations and file-pane
+  scans/watchers. Keep shared work that another enabled feature still needs.
+- Keep clipboard Allow/Deny, unsaved-edit confirmation, busy-close warnings and persistent
+  failure warnings as safeguards, not optional notification switches. Theme, color schemes,
+  opacity, blur, shell and icon choices remain pickers/sliders, not extra on/off switches.
+- Integrate these controls with the existing notification next step and the Backlog items
+  for hover cards, history per shell, prompt layout, last-command restoration, animations
+  and named workspaces; do not implement a second set of settings for the same behavior.
+- When implementing, cover settings defaults/round trips, parent-child combinations,
+  live disable/re-enable, key pass-through, retained-data clearing and disabled background
+  work in tests; manually check the settings UI and unsaved-edit flow.
 
 ## Fixed, not tested yet
 
@@ -106,14 +183,65 @@ Six UX improvements are implemented in 0.2.16. All 360 workspace tests, the buil
 pass in Linux Docker. Native Windows builds and visual checks remain pending: the MSVC
 linker is not available locally. See README's "Six UX improvements" manual checklist.
 
+**Windows check, 2026-10-23 (build reported as 0.2.16): nothing passed.** The overflow menu,
+the theme switch and the group card are all missing, though their code is in the `v0.2.16`
+tag. So the build that was run probably doesn't contain these changes (an older build, or one
+from an earlier commit). Before debugging, confirm which commit the Windows build came from,
+then rebuild from `v0.2.16` and run all six checks again.
+
 - Settings gear: focus an unfocused Settings page; close a focused page and remove its row.
+  **Failed** (what goes wrong not recorded yet).
 - File viewer overflow menu: existing Save and Raw/Rendered actions; toolbar controls stay.
+  **Not shown:** no menu in the viewer.
 - Initial shell fallback: a persistent warning retains the requested shell's failure reason.
+  Not tested yet.
 - Group hover card: whole-group tab count and Working/Waiting/Done totals, including empty
-  groups; no timer, per-tab rows or card during dragging.
+  groups; no timer, per-tab rows or card during dragging. **Not shown:** no card when
+  hovering a group. (Dragging a group header doesn't work either, but that was never built:
+  see the Backlog.)
 - Background agent toasts: status-transition based, silent, in-app only; click to select,
-  dismiss or auto-hide, replacing an earlier notice for the same tab.
+  dismiss or auto-hide, replacing an earlier notice for the same tab. **Failed** (what goes
+  wrong not recorded yet).
 - Persisted Light theme switch: live UI changes, dark by default, terminal palette unchanged.
+  **Not shown:** no theme setting on the settings page.
+
+### Four requested features (unreleased, 2026-10-23)
+
+Implemented with automated coverage; native Windows UI and live Copilot permission-dialog
+checks remain pending. README documents the settings and behavior.
+
+- Restore a shell tab's last command: integrated bash/zsh tabs (including Git Bash and bash
+  in WSL; not PowerShell, cmd or agents) save the last non-trivial, recordable command at
+  command start. `tabs.json` is owner-only on Unix at every write. The first empty prompt
+  offers a one-shot dimmed suggestion with a fainter last-session hint when it fits; Right
+  or End accepts, never Tab or Enter. Any line action dismisses it, including keys before
+  the first prompt; HISTORY deletion clears it from all tabs.
+  Manual check: run a useful command then `cd`/`ls`, restart and verify the useful command
+  is suggested; check Right/End, Tab/Enter pass-through, dismissal, narrow-window hint,
+  crash recovery and forgetting across tabs.
+- Tab hover card settings: Appearance has a persisted master switch and Status, Location,
+  Changes, Program title and Session kind switches, all on by default. Missing/wrong-typed
+  fields default independently. Name/shortcut always remain; all pieces off suppresses the
+  card without changing the master. Disabled piece controls retain their values. No card
+  clocks when status is off and no new diffs when changes is off; group cards are unchanged.
+  Manual check: toggle every field live, disable/re-enable the card, restart and confirm
+  retained values; verify all-fields-off suppression and unchanged group cards.
+- Copilot CLI NeedsAttention: tested against CLI 1.0.103's supported per-tab `--plugin-dir`.
+  App-owned private plugins register only `PermissionRequest`, routed through `agentws-hook`
+  to Waiting. Working/Idle still come from progress reports, which clear Waiting. User
+  Copilot configuration is never changed; unavailable hooks keep progress-only fallback.
+  Automatic approvals can briefly report Waiting because Copilot emits the hook first.
+  Manual check: README checks 6-9 on Windows and Ubuntu (Wayland/X11), including two tabs,
+  approval/denial, progress recovery, disabled hooks and unchanged user configuration.
+- Agent launch arguments: Terminal shows Claude/Copilot paths and free-text argument fields
+  (`claude_args`, `copilot_args`). Shell-style quoting groups words without shell expansion;
+  malformed quoting blocks launch with an error. Arguments follow app hook arguments;
+  user `--settings` is passed through even if it overrides hooks. Menu/explorer launches
+  use current settings, while existing, duplicated and restored tabs keep original args.
+  Ctrl+Shift+T continues opening the default shell.
+  Manual check: launch with quoted arguments, empty fields, malformed quotes, Claude
+  `--permission-mode plan`/`--model opus` and Copilot `--mode plan`/`--yolo`; change settings
+  and confirm duplication/restoration keep the old arguments.
 
 ## Decisions
 
@@ -164,13 +292,21 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 - Copilot working animation: show a blue circular spinner rotating beside the Copilot tab's
   title in the sidebar while its status is Working, matching the reference screenshot.
   Stop the animation when the status leaves Working; no animation timer while idle.
+  - Copilot only: Claude tabs already have their own Working animation.
+  - Same place as Claude's animation: just left of the title on the row's first line, where
+    the half-circle glyph shows on a working Claude tab.
+  - It animates only while the row can be seen: no frames while its group is collapsed or the
+    window is minimized.
 - Named workspaces (the single window's tabs are already restored): save and open named
   workspaces, offer to relaunch their tabs; restored tabs clearly marked "not running".
-- Copilot CLI NeedsAttention via its hooks (progress reports only give Working / Idle;
-  Copilot's `cli-main.js` has a `hooks` config and a `PermissionRequest` event: per-tab hooks
-  config like `ClaudeHooks`, event through `agentws-hook` to `agent-status`, fall back to the
-  progress status without hooks; pin the Copilot version tested). Re-run the manual checks 6-9
-  (README) on Ubuntu, Wayland and X11.
+  - Opening one replaces every current tab, after a confirmation. No confirmation when the
+    window has a single tab and it isn't busy (no command running, agent not Working or
+    Waiting): that tab is replaced right away.
+  - Each restored tab shows a "Not running" panel with a Start button (the open dialog also
+    has "Start all"). Agent tabs start a new session (no `--continue`); shells start as new.
+  - Saved: what `tabs.json` holds (kind, folder, names, groups, order, launch arguments),
+    plus each tab's file open in the viewer and the viewer and explorer widths. Not the
+    scrollback.
 - `claude` / `copilot` typed at a shell prompt open an agent tab: instead of running in the
   shell tab, the command opens a new tab exactly like the `+` menu's "Claude Code" / "Copilot
   CLI" entry (`open_launcher` in `app/src/workspace_view.rs`, so hooks and status work), in the
@@ -202,9 +338,16 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   shortcuts and the menu-only ones such as Duplicate, Move to group or Copy branch), showing
   each one's shortcut, plus the tabs by name ("go to tab"). Enter runs the action on the
   selected tab.
-- File viewer find and replace: Ctrl+F searches the open file (highlight all matches,
-  Enter / Shift+Enter to move, match count, case and whole-word toggles), Ctrl+H adds a
-  replace field (replace one / all) in source mode; rendered Markdown only gets find.
+- File viewer search and replace: Ctrl+F opens a search bar for the open file (highlight all
+  matches, Enter / Shift+Enter to move, match count, case and whole-word toggles); Ctrl+H
+  adds a replace field with Replace and Replace all in editable source mode. Replacements
+  update the editor buffer and mark it unsaved, using the existing Save and unsaved-edit
+  confirmation flow; read-only and rendered views only get search. Shortcuts apply while
+  the viewer is focused, leaving terminal shortcuts unchanged; Esc closes the bar and
+  returns focus to the file.
+- File viewer close shortcut: Ctrl+Shift+X closes the selected tab's file viewer from
+  either the terminal or the viewer, using the same unsaved-edit confirmation as its close
+  button. Return focus to the terminal after closing; do nothing when no viewer is open.
 - File viewer: the rendered JSON view ("Not valid JSON") is only worked out when the file
   opens, so it stays stale after the file is fixed and saved in the viewer.
 - Command history with zsh-autosuggestions (likely bug, unverified): Enter on a HISTORY row
@@ -212,6 +355,29 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   (`$BUFFER`, `.zshenv` `__agentws_report_line`) excludes it, so the Backspaces leave the
   accepted rest in front of the new command. Send a key that doesn't accept it, or clear
   `POSTDISPLAY` first.
+- Command history per shell: today every shell tab shares one history, so a PowerShell tab
+  suggests bash commands and the other way round.
+  - Saved by shell: `HistoryEntry` gets a `shell` field, the tab's launcher id (`pwsh`,
+    `powershell`, `git-bash`, `zsh`, `wsl:Ubuntu`), so Git Bash and a WSL bash stay apart
+    (their paths differ). `#[serde(default)]`: entries saved before have no shell and show
+    only under "All". A command is kept once per shell (dedup on shell + command), and the
+    cap applies per shell, so a busy shell doesn't push the others out.
+  - Inline suggestion: from the tab's own shell only.
+  - HISTORY header: one chip per shell that has entries plus "All", using the launcher's
+    menu name and icon; the tab's shell is selected when the popup opens. The list shows the
+    selected chip's commands, still filtered by the typed text. Delete forgets the command
+    in the selected shell only ("All": in every shell).
+  - Switching: Tab (pick) and Left/Right (go to the shell, edit the line) are taken, and plain
+    letters are typed into the line as the filter, so a bare first letter can't switch.
+    Proposed: Alt+the chip's first letter (Alt+P PowerShell, Alt+G Git Bash, Alt+U Ubuntu,
+    Alt+A All), with the letter underlined on the chip. Two chips with the same letter
+    (PowerShell and Windows PowerShell): pressing it again moves to the next one. Ctrl+Alt is
+    left alone (AltGr on European layouts). Clicking a chip also switches. While the popup
+    is open, Alt+letter isn't sent to the shell (so readline's Alt+B / Alt+F word moves are
+    lost there). Alternatives: Ctrl+Left / Ctrl+Right to move through the chips (no letter
+    collisions, but slow with many shells), or Shift+Tab to cycle.
+  - Unit-test the JSON round trip (field missing, present), per-shell dedup and cap, the
+    suggestion per shell, and the chip key (letter collision, Ctrl+Alt ignored).
 - Prompt at the bottom ([reference](docs/ui-reference/revers_command_line_order.png)): in a
   shell tab the prompt stays on the last rows, the HISTORY panel (Up) opens just above it, and
   the earlier commands and their output sit above the panel. Today a new tab or `clear` puts
@@ -245,18 +411,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   settings size, which acts as the default zoom. Zooming never changes the setting and isn't
   saved (Ctrl+0 and a restart go back to the settings size). Ctrl+wheel is never sent to the
   program, even with mouse reporting on.
-- Restore a shell tab's last command: each shell tab (shell integration only; not agent tabs,
-  not cmd tabs, which report no commands) keeps the last command it ran, saved with the tab in
-  `tabs.json` (a `last_command` field in `SavedTab`, written when the window closes like
-  `folder`). Taken from the `ExecutedCommand` that `TerminalView` already passes to
-  `history::record`, so unrecordable commands (leading space, control characters) are never
-  saved. When the restored tab shows its first prompt with an empty line, the command is drawn
-  as the dimmed inline suggestion and accepted with the same keys (Right, End, Tab); it is
-  never typed into the line, so an Enter can't rerun `git push` or `rm` by accident. It goes
-  away once something is typed (the normal history suggestion takes over) or a command runs.
-  `tabs.json` must then be written owner-only like `history.jsonl` (commands may hold
-  secrets). Unit-test the `SavedTab` round trip (field missing, present) and the empty-line
-  suggestion.
 - New-tab folder picker (currently the selected tab's folder).
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
@@ -266,23 +420,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   palette plus "Default") that tints the tab's sidebar row and its terminal background; saved
   with the tab in `tabs.json` and restored. The terminal's foreground colors stay unchanged,
   so the palette must keep text readable in light and dark themes.
-- Tab hover card settings: a "Tab hover card" switch (default on) on the settings page that
-  turns the card on the sidebar rows off or on, and one switch per piece of information it
-  shows (all on by default), saved in the settings file:
-  - Status: the colored chip, with the lap time ("Working · 2m 14s") or the running command,
-    and the "Running for 2:14" line.
-  - Shortcut: the tab's Ctrl+number shortcut.
-  - Folder: the full folder, home shortened to `~`.
-  - Branch: the git branch.
-  - Program title: the program's title, when the row's custom name hides it.
-  - Session kind: the kind icon and name (or the shell's name).
-  - Lines added: the `+N` from `git diff`.
-  Applies live. Card off: `with_hover_card` returns the bare row, so no card is built, no
-  `git diff` runs and no clock ticks. Lines added off: `refresh_diff_stat` doesn't run
-  `git diff` either. Every piece off is the same as the card off. `sidebar::tab_card` skips
-  the unchecked parts (a `TabCardFields` set in `workspace-model/src/settings.rs`, read in
-  `tab_card.rs`); unit-test the settings read (missing, wrong type) and which parts a set
-  keeps.
 - Extended group hover card (basic counts are implemented): one line per tab with kind icon,
     name, status and lap time ("Working · 2m 14s", "Running for 40s") and branch, in sidebar
     order; tabs that need attention (Waiting, unviewed Done or failed) first.

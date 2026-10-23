@@ -51,7 +51,8 @@ use crate::sidebar::{self, SIDEBAR_WIDTH};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
 use crate::terminal_view::{
-    AgentExited, AgentNotice, OpenFileRequest, StatusReporting, TabChanged, TerminalView,
+    AgentExited, AgentNotice, LastCommandChanged, OpenFileRequest, StatusReporting, TabChanged,
+    TerminalView,
 };
 use crate::window_bounds;
 
@@ -163,7 +164,7 @@ struct Tab {
     meta: TabMeta,
     /// The file the tab shows beside its terminal; `None` when the viewer is closed.
     viewer: Option<TabViewer>,
-    _view_events: [Subscription; 4],
+    _view_events: [Subscription; 5],
 }
 
 struct TabViewer {
@@ -369,7 +370,7 @@ impl WorkspaceView {
         spec: &LaunchSpec,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> io::Result<(Entity<TerminalView>, [Subscription; 4])> {
+    ) -> io::Result<(Entity<TerminalView>, [Subscription; 5])> {
         let session_id = self.next_session_id;
         let mut launch = spec.clone();
         let reporting = if self
@@ -409,7 +410,10 @@ impl WorkspaceView {
                 workspace.notify_agent(tab_id, *notice, window, cx);
             },
         );
-        Ok((view, [changed, exited, open_file, notice]))
+        let last_command = cx.subscribe(&view, |workspace, _, _: &LastCommandChanged, cx| {
+            workspace.save_tabs(cx);
+        });
+        Ok((view, [changed, exited, open_file, notice, last_command]))
     }
 
     fn notify_agent(
@@ -560,7 +564,14 @@ impl WorkspaceView {
         let (layout, selected) = state.layout.filter_map_selected(state.selected, |saved| {
             let spec = tabs_file::launch_spec(&saved);
             match self.spawn_tab(spec.clone(), saved.meta, window, cx) {
-                Ok(id) => Some(id),
+                Ok(id) => {
+                    if let Some(index) = self.tab_index(id) {
+                        self.tabs[index].view.update(cx, |view, cx| {
+                            view.restore_last_command(saved.last_command, cx);
+                        });
+                    }
+                    Some(id)
+                }
                 Err(err) => {
                     failures.push(format!("{}: {err}", launch_name(&spec)));
                     None
@@ -600,7 +611,9 @@ impl WorkspaceView {
         let (layout, selected) = self.layout.save_selected(active, |id| {
             let tab = self.tabs.iter().find(|tab| tab.id == id)?;
             let folder = tab.view.read(cx).current_folder();
-            Some(tabs_file::saved_tab(&tab.spec, folder, tab.meta.clone()))
+            let mut saved = tabs_file::saved_tab(&tab.spec, folder, tab.meta.clone());
+            saved.last_command = tab.view.read(cx).last_command().map(str::to_owned);
+            Some(saved)
         });
         tabs_file::save(&TabsState { layout, selected });
     }
@@ -665,8 +678,23 @@ impl WorkspaceView {
 
     fn open_launcher(&mut self, launcher: &Launcher, window: &mut Window, cx: &mut Context<Self>) {
         let folder = self.new_tab_folder(cx);
-        if let Some(spec) = launcher.spec(folder) {
-            self.open_tab_or_notify(spec, window, cx);
+        self.open_launcher_in(launcher, folder, window, cx);
+    }
+
+    fn open_launcher_in(
+        &mut self,
+        launcher: &Launcher,
+        folder: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match launcher.configured_spec(folder, settings_file::settings(cx)) {
+            Ok(Some(spec)) => self.open_tab_or_notify(spec, window, cx),
+            Ok(None) => {}
+            Err(error) => window.push_notification(
+                Notification::error(format!("{} arguments: {error}", launcher.label)),
+                cx,
+            ),
         }
     }
 
@@ -1179,9 +1207,7 @@ impl WorkspaceView {
                     self.open_default_shell_in(Some(folder.clone()), window, cx);
                     return;
                 };
-                if let Some(spec) = agent.spec(Some(folder.clone())) {
-                    self.open_tab_or_notify(spec, window, cx);
-                }
+                self.open_launcher_in(agent, Some(folder.clone()), window, cx);
             }
             ExplorerEvent::EditEnded => self.focus_active(window, cx),
             ExplorerEvent::OpenFile(path) => {

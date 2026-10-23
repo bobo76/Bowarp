@@ -3,6 +3,16 @@
 User-visible changes are listed by release. Maintenance work and internal refactors are
 omitted unless they affect how the app is used.
 
+## 0.2.17
+
+- Offer a restored bash/zsh tab's last useful command as a one-shot suggestion, accepted
+  with Right or End, never run automatically.
+- Configure tab hover cards and individual details on the Appearance settings page.
+- Mark Copilot CLI tabs Waiting on permission requests through isolated per-tab plugins
+  (CLI 1.0.103); Working/Idle still use terminal progress reports.
+- Configure extra Claude Code and Copilot CLI launch arguments on the Terminal settings
+  page; restored and duplicated tabs keep their original arguments.
+
 ## 0.2.16
 
 - Close a focused Settings page from the gear button, or focus it first from another pane.

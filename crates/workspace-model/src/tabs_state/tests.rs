@@ -10,6 +10,7 @@ fn tab(kind: SavedKind, folder: &str) -> SavedTab {
         program: None,
         args: Vec::new(),
         folder: Some(folder.into()),
+        last_command: None,
         meta: TabMeta::default(),
     }
 }
@@ -74,6 +75,7 @@ fn missing_fields_take_defaults() {
     assert_eq!(tabs[0].kind, SavedKind::Shell);
     assert_eq!(tabs[0].program, None);
     assert_eq!(tabs[0].folder, None);
+    assert_eq!(tabs[0].last_command, None);
     assert_eq!(tabs[0].meta, TabMeta::default());
     assert_eq!(state.selected, None);
     assert_eq!(TabsState::from_json("{}"), Some(TabsState::default()));
@@ -89,6 +91,31 @@ fn damaged_files_are_rejected() {
         r#"{"layout": {"pinned": [{"kind": "shell"}], "items": "x"}}"#,
     ] {
         assert_eq!(TabsState::from_json(text), None, "{text}");
+    }
+}
+
+#[test]
+fn last_command_round_trip() {
+    let mut state = sample();
+    state.layout.pinned[0].last_command = Some("cargo test".into());
+    assert_eq!(TabsState::from_json(&state.to_json()), Some(state));
+}
+
+#[cfg(unix)]
+#[test]
+fn every_save_replaces_public_permissions_with_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = TempDir::new();
+    let path = root.0.join("tabs.json");
+    fs::write(&path, "old").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    for _ in 0..2 {
+        sample().save(&path).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }
 

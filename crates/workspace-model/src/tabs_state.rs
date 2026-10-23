@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::TabMeta;
 use crate::layout::SavedLayout;
-use crate::window_state::write_atomic;
+use crate::window_state::write_private_atomic;
 
 /// What a saved tab runs, as the new-tab menu tells them apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,6 +33,8 @@ pub struct SavedTab {
     /// The folder the session was in when the window closed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_command: Option<String>,
     #[serde(flatten)]
     pub meta: TabMeta,
 }
@@ -73,9 +75,9 @@ impl TabsState {
         Self::from_json(&fs::read_to_string(path).ok()?)
     }
 
-    /// Write the state to `path`, creating its folder (see `write_atomic`).
+    /// Write atomically, creating the folder and using owner-only permissions on Unix.
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        write_atomic(path, &self.to_json())
+        write_private_atomic(path, &self.to_json())
     }
 
     pub fn to_json(&self) -> String {

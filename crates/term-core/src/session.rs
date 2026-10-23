@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg, State};
@@ -44,8 +44,12 @@ pub enum SessionEvent {
     /// The command a shell with integration ran finished: the prompt is back. Also sent when
     /// the shell reports a new folder at a prompt without a command before it.
     CommandFinished,
-    /// The program reported a new progress state (OSC 9;4).
-    ProgressChanged(ProgressState),
+    /// The program reported progress (OSC 9;4), including repeated states.
+    ProgressChanged {
+        state: ProgressState,
+        /// I/O observation time, in microseconds since the Unix epoch.
+        at: u64,
+    },
     /// The program wrote text to the clipboard or the primary selection (OSC 52).
     ClipboardStore(ClipboardType, String),
 }
@@ -254,7 +258,12 @@ impl Session {
             term.clone(),
             shared.prompt.clone(),
             spec.mark_token.as_deref(),
-            Box::new(move |state| progress_callback(SessionEvent::ProgressChanged(state))),
+            Box::new(move |state| {
+                let at = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |elapsed| elapsed.as_micros() as u64);
+                progress_callback(SessionEvent::ProgressChanged { state, at });
+            }),
         );
         let event_loop = EventLoop::new(term.clone(), listener, pty, options.drain_on_exit, false)?;
         let _ = shared.sender.set(event_loop.channel());

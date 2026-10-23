@@ -3,12 +3,12 @@
 A terminal workspace for running Claude Code, Copilot CLI and shell sessions side by side, with
 per-tab agent status. Feature spec: [FEATURES.md](FEATURES.md). Plan and status: [PLAN.md](PLAN.md).
 
-## What's new in 0.2.16
+## What's new in 0.2.17
 
-Settings now toggles closed from the gear button, the file viewer has an overflow menu, and
-startup shell fallback shows its failure reason. This version also adds basic group hover
-cards, silent background-agent toasts, and a persisted light/dark UI choice. See the
-[changelog](CHANGELOG.md#0216) for release notes.
+Restored bash/zsh tabs offer their last useful command as a one-shot suggestion. Tab hover
+cards and their details are configurable, and Copilot CLI permission requests mark tabs as
+Waiting. Extra Claude Code and Copilot CLI launch arguments can now be configured in Settings.
+See the [changelog](CHANGELOG.md#0217) for release notes.
 
 Native Windows UI checks remain pending; see the [manual checklist](#six-ux-improvements-manual-checks-pending).
 
@@ -146,6 +146,17 @@ command runs, in Claude Code and Copilot tabs, and in shells without integration
 WSL shells other than bash, shells started with their own arguments other than Git Bash and
 WSL distros).
 
+On restart, an integrated bash or zsh tab (including Git Bash and bash in WSL) offers its
+last non-trivial command at its first empty prompt, dimmed with a fainter "last session"
+hint when space allows. Right or End accepts it; Tab keeps shell completion, and Enter
+never runs the suggestion. Any other line action, including opening HISTORY, dismisses it
+for that session. PowerShell, cmd, agent tabs and shells without integration do not offer it.
+Commands beginning with `exit`, `logout`, `clear`, `cls`, `reset`, `ls`, `ll`, `dir`, `pwd`,
+`cd` or `history` do not replace the saved command. Private/unrecordable commands are never
+saved. The command is saved in `tabs.json` as soon as it starts, so a crash keeps it;
+deleting it from HISTORY also forgets it in every tab. On Unix, every write makes
+`tabs.json` owner-only (`0600`); on Windows it inherits the profile folder's permissions.
+
 These tabs start with a small script that loads your own `~/.bashrc` / zsh startup files /
 PowerShell profile and then marks the prompt (OSC 133); the scripts live in
 `shell-integration/` in the config folder. zsh reads your `.zprofile` and `.zshrc` itself, from
@@ -172,6 +183,47 @@ The badge on the icon shows the status. Hover a row for a moment to see its card
 the full folder, the branch, the program's title, the session kind and, in a repository, the
 lines added in the working tree (`+N`: changes to tracked files from `git diff HEAD` plus new
 files not yet added and not ignored, refreshed at most every 5 s).
+
+Appearance → Tab hover card controls the card and its Status, Location, Changes, Program
+title and Session kind pieces (all on initially). The tab name and Ctrl+number shortcut
+always remain. Program title appears when a custom name hides it. Turning the card off
+disables, but remembers, the piece switches; turning every piece off also hides the card.
+Changes off skips `git diff`; Status off stops the card's clock. Group cards are unaffected.
+
+### Copilot permission status (CLI 1.0.103)
+
+Copilot CLI integration is tested against **1.0.103** (`npm install -g
+@github/copilot@1.0.103`; `copilot --version` must report that version). Disable its automatic
+updates with `COPILOT_AUTO_UPDATE=false` when reproducing these checks.
+
+Each new Copilot tab mounts its own app-owned plugin with the supported
+`--plugin-dir <directory>` option. The plugin registers only `PermissionRequest`, using
+Copilot's PascalCase/snake_case payload format and direct `exec` command hooks.
+`agentws-hook` forwards the event to that tab's local status socket: **Waiting**.
+Working and Idle still come exclusively from terminal progress reports; the next progress
+report observed after the permission hook starts clears Waiting, even if its state repeats.
+Reports retain their I/O observation times so queued older progress cannot hide a newer
+permission request. Copilot emits permission hooks before its approval rules, so an
+automatically approved request can briefly report Waiting too.
+
+Bowarp never installs or writes hook configuration into the user's `~/.copilot` or repository.
+The per-tab plugin files live in the app's private runtime directory and are removed on
+shutdown. User settings, authentication, hooks and plugins are retained. A missing helper,
+an unwritable runtime directory, disabled hooks or sandbox-blocked hook
+keeps the existing progress-only fallback (Working/Idle, no reliable Waiting).
+
+Verified API sources: installed CLI **1.0.103** `--help` lists `--plugin-dir`, and its native
+plugin loader accepts this manifest, `PermissionRequest` and `exec` hook with no warnings.
+See GitHub's [plugin reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference)
+(`hooks` component and read-only `--plugin-dir` mounts) and
+[hook reference](https://docs.github.com/en/copilot/reference/hooks-reference)
+(PascalCase payloads and direct executable hooks).
+
+Manual validation pending: README checks 6–9 on Windows and Ubuntu (Wayland and X11),
+including two simultaneous Copilot tabs, permission approval/denial, progress after Waiting,
+disabled hooks and unchanged user configuration. Automated tests cover plugin generation,
+argument ordering, tab routing, permission-to-Waiting and progress recovery; they do not
+exercise a live Copilot permission dialog.
 
 ### Copilot mode extension
 
@@ -361,6 +413,35 @@ stays until dismissed.
 (Windows PowerShell), `cmd`, `git-bash` and `wsl:<distro>` (e.g. `wsl:Ubuntu`) on Windows; the
 agents are `claude` and `copilot`. Written by hand, the id's case doesn't matter, and a menu
 name (`Zsh`, `Git Bash`, `Ubuntu`) works too.
+
+The Terminal page also shows each agent's executable path and a free-text arguments field.
+`claude_args` and `copilot_args` in `settings.json` default to empty. Quotes group words
+(for example `--model opus`, `--permission-mode plan` or `--dangerously-skip-permissions`
+for Claude; `--mode autopilot`, `--mode plan` or `--yolo` for Copilot). Copilot's mode is
+separate from permission bypass. Parsing uses shell-style quoting and backslash escaping,
+without variable expansion or executing a shell; quote Windows paths with single quotes
+or escape their backslashes. Unmatched quotes prevent launching and show an error.
+
+These words follow the app's own arguments, including Claude's hooks `--settings`; a user
+`--settings` is passed through unchanged, even if it overrides the hooks. The + menu and
+explorer agent launches always use the current setting (Ctrl+Shift+T still opens the default
+shell). Existing, duplicated and restored tabs keep their original argument vector, saved
+in `tabs.json`; changing the setting only affects new launches.
+
+Hover-card settings are saved as independent booleans, for example:
+
+```json
+"tab_card": {
+  "enabled": true,
+  "status": true,
+  "location": true,
+  "changes": false,
+  "program_title": true,
+  "session_kind": true
+}
+```
+
+Missing or wrong-typed booleans each default to true. Changes apply live.
 
 ## About
 

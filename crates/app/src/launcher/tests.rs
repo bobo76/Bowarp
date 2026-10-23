@@ -42,6 +42,80 @@ fn shell(path: &str) -> Launcher {
 }
 
 #[test]
+fn configured_agent_arguments_are_shell_words_after_existing_arguments() {
+    let mut settings = Settings {
+        claude_args: r#"--model "opus" --settings 'my settings.json' --tag "" escaped\ word"#
+            .into(),
+        copilot_args: "--mode autopilot --yolo".into(),
+        ..Settings::default()
+    };
+    let mut agent = shell("/usr/bin/claude");
+    agent.kind = SessionKind::ClaudeCode;
+    agent.args = vec!["own-argument".into()];
+    let spec = agent
+        .configured_spec(Some("/repo".into()), &settings)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        spec.args,
+        [
+            "own-argument",
+            "--model",
+            "opus",
+            "--settings",
+            "my settings.json",
+            "--tag",
+            "",
+            "escaped word",
+        ]
+    );
+    assert_eq!(spec.cwd, Some("/repo".into()));
+    assert_eq!(agent.args, ["own-argument"]);
+    settings.claude_args.clear();
+    assert_eq!(
+        agent
+            .configured_spec(None, &settings)
+            .unwrap()
+            .unwrap()
+            .args,
+        agent.args
+    );
+    agent.kind = SessionKind::CopilotCli;
+    assert_eq!(
+        agent
+            .configured_spec(None, &settings)
+            .unwrap()
+            .unwrap()
+            .args,
+        ["own-argument", "--mode", "autopilot", "--yolo"]
+    );
+}
+
+#[test]
+fn invalid_agent_arguments_are_reported_but_never_affect_shells() {
+    let settings = Settings {
+        claude_args: "'unterminated".into(),
+        copilot_args: "\"unterminated".into(),
+        ..Settings::default()
+    };
+    let mut launcher = shell("/bin/bash");
+    assert!(
+        launcher
+            .configured_spec(None, &settings)
+            .unwrap()
+            .unwrap()
+            .args
+            .is_empty()
+    );
+    for kind in [SessionKind::ClaudeCode, SessionKind::CopilotCli] {
+        launcher.kind = kind;
+        assert!(launcher.configured_spec(None, &settings).is_err());
+    }
+    launcher.program = None;
+    assert!(launcher.configured_spec(None, &settings).unwrap().is_none());
+}
+
+#[test]
 fn terminal_entry_opens_first_installed_shell() {
     let mut missing = shell("/usr/bin/zsh");
     missing.program = None;

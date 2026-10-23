@@ -1,5 +1,5 @@
 //! Reopening the tabs: what each tab runs, its folder, name, color and place in the sidebar are
-//! saved to `tabs.json` in the config folder when the window closes and reopened at the next
+//! saved to `tabs.json` when the window closes or a last command changes, and reopened at the next
 //! start (`workspace_model::TabsState`). Sessions start fresh; a Claude Code tab starts a new
 //! conversation in its folder.
 
@@ -45,6 +45,7 @@ pub fn saved_tab(spec: &LaunchSpec, folder: Option<PathBuf>, meta: TabMeta) -> S
         folder: folder
             .filter(utf8)
             .or_else(|| spec.cwd.clone().filter(utf8)),
+        last_command: None,
         meta,
     }
 }
@@ -114,6 +115,48 @@ mod tests {
         let spec = LaunchSpec::shell(Some("/".into()));
         let saved = saved_tab(&spec, None, TabMeta::default());
         assert_eq!(saved.folder, Some("/".into()));
+    }
+
+    #[test]
+    fn restored_agent_keeps_original_arguments_not_new_launcher_settings() {
+        use crate::launcher::Launcher;
+        use workspace_model::{LauncherIcon, Settings};
+        let launcher = Launcher {
+            id: "claude".into(),
+            label: "Claude Code".into(),
+            kind: SessionKind::ClaudeCode,
+            program: Some("claude".into()),
+            args: vec![],
+            icon: LauncherIcon::Claude,
+        };
+        let mut settings = Settings {
+            claude_args: "--model 'opus' --settings 'user settings.json'".into(),
+            ..Settings::default()
+        };
+        let spec = launcher.configured_spec(None, &settings).unwrap().unwrap();
+        let saved = saved_tab(&spec, None, TabMeta::default());
+        let state = TabsState {
+            layout: workspace_model::SavedLayout {
+                pinned: vec![saved],
+                items: vec![],
+            },
+            selected: Some(0),
+        };
+        let state = TabsState::from_json(&state.to_json()).unwrap();
+        let saved = &state.layout.pinned[0];
+        settings.claude_args = "--model sonnet".into();
+        assert_eq!(
+            launch_spec(saved).args,
+            ["--model", "opus", "--settings", "user settings.json"]
+        );
+        assert_eq!(
+            launcher
+                .configured_spec(None, &settings)
+                .unwrap()
+                .unwrap()
+                .args,
+            ["--model", "sonnet"]
+        );
     }
 
     #[cfg(unix)]

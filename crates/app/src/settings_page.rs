@@ -21,7 +21,7 @@ use gpui_kit::component::setting::{
 };
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme, Icon, IconName, Side, Sizable};
+use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Side, Sizable};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     Anchor, AnyElement, App, AppContext, Axis, ClickEvent, ClipboardItem, Entity, Focusable,
@@ -119,6 +119,7 @@ fn appearance_groups() -> Vec<SettingGroup> {
             )
             .keywords(["text", "zoom", "points"]),
         ]),
+        tab_card_group(),
     ]
 }
 
@@ -134,8 +135,116 @@ fn terminal_groups(launchers: Rc<[Launcher]>) -> Vec<SettingGroup> {
     vec![
         SettingGroup::new()
             .title("Shell")
-            .item(default_shell_row(launchers)),
+            .item(default_shell_row(launchers.clone())),
+        agent_arguments_group(&launchers),
     ]
+}
+
+fn agent_arguments_group(launchers: &[Launcher]) -> SettingGroup {
+    let mut group = SettingGroup::new().title("Agent launch arguments");
+    for (id, label, placeholder, field) in [
+        (
+            "claude",
+            "Claude Code arguments",
+            "--model opus",
+            SettingsField::new(
+                |settings| settings.claude_args.clone(),
+                |settings, value| settings.claude_args = value,
+            ),
+        ),
+        (
+            "copilot",
+            "Copilot CLI arguments",
+            "--yolo",
+            SettingsField::new(
+                |settings| settings.copilot_args.clone(),
+                |settings, value| settings.copilot_args = value,
+            ),
+        ),
+    ] {
+        let path = launchers
+            .iter()
+            .find(|launcher| launcher.id == id)
+            .and_then(|launcher| launcher.program.as_deref())
+            .map_or_else(|| "Not installed".into(), |path| path.display().to_string());
+        group = group.item(text_row(
+            label,
+            format!("{path}\nExtra arguments for new tabs, after the app's own arguments. \
+                Quotes group words; no shell expansion. Restored tabs keep their original arguments."),
+            placeholder,
+            field,
+        ).keywords(["launcher", "permissions", "mode", "command line", "path"]));
+    }
+    group
+}
+
+fn tab_card_group() -> SettingGroup {
+    let mut group = SettingGroup::new().title("Tab hover card").item(switch_row(
+        "Tab hover card",
+        "Show details beside a hovered tab. Turning every piece off also hides the card; \
+         the switch keeps its value. Group cards are unchanged.",
+        SettingsField::new(
+            |settings| settings.tab_card.enabled,
+            |settings, value| settings.tab_card.enabled = value,
+        ),
+    ));
+    type Piece = (
+        &'static str,
+        &'static str,
+        fn(&Settings) -> bool,
+        fn(&mut Settings, bool),
+    );
+    let pieces: [Piece; 5] = [
+        (
+            "Status",
+            "Status chip, command and elapsed working or running time.",
+            |s| s.tab_card.status,
+            |s, v| s.tab_card.status = v,
+        ),
+        (
+            "Location",
+            "Full folder and git branch.",
+            |s| s.tab_card.location,
+            |s, v| s.tab_card.location = v,
+        ),
+        (
+            "Changes",
+            "Lines added in the working tree (+N from git diff).",
+            |s| s.tab_card.changes,
+            |s, v| s.tab_card.changes = v,
+        ),
+        (
+            "Program title",
+            "The program's title when a custom tab name hides it.",
+            |s| s.tab_card.program_title,
+            |s, v| s.tab_card.program_title = v,
+        ),
+        (
+            "Session kind",
+            "Kind icon, agent or shell name, and agent mode.",
+            |s| s.tab_card.session_kind,
+            |s, v| s.tab_card.session_kind = v,
+        ),
+    ];
+    for (title, description, get, set) in pieces {
+        group = group.item(
+            bound_row(
+                title,
+                description,
+                SettingsField::new(get, set),
+                Rc::new(|checked, binding, _, cx| {
+                    let binding = binding.clone();
+                    Switch::new("switch")
+                        .checked(checked)
+                        .disabled(!settings_file::settings(cx).tab_card.enabled)
+                        .on_click(move |checked: &bool, _, cx| binding.save(*checked, cx))
+                        .into_any_element()
+                }),
+            )
+            .keywords(["tab", "hover", "card", "sidebar"]),
+        );
+    }
+    group
 }
 
 /// The `default_shell` setting: "Automatic" (empty) or one of the installed shells, shown by

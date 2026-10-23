@@ -18,6 +18,7 @@ mod git;
 mod history;
 mod instance_lock;
 mod lap;
+mod last_command;
 mod launcher_icon;
 pub mod layout;
 pub mod links;
@@ -44,6 +45,7 @@ pub use history::{
 };
 pub use instance_lock::{held_by_other, lock_pid, lock_text};
 pub use lap::{Lap, format_lap, until_next_second};
+pub use last_command::LastCommand;
 pub use launcher_icon::{LauncherIcon, distro_icon, shell_icon};
 pub use layout::{
     DropTarget, Group, GroupId, Item, Layout, SavedGroup, SavedItem, SavedLayout, TabId,
@@ -58,8 +60,8 @@ pub use running::{
 };
 pub use search::{SearchedTab, TabQuery, step_match};
 pub use settings::{
-    FontSize, Settings, SettingsFile, SettingsLoad, UiTheme, installed_font_family,
-    settings_backup_path,
+    FontSize, Settings, SettingsFile, SettingsLoad, TabCardField, TabCardFields, UiTheme,
+    installed_font_family, settings_backup_path,
 };
 pub use tab::{TabColor, TabMeta};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};

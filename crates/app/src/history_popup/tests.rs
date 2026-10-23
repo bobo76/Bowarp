@@ -1,5 +1,117 @@
 use super::*;
 
+#[cfg(unix)]
+#[gpui::test]
+fn restored_command_is_one_shot_and_never_accepted_by_tab_or_enter(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use gpui_kit::AppContext;
+    use std::sync::{Arc, mpsc};
+    use std::time::{Duration, Instant};
+    use term_core::{ExecutedCommand, LaunchSpec, Palette, Session, SessionEvent, TermDimensions};
+
+    cx.update(history::init_in_memory);
+    let mut spec = LaunchSpec::new(
+        SessionKind::Shell,
+        Some("sh".into()),
+        vec![
+            "-c".into(),
+            r"printf '\033]133;A;aw=tok\007$ \033]133;B;aw=tok\007'; read line".into(),
+        ],
+        None,
+    );
+    spec.mark_token = Some("tok".into());
+    let (sender, events) = mpsc::channel();
+    let session = Session::spawn(
+        1,
+        &spec,
+        TermDimensions::new(80, 24),
+        Palette::default(),
+        Arc::new(move |event| {
+            let _ = sender.send(event);
+        }),
+    )
+    .unwrap();
+    let view = cx.new(|cx| TerminalView::from_test_session(session, &spec, cx));
+    view.update(cx, |view, cx| {
+        view.restore_last_command(Some("cargo test".into()), cx);
+        assert!(!view.handle_history_key(&Keystroke::parse("escape").unwrap(), cx));
+        assert!(view.restored_suggestion().is_none());
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !view.read_with(cx, |view, _| view.prompt_input().is_some()) {
+        view.update(cx, |view, cx| {
+            for event in events.try_iter() {
+                view.dispatch_test_event(event, cx);
+            }
+        });
+        assert!(Instant::now() < deadline, "first prompt did not arrive");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    view.update(cx, |view, cx| {
+        for command in ["cargo build", "cd project", " secret"] {
+            view.dispatch_test_event(
+                SessionEvent::CommandExecuted(ExecutedCommand {
+                    command: command.into(),
+                    folder: None,
+                }),
+                cx,
+            );
+            assert_eq!(view.last_command(), Some("cargo build"));
+        }
+    });
+    for key in [
+        "tab",
+        "enter",
+        "ctrl-c",
+        "escape",
+        "backspace",
+        "up",
+        "a->a",
+    ] {
+        view.update(cx, |view, cx| {
+            view.close_history_popup(cx);
+            view.restore_last_command(Some("git push".into()), cx);
+            assert_eq!(view.history_suggestion(cx), Some("git push".into()));
+            let consumed = view.handle_history_key(&Keystroke::parse(key).unwrap(), cx);
+            assert_eq!(consumed, key == "up", "{key}");
+            assert!(view.restored_suggestion().is_none(), "{key}");
+            assert!(!view.session.awaiting_echo(), "{key} sent the command");
+            assert_eq!(view.last_command(), Some("git push"));
+        });
+    }
+    view.update(cx, |view, cx| {
+        view.close_history_popup(cx);
+        view.restore_last_command(Some("git push".into()), cx);
+    });
+    cx.update(|cx| history::forget("git push", cx));
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| assert_eq!(view.last_command(), None));
+    view.update(cx, |view, cx| {
+        view.restore_last_command(Some("git push".into()), cx);
+        assert!(view.handle_history_key(&Keystroke::parse("right").unwrap(), cx));
+        assert!(view.restored_suggestion().is_none());
+        assert!(view.session.awaiting_echo());
+    });
+    for program in ["pwsh", "powershell", "cmd"] {
+        let mut excluded = spec.clone();
+        excluded.program = Some(program.into());
+        let session = Session::spawn(
+            2,
+            &spec,
+            TermDimensions::new(80, 24),
+            Palette::default(),
+            Arc::new(|_| {}),
+        )
+        .unwrap();
+        let excluded = cx.new(|cx| TerminalView::from_test_session(session, &excluded, cx));
+        excluded.update(cx, |view, cx| {
+            view.restore_last_command(Some("git push".into()), cx);
+            assert_eq!(view.last_command(), None, "{program}");
+        });
+    }
+}
+
 fn key(source: &str) -> PopupKey {
     popup_key(&Keystroke::parse(source).unwrap())
 }

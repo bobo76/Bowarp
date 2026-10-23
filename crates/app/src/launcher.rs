@@ -5,7 +5,7 @@ use term_core::{LaunchSpec, SessionKind};
 #[cfg(any(windows, test))]
 use workspace_model::distro_icon;
 use workspace_model::file_tree::ShellSyntax;
-use workspace_model::{LauncherIcon, Platform, shell_icon};
+use workspace_model::{LauncherIcon, Platform, Settings, shell_icon};
 
 /// A program the new-tab menu offers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,6 +41,24 @@ impl Launcher {
             self.args.clone(),
             cwd,
         ))
+    }
+
+    /// Current settings apply only to new launches. Saved and duplicated tabs use their spec.
+    pub fn configured_spec(
+        &self,
+        cwd: Option<PathBuf>,
+        settings: &Settings,
+    ) -> Result<Option<LaunchSpec>, shell_words::ParseError> {
+        let Some(mut spec) = self.spec(cwd) else {
+            return Ok(None);
+        };
+        let arguments = match self.kind {
+            SessionKind::ClaudeCode => &settings.claude_args,
+            SessionKind::CopilotCli => &settings.copilot_args,
+            SessionKind::Shell => return Ok(Some(spec)),
+        };
+        spec.args.extend(shell_words::split(arguments)?);
+        Ok(Some(spec))
     }
 }
 

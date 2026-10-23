@@ -137,6 +137,31 @@ pub(crate) fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
     fs::rename(&temp, path)
 }
 
+/// Tabs may contain commands with secrets; secure the temporary file before writing any.
+pub(crate) fn write_private_atomic(path: &Path, text: &str) -> io::Result<()> {
+    use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let temp = temp_path(path);
+    match fs::remove_file(&temp) {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&temp)?;
+    file.write_all(text.as_bytes())?;
+    drop(file);
+    fs::rename(&temp, path)
+}
+
 pub(crate) fn temp_path(path: &Path) -> std::path::PathBuf {
     path.with_extension(format!("json.{}.tmp", std::process::id()))
 }

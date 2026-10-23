@@ -127,6 +127,14 @@ impl TerminalView {
         keystroke: &Keystroke,
         cx: &mut Context<Self>,
     ) -> bool {
+        if is_plain(keystroke)
+            && matches!(keystroke.key.as_str(), "right" | "end")
+            && self.restored_suggestion().is_some()
+            && self.accept_suggestion(cx)
+        {
+            return true;
+        }
+        self.last_command.dismiss();
         if self.history_popup.is_some() {
             return self.handle_popup_key(keystroke, cx);
         }
@@ -232,6 +240,9 @@ impl TerminalView {
     /// end of the command line.
     fn suggestion(&self, cx: &App) -> Option<String> {
         let input = self.prompt_input().filter(|input| input.at_end)?;
+        if let Some(command) = self.restored_suggestion() {
+            return Some(command.to_owned());
+        }
         let history = cx.global::<History>().commands();
         history.suggestion(&input.before_cursor).map(str::to_string)
     }
@@ -243,9 +254,23 @@ impl TerminalView {
         self.suggestion(cx)
     }
 
+    pub(crate) fn restored_suggestion(&self) -> Option<&str> {
+        let input = self.prompt_input()?;
+        if !input.before_cursor.is_empty() {
+            return None;
+        }
+        self.last_command.suggestion(&input.text, input.at_end)
+    }
+
     /// Reconcile history state after a prompt, history or popup event, never during rendering.
     pub(crate) fn refresh_history(&mut self, cx: &mut Context<Self>) {
         let input = self.prompt_input();
+        if input
+            .as_ref()
+            .is_some_and(|input| !input.text.is_empty() || !input.before_cursor.is_empty())
+        {
+            self.last_command.dismiss();
+        }
         let rows = input
             .as_ref()
             .and_then(|input| self.popup_placement(input))

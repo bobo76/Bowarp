@@ -79,6 +79,22 @@ fn forwards_copilot_mode_to_server() {
 }
 
 #[test]
+fn copilot_permission_request_is_silent_and_isolated_to_its_tab() {
+    let (server, receiver) = start_server();
+    for session in ["12", "13"] {
+        let output = run_hook(
+            &[(PIPE_ENV, server.pipe_name()), (SESSION_ENV, session)],
+            r#"{"hook_event_name":"PermissionRequest","session_id":"copilot-session","tool_name":"shell","tool_input":{"command":"git status"}}"#,
+        );
+        assert_silent_success(&output);
+        assert!(output.stderr.is_empty(), "{output:?}");
+        let message = receiver.recv_timeout(TIMEOUT).expect("permission message");
+        assert_eq!(message.session.to_string(), session);
+        assert_eq!(message.event, AgentEvent::Hook(HookEvent::InputRequested));
+    }
+}
+
+#[test]
 fn reports_delivery_errors_only_when_requested() {
     let output = run_hook_with_args(
         &[

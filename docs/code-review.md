@@ -37,6 +37,90 @@ history events/render purity, settings focus and deferred startup notifications,
 deterministic PTY event delivery in GPUI tests. Rust checks ran under WSL; native Windows
 execution remains unavailable because the MSVC linker is not installed.
 
+## Local changes review (2026-10-23)
+
+Scope: uncommitted changes on `m2-sidebar` (`git diff HEAD`, 29 files) on top of commit
+`ef2b209`. Locations below refer to that working tree.
+
+This was a static correctness review at medium effort, not an FM IPL rule review. Only
+`cargo fmt --check` was run; Clippy and the tests were not, so Problems 1 and 10 still need
+confirming with `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test`.
+
+**Files needing the most work:** `agent-status/src/status.rs` (with its `settings.rs` test,
+Problems 1-3), `app/src/launcher.rs` (Problem 4), `app/src/hooks.rs` (Problem 5).
+
+### Need to fix
+
+**Problem 1: 🔴 [test]** `crates\agent-status\src\settings.rs:69` — A misplaced closing brace
+nests `copilot_registers_only_permission_requests_without_shell_quoting` inside
+`registers_quoted_command_for_every_event`, so it never runs.
+> `cargo test` silently skips the Copilot hooks test. The `unnameable_test_items` lint ("cannot
+> test inner items") plus dead-code warnings should fail CI's Clippy step with `-D warnings`
+> (`ubuntu.yml:75`).
+
+**Problem 2: 🔴 [correctness]** `crates\agent-status\src\status.rs:110` — `apply_progress`
+stamps `last_event_at` with the time the app processed the report, not when Copilot emitted it,
+so a permission hook that started slightly earlier is dropped as stale.
+> Copilot clears its progress and fires the PermissionRequest hook at about the same moment. The
+> hook records `at = T`; the progress report crosses the pty, I/O thread and UI thread and is
+> stamped `T + ms`. `apply` ignores the hook, so the tab shows Idle while Copilot waits for
+> approval.
+
+**Problem 3: 🔴 [correctness]** `crates\app\src\terminal_view.rs:518` — Copilot's
+`NeedsAttention` clears only on a new progress report, but `prompt.rs` drops repeated progress
+states.
+> If Copilot keeps OSC 9;4 Indeterminate while asking for permission, the user approves and
+> Copilot keeps working, but no new report arrives. The tab shows "needs attention" until the
+> turn ends.
+
+**Problem 4: 🔴 [correctness]** `crates\app\src\launcher.rs:80` — `shell_words::split` follows
+POSIX rules: an unquoted backslash escapes the next character, mangling Windows paths in
+`claude_args`/`copilot_args`.
+> `--settings C:\Users\me\s.json` becomes `C:Usersmes.json` with no error, and Claude starts with
+> a missing settings file. The settings page only says "Quotes group words". Use Windows-style
+> splitting on Windows, or warn on the settings page.
+
+**Problem 5: 🔴 [resource leak]** `crates\app\src\hooks.rs:47` — The Copilot plugin folder name
+contains the pid and a microsecond timestamp, gets one subfolder per Copilot tab, and is removed
+only by `remove_settings` at clean shutdown.
+> Every crash, kill or forced logoff leaves an `agentws-<pid>-<micros>-copilot` folder behind,
+> and folders for closed tabs stay until exit. Sweep stale folders at startup and remove a tab's
+> subfolder when the tab closes.
+
+### Should fix
+
+**Problem 6: 🟡 [efficiency]** `crates\app\src\workspace_view.rs:504` — Every
+`LastCommandChanged` rewrites the whole tabs file on the UI thread.
+> With many tabs and a busy build loop, each command serializes all tabs and does
+> create/write/rename on the UI thread for one changed string. Debounce, or save on close.
+
+**Problem 7: 🟡 [security, DRY]** `crates\workspace-model\src\window_state.rs:141` —
+`write_private_atomic` copies `write_atomic`, and its temporary-file protection is Unix-only.
+> On Windows, `export TOKEN=abc` saved as `last_command` in `tabs.json` gets default permissions
+> despite the doc comment. The two write paths will drift; give `write_atomic` an optional mode
+> instead.
+
+**Problem 8: 🟡 [efficiency]** `crates\app\src\workspace_view\tab_card.rs:702` —
+`update_card_settings` runs on every `AppSettings` change and restarts the card clock and the
+`git diff` refresh even when no tab-card setting changed.
+> Dragging the file-viewer divider with a hover card open starts a clock task and a diff-stat
+> request per change. Compare old and new `tab_card` values and return early when equal.
+
+**Problem 9: 🟡 [behavior]** `crates\app\src\terminal_view.rs:286` — `last_command_supported` is
+false for PowerShell/cmd tabs, and the removed `repeats_kind_label` check lets the card name
+repeat the kind label.
+> A pwsh tab never records or restores its last command, which the settings and README don't
+> say. In `sidebar.rs` the card shows the name "✳ Claude Code" above the kind line "Claude Code";
+> the function and its test were deleted.
+
+**Problem 10: 🟡 [formatting]** `crates\app\src\workspace_view\tab_card.rs:192` — 15 changed
+files are not rustfmt-formatted, including `tab_card.rs`, `settings_page.rs`, `sidebar.rs`,
+`workspace-model/src/lib.rs` and `workspace_view.rs`.
+> `cargo fmt --all --check` fails on 30 hunks. Over-long lines and hand-wrapped closures make the
+> field-gating code hard to review.
+
+---
+
 ## Branch review (2026-10-22)
 
 Scope: `m2-sidebar` against `origin/main`, plus local changes, at commit `8d0b3c9`

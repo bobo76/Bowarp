@@ -168,6 +168,7 @@ pub struct PrepaintState {
     cursor: Option<PaintQuad>,
     marked_text: Option<(PaintQuad, Point<Pixels>, ShapedLine)>,
     ghost_text: Option<(Point<Pixels>, ShapedLine)>,
+    ghost_hint: Option<(Point<Pixels>, ShapedLine)>,
     geometry: GridGeometry,
     scrollbar: Option<PreparedScrollbar>,
     /// The underline of the link under a held Ctrl, and the hitboxes giving it a hand cursor.
@@ -269,6 +270,26 @@ impl Element for TerminalElement {
             let style = ghost_text_style(palette.foreground, snapshot.background);
             (!text.is_empty()).then(|| (cursor_origin, shaper.shape(text, style)))
         });
+        let ghost_hint = snapshot.cursor.as_ref().and_then(|cursor| {
+            let suggestion = view.restored_suggestion()?;
+            let hint = " \u{21a9} last session";
+            let cells = |text: &str| {
+                text.chars()
+                    .filter_map(UnicodeWidthChar::width)
+                    .sum::<usize>()
+            };
+            let used = cells(suggestion);
+            let room = (columns as usize).saturating_sub(cursor.span.column);
+            if used + cells(hint) > room || view.history_popup.is_some() {
+                return None;
+            }
+            let style = ghost_text_style(palette.foreground, snapshot.background);
+            let fainter = ghost_text_style(style.foreground, snapshot.background);
+            Some((
+                point(cursor_origin.x + cell_width * used as f32, cursor_origin.y),
+                shaper.shape(hint.to_owned(), fainter),
+            ))
+        });
         let marked_text = view.marked_text.clone().map(|text| {
             let shaped = shaper.shape(text, marked_text_style(palette.foreground));
             marked_text_overlay(shaped, cursor_origin, line_height, snapshot.background)
@@ -304,6 +325,7 @@ impl Element for TerminalElement {
             cursor,
             marked_text,
             ghost_text,
+            ghost_hint,
             geometry: GridGeometry {
                 origin: grid.origin,
                 cell_width,
@@ -347,6 +369,11 @@ impl Element for TerminalElement {
             && let Err(err) = line.paint(origin, line_height, TextAlign::Left, None, window, cx)
         {
             log::warn!("failed to paint the history suggestion: {err}");
+        }
+        if let Some((origin, line)) = prepaint.ghost_hint.take()
+            && let Err(err) = line.paint(origin, line_height, TextAlign::Left, None, window, cx)
+        {
+            log::warn!("failed to paint the last-session hint: {err}");
         }
         if let Some(cursor) = prepaint.cursor.take() {
             window.paint_quad(cursor);

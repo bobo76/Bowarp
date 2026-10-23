@@ -540,7 +540,8 @@ pub fn tab_shortcut(index: usize) -> Option<String> {
 #[derive(Clone)]
 pub struct TabCard {
     pub index: usize,
-    pub status: TabStatus,
+    pub name: SharedString,
+    pub status: Option<TabStatus>,
     pub mode: Option<AgentMode>,
     /// How long the agent has been working on the current turn, shown in the status chip.
     pub working_for: Option<Duration>,
@@ -552,10 +553,10 @@ pub struct TabCard {
     pub folder: Option<SharedString>,
     pub branch: Option<SharedString>,
     /// The program's title, which a custom tab name hides in the row.
-    pub title: SharedString,
-    pub kind: SessionKind,
+    pub title: Option<SharedString>,
+    pub kind: Option<SessionKind>,
     /// The session kind, or the shell's name.
-    pub kind_label: SharedString,
+    pub kind_label: Option<SharedString>,
     /// Lines added in the working tree, once `git diff` has answered.
     pub lines_added: Option<u64>,
 }
@@ -586,14 +587,6 @@ fn status_chip(
         .children(running_label.map(|command| single_line(format!("· {command}").into())))
 }
 
-/// Whether the program's title only repeats the kind line below it, ignoring the status glyph
-/// some agents put before their title ("✳ Claude Code").
-fn repeats_kind_label(title: &str, kind_label: &str) -> bool {
-    title
-        .trim_start_matches(|c: char| !c.is_alphanumeric())
-        .eq_ignore_ascii_case(kind_label)
-}
-
 pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
     let muted = theme.muted_foreground;
@@ -610,11 +603,7 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
                 .justify_between()
                 .mb_0p5()
                 .gap_2()
-                .child(status_chip(
-                    card.status,
-                    card.working_for,
-                    card.running_label,
-                ))
+                .child(single_line(card.name))
                 .children(tab_shortcut(card.index).map(|shortcut| {
                     div()
                         .flex_none()
@@ -622,6 +611,10 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
                         .text_color(muted)
                         .child(shortcut)
                 })),
+        )
+        .children(
+            card.status
+                .map(|status| status_chip(status, card.working_for, card.running_label)),
         )
         .children(card.mode.map(|mode| {
             div()
@@ -642,8 +635,8 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
                 .map(|branch| detail_line(TabDetail::Branch(branch), theme.foreground)),
         )
         .children(
-            (!repeats_kind_label(&card.title, &card.kind_label))
-                .then(|| div().text_color(muted).child(single_line(card.title))),
+            card.title
+                .map(|title| div().text_color(muted).child(single_line(title))),
         )
         .child(
             div()
@@ -652,8 +645,11 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
                 .gap_1p5()
                 .text_xs()
                 .text_color(muted)
-                .child(kind_icon(card.kind).size(px(KIND_ICON_SIZE)))
-                .child(single_line(card.kind_label))
+                .children(
+                    card.kind
+                        .map(|kind| kind_icon(kind).size(px(KIND_ICON_SIZE))),
+                )
+                .children(card.kind_label.map(single_line))
                 .children(card.lines_added.filter(|&added| added > 0).map(|added| {
                     div()
                         .flex_none()
@@ -1004,13 +1000,5 @@ mod tests {
     #[test]
     fn empty_groups_have_zero_totals() {
         assert_eq!(GroupSummary::of([]), GroupSummary::default());
-    }
-
-    #[test]
-    fn card_hides_a_title_that_repeats_the_kind_label() {
-        assert!(repeats_kind_label("✳ Claude Code", "Claude Code"));
-        assert!(repeats_kind_label("Claude Code", "Claude Code"));
-        assert!(!repeats_kind_label("Review Rust Project", "Claude Code"));
-        assert!(!repeats_kind_label("bobo@bobo-pc: ~/dev", "bash"));
     }
 }
