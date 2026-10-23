@@ -305,33 +305,34 @@ impl SettingsFile {
 }
 
 /// The installed family to draw `requested` in: its name as listed in `installed` (the
-/// platform's family names), or `None` when it isn't listed. `ignore_case` matches names the
-/// way Windows does. Names starting with `.` (GPUI's aliases, like `.SystemUIFont`) are
+/// platform's family names), or `None` when it isn't listed. Windows matches names ignoring
+/// case. Names starting with `.` (GPUI's aliases, like `.SystemUIFont`) are
 /// refused: they stand for proportional fonts.
 pub fn installed_font_family<'a>(
     installed: &'a [String],
     requested: &str,
-    ignore_case: bool,
+    platform: crate::Platform,
 ) -> Option<&'a str> {
     if requested.is_empty() || requested.starts_with('.') {
         return None;
     }
-    let requested_lower = requested.to_lowercase();
+    if platform == crate::Platform::Windows {
+        let requested_lower = requested.to_lowercase();
+        return installed
+            .iter()
+            .find(|name| name.to_lowercase() == requested_lower)
+            .map(String::as_str);
+    }
     installed
         .iter()
-        .find(|name| {
-            if ignore_case {
-                name.to_lowercase() == requested_lower
-            } else {
-                name.as_str() == requested
-            }
-        })
+        .find(|name| name.as_str() == requested)
         .map(String::as_str)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Platform;
     use crate::git::tests::TempDir;
     use crate::window_state::temp_path;
 
@@ -921,15 +922,18 @@ mod tests {
     #[test]
     fn installed_font_family_matches_exactly_when_case_counts() {
         let installed = names(&["DejaVu Sans Mono", "Liberation Mono"]);
-        let found = installed_font_family(&installed, "Liberation Mono", false);
+        let found = installed_font_family(&installed, "Liberation Mono", Platform::Linux);
         assert_eq!(found, Some("Liberation Mono"));
         assert_eq!(
-            installed_font_family(&installed, "liberation mono", false),
+            installed_font_family(&installed, "liberation mono", Platform::Linux),
             None
         );
-        assert_eq!(installed_font_family(&installed, "Liberation", false), None);
         assert_eq!(
-            installed_font_family(&installed, "No Such Font", false),
+            installed_font_family(&installed, "Liberation", Platform::Linux),
+            None
+        );
+        assert_eq!(
+            installed_font_family(&installed, "No Such Font", Platform::Linux),
             None
         );
     }
@@ -937,24 +941,30 @@ mod tests {
     #[test]
     fn installed_font_family_ignores_case_like_windows() {
         let installed = names(&["Cascadia Mono", "Consolas", "Écrin Mono"]);
-        let found = installed_font_family(&installed, "cascadia MONO", true);
+        let found = installed_font_family(&installed, "cascadia MONO", Platform::Windows);
         assert_eq!(found, Some("Cascadia Mono"));
         assert_eq!(
-            installed_font_family(&installed, "écrin mono", true),
+            installed_font_family(&installed, "écrin mono", Platform::Windows),
             Some("Écrin Mono")
         );
-        assert_eq!(installed_font_family(&installed, "Cascadia", true), None);
+        assert_eq!(
+            installed_font_family(&installed, "Cascadia", Platform::Windows),
+            None
+        );
     }
 
     #[test]
     fn installed_font_family_refuses_aliases_and_empty_names() {
         let installed = names(&[".SystemUIFont", ".ZedMono", ""]);
-        for ignore_case in [false, true] {
+        for platform in [Platform::Linux, Platform::Windows, Platform::MacOs] {
             for requested in [".SystemUIFont", ".ZedMono", ".zedmono", ""] {
-                let found = installed_font_family(&installed, requested, ignore_case);
+                let found = installed_font_family(&installed, requested, platform);
                 assert_eq!(found, None, "{requested:?}");
             }
         }
-        assert_eq!(installed_font_family(&[], "Liberation Mono", false), None);
+        assert_eq!(
+            installed_font_family(&[], "Liberation Mono", Platform::Linux),
+            None
+        );
     }
 }

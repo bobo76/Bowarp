@@ -1,6 +1,17 @@
 use alacritty_terminal::term::color::{COUNT, Colors};
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 
+const ANSI_COLOR_COUNT: usize = 16;
+const COLOR_CUBE_START: usize = ANSI_COLOR_COUNT;
+const COLOR_CUBE_SIDE: usize = 6;
+const COLOR_CUBE_PLANE: usize = COLOR_CUBE_SIDE * COLOR_CUBE_SIDE;
+const GRAYSCALE_START: usize = COLOR_CUBE_START + COLOR_CUBE_PLANE * COLOR_CUBE_SIDE;
+const COLOR_CUBE_END: usize = GRAYSCALE_START - 1;
+const COLOR_CUBE_STEP: usize = 40;
+const COLOR_CUBE_BASE: usize = 55;
+const GRAYSCALE_BASE: usize = 8;
+const GRAYSCALE_STEP: usize = 10;
+
 /// Default terminal colors. Programs may override individual entries at runtime (OSC 4/10/11),
 /// which alacritty records in the terminal's [`Colors`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,23 +85,23 @@ impl Palette {
         const DIM_WHITE: usize = NamedColor::DimWhite as usize;
         match index {
             0..=15 => self.ansi[index],
-            16..=231 => {
-                let cube = index - 16;
+            COLOR_CUBE_START..=COLOR_CUBE_END => {
+                let cube = index - COLOR_CUBE_START;
                 let level = |value: usize| {
                     if value == 0 {
                         0
                     } else {
-                        (value * 40 + 55) as u8
+                        (value * COLOR_CUBE_STEP + COLOR_CUBE_BASE) as u8
                     }
                 };
                 Rgb {
-                    r: level(cube / 36),
-                    g: level((cube / 6) % 6),
-                    b: level(cube % 6),
+                    r: level(cube / COLOR_CUBE_PLANE),
+                    g: level((cube / COLOR_CUBE_SIDE) % COLOR_CUBE_SIDE),
+                    b: level(cube % COLOR_CUBE_SIDE),
                 }
             }
-            232..=255 => {
-                let gray = (8 + (index - 232) * 10) as u8;
+            GRAYSCALE_START..=255 => {
+                let gray = (GRAYSCALE_BASE + (index - GRAYSCALE_START) * GRAYSCALE_STEP) as u8;
                 Rgb {
                     r: gray,
                     g: gray,

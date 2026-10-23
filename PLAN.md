@@ -161,6 +161,9 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 
 ## Backlog
 
+- Copilot working animation: show a blue circular spinner rotating beside the Copilot tab's
+  title in the sidebar while its status is Working, matching the reference screenshot.
+  Stop the animation when the status leaves Working; no animation timer while idle.
 - Named workspaces (the single window's tabs are already restored): save and open named
   workspaces, offer to relaunch their tabs; restored tabs clearly marked "not running".
 - Copilot CLI NeedsAttention via its hooks (progress reports only give Working / Idle;
@@ -314,9 +317,21 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   current detection (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`),
   e.g. for a wrapper script that `shell_icon` only sees as `Shell`.
 
-## Maybe
+### Git
 
-Ideas not committed to yet; not in [FEATURES.md](FEATURES.md) until picked.
+- Safety rule: avoid actions that can cause conflicts. Block working-tree-changing actions
+  (branch switching, pull, merge/rebase) while uncommitted changes exist, including staged,
+  unstaged and untracked files. Explain the block; never auto-stash or discard changes.
+- Git workflow analysis first: review the existing Git UI and common needs (status and diff,
+  local and remote branches, fetch, pull, push, staging and commits, stash, merge/rebase,
+  worktrees and remotes). Define the scope, entry points and safe defaults before
+  implementation, including authentication, dirty working trees, conflicts, remote tracking
+  and repositories shared by running tabs or agents.
+- Switch branch from the app: select a local branch or check out a remote-tracking branch.
+  Depends on the workflow analysis above and requires a clean working tree; define safeguards
+  for active agents and refresh branch/status information for all affected tabs after a switch.
+
+**Ideas to evaluate, not committed to yet:** not in [FEATURES.md](FEATURES.md) until picked.
 
 - Diff panel: the selected tab's working-tree changes (`git diff` against `HEAD`, untracked
   files included) in the file viewer pane, one collapsible section per file with added and
@@ -327,6 +342,11 @@ Ideas not committed to yet; not in [FEATURES.md](FEATURES.md) until picked.
   a linked worktree (`.git` is a file), with the main repository in the hover card; the open
   PR's number and state for the branch, from `gh pr view --json` run off the UI thread and
   cached per branch, skipped when `gh` is missing or not logged in.
+
+## Maybe
+
+Ideas not committed to yet; not in [FEATURES.md](FEATURES.md) until picked.
+
 - Sticky command header: while scrolling back through a shell tab's output, the command that
   produced the top visible line stays pinned above the terminal (from the OSC 133 marks);
   clicking it scrolls to that command's prompt. Needs shell integration; not for agent tabs.

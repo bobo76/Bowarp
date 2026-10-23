@@ -193,6 +193,13 @@ impl CommandHistory {
     /// Load the history saved at `path`, rewriting the file compacted when it has grown too
     /// long. A missing or unreadable file gives an empty history.
     pub fn load(path: &Path, cap: usize) -> Self {
+        let _lock = match lock_history(path) {
+            Ok(lock) => lock,
+            Err(err) => {
+                eprintln!("agent-workspace: failed to lock {}: {err}", path.display());
+                return Self::new(cap);
+            }
+        };
         let Ok(bytes) = fs::read(path) else {
             return Self::new(cap);
         };
@@ -206,7 +213,7 @@ impl CommandHistory {
         }
         let (history, lines) = Self::from_jsonl(&text, cap);
         if history.needs_compaction(lines)
-            && let Err(err) = compact(path, history.to_jsonl().as_bytes(), bytes.len() as u64)
+            && let Err(err) = compact_locked(path, history.to_jsonl().as_bytes())
         {
             eprintln!(
                 "agent-workspace: failed to compact {}: {err}",
@@ -280,10 +287,25 @@ fn private_file() -> OpenOptions {
     options
 }
 
-/// Rewrite the history file at `path` with `text`, unless it is no longer `read_len` bytes
-/// long: another instance appended a line since it was read, which the rewrite would lose.
-/// Returns whether the file was rewritten.
-fn compact(path: &Path, text: &[u8], read_len: u64) -> io::Result<bool> {
+/// Lock a stable sibling, not the history inode that compaction replaces. Keep it open for the
+/// entire read/modify/write operation; an appender must acquire it before opening the history.
+fn lock_history(path: &Path) -> io::Result<File> {
+    if let Some(folder) = path
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+    {
+        fs::create_dir_all(folder)?;
+    }
+    let file = private_file()
+        .read(true)
+        .write(true)
+        .open(path.with_extension("lock"))?;
+    file.lock()?;
+    Ok(file)
+}
+
+/// Replace the history while the caller holds its sibling lock.
+fn compact_locked(path: &Path, text: &[u8]) -> io::Result<()> {
     let temp = path.with_extension(format!("jsonl.{}.tmp", std::process::id()));
     // A leftover from a crash keeps its mode when reopened.
     let _ = fs::remove_file(&temp);
@@ -292,40 +314,29 @@ fn compact(path: &Path, text: &[u8], read_len: u64) -> io::Result<bool> {
         .truncate(true)
         .open(&temp)?
         .write_all(text)?;
-    if fs::metadata(path)?.len() != read_len {
-        fs::remove_file(&temp)?;
-        return Ok(false);
-    }
     fs::rename(&temp, path)?;
-    Ok(true)
+    Ok(())
 }
-
-/// How often [`remove_command`] reads the file again after another instance appended to it.
-const REMOVE_ATTEMPTS: usize = 3;
 
 /// Drop every line of the history file at `path` that holds `command`, keeping the other lines
 /// as they are (damaged ones too). A missing file is fine.
 pub fn remove_command(path: &Path, command: &str) -> io::Result<()> {
-    for _ in 0..REMOVE_ATTEMPTS {
-        let bytes = match fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
-            Err(err) => return Err(err),
-        };
-        let kept: Vec<&[u8]> = bytes
-            .split(|&byte| byte == b'\n')
-            .filter(|line| !line.is_empty() && !holds_command(line, command))
-            .collect();
-        let text = kept.iter().fold(Vec::new(), |mut text, line| {
-            text.extend_from_slice(line);
-            text.push(b'\n');
-            text
-        });
-        if compact(path, &text, bytes.len() as u64)? {
-            return Ok(());
-        }
-    }
-    Err(io::Error::other("the history file kept changing"))
+    let _lock = lock_history(path)?;
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    let kept: Vec<&[u8]> = bytes
+        .split(|&byte| byte == b'\n')
+        .filter(|line| !line.is_empty() && !holds_command(line, command))
+        .collect();
+    let text = kept.iter().fold(Vec::new(), |mut text, line| {
+        text.extend_from_slice(line);
+        text.push(b'\n');
+        text
+    });
+    compact_locked(path, &text)
 }
 
 fn holds_command(line: &[u8], command: &str) -> bool {
@@ -337,9 +348,7 @@ pub fn append_entry(path: &Path, entry: &HistoryEntry) -> io::Result<()> {
     let Some(line) = entry_line(entry) else {
         return Ok(());
     };
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
+    let _lock = lock_history(path)?;
     let mut file = private_file().read(true).append(true).open(path)?;
     // After a crash in the middle of a write the last line has no end; start a new one, so
     // this line is not glued to it.
@@ -348,7 +357,7 @@ pub fn append_entry(path: &Path, entry: &HistoryEntry) -> io::Result<()> {
     } else {
         line
     };
-    // One write per line, so lines appended by two instances don't interleave.
+    // The lock also keeps partial writes and repairs of unterminated lines together.
     file.write_all(text.as_bytes())
 }
 
@@ -365,6 +374,7 @@ fn ends_unterminated(file: &mut File) -> io::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::tests::TempDir;
 
     fn entry(command: &str, time: u64) -> HistoryEntry {
         HistoryEntry::new(command, Some("/tmp".into()), time)
@@ -590,5 +600,90 @@ mod tests {
         let history = CommandHistory::load(&path, 10);
         assert_eq!(commands(&history), ["ls", "make"]);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn append_in_subprocess() {
+        let Some(path) = std::env::var_os("AGENTWS_HISTORY_LOCK_TEST") else {
+            return;
+        };
+        let path = PathBuf::from(path);
+        fs::write(path.with_extension("ready"), "").unwrap();
+        append_entry(&path, &entry("from child", 2)).unwrap();
+    }
+
+    #[test]
+    fn cross_process_append_waits_for_replacement() {
+        use std::process::Command;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let root = TempDir::new();
+        let path = root.0.join("history.jsonl");
+        append_entry(&path, &entry("old", 1)).unwrap();
+        let lock = lock_history(&path).unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "history::tests::append_in_subprocess",
+                "--nocapture",
+            ])
+            .env("AGENTWS_HISTORY_LOCK_TEST", &path)
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !path.with_extension("ready").exists() {
+            assert!(Instant::now() < deadline, "child did not start");
+            thread::sleep(Duration::from_millis(10));
+        }
+        thread::sleep(Duration::from_millis(100));
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "append bypassed the lock"
+        );
+        compact_locked(
+            &path,
+            entry_line(&entry("replacement", 1)).unwrap().as_bytes(),
+        )
+        .unwrap();
+        drop(lock);
+        assert!(child.wait().unwrap().success());
+        assert_eq!(
+            commands(&CommandHistory::load(&path, 10)),
+            ["replacement", "from child"]
+        );
+    }
+
+    #[test]
+    fn concurrent_append_delete_and_compaction_preserve_other_commands() {
+        use std::thread;
+
+        let root = TempDir::new();
+        let path = root.0.join("history.jsonl");
+        thread::scope(|scope| {
+            for worker in 0..4 {
+                let path = &path;
+                scope.spawn(move || {
+                    for index in 0..25 {
+                        append_entry(
+                            path,
+                            &entry(&format!("worker {worker} command {index}"), index),
+                        )
+                        .unwrap();
+                        append_entry(path, &entry("remove me", index)).unwrap();
+                        remove_command(path, "remove me").unwrap();
+                        CommandHistory::load(path, 100);
+                    }
+                });
+            }
+        });
+        let history = CommandHistory::load(&path, 100);
+        assert_eq!(history.len(), 100);
+        assert!(
+            !history
+                .entries()
+                .iter()
+                .any(|entry| entry.command == "remove me")
+        );
     }
 }

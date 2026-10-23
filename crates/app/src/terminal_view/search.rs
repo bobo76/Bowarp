@@ -6,6 +6,7 @@ use gpui_kit::{
     Styled, Subscription, Window, div,
 };
 use term_core::TerminalSearch;
+use workspace_model::layout::Direction;
 
 use super::{CloseFind, Find, TerminalView};
 
@@ -36,7 +37,12 @@ impl TerminalView {
                             cx.notify();
                         }
                         InputEvent::PressEnter { shift, .. } => {
-                            view.step_terminal_search(!shift, window, cx);
+                            let direction = if *shift {
+                                Direction::Up
+                            } else {
+                                Direction::Down
+                            };
+                            view.step_terminal_search(direction, window, cx);
                         }
                         _ => {}
                     },
@@ -76,11 +82,16 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn step_terminal_search(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn step_terminal_search(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         {
             let mut term = self.session.lock_term();
             self.search.refresh(&mut term);
-            self.search.step(forward);
+            self.search.step(direction);
             self.search.refresh(&mut term);
         }
         if let Some(bar) = &self.search_bar {
@@ -139,7 +150,7 @@ impl TerminalView {
                         .small()
                         .tooltip("Previous match (Shift+Enter)")
                         .on_click(cx.listener(|view, _, window, cx| {
-                            view.step_terminal_search(false, window, cx);
+                            view.step_terminal_search(Direction::Up, window, cx);
                         })),
                 )
                 .child(
@@ -149,7 +160,7 @@ impl TerminalView {
                         .small()
                         .tooltip("Next match (Enter)")
                         .on_click(cx.listener(|view, _, window, cx| {
-                            view.step_terminal_search(true, window, cx);
+                            view.step_terminal_search(Direction::Down, window, cx);
                         })),
                 )
                 .child(
@@ -215,7 +226,9 @@ mod tests {
             Palette::default(),
             Arc::new(move |event| {
                 if let SessionEvent::Exited(_) = event {
-                    exited.send(()).expect("test must wait for the child to exit");
+                    exited
+                        .send(())
+                        .expect("test must wait for the child to exit");
                 }
             }),
         )
@@ -224,12 +237,19 @@ mod tests {
         exit_events
             .recv_timeout(Duration::from_secs(30))
             .expect("test child did not exit and drain its terminal output");
-        Processor::<StdSyncHandler>::new()
-            .advance(&mut *session.lock_term(), b"\x1bcone one");
+        Processor::<StdSyncHandler>::new().advance(&mut *session.lock_term(), b"\x1bcone one");
         let captured = Rc::new(RefCell::new(None));
         let capture = captured.clone();
         let window = cx.add_window(move |window, cx| {
-            let view = cx.new(|cx| TerminalView::new(session, &spec, false, Task::ready(()), cx));
+            let view = cx.new(|cx| {
+                TerminalView::new(
+                    session,
+                    &spec,
+                    super::super::StatusReporting::OutputActivity,
+                    Task::ready(()),
+                    cx,
+                )
+            });
             view.update(cx, |view, cx| window.focus(&view.focus_handle, cx));
             *capture.borrow_mut() = Some(view.clone());
             Root::new(view, window, cx)

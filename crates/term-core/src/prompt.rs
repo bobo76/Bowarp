@@ -56,7 +56,17 @@ const PARSE_WAIT: Duration = Duration::from_millis(1);
 const READ_CHUNK: usize = 64 * 1024;
 /// A real pty's output is held after `A` and `B` marks only where the event loop can be woken
 /// to read the held output (`Wake`).
-const HOLDS_PROMPTS: bool = cfg!(any(unix, windows));
+const PROMPT_TRACKING: PromptTracking = if cfg!(any(unix, windows)) {
+    PromptTracking::Position
+} else {
+    PromptTracking::EventsOnly
+};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PromptTracking {
+    Position,
+    EventsOnly,
+}
 /// Ctrl+E: end of line in readline (bash) and zsh's emacs keymap.
 const END_OF_LINE: &str = "\x05";
 /// The End key as the terminal sends it (`keys::bytes`). PSReadLine's Windows edit mode, the
@@ -172,6 +182,75 @@ struct TrackerState {
     folder: Option<PathBuf>,
 }
 
+impl TrackerState {
+    fn mark(
+        &mut self,
+        mark: PromptMark,
+        tracking: PromptTracking,
+    ) -> (Vec<PromptEvent>, Option<u16>) {
+        match mark {
+            PromptMark::PromptStart | PromptMark::CommandStart => self.start_prompt(mark, tracking),
+            PromptMark::CommandExecuted(command) => (self.execute_command(command), None),
+            PromptMark::CommandFinished(folder) => (self.finish_command(folder), None),
+            PromptMark::CommandLine(line) => {
+                self.reports_line = line.is_some();
+                self.line = line;
+                (Vec::new(), None)
+            }
+        }
+    }
+
+    fn start_prompt(
+        &mut self,
+        mark: PromptMark,
+        tracking: PromptTracking,
+    ) -> (Vec<PromptEvent>, Option<u16>) {
+        let mut events = Vec::new();
+        // A shell can replace PROMPT_COMMAND and omit D; the next prompt still ends the run.
+        if self.phase == Phase::Running {
+            self.phase = Phase::Idle;
+            self.line = None;
+            events.push(PromptEvent::Finished);
+        }
+        if tracking == PromptTracking::EventsOnly {
+            return (events, None);
+        }
+        let tag = TAG_BASE + self.next_tag;
+        self.next_tag = (self.next_tag + 1) % TAG_COUNT;
+        self.pending = Some(Pending {
+            mark,
+            tag,
+            parsed: false,
+            handed_over: None,
+        });
+        (events, Some(tag))
+    }
+
+    fn execute_command(&mut self, command: Option<String>) -> Vec<PromptEvent> {
+        self.line = None;
+        let mut events = vec![PromptEvent::Started(command.clone())];
+        if let Phase::Typing { folder, .. } = std::mem::replace(&mut self.phase, Phase::Running)
+            && let Some(command) = command
+        {
+            events.push(PromptEvent::Executed(ExecutedCommand { command, folder }));
+        }
+        events
+    }
+
+    fn finish_command(&mut self, folder: Option<PathBuf>) -> Vec<PromptEvent> {
+        let moved = folder.is_some() && folder != self.folder;
+        if moved {
+            self.folder = folder;
+        }
+        let was_running = std::mem::replace(&mut self.phase, Phase::Idle);
+        self.line = None;
+        if was_running == Phase::Running || moved {
+            return vec![PromptEvent::Finished];
+        }
+        Vec::new()
+    }
+}
+
 /// The shell integration state of one session, shared by the I/O thread, the terminal's event
 /// listener and the UI. Lock order: the terminal first, then this.
 pub struct PromptTracker {
@@ -202,69 +281,9 @@ impl PromptTracker {
 
     /// A mark was found in the output. Returns the tag to append after it when the mark needs
     /// the terminal state at that point (`A` and `B`); the others are applied at once.
-    /// `in_sync`: the mark is inside a synchronized update, whose bytes the parser holds back
-    /// until it ends, so a tag would not be answered in time; the prompt is not tracked then.
-    fn mark(&self, mark: PromptMark, in_sync: bool) -> Option<u16> {
-        let (events, tag) = {
-            let mut state = self.state();
-            match mark {
-                PromptMark::PromptStart | PromptMark::CommandStart => {
-                    // A prompt without a D mark before it (bash whose PROMPT_COMMAND was
-                    // replaced): the command finished anyway. The pending mark's `apply` sets
-                    // the phase again once it resolves.
-                    let mut events = Vec::new();
-                    if state.phase == Phase::Running {
-                        state.phase = Phase::Idle;
-                        state.line = None;
-                        events.push(PromptEvent::Finished);
-                    }
-                    if in_sync {
-                        (events, None)
-                    } else {
-                        let tag = TAG_BASE + state.next_tag;
-                        state.next_tag = (state.next_tag + 1) % TAG_COUNT;
-                        state.pending = Some(Pending {
-                            mark,
-                            tag,
-                            parsed: false,
-                            handed_over: None,
-                        });
-                        (events, Some(tag))
-                    }
-                }
-                PromptMark::CommandExecuted(command) => {
-                    state.line = None;
-                    let mut events = vec![PromptEvent::Started(command.clone())];
-                    if let Phase::Typing { folder, .. } =
-                        std::mem::replace(&mut state.phase, Phase::Running)
-                        && let Some(command) = command
-                    {
-                        events.push(PromptEvent::Executed(ExecutedCommand { command, folder }));
-                    }
-                    (events, None)
-                }
-                PromptMark::CommandFinished(folder) => {
-                    // A new folder at the first prompt (a startup file's `cd`) is news too.
-                    let moved = folder.is_some() && folder != state.folder;
-                    if moved {
-                        state.folder = folder;
-                    }
-                    let was_running = std::mem::replace(&mut state.phase, Phase::Idle);
-                    state.line = None;
-                    if was_running == Phase::Running || moved {
-                        (vec![PromptEvent::Finished], None)
-                    } else {
-                        (Vec::new(), None)
-                    }
-                }
-                PromptMark::CommandLine(line) => {
-                    // A line too long to report is read from the grid.
-                    state.reports_line = line.is_some();
-                    state.line = line;
-                    (Vec::new(), None)
-                }
-            }
-        };
+    /// EventsOnly avoids tag queries while synchronized output is held by the parser.
+    fn mark(&self, mark: PromptMark, tracking: PromptTracking) -> Option<u16> {
+        let (events, tag) = self.state().mark(mark, tracking);
         for event in events {
             (self.on_event)(event);
         }
@@ -572,7 +591,7 @@ struct MarkFilter<L: EventListener> {
     output_pos: usize,
     /// Output after an `A` or `B` mark is held back until the mark is resolved; without it the
     /// prompt's position is not tracked.
-    holds_prompts: bool,
+    tracking: PromptTracking,
 }
 
 impl<L: EventListener> MarkFilter<L> {
@@ -580,12 +599,12 @@ impl<L: EventListener> MarkFilter<L> {
         term: Arc<FairMutex<Term<L>>>,
         tracker: Arc<PromptTracker>,
         token: &str,
-        holds_prompts: bool,
+        tracking: PromptTracking,
     ) -> Self {
         Self {
             term,
             tracker,
-            holds_prompts,
+            tracking,
             scanner: Osc133Scanner::new(token),
             chunk: vec![0; READ_CHUNK].into_boxed_slice(),
             input: Vec::new(),
@@ -643,8 +662,12 @@ impl<L: EventListener> MarkFilter<L> {
             Some((end, mark)) => {
                 self.output.extend_from_slice(&rest[..end]);
                 self.input_pos += end;
-                let untracked = self.scanner.in_sync() || !self.holds_prompts;
-                if let Some(tag) = self.tracker.mark(mark, untracked) {
+                let tracking = if self.scanner.in_sync() {
+                    PromptTracking::EventsOnly
+                } else {
+                    self.tracking
+                };
+                if let Some(tag) = self.tracker.mark(mark, tracking) {
                     self.output.extend_from_slice(tag_query(tag).as_bytes());
                 }
             }
@@ -768,7 +791,7 @@ impl<T, L: EventListener> MarkedPty<T, L> {
         });
         Self {
             pty,
-            filter: MarkFilter::new(term, tracker, token.unwrap_or_default(), HOLDS_PROMPTS),
+            filter: MarkFilter::new(term, tracker, token.unwrap_or_default(), PROMPT_TRACKING),
             progress: ProgressScanner::new(),
             last_progress: None,
             on_progress,
@@ -942,7 +965,12 @@ mod tests {
                 &TermDimensions::new(columns, lines),
                 Listener(tracker.clone()),
             )));
-            let filter = MarkFilter::new(term.clone(), tracker.clone(), TOKEN, true);
+            let filter = MarkFilter::new(
+                term.clone(),
+                tracker.clone(),
+                TOKEN,
+                PromptTracking::Position,
+            );
             Self {
                 term,
                 tracker,
@@ -1121,7 +1149,7 @@ mod tests {
     #[test]
     fn without_the_hold_commands_are_reported_but_not_the_prompt() {
         let mut harness = Harness::new(40, 5);
-        harness.filter.holds_prompts = false;
+        harness.filter.tracking = PromptTracking::EventsOnly;
         harness.feed(format!("{PROMPT}sleep 5{}", executed("sleep 5")).as_bytes());
         assert_eq!(
             harness.take_running_events(),
@@ -1307,7 +1335,9 @@ mod tests {
     #[test]
     fn unparsed_mark_is_dropped_after_the_timeout() {
         let tracker = PromptTracker::new(|_| {});
-        let tag = tracker.mark(PromptMark::CommandStart, false).unwrap();
+        let tag = tracker
+            .mark(PromptMark::CommandStart, PromptTracking::Position)
+            .unwrap();
         assert!(!tracker.resolve_unlocked());
         tracker.handed_over();
         tracker.state().pending.as_mut().unwrap().handed_over = Some(Instant::now() - MARK_TIMEOUT);

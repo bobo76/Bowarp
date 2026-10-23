@@ -18,9 +18,9 @@ use gpui_kit::component::{ActiveTheme, Icon, IconName, Selectable, Sizable, Titl
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, App, AppContext, ClipboardItem, Context, CursorStyle, DragMoveEvent, Empty, Entity,
-    FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, Keystroke,
-    MouseButton, MouseDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, Task, Window, actions, div, px,
+    FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, MouseButton,
+    MouseDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task,
+    WeakEntity, Window, actions, div, px,
 };
 use term_core::{LaunchSpec, SessionKind};
 use workspace_model::layout::Direction;
@@ -36,7 +36,7 @@ use self::tab_card::TabCards;
 use self::tab_search::TabSearch;
 use crate::about;
 use crate::assets::FILES_ICON;
-use crate::file_explorer::{ExplorerEvent, FileExplorer};
+use crate::file_explorer::{CdAvailability, ExplorerEvent, FileExplorer};
 use crate::file_viewer::{FilePlace, FileViewer, ViewerEvent};
 use crate::hooks::ClaudeHooks;
 use crate::launcher::{self, Launcher, launch_name};
@@ -47,24 +47,51 @@ use crate::shortcuts::{
     self, ATTENTION_KEY, CLOSE_TAB_KEY, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY, SEARCH_KEY,
     SIDEBAR_KEY,
 };
-use crate::sidebar::{self, NUMBERED_TABS, SIDEBAR_WIDTH};
+use crate::sidebar::{self, SIDEBAR_WIDTH};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
-use crate::terminal_view::{AgentExited, AgentNotice, OpenFileRequest, TabChanged, TerminalView};
+use crate::terminal_view::{
+    AgentExited, AgentNotice, OpenFileRequest, StatusReporting, TabChanged, TerminalView,
+};
 use crate::window_bounds;
 
 const NEW_GROUP_NAME: &str = "New group";
+const KEY_CONTEXT: &str = "Workspace";
 
 /// The width of the strip on the file viewer's left edge that resizes it.
 const DIVIDER_WIDTH: f32 = 6.;
 
-actions!(workspace, [ToggleFullScreen]);
+actions!(
+    workspace,
+    [
+        ToggleFullScreen,
+        NextTab,
+        PreviousTab,
+        NewTab,
+        DuplicateTab,
+        CloseTab,
+        ToggleSidebar,
+        ToggleExplorer,
+        SearchTabs,
+        NextAttention,
+        SelectTab1,
+        SelectTab2,
+        SelectTab3,
+        SelectTab4,
+        SelectTab5,
+        SelectTab6,
+        SelectTab7,
+        SelectTab8,
+        SelectTab9,
+    ]
+);
 
 /// F11 toggles full screen. Bound for the whole window, so it works whichever pane has the
 /// keyboard: bindings match before the terminal's key handler, so F11 is not sent to the
 /// program.
 pub fn init(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("f11", ToggleFullScreen, None)]);
+    cx.bind_keys(default_bindings());
     // A global listener, so F11 also works while a dialog or notification has the keyboard
     // (they are not inside the workspace view) or nothing does.
     cx.on_action(|_: &ToggleFullScreen, cx| {
@@ -81,6 +108,49 @@ pub fn init(cx: &mut App) {
             let _ = window.update(cx, |_, window, _| window.toggle_fullscreen());
         });
     });
+}
+
+fn default_bindings() -> Vec<KeyBinding> {
+    let mut bindings = vec![
+        KeyBinding::new("ctrl-tab", NextTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-shift-tab", PreviousTab, Some(KEY_CONTEXT)),
+        KeyBinding::new(
+            &format!("ctrl-{EXPLORER_KEY}"),
+            ToggleExplorer,
+            Some(KEY_CONTEXT),
+        ),
+        KeyBinding::new("ctrl-1", SelectTab1, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-2", SelectTab2, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-3", SelectTab3, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-4", SelectTab4, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-5", SelectTab5, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-6", SelectTab6, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-7", SelectTab7, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-8", SelectTab8, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-9", SelectTab9, Some(KEY_CONTEXT)),
+    ];
+    macro_rules! bind {
+        ($key:expr, $action:expr) => {
+            bindings.push(KeyBinding::new(
+                &format!("ctrl-shift-{}", $key),
+                $action,
+                Some(KEY_CONTEXT),
+            ));
+        };
+    }
+    bind!(NEW_TAB_KEY, NewTab);
+    bind!(DUPLICATE_TAB_KEY, DuplicateTab);
+    bind!(CLOSE_TAB_KEY, CloseTab);
+    bind!(SIDEBAR_KEY, ToggleSidebar);
+    bind!(SEARCH_KEY, SearchTabs);
+    bind!(ATTENTION_KEY, NextAttention);
+    bindings
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabOwnership {
+    Owner,
+    Guest,
 }
 
 struct Tab {
@@ -149,8 +219,7 @@ pub struct WorkspaceView {
     layout: Layout,
     active: usize,
     sidebar_visible: bool,
-    /// Whether Running badges may pulse in this window ([`sidebar::pulse_allowed`]), read each
-    /// render.
+    /// GPU capability is fixed for the lifetime of this window.
     pulse_running: bool,
     explorer: Entity<FileExplorer>,
     explorer_visible: bool,
@@ -167,7 +236,7 @@ pub struct WorkspaceView {
     /// For shortening folders to `~` in the sidebar.
     home: Option<PathBuf>,
     /// Whether this instance reopens and saves the tabs (it holds the instance lock).
-    owns_tabs: bool,
+    ownership: TabOwnership,
     next_session_id: u64,
     launchers: Rc<[Launcher]>,
     hooks: Option<Rc<ClaudeHooks>>,
@@ -194,7 +263,7 @@ impl WorkspaceView {
         launchers: Rc<[Launcher]>,
         hooks: Option<Rc<ClaudeHooks>>,
         mut hook_messages: UnboundedReceiver<HookMessage>,
-        owns_tabs: bool,
+        ownership: TabOwnership,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -215,12 +284,13 @@ impl WorkspaceView {
             .collect();
         let explorer = cx.new(|cx| FileExplorer::new(agents, window, cx));
         let explorer_events = cx.subscribe_in(&explorer, window, Self::on_explorer_event);
+        window.set_window_title(about::APP_NAME);
         Self {
             tabs: Vec::new(),
             layout: Layout::default(),
             active: 0,
             sidebar_visible: true,
-            pulse_running: false,
+            pulse_running: sidebar::pulse_allowed(window),
             explorer,
             explorer_visible: false,
             viewer_drag: DividerDrag::new(Self::save_viewer_fraction),
@@ -230,7 +300,7 @@ impl WorkspaceView {
             cards: TabCards::default(),
             drop_hint: None,
             home: std::env::home_dir(),
-            owns_tabs,
+            ownership,
             next_session_id: 1,
             launchers,
             hooks,
@@ -247,10 +317,7 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> io::Result<()> {
-        let group = self
-            .active_tab()
-            .and_then(|tab| self.layout.group_of(tab.id))
-            .map(|group| group.id);
+        let group = self.active_group();
         self.open_tab_in(spec, NewTabPlace::EndOf(group), window, cx)
     }
 
@@ -305,12 +372,17 @@ impl WorkspaceView {
     ) -> io::Result<(Entity<TerminalView>, [Subscription; 4])> {
         let session_id = self.next_session_id;
         let mut launch = spec.clone();
-        let reports_status = self
+        let reporting = if self
             .hooks
             .as_ref()
-            .is_some_and(|hooks| hooks.attach(session_id, &mut launch));
+            .is_some_and(|hooks| hooks.attach(session_id, &mut launch))
+        {
+            StatusReporting::Hooks
+        } else {
+            StatusReporting::OutputActivity
+        };
         shell_integration::attach(&mut launch);
-        let view = TerminalView::spawn(session_id, &launch, reports_status, cx)?;
+        let view = TerminalView::spawn(session_id, &launch, reporting, cx)?;
         self.next_session_id += 1;
         let changed = cx.subscribe(&view, |workspace, _, _: &TabChanged, cx| {
             workspace.sync_explorer(cx);
@@ -395,17 +467,24 @@ impl WorkspaceView {
         let Some(spec) = shell.spec(folder) else {
             return;
         };
-        let (view, view_events) = match self.start_session(tab_id, &spec, window, cx) {
-            Ok(started) => started,
-            Err(err) => {
-                log::error!("failed to start {}: {err}", launch_name(&spec));
-                window.push_notification(
-                    Notification::error(format!("Failed to start {}: {err}", launch_name(&spec))),
-                    cx,
-                );
-                return;
-            }
-        };
+        if let Err(err) = self.replace_tab_session(index, spec.clone(), window, cx) {
+            log::error!("failed to start {}: {err}", launch_name(&spec));
+            window.push_notification(
+                Notification::error(format!("Failed to start {}: {err}", launch_name(&spec))),
+                cx,
+            );
+        }
+    }
+
+    fn replace_tab_session(
+        &mut self,
+        index: usize,
+        spec: LaunchSpec,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> io::Result<()> {
+        let tab_id = self.tabs[index].id;
+        let (view, view_events) = self.start_session(tab_id, &spec, window, cx)?;
         let had_focus = self.tabs[index]
             .view
             .read(cx)
@@ -416,16 +495,19 @@ impl WorkspaceView {
         tab.spec = spec;
         tab._view_events = view_events;
         self.cards.forget(tab_id);
-        if index == self.active && !self.settings.shows_page() {
-            view.update(cx, |view, cx| view.show(cx));
-            if had_focus {
-                window.focus(&view.focus_handle(cx), cx);
-            }
-        } else {
+        if index != self.active || self.settings.shows_page() {
             view.update(cx, |view, _| view.hide());
+            self.sync_explorer(cx);
+            cx.notify();
+            return Ok(());
+        }
+        view.update(cx, |view, cx| view.show(cx));
+        if had_focus {
+            window.focus(&view.focus_handle(cx), cx);
         }
         self.sync_explorer(cx);
         cx.notify();
+        Ok(())
     }
 
     /// Show `path` in tab `tab_id`'s file viewer, opening the viewer when it is closed.
@@ -511,7 +593,7 @@ impl WorkspaceView {
     /// The tabs as they are now, for reopening them at the next start. Nothing is saved when
     /// another instance owns the tabs (`instance_lock`).
     pub fn save_tabs(&self, cx: &App) {
-        if !self.owns_tabs {
+        if self.ownership == TabOwnership::Guest {
             return;
         }
         let active = self.active_tab().map(|tab| tab.id);
@@ -536,10 +618,7 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let group = self
-            .active_tab()
-            .and_then(|tab| self.layout.group_of(tab.id))
-            .map(|group| group.id);
+        let group = self.active_group();
         self.open_tab_in_or_notify(spec, NewTabPlace::EndOf(group), window, cx);
     }
 
@@ -572,12 +651,12 @@ impl WorkspaceView {
     }
 
     /// Folder for new tabs: the selected tab's current one, else the app's working directory.
-    fn new_tab_cwd(&self, cx: &App) -> Option<PathBuf> {
-        self.tab_cwd(self.active, cx)
+    fn new_tab_folder(&self, cx: &App) -> Option<PathBuf> {
+        self.tab_folder(self.active, cx)
     }
 
     /// The tab's current folder, else the app's working directory.
-    fn tab_cwd(&self, index: usize, cx: &App) -> Option<PathBuf> {
+    fn tab_folder(&self, index: usize, cx: &App) -> Option<PathBuf> {
         self.tabs
             .get(index)
             .and_then(|tab| tab.view.read(cx).current_folder())
@@ -585,14 +664,23 @@ impl WorkspaceView {
     }
 
     fn open_launcher(&mut self, launcher: &Launcher, window: &mut Window, cx: &mut Context<Self>) {
-        let cwd = self.new_tab_cwd(cx);
-        if let Some(spec) = launcher.spec(cwd) {
+        let folder = self.new_tab_folder(cx);
+        if let Some(spec) = launcher.spec(folder) {
             self.open_tab_or_notify(spec, window, cx);
         }
     }
 
     /// Open the default shell (the `+` menu's first entry) in the selected tab's folder.
     fn open_default_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_default_shell_in(self.new_tab_folder(cx), window, cx);
+    }
+
+    fn open_default_shell_in(
+        &mut self,
+        folder: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(shell) =
             launcher::default_shell(&self.launchers, settings_file::settings(cx).default_shell())
                 .cloned()
@@ -600,7 +688,9 @@ impl WorkspaceView {
             window.push_notification(Notification::error("No shell found"), cx);
             return;
         };
-        self.open_launcher(&shell, window, cx);
+        if let Some(spec) = shell.spec(folder) {
+            self.open_tab_or_notify(spec, window, cx);
+        }
     }
 
     /// Open another tab running what the tab runs, in its current folder and group.
@@ -609,7 +699,7 @@ impl WorkspaceView {
             return;
         };
         let (mut spec, id) = (tab.spec.clone(), tab.id);
-        spec.cwd = self.tab_cwd(index, cx);
+        spec.cwd = self.tab_folder(index, cx);
         self.open_tab_in_or_notify(spec, NewTabPlace::After(id), window, cx);
     }
 
@@ -650,15 +740,23 @@ impl WorkspaceView {
         let (tab_id, workspace) = (tab.id, cx.entity().downgrade());
         viewer.update(cx, |viewer, cx| {
             viewer.discard_then(window, cx, move |_, window, cx| {
-                // Run outside the viewer's update: closing the tab updates the viewer.
-                let workspace = workspace.clone();
-                window.defer(cx, move |window, cx| {
-                    let _ = workspace.update(cx, |workspace, cx| {
-                        if let Some(index) = workspace.tab_index(tab_id) {
-                            workspace.remove_tab(index, window, cx);
-                        }
-                    });
-                });
+                Self::defer_remove_tab(workspace.clone(), tab_id, window, cx);
+            });
+        });
+    }
+
+    fn defer_remove_tab(
+        workspace: WeakEntity<Self>,
+        tab_id: u64,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        // Closing a tab updates its viewer, so wait until the viewer's update has ended.
+        window.defer(cx, move |window, cx| {
+            let _ = workspace.update(cx, |workspace, cx| {
+                if let Some(index) = workspace.tab_index(tab_id) {
+                    workspace.remove_tab(index, window, cx);
+                }
             });
         });
     }
@@ -701,6 +799,12 @@ impl WorkspaceView {
 
     fn active_tab(&self) -> Option<&Tab> {
         self.tabs.get(self.active)
+    }
+
+    fn active_group(&self) -> Option<GroupId> {
+        self.active_tab()
+            .and_then(|tab| self.layout.group_of(tab.id))
+            .map(|group| group.id)
     }
 
     fn tab_index(&self, id: u64) -> Option<usize> {
@@ -799,7 +903,7 @@ impl WorkspaceView {
             }
             TabCommand::CopyFolder => {
                 if let Some(location) = location {
-                    copy_text(location.dir.display().to_string(), cx);
+                    copy_text(location.folder.display().to_string(), cx);
                 }
             }
             TabCommand::Rename => self.start_rename(RenameTarget::Tab(id), window, cx),
@@ -988,15 +1092,14 @@ impl WorkspaceView {
         waiting_count(&self.attention(cx), self.current_index())
     }
 
-    fn cycle(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn cycle(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.tabs.len();
         if count == 0 {
             return;
         }
-        let next = if forward {
-            (self.active + 1) % count
-        } else {
-            (self.active + count - 1) % count
+        let next = match direction {
+            Direction::Down => (self.active + 1) % count,
+            Direction::Up => (self.active + count - 1) % count,
         };
         self.activate(next, window, cx);
     }
@@ -1014,18 +1117,6 @@ impl WorkspaceView {
         });
     }
 
-    /// Tab shortcuts run in the capture phase, before the terminal turns keys into input.
-    fn on_key_down_capture(
-        &mut self,
-        event: &KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.handle_tab_shortcut(&event.keystroke, window, cx) {
-            cx.stop_propagation();
-        }
-    }
-
     fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_visible = !self.sidebar_visible;
         cx.notify();
@@ -1037,8 +1128,9 @@ impl WorkspaceView {
             self.sync_explorer(cx);
         } else {
             // Drop the watches while hidden; showing it again reads the folders afresh.
-            self.explorer
-                .update(cx, |explorer, cx| explorer.set_root(None, false, cx));
+            self.explorer.update(cx, |explorer, cx| {
+                explorer.set_root(None, CdAvailability::Unavailable, cx)
+            });
         }
         cx.notify();
     }
@@ -1049,20 +1141,25 @@ impl WorkspaceView {
         if !self.explorer_visible {
             return;
         }
-        let (root, can_cd) = match self.active_tab() {
+        let (root, cd) = match self.active_tab() {
             Some(tab) => {
                 let view = tab.view.read(cx);
                 let root = view
                     .location()
-                    .map(|location| location.dir.clone())
+                    .map(|location| location.folder.clone())
                     .or_else(|| view.current_folder());
                 // Typing `cd` into a running program would feed it keys.
-                (root, view.kind() == SessionKind::Shell && view.at_prompt())
+                let cd = if view.kind() == SessionKind::Shell && view.at_prompt() {
+                    CdAvailability::Available
+                } else {
+                    CdAvailability::Unavailable
+                };
+                (root, cd)
             }
-            None => (None, false),
+            None => (None, CdAvailability::Unavailable),
         };
         self.explorer
-            .update(cx, |explorer, cx| explorer.set_root(root, can_cd, cx));
+            .update(cx, |explorer, cx| explorer.set_root(root, cd, cx));
     }
 
     fn on_explorer_event(
@@ -1075,34 +1172,14 @@ impl WorkspaceView {
         match event {
             ExplorerEvent::Close => self.toggle_explorer(cx),
             ExplorerEvent::CdTo(folder) => {
-                if let Some(tab) = self.active_tab() {
-                    // Stale when a command started since the explorer last synced.
-                    if !tab.view.read(cx).at_prompt() {
-                        return;
-                    }
-                    let changed = tab.view.update(cx, |view, cx| view.change_dir(folder, cx));
-                    if let Err(err) = changed {
-                        window.push_notification(Notification::error(err.to_string()), cx);
-                        return;
-                    }
-                }
-                self.focus_active(window, cx);
+                self.change_active_folder(folder, window, cx);
             }
             ExplorerEvent::OpenTab(folder, agent) => {
-                let launcher = match agent {
-                    Some(agent) => agent.clone(),
-                    None => match launcher::default_shell(
-                        &self.launchers,
-                        settings_file::settings(cx).default_shell(),
-                    ) {
-                        Some(shell) => shell.clone(),
-                        None => {
-                            window.push_notification(Notification::error("No shell found"), cx);
-                            return;
-                        }
-                    },
+                let Some(agent) = agent else {
+                    self.open_default_shell_in(Some(folder.clone()), window, cx);
+                    return;
                 };
-                if let Some(spec) = launcher.spec(Some(folder.clone())) {
+                if let Some(spec) = agent.spec(Some(folder.clone())) {
                     self.open_tab_or_notify(spec, window, cx);
                 }
             }
@@ -1113,6 +1190,27 @@ impl WorkspaceView {
                 }
             }
         }
+    }
+
+    fn change_active_folder(
+        &mut self,
+        folder: &std::path::Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.active_tab() else {
+            self.focus_active(window, cx);
+            return;
+        };
+        // A command may have started since the explorer last synchronized.
+        if !tab.view.read(cx).at_prompt() {
+            return;
+        }
+        if let Err(err) = tab.view.update(cx, |view, cx| view.change_dir(folder, cx)) {
+            window.push_notification(Notification::error(err.to_string()), cx);
+            return;
+        }
+        self.focus_active(window, cx);
     }
 
     fn on_viewer_event(
@@ -1292,38 +1390,12 @@ impl WorkspaceView {
         }
     }
 
-    /// Ctrl+Tab / Ctrl+Shift+Tab cycle tabs, Ctrl+1..9 select one, Ctrl+Shift+T opens the
-    /// default shell, Ctrl+Shift+D another tab like the selected one, Ctrl+Shift+W closes it,
-    /// Ctrl+Shift+B shows or hides the sidebar, Ctrl+Shift+S searches tabs, Ctrl+Shift+A jumps
-    /// to the next tab needing attention, Ctrl+Shift+| shows or hides the file explorer.
-    fn handle_tab_shortcut(
-        &mut self,
-        keystroke: &Keystroke,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let modifiers = &keystroke.modifiers;
-        if !modifiers.control || modifiers.alt || modifiers.platform {
-            return false;
+    fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings.shows_page() {
+            self.close_settings(window, cx);
+            return;
         }
-        match (keystroke.key.as_str(), modifiers.shift) {
-            ("tab", shift) => self.cycle(!shift, window, cx),
-            (NEW_TAB_KEY, true) => self.open_default_shell(window, cx),
-            (DUPLICATE_TAB_KEY, true) => self.duplicate_tab(self.active, window, cx),
-            (CLOSE_TAB_KEY, true) if self.settings.shows_page() => self.close_settings(window, cx),
-            (CLOSE_TAB_KEY, true) => self.close_tab(self.active, window, cx),
-            (SIDEBAR_KEY, true) => self.toggle_sidebar(cx),
-            // GPUI drops Shift from a shifted symbol: Ctrl+Shift+\ arrives as Ctrl+|.
-            (EXPLORER_KEY, _) => self.toggle_explorer(cx),
-            (SEARCH_KEY, true) => self.focus_search(window, cx),
-            (ATTENTION_KEY, true) => self.jump_to_attention(window, cx),
-            (key, false) => match tab_number(key) {
-                Some(number) => self.activate(number - 1, window, cx),
-                None => return false,
-            },
-            _ => return false,
-        }
-        true
+        self.close_tab(self.active, window, cx);
     }
 
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1360,13 +1432,6 @@ fn copy_text(text: String, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(text));
 }
 
-/// The tab number for Ctrl+1..9.
-fn tab_number(key: &str) -> Option<usize> {
-    key.parse()
-        .ok()
-        .filter(|number| (1..=NUMBERED_TABS).contains(number))
-}
-
 impl Focusable for WorkspaceView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         if self.settings.shows_page() {
@@ -1381,7 +1446,6 @@ impl Focusable for WorkspaceView {
 
 impl Render for WorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.pulse_running = sidebar::pulse_allowed(window);
         let active = self
             .active_tab()
             .filter(|_| !self.settings.shows_page())
@@ -1392,15 +1456,67 @@ impl Render for WorkspaceView {
             f32::from(window.viewport_size().width),
             self.fixed_panes_width(cx),
         );
-        if window.window_title() != about::APP_NAME {
-            window.set_window_title(about::APP_NAME);
-        }
-
         div()
             .size_full()
             .flex()
             .flex_col()
-            .capture_key_down(cx.listener(Self::on_key_down_capture))
+            .key_context(KEY_CONTEXT)
+            .capture_action(cx.listener(|workspace, _: &NextTab, window, cx| {
+                workspace.cycle(Direction::Down, window, cx)
+            }))
+            .capture_action(cx.listener(|workspace, _: &PreviousTab, window, cx| {
+                workspace.cycle(Direction::Up, window, cx)
+            }))
+            .capture_action(cx.listener(|workspace, _: &NewTab, window, cx| {
+                workspace.open_default_shell(window, cx)
+            }))
+            .capture_action(cx.listener(|workspace, _: &DuplicateTab, window, cx| {
+                workspace.duplicate_tab(workspace.active, window, cx)
+            }))
+            .capture_action(
+                cx.listener(|workspace, _: &CloseTab, window, cx| {
+                    workspace.close_active(window, cx)
+                }),
+            )
+            .capture_action(
+                cx.listener(|workspace, _: &ToggleSidebar, _, cx| workspace.toggle_sidebar(cx)),
+            )
+            .capture_action(
+                cx.listener(|workspace, _: &ToggleExplorer, _, cx| workspace.toggle_explorer(cx)),
+            )
+            .capture_action(cx.listener(|workspace, _: &SearchTabs, window, cx| {
+                workspace.focus_search(window, cx)
+            }))
+            .capture_action(cx.listener(|workspace, _: &NextAttention, window, cx| {
+                workspace.jump_to_attention(window, cx)
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab1, window, cx| {
+                workspace.activate(0, window, cx)
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab2, window, cx| {
+                workspace.activate(1, window, cx)
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab3, window, cx| {
+                workspace.activate(2, window, cx)
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab4, window, cx| {
+                workspace.activate(3, window, cx)
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab5, window, cx| {
+                workspace.activate(4, window, cx)
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab6, window, cx| {
+                workspace.activate(5, window, cx)
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab7, window, cx| {
+                workspace.activate(6, window, cx)
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab8, window, cx| {
+                workspace.activate(7, window, cx)
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab9, window, cx| {
+                workspace.activate(8, window, cx)
+            }))
             // Both halves of "any release": over this view, and outside it (an overlay, or
             // past the window's edge).
             .capture_any_mouse_up(cx.listener(|workspace, _, _, cx| {
@@ -1481,11 +1597,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tab_numbers() {
-        assert_eq!(tab_number("1"), Some(1));
-        assert_eq!(tab_number("9"), Some(9));
-        assert_eq!(tab_number("0"), None);
-        assert_eq!(tab_number("a"), None);
+    fn default_bindings_parse() {
+        assert_eq!(default_bindings().len(), 18);
+    }
+
+    #[gpui::test]
+    fn tab_actions_capture_shortcuts_while_search_has_focus(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::VisualTestContext;
+        use gpui_kit::component::Root;
+        use std::cell::RefCell;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            settings_file::init(cx);
+            init(cx);
+        });
+        let captured = Rc::new(RefCell::new(None));
+        let capture = captured.clone();
+        let window = cx.add_window(move |window, cx| {
+            let (_, messages) = futures::channel::mpsc::unbounded();
+            let workspace = cx.new(|cx| {
+                WorkspaceView::new(
+                    Rc::from([]),
+                    None,
+                    messages,
+                    TabOwnership::Guest,
+                    window,
+                    cx,
+                )
+            });
+            workspace.update(cx, |workspace, cx| workspace.focus_search(window, cx));
+            *capture.borrow_mut() = Some(workspace.clone());
+            Root::new(workspace, window, cx)
+        });
+        let workspace = captured.borrow().clone().unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_keystrokes("ctrl-alt-shift-b");
+        assert!(workspace.read_with(&cx, |workspace, _| workspace.sidebar_visible));
+        cx.simulate_keystrokes("ctrl-b");
+        assert!(workspace.read_with(&cx, |workspace, _| workspace.sidebar_visible));
+        cx.simulate_keystrokes("ctrl-shift-b");
+        assert!(!workspace.read_with(&cx, |workspace, _| workspace.sidebar_visible));
+        assert!(workspace.read_with(&cx, |workspace, cx| workspace.search.query(cx).is_empty()));
     }
 
     #[gpui::test]
@@ -1499,8 +1654,16 @@ mod tests {
         cx.update(settings_file::init);
         let window = cx.add_window(move |window, cx| {
             let (_, messages) = futures::channel::mpsc::unbounded();
-            let workspace =
-                cx.new(|cx| WorkspaceView::new(Rc::from([]), None, messages, false, window, cx));
+            let workspace = cx.new(|cx| {
+                WorkspaceView::new(
+                    Rc::from([]),
+                    None,
+                    messages,
+                    TabOwnership::Guest,
+                    window,
+                    cx,
+                )
+            });
             workspace.update(cx, |workspace, cx| {
                 workspace.warn_shell_fallback(
                     "Could not start broken-shell: executable not found".into(),
@@ -1512,6 +1675,7 @@ mod tests {
         });
         let mut cx = VisualTestContext::from_window(window.into(), cx);
         cx.run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some(about::APP_NAME));
         cx.update(|window, cx| assert_eq!(window.notifications(cx).len(), 1));
         assert!(cx.shown_system_notifications().is_empty());
     }

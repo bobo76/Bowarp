@@ -5,6 +5,7 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Direction, Point};
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
+use workspace_model::layout::Direction as SearchDirection;
 
 #[derive(Default)]
 pub struct TerminalSearch {
@@ -64,16 +65,16 @@ impl TerminalSearch {
             .map(|_| self.current == Some(index))
     }
 
-    pub fn step(&mut self, forward: bool) {
+    pub fn step(&mut self, direction: SearchDirection) {
         if self.matches.is_empty() {
             return;
         }
         let len = self.matches.len();
-        self.current = Some(match (self.current, forward) {
-            (Some(index), true) => (index + 1) % len,
-            (Some(index), false) => (index + len - 1) % len,
-            (None, true) => 0,
-            (None, false) => len - 1,
+        self.current = Some(match (self.current, direction) {
+            (Some(index), SearchDirection::Down) => (index + 1) % len,
+            (Some(index), SearchDirection::Up) => (index + len - 1) % len,
+            (None, SearchDirection::Down) => 0,
+            (None, SearchDirection::Up) => len - 1,
         });
         self.reveal = true;
     }
@@ -81,44 +82,64 @@ impl TerminalSearch {
     /// Recompute only on output, query changes, or resize. Reveal only on explicit search
     /// navigation, so incoming output does not pull the viewport away from the reader.
     pub fn refresh<T: EventListener>(&mut self, term: &mut Term<T>) -> bool {
-        let Some(regex) = &mut self.regex else {
+        if self.regex.is_none() {
             return false;
-        };
+        }
         let dimensions = (term.columns(), term.screen_lines(), term.total_lines());
         let refresh = self.dirty || self.dimensions != Some(dimensions);
         if refresh {
             self.dirty = false;
             self.dimensions = Some(dimensions);
-            let previous = self
-                .current
-                .and_then(|index| self.matches.get(index))
-                .cloned();
-            self.matches = RegexIter::new(
-                Point::new(term.topmost_line(), Column(0)),
-                Point::new(term.bottommost_line(), term.last_column()),
-                Direction::Right,
-                term,
-                regex,
-            )
-            .collect();
-            self.current = if self.matches.is_empty() {
-                None
-            } else if let Some(previous) = previous {
-                Some(
-                    self.matches
-                        .binary_search_by_key(previous.start(), |range| *range.start())
-                        .unwrap_or_else(|_| self.current.unwrap_or(0).min(self.matches.len() - 1)),
-                )
-            } else {
-                let top = -(term.grid().display_offset() as i32);
-                Some(
-                    self.matches
-                        .iter()
-                        .position(|range| range.start().line.0 >= top)
-                        .unwrap_or(self.matches.len() - 1),
-                )
-            };
+            self.rebuild_matches(term);
         }
+        self.reveal_current(term);
+        refresh
+    }
+
+    fn rebuild_matches<T: EventListener>(&mut self, term: &Term<T>) {
+        let previous = self
+            .current
+            .and_then(|index| self.matches.get(index))
+            .cloned();
+        let Some(regex) = &mut self.regex else {
+            return;
+        };
+        self.matches = RegexIter::new(
+            Point::new(term.topmost_line(), Column(0)),
+            Point::new(term.bottommost_line(), term.last_column()),
+            Direction::Right,
+            term,
+            regex,
+        )
+        .collect();
+        self.current = self.current_after_rebuild(previous.as_ref(), term.grid().display_offset());
+    }
+
+    fn current_after_rebuild(
+        &self,
+        previous: Option<&Match>,
+        display_offset: usize,
+    ) -> Option<usize> {
+        if self.matches.is_empty() {
+            return None;
+        }
+        if let Some(previous) = previous {
+            return Some(
+                self.matches
+                    .binary_search_by_key(previous.start(), |range| *range.start())
+                    .unwrap_or_else(|_| self.current.unwrap_or(0).min(self.matches.len() - 1)),
+            );
+        }
+        let top = -(display_offset as i32);
+        Some(
+            self.matches
+                .iter()
+                .position(|range| range.start().line.0 >= top)
+                .unwrap_or(self.matches.len() - 1),
+        )
+    }
+
+    fn reveal_current<T: EventListener>(&mut self, term: &mut Term<T>) {
         if self.reveal {
             self.reveal = false;
             if let Some(index) = self.current {
@@ -127,7 +148,6 @@ impl TerminalSearch {
                 term.scroll_to_point(*range.start());
             }
         }
-        refresh
     }
 }
 
@@ -158,11 +178,11 @@ mod tests {
         search.refresh(&mut term);
         assert_eq!(search.matches.len(), 2);
         assert_eq!(search.current(), Some(1));
-        search.step(true);
+        search.step(SearchDirection::Down);
         search.refresh(&mut term);
         assert_eq!(search.current(), Some(0));
         assert!(term.grid().display_offset() > 0);
-        search.step(false);
+        search.step(SearchDirection::Up);
         search.refresh(&mut term);
         assert_eq!(search.current(), Some(1));
     }
@@ -197,8 +217,8 @@ mod tests {
             search.refresh(&mut term);
             assert_eq!(search.matches.len(), usize::from(query == "needle"));
             if query != "needle" {
-                search.step(true);
-                search.step(false);
+                search.step(SearchDirection::Down);
+                search.step(SearchDirection::Up);
                 assert_eq!(search.current(), None);
             }
         }
@@ -265,10 +285,43 @@ mod tests {
         let mut search = TerminalSearch::default();
         search.set_query("one").unwrap();
         search.refresh(&mut term);
-        search.step(true);
+        search.step(SearchDirection::Down);
         search.refresh(&mut term);
         search.set_query("one").unwrap();
         assert!(!search.refresh(&mut term));
         assert_eq!(search.current(), Some(1));
+    }
+
+    #[test]
+    fn rebuilding_keeps_the_active_match_or_clamps_its_old_index() {
+        let mut term = terminal("one one one", 20, 3);
+        let mut search = TerminalSearch::default();
+        search.set_query("one").unwrap();
+        search.refresh(&mut term);
+        search.step(SearchDirection::Down);
+        search.refresh(&mut term);
+        search.invalidate();
+        search.refresh(&mut term);
+        assert_eq!(search.current(), Some(1));
+
+        Processor::<StdSyncHandler>::new().advance(&mut term, b"\x1b[Hone\x1b[K");
+        search.invalidate();
+        search.refresh(&mut term);
+        assert_eq!(search.matches.len(), 1);
+        assert_eq!(search.current(), Some(0));
+    }
+
+    #[test]
+    fn navigation_without_a_current_match_starts_at_either_end() {
+        let mut term = terminal("one one", 20, 3);
+        let mut search = TerminalSearch::default();
+        search.set_query("one").unwrap();
+        search.refresh(&mut term);
+        search.current = None;
+        search.step(SearchDirection::Up);
+        assert_eq!(search.current(), Some(1));
+        search.current = None;
+        search.step(SearchDirection::Down);
+        assert_eq!(search.current(), Some(0));
     }
 }

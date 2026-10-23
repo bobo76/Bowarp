@@ -143,8 +143,8 @@ pub enum AgentNotice {
 }
 
 impl AgentNotice {
-    fn for_change(before: AgentStatus, after: AgentStatus, visible: bool) -> Option<Self> {
-        if visible || before == after {
+    fn for_change(before: AgentStatus, after: AgentStatus) -> Option<Self> {
+        if before == after {
             return None;
         }
         match after {
@@ -161,13 +161,22 @@ pub struct OpenFileRequest {
     pub place: FilePlace,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum StatusReporting {
+    Hooks,
+    OutputActivity,
+}
+
+const INITIAL_TERMINAL_COLUMNS: u16 = 80;
+const INITIAL_TERMINAL_LINES: u16 = 24;
+
 /// One terminal session and its interaction state.
 pub struct TerminalView {
     pub(crate) session: Session,
     /// Shown until the program sets a title.
     name: String,
     /// Folder the session was started in, used while the child's own cannot be read.
-    launch_cwd: Option<PathBuf>,
+    launch_folder: Option<PathBuf>,
     location: Option<Location>,
     /// How the program parses typed paths.
     pub(crate) shell: ShellSyntax,
@@ -187,8 +196,6 @@ pub struct TerminalView {
     pub(crate) geometry: Option<GridGeometry>,
     /// IME composition text not yet committed.
     pub(crate) marked_text: Option<String>,
-    /// The rest of a history command matching the typed text, drawn dimmed after the cursor.
-    pub(crate) ghost_text: Option<String>,
     pub(crate) history_popup: Option<HistoryPopup>,
     pub(crate) search: TerminalSearch,
     search_bar: Option<search::SearchBar>,
@@ -208,12 +215,11 @@ pub struct TerminalView {
 }
 
 impl TerminalView {
-    /// Start `spec` as session `id`. `reports_status` says whether the session was set up
-    /// with Claude Code status hooks.
+    /// Start `spec` as session `id`, tracking hook status when hooks were installed.
     pub fn spawn(
         id: u64,
         spec: &LaunchSpec,
-        reports_status: bool,
+        reporting: StatusReporting,
         cx: &mut App,
     ) -> io::Result<Entity<Self>> {
         let (sender, mut receiver) = mpsc::unbounded();
@@ -223,7 +229,7 @@ impl TerminalView {
         let session = Session::spawn(
             id,
             spec,
-            TermDimensions::new(80, 24),
+            TermDimensions::new(INITIAL_TERMINAL_COLUMNS, INITIAL_TERMINAL_LINES),
             Palette::default(),
             callback,
         )?;
@@ -239,24 +245,29 @@ impl TerminalView {
                     }
                 }
             });
-            Self::new(session, spec, reports_status, session_events, cx)
+            Self::new(session, spec, reporting, session_events, cx)
         }))
     }
 
     fn new(
         session: Session,
         spec: &LaunchSpec,
-        reports_status: bool,
+        reporting: StatusReporting,
         session_events: Task<()>,
         cx: &mut Context<Self>,
     ) -> Self {
+        cx.observe_global::<history::History>(|view, cx| {
+            view.refresh_history(cx);
+            cx.notify();
+        })
+        .detach();
         Self {
             session,
             name: launcher::default_name(spec),
-            launch_cwd: spec.cwd.clone(),
+            launch_folder: spec.cwd.clone(),
             location: spec.cwd.clone().map(Location::read),
             shell: launcher::shell_syntax(spec),
-            agent: reports_status.then(|| AgentTracker::new(Instant::now())),
+            agent: (reporting == StatusReporting::Hooks).then(|| AgentTracker::new(Instant::now())),
             mode: AgentModeState::default(),
             finished_unseen: false,
             bell_unseen: false,
@@ -265,7 +276,6 @@ impl TerminalView {
             focus_handle: cx.focus_handle(),
             geometry: None,
             marked_text: None,
-            ghost_text: None,
             history_popup: None,
             search: TerminalSearch::default(),
             search_bar: None,
@@ -282,6 +292,26 @@ impl TerminalView {
             home: std::env::home_dir(),
             _session_events: session_events,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_test_session(
+        session: Session,
+        spec: &LaunchSpec,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new(
+            session,
+            spec,
+            StatusReporting::OutputActivity,
+            Task::ready(()),
+            cx,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dispatch_test_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
+        self.on_session_event(event, cx);
     }
 
     pub fn id(&self) -> u64 {
@@ -325,8 +355,12 @@ impl TerminalView {
     pub fn current_folder(&self) -> Option<PathBuf> {
         self.session
             .current_dir()
-            .or_else(|| self.location.as_ref().map(|location| location.dir.clone()))
-            .or_else(|| self.launch_cwd.clone())
+            .or_else(|| {
+                self.location
+                    .as_ref()
+                    .map(|location| location.folder.clone())
+            })
+            .or_else(|| self.launch_folder.clone())
     }
 
     /// The program's title, or the session's default name.
@@ -414,16 +448,17 @@ impl TerminalView {
         if self.refresh_location() || was_done || rang {
             cx.emit(TabChanged);
         }
+        self.refresh_history(cx);
         cx.notify();
     }
 
     /// Re-read the child's folder and its git branch. Returns whether either changed. When the
     /// folder cannot be read (exited child, unsupported platform) the last known one is kept.
     fn refresh_location(&mut self) -> bool {
-        let Some(dir) = self.current_folder() else {
+        let Some(folder) = self.current_folder() else {
             return false;
         };
-        let location = Some(Location::read(dir));
+        let location = Some(Location::read(folder));
         if location == self.location {
             return false;
         }
@@ -434,7 +469,7 @@ impl TerminalView {
     /// Tell the sidebar something changed, refreshing the folder and branch first: a shell's
     /// title changes and output bursts end around `cd` and `git checkout`, and hook events
     /// follow Claude Code's commands, so the location is read then instead of polled.
-    fn emit_tab_changed(&mut self, cx: &mut Context<Self>) {
+    fn refresh_location_and_notify(&mut self, cx: &mut Context<Self>) {
         self.refresh_location();
         cx.emit(TabChanged);
     }
@@ -472,7 +507,7 @@ impl TerminalView {
             self.agent = Some(AgentTracker::new(Instant::now()));
             self.activity_task = None;
         }
-        let changed = self.update_agent(|agent| agent.apply_progress(state.is_shown()), cx);
+        let changed = self.update_agent(|agent| agent.apply_progress(state), cx);
         if adopted && !changed {
             cx.emit(TabChanged);
         }
@@ -491,63 +526,32 @@ impl TerminalView {
             return false;
         };
         self.finished_unseen = finished_unseen(change.before, change.after, self.visible);
-        if let Some(notice) = AgentNotice::for_change(change.before, change.after, self.visible) {
+        if !self.visible
+            && let Some(notice) = AgentNotice::for_change(change.before, change.after)
+        {
             cx.emit(notice);
         }
-        self.emit_tab_changed(cx);
+        self.refresh_location_and_notify(cx);
         true
     }
 
     fn on_session_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
         match event {
             SessionEvent::Wakeup => {
-                self.search.invalidate();
-                self.track_activity(cx);
-                self.refresh_link_hover(cx);
-                if !self.visible {
-                    // Nothing paints, so re-arm here to keep hearing about output.
-                    self.session.ack_wakeup();
+                if !self.on_wakeup(cx) {
                     return;
                 }
             }
             SessionEvent::TitleChanged(title) => {
                 self.title = title;
-                self.emit_tab_changed(cx);
+                self.refresh_location_and_notify(cx);
             }
             SessionEvent::Bell => {
-                // Claude Code's hooks already tell when it finished or waits.
-                let hooked = self.agent.is_some() && self.kind() == SessionKind::ClaudeCode;
-                if self.visible || self.bell_unseen || hooked {
+                if !self.on_bell(cx) {
                     return;
                 }
-                self.bell_unseen = true;
-                if self.kind() != SessionKind::Shell {
-                    cx.emit(AgentNotice::NeedsAttention);
-                }
-                cx.emit(TabChanged);
             }
-            SessionEvent::CommandStarted(command) => {
-                let label =
-                    command.and_then(|command| command_label(&command, COMMAND_LABEL_CHARS));
-                match self.running_command.as_mut() {
-                    // A second C mark before a D mark: the same run goes on, with the new line.
-                    Some(running) => {
-                        running.label = label;
-                        if self.agent.is_none() {
-                            cx.emit(TabChanged);
-                        }
-                    }
-                    None => {
-                        self.running_command = Some(RunningCommand {
-                            label,
-                            started: Instant::now(),
-                            _reveal: self.reveal_running(cx),
-                        });
-                        // Not at the prompt any more: the explorer disables its cd entries.
-                        cx.emit(TabChanged);
-                    }
-                }
-            }
+            SessionEvent::CommandStarted(command) => self.on_command_started(command, cx),
             SessionEvent::CommandExecuted(command) => {
                 self.history_popup = None;
                 history::record(command, cx);
@@ -556,7 +560,7 @@ impl TerminalView {
                 self.running_command = None;
                 if self.agent.is_none() {
                     // The command may have changed the folder or the branch.
-                    self.emit_tab_changed(cx);
+                    self.refresh_location_and_notify(cx);
                 }
             }
             SessionEvent::ProgressChanged(state) => self.apply_progress(state, cx),
@@ -564,26 +568,71 @@ impl TerminalView {
                 store_clipboard(clipboard, text, cx);
                 return;
             }
-            SessionEvent::Exited(code) => {
-                if self.kind() != SessionKind::Shell
-                    && !self.visible
-                    && (code != Some(0) || !self.finished_unseen)
-                {
-                    cx.emit(AgentNotice::Exited(code));
-                }
-                self.process = ProcessState::Exited(code);
-                self.running_command = None;
-                if let Some(agent) = self.agent.as_mut() {
-                    agent.exit(Instant::now());
-                }
-                cx.emit(TabChanged);
-                // A failed agent keeps its last screen, so its error can be read.
-                if self.kind() != SessionKind::Shell && code == Some(0) {
-                    cx.emit(AgentExited);
-                }
-            }
+            SessionEvent::Exited(code) => self.on_exited(code, cx),
         }
+        self.refresh_history(cx);
         cx.notify();
+    }
+
+    fn on_wakeup(&mut self, cx: &mut Context<Self>) -> bool {
+        self.search.invalidate();
+        self.track_activity(cx);
+        self.refresh_link_hover(cx);
+        if !self.visible {
+            // Nothing paints, so re-arm here to keep hearing about output.
+            self.session.ack_wakeup();
+            return false;
+        }
+        true
+    }
+
+    fn on_bell(&mut self, cx: &mut Context<Self>) -> bool {
+        let hooked = self.agent.is_some() && self.kind() == SessionKind::ClaudeCode;
+        if self.visible || self.bell_unseen || hooked {
+            return false;
+        }
+        self.bell_unseen = true;
+        if self.kind() != SessionKind::Shell {
+            cx.emit(AgentNotice::NeedsAttention);
+        }
+        cx.emit(TabChanged);
+        true
+    }
+
+    fn on_command_started(&mut self, command: Option<String>, cx: &mut Context<Self>) {
+        let label = command.and_then(|command| command_label(&command, COMMAND_LABEL_CHARS));
+        if let Some(running) = self.running_command.as_mut() {
+            running.label = label;
+            if self.agent.is_none() {
+                cx.emit(TabChanged);
+            }
+            return;
+        }
+        self.running_command = Some(RunningCommand {
+            label,
+            started: Instant::now(),
+            _reveal: self.reveal_running(cx),
+        });
+        cx.emit(TabChanged);
+    }
+
+    fn on_exited(&mut self, code: Option<i32>, cx: &mut Context<Self>) {
+        if self.kind() != SessionKind::Shell
+            && !self.visible
+            && (code != Some(0) || !self.finished_unseen)
+        {
+            cx.emit(AgentNotice::Exited(code));
+        }
+        self.process = ProcessState::Exited(code);
+        self.running_command = None;
+        if let Some(agent) = self.agent.as_mut() {
+            agent.exit(Instant::now());
+        }
+        cx.emit(TabChanged);
+        // A failed agent keeps its last screen, so its error can be read.
+        if self.kind() != SessionKind::Shell && code == Some(0) {
+            cx.emit(AgentExited);
+        }
     }
 
     /// Tell the sidebar once the running command has run for [`RUNNING_AFTER`], when its status
@@ -627,7 +676,7 @@ impl TerminalView {
             }
             let _ = this.update(cx, |view, cx| {
                 view.activity_task = None;
-                view.emit_tab_changed(cx);
+                view.refresh_location_and_notify(cx);
             });
         }));
         cx.emit(TabChanged);
@@ -895,7 +944,7 @@ impl Render for TerminalView {
             .on_mouse_up_out(MouseButton::Middle, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Right, cx.listener(Self::on_mouse_up));
 
-        let history_popup = self.update_history(cx);
+        let history_popup = self.render_history_popup(cx);
         let exit_banner = self.exit_banner(cx);
         let search_bar = self.render_terminal_search(cx);
         // The banner sits below the grid, which shrinks by its height, so no output is hidden.
@@ -1059,11 +1108,10 @@ mod tests {
     }
 
     #[test]
-    fn agent_notices_require_a_background_status_transition() {
+    fn agent_notices_classify_status_transitions() {
         use AgentStatus::*;
         for before in [Idle, Working, NeedsAttention, Exited] {
             for after in [Idle, Working, NeedsAttention, Exited] {
-                assert_eq!(AgentNotice::for_change(before, after, true), None);
                 let expected = match (before, after) {
                     (Working, Idle) => Some(AgentNotice::Finished),
                     (before, NeedsAttention) if before != NeedsAttention => {
@@ -1071,7 +1119,7 @@ mod tests {
                     }
                     _ => None,
                 };
-                assert_eq!(AgentNotice::for_change(before, after, false), expected);
+                assert_eq!(AgentNotice::for_change(before, after), expected);
             }
         }
     }
@@ -1103,7 +1151,9 @@ mod tests {
             Arc::new(|_| {}),
         )
         .unwrap();
-        let view = cx.new(|cx| TerminalView::new(session, &spec, true, Task::ready(()), cx));
+        let view = cx.new(|cx| {
+            TerminalView::new(session, &spec, StatusReporting::Hooks, Task::ready(()), cx)
+        });
         let notices = Rc::new(RefCell::new(Vec::new()));
         let captured = notices.clone();
         let _events = cx.update(|cx| {
@@ -1112,6 +1162,18 @@ mod tests {
             })
         });
         view.update(cx, |view, cx| {
+            for event in [
+                HookEvent::PromptSubmitted,
+                HookEvent::InputRequested,
+                HookEvent::ToolStarted,
+                HookEvent::Stopped,
+            ] {
+                view.apply_hook_event(AgentEvent::Hook(event), 0, cx);
+            }
+            assert!(
+                notices.borrow().is_empty(),
+                "foreground tabs must not notify"
+            );
             view.hide();
             for (event, at) in [
                 (HookEvent::PromptSubmitted, 1),

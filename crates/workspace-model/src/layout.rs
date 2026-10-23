@@ -333,35 +333,34 @@ impl Layout {
 
     /// Move the tab to `target`, joining the target's block. Returns whether anything moved.
     pub fn drop_tab(&mut self, id: TabId, target: DropTarget) -> bool {
-        let target_tab = match target {
-            DropTarget::Before(other) | DropTarget::After(other) => Some(other),
-            _ => None,
+        let Some(before) = self.place(id) else {
+            return false;
         };
-        let target_exists = match target {
-            DropTarget::Before(other) | DropTarget::After(other) => self.place(other).is_some(),
+        if !self.accepts_drop(id, target) {
+            return false;
+        }
+        self.take(id);
+        self.insert_drop(id, target);
+        Some(before) != self.place(id)
+    }
+
+    fn accepts_drop(&self, id: TabId, target: DropTarget) -> bool {
+        match target {
+            DropTarget::Before(other) | DropTarget::After(other) => {
+                id != other && self.place(other).is_some()
+            }
             DropTarget::BeforeGroup(group) | DropTarget::IntoGroup(group) => {
                 self.group(group).is_some()
             }
             DropTarget::End => true,
-        };
-        if target_tab == Some(id) || !target_exists || self.place(id).is_none() {
-            return false;
         }
-        let before = (self.pinned.clone(), self.items.clone());
-        self.take(id);
+    }
+
+    fn insert_drop(&mut self, id: TabId, target: DropTarget) {
         match target {
             DropTarget::Before(other) | DropTarget::After(other) => {
                 let after = usize::from(matches!(target, DropTarget::After(_)));
-                match self.place(other) {
-                    Some(Place::Pinned(index)) => self.pinned.insert(index + after, id),
-                    Some(Place::Loose(index)) => self.items.insert(index + after, Item::Tab(id)),
-                    Some(Place::Grouped { item, index }) => {
-                        if let Item::Group(group) = &mut self.items[item] {
-                            group.tabs.insert(index + after, id);
-                        }
-                    }
-                    None => unreachable!("the target tab was checked above"),
-                }
+                self.insert_next_to(id, other, after);
             }
             DropTarget::BeforeGroup(group) => {
                 let index = self.group_index(group).expect("checked above");
@@ -372,8 +371,19 @@ impl Layout {
             }
             DropTarget::End => self.items.push(Item::Tab(id)),
         }
-        // Dropping right next to itself in the same block changes nothing.
-        before != (self.pinned.clone(), self.items.clone())
+    }
+
+    fn insert_next_to(&mut self, id: TabId, other: TabId, after: usize) {
+        match self.place(other).expect("drop target was checked") {
+            Place::Pinned(index) => self.pinned.insert(index + after, id),
+            Place::Loose(index) => self.items.insert(index + after, Item::Tab(id)),
+            Place::Grouped { item, index } => {
+                let Item::Group(group) = &mut self.items[item] else {
+                    unreachable!("grouped place must point at a group");
+                };
+                group.tabs.insert(index + after, id);
+            }
+        }
     }
 
     pub fn can_move_group(&self, id: GroupId, direction: Direction) -> bool {
@@ -837,6 +847,29 @@ mod tests {
         assert!(!layout.drop_tab(3, DropTarget::After(99)));
         assert!(!layout.drop_tab(99, DropTarget::End));
         assert_eq!(layout.tabs(), vec![1, 2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn drop_change_detection_matches_the_resulting_layout() {
+        let (initial, first_group, last_group) = sample();
+        let targets: Vec<_> = (0..=7)
+            .flat_map(|id| [DropTarget::Before(id), DropTarget::After(id)])
+            .chain([
+                DropTarget::BeforeGroup(first_group),
+                DropTarget::BeforeGroup(last_group),
+                DropTarget::IntoGroup(first_group),
+                DropTarget::IntoGroup(last_group),
+                DropTarget::End,
+            ])
+            .collect();
+        for id in 0..=7 {
+            for &target in &targets {
+                let mut layout = initial.clone();
+                let before = layout.save(Some);
+                let changed = layout.drop_tab(id, target);
+                assert_eq!(changed, before != layout.save(Some), "{id} -> {target:?}");
+            }
+        }
     }
 
     #[test]

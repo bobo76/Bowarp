@@ -1,5 +1,164 @@
 # Code review: FM IPL standards
 
+## Remediation (2026-10-22)
+
+The reviews below are historical snapshots; their line numbers and confirmation notes describe
+the reviewed revisions, not the current implementation.
+
+### Branch findings
+
+| Problem | Resolution |
+|---|---|
+| 1 | A stable sibling lock serializes history reads/compaction, appends and deletion across processes. Appenders lock before opening the history file. Added subprocess and concurrent-writer regressions. |
+| 2 | Terminal search, sidebar search and tab cycling use the shared `Direction` enum instead of boolean navigation flags. |
+| 3-4 | Shell selection, font matching, filename validation and wheel policy use an explicit `Platform`. Case folding is only allocated on Windows. |
+| 5 | Foreground suppression lives at the notification caller; transition classification only examines the old and new statuses. |
+| 6-7 | Named the hook timeout in milliseconds and the group hover-card width. |
+| 8 | Split terminal search rebuilding, active-match selection and reveal without changing the terminal-lock scope. |
+| 9 | All settings-row helpers now accept a cohesive `SettingsField` read/write pair; dropdown choices and fallback labeling are grouped together. |
+| 10 | Separated keyed slider initialization, value synchronization and rendering. |
+| 11 | Extracted the viewer menu and individual action builders from the header. |
+
+### Earlier whole-project findings
+
+| Problem | Resolution |
+|---|---|
+| 4-5 | History rendering computes presentation without mutating popup state; events refresh history state. Suggestions are calculated read-only at prepaint. Window titles and pulse capability are initialized/updated outside render. Renamed location refresh-and-notify to expose its side effect. |
+| 6-10 | Replaced navigation, platform, entry-kind, cd availability, hook-reporting, tab-ownership, pulse and search-display flags with named types. Progress tracking accepts `ProgressState`; editor modes use named operations. Card clocks were already split into start/stop operations. |
+| 11-12 | Named the cited sizing, font fallback, scrollbar, initial terminal, palette, file-size and image-header values. Shared duration/header/menu constants already covered some original locations. Centralized shortcut keys/hints and OSC parameter keys. |
+| 13-15 | Extracted startup phases, OSC parameter parsing/mark construction, and terminal hyperlink/logical-line/path resolution. |
+| 16-20 | Split the cited mixed-responsibility event/render/session/prompt methods, flattened parser/explorer/workspace branches, introduced `CellSpan` and cohesive row/entry parameters, made view-kind dispatch exhaustive, and registered workspace shortcuts as GPUI actions. Layout drops detect changes without cloning the layout. Existing folder-watcher helpers already resolved the cited watch nesting. |
+| 21-22 | Standardized session location naming on `folder`, retaining protocol/persistence field names. Cell styling stores the terminal attribute bitset instead of five booleans. |
+| 23-24 | Reused launcher labels, filename/status/selection/group helpers and SVG refresh logic. Settings row helpers now have production callers, so the unused-code finding no longer applies. |
+
+**Validation:** all 377 workspace tests (including 108 app tests), all-target Clippy
+(`-D warnings`), formatting and the six Copilot bridge tests pass. The app regressions cover
+history events/render purity, settings focus and deferred startup notifications, using
+deterministic PTY event delivery in GPUI tests. Rust checks ran under WSL; native Windows
+execution remains unavailable because the MSVC linker is not installed.
+
+## Branch review (2026-10-22)
+
+Scope: `m2-sidebar` against `origin/main`, plus local changes, at commit `8d0b3c9`
+(version `0.2.16`). Locations below refer to that revision's code.
+
+**Original review: blocking FM IPL findings existed.** Checkstyle does not apply to this Rust repository;
+these are review-standard blockers, not build failures. This was a static review; the
+concurrency interleaving in Problem 1 was not runtime-reproduced.
+
+**Validation (2026-10-22):** each finding was re-checked against the code at `8d0b3c9`.
+All 11 are confirmed. *Worth* rates value against fix cost: **High**, fix in this branch;
+**Medium**, fix in this branch if cheap; **Low**, optional.
+
+| # | Confirmed | Worth | Note |
+|---|---|---|---|
+| 1 | ✅ | Medium | Real race, but a correctness bug rather than CC-10 |
+| 2 | ✅ | High | Fix together with earlier Problem 6 (still open) |
+| 3 | ✅ | High | Same fix as earlier Problem 9 (`Platform` enum) |
+| 4 | ✅ | High | Also a platform flag; same `Platform` fix |
+| 5 | ✅ | High | Trivial: the guard moves to the single caller |
+| 6 | ✅ | Low | The `timeout` key already names it; only the unit is missing |
+| 7 | ✅ | Medium | `240.` equals `SIDEBAR_WIDTH`; name the intent |
+| 8 | ✅ | High | 48-line method with a three-way `if` chain |
+| 9 | ✅ | Low | Matches the existing `bound_row` family's style |
+| 10 | ✅ | Medium | Extract `use_slider` keyed state; small gain |
+| 11 | ✅ | High | Five nesting levels inside the header renderer |
+
+### Need to follow
+
+**Problem 1: 🔴 [CC-10]** `crates\workspace-model\src\history.rs:295-299,308-325` —
+The new deletion operation reuses an existing check/rename race: another instance can
+append after the size check, then have its command silently erased by replacement.
+Coordinate append, deletion and compaction with a shared cross-process lock.
+> ✅ **Confirmed · Worth: Medium.** An append between `fs::metadata` (`:295`) and `fs::rename`
+> (`:299`) is lost, and on Unix so is one from an appender that opened the old inode before the
+> rename. The window is microseconds wide and costs at most one history line. The bug predates
+> this branch in `compact`; this branch adds a second caller. It is a correctness issue, not
+> CC-10 (no hidden side effect). An advisory lock file (`history.lock`) taken by
+> `append_entry`, `compact` and `remove_command` fixes both paths.
+
+**Problem 2: 🔴 [CC-9]** `crates\term-core\src\search.rs:67-78`;
+`crates\app\src\terminal_view\search.rs:79` — `forward` selects previous versus next
+navigation, producing opaque `true`/`false` calls. Expose explicitly named navigation methods.
+> ✅ **Confirmed · Worth: High.** Call sites are `step_terminal_search(!shift, ..)`
+> (`terminal_view/search.rs:39`), `(false, ..)` `:142`, `(true, ..)` `:152`, and `step(true)`
+> in `terminal_element.rs:964`. Earlier Problem 6 is still open with the same pattern
+> (`tab_search.rs:136` `step_search(forward)`, `workspace_view.rs:991` `cycle(forward)`,
+> `workspace-model/src/search.rs:73`). Fix them together with one shared direction enum.
+
+**Problem 3: 🔴 [CC-9]** `crates\app\src\launcher.rs:149-154,197-201` —
+New `windows` flags select platform-specific startup policies. Replace them with an
+explicit platform type or named platform-specific helpers.
+> ✅ **Confirmed · Worth: High.** `startup_shell_on(.., windows, ..)` and
+> `automatic_shell_on(.., windows, ..)` are new test seams. `automatic_shell_on` branches on
+> the flag (`:200`), and `startup_shell_on` passes a literal `true` to `preferred_shell`
+> (`:154`). This extends earlier Problem 9; one `Platform` enum fixes both.
+
+**Problem 4: 🔴 [CC-9]** `crates\workspace-model\src\settings.rs:311-330` —
+`ignore_case` switches font-matching behavior. Use explicitly named exact/case-insensitive
+operations or a matching strategy.
+> ✅ **Confirmed · Worth: High.** The only production caller passes
+> `cfg!(target_os = "windows")` (`terminal_element.rs:479`), and the tests pass `false`. It is
+> the same platform seam as Problem 3, so take the `Platform` enum (or a
+> `Platform::font_names_match`) instead. Minor: `requested_lower` is computed even when case
+> matters.
+
+**Problem 5: 🔴 [CC-9]** `crates\app\src\terminal_view.rs:146-154` —
+`visible` combines foreground suppression with status-transition classification. Gate
+foreground tabs at the caller and keep `for_change` responsible only for transitions.
+> ✅ **Confirmed · Worth: High.** It has one caller (`terminal_view.rs:494`), which already
+> holds `self.visible`, so the fix is a one-line guard there. The `visible = true` test case
+> (`:1066`) moves to the caller or is dropped.
+
+**Problem 6: 🔴 [CC-11]** `crates\app\copilot-extension\bridge.mjs:13` —
+The helper timeout is an unnamed `5000`. Introduce a meaningful constant including its
+milliseconds unit.
+> ✅ **Confirmed · Worth: Low.** The literal sits under the `timeout:` option key, so only the
+> unit is implicit. `const HOOK_TIMEOUT_MS = 5000;` is cheap but adds little.
+
+**Problem 7: 🔴 [CC-11]** `crates\app\src\sidebar.rs:793` —
+The new hover-card width embeds `240.` directly. Define a named group-card width constant.
+> ✅ **Confirmed · Worth: Medium.** `240.` equals `SIDEBAR_WIDTH` (`sidebar.rs:24`), so it
+> reads as either a coincidence or a hidden coupling. Name it (`GROUP_CARD_WIDTH`) or reuse
+> `SIDEBAR_WIDTH` if the card is meant to match the sidebar.
+
+### Should follow
+
+**Problem 8: 🟡 [CC-3, OC-1]** `crates\term-core\src\search.rs:83-131` —
+`refresh` combines match rebuilding, active-match selection and viewport navigation across
+nested branches. Extract those operations, preserving their current synchronization.
+> ✅ **Confirmed · Worth: High.** The method is 48 lines with a three-way `if`/`else if` for
+> `current` (`:109-127`). Natural splits: `rebuild_matches(term, regex)`,
+> `current_after_rebuild(previous, display_offset)`, `reveal_current(term)`. They all run on
+> the `&mut Term` the caller already locked, so the locking does not change.
+
+**Problem 9: 🟡 [CC-7]** `crates\app\src\settings_page.rs:583-590` —
+New `dropdown_row` takes six arguments without a framework-imposed signature. Group row
+metadata, choices and settings binding into cohesive parameters.
+> ✅ **Confirmed · Worth: Low.** It is six arguments, but it follows the `bound_row`
+> `(title, description, .., get, set)` shape its siblings share. Grouping only `get`/`set`
+> into the existing `Binding` would help everywhere, so change the whole row family or none
+> of it.
+
+**Problem 10: 🟡 [CC-3]** `crates\app\src\settings_page.rs:517-555` —
+`slider_field` mixes entity/subscription initialization, state reconciliation and rendering.
+Extract initialization and synchronization; retain the fluent rendering chain.
+> ✅ **Confirmed · Worth: Medium.** The keyed-state closure (`:524-541`) and the
+> thumb-resync check (`:544-546`) extract cleanly (`use_slider`, `sync_slider`). The gain is
+> modest: the function reads top to bottom already.
+
+**Problem 11: 🟡 [CC-3, OC-1]** `crates\app\src\file_viewer.rs:576-610` —
+The new menu closure nests state lookup, action construction and view-mode iteration inside
+the header renderer. Extract a dedicated menu builder and action helpers.
+> ✅ **Confirmed · Worth: High.** The closure nests five levels deep inside the builder chain:
+> closure, `if let`, `for`, item, `on_click`. A
+> `fn viewer_menu(viewer: WeakEntity<Self>, menu, cx) -> PopupMenu` with a `mode_item` helper
+> flattens it and leaves the header readable.
+
+---
+
+## Earlier whole-project review (2026-10-20)
+
 Whole-project review (2026-10-20) against the FM IPL Clean Code (CC-1..CC-12) and Object
 Calisthenics (OC-1..OC-9) rules, applied to Rust: Checkstyle does not exist here, GPUI view
 entities are treated like Spring components for OC-8, and GPUI's `cx` and protocol names

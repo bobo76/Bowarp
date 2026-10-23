@@ -18,8 +18,8 @@ const DIFF_STAT_TTL: Duration = Duration::from_secs(5);
 
 /// The `+N` shown in a tab's hover card, for the folder it was computed in.
 struct DiffStat {
-    dir: PathBuf,
-    /// When `git diff` last answered for `dir`.
+    folder: PathBuf,
+    /// When `git diff` last answered for `folder`.
     checked: Option<Instant>,
     /// The run whose answer is awaited; an answer from an older run is stale.
     generation: u64,
@@ -29,9 +29,9 @@ struct DiffStat {
 }
 
 impl DiffStat {
-    fn new(dir: PathBuf) -> Self {
+    fn new(folder: PathBuf) -> Self {
         Self {
-            dir,
+            folder,
             checked: None,
             generation: 0,
             running: false,
@@ -39,10 +39,10 @@ impl DiffStat {
         }
     }
 
-    /// Whether `git diff` should run for `dir`: not while a run for it is going, nor when one
+    /// Whether `git diff` should run for `folder`: not while a run for it is going, nor when one
     /// answered within [`DIFF_STAT_TTL`].
-    fn needs_run(&self, dir: &Path, now: Instant) -> bool {
-        if self.dir != dir {
+    fn needs_run(&self, folder: &Path, now: Instant) -> bool {
+        if self.folder != folder {
             return true;
         }
         let fresh = self
@@ -51,13 +51,13 @@ impl DiffStat {
         !self.running && !fresh
     }
 
-    /// Start a run for `dir` and return its generation. The last answer stays shown while it
+    /// Start a run for `folder` and return its generation. The last answer stays shown while it
     /// runs, unless the folder changed.
-    fn start(&mut self, dir: &Path) -> u64 {
-        if self.dir != dir {
+    fn start(&mut self, folder: &Path) -> u64 {
+        if self.folder != folder {
             *self = Self {
                 generation: self.generation,
-                ..Self::new(dir.to_path_buf())
+                ..Self::new(folder.to_path_buf())
             };
         }
         self.generation += 1;
@@ -93,14 +93,14 @@ impl TabCards {
         self.diff_stats.remove(&id);
     }
 
-    /// Start a `git diff` run for tab `id` in `dir`, unless one is going or answered recently.
+    /// Start a `git diff` run for tab `id` in `folder`, unless one is going or answered recently.
     /// Returns the run's generation.
-    fn start_diff_stat(&mut self, id: u64, dir: &Path, now: Instant) -> Option<u64> {
+    fn start_diff_stat(&mut self, id: u64, folder: &Path, now: Instant) -> Option<u64> {
         let stat = self
             .diff_stats
             .entry(id)
-            .or_insert_with(|| DiffStat::new(dir.to_path_buf()));
-        stat.needs_run(dir, now).then(|| stat.start(dir))
+            .or_insert_with(|| DiffStat::new(folder.to_path_buf()));
+        stat.needs_run(folder, now).then(|| stat.start(folder))
     }
 
     /// Take the answer of tab `id`'s run `generation`. Returns whether it is kept (no newer run
@@ -117,11 +117,11 @@ impl TabCards {
             .is_some_and(|stat| stat.finish(generation, added, now))
     }
 
-    /// Lines added in `dir` for tab `id`, once `git diff` answered there.
-    fn lines_added(&self, id: u64, dir: &Path) -> Option<u64> {
+    /// Lines added in `folder` for tab `id`, once `git diff` answered there.
+    fn lines_added(&self, id: u64, folder: &Path) -> Option<u64> {
         self.diff_stats
             .get(&id)
-            .filter(|stat| stat.dir == dir)
+            .filter(|stat| stat.folder == folder)
             .and_then(|stat| stat.added)
     }
 }
@@ -182,14 +182,14 @@ impl WorkspaceView {
             running_for: view.running_for(now),
             running_label: view.running_label().map(|label| label.to_string().into()),
             folder: location
-                .map(|location| display_path(&location.dir, self.home.as_deref()).into()),
+                .map(|location| display_path(&location.folder, self.home.as_deref()).into()),
             branch: location
                 .and_then(|location| location.head.as_ref())
                 .map(|head| head.name().to_string().into()),
             title: view.name().to_string().into(),
             kind: view.kind(),
             kind_label: launcher::default_name(&tab.spec).into(),
-            lines_added: location.and_then(|location| self.cards.lines_added(id, &location.dir)),
+            lines_added: location.and_then(|location| self.cards.lines_added(id, &location.folder)),
         })
     }
 
@@ -238,12 +238,14 @@ impl WorkspaceView {
         else {
             return;
         };
-        let dir = location.dir.clone();
-        let Some(generation) = self.cards.start_diff_stat(id, &dir, Instant::now()) else {
+        let folder = location.folder.clone();
+        let Some(generation) = self.cards.start_diff_stat(id, &folder, Instant::now()) else {
             return;
         };
         cx.spawn(async move |this, cx| {
-            let added = cx.background_spawn(async move { lines_added(&dir) }).await;
+            let added = cx
+                .background_spawn(async move { lines_added(&folder) })
+                .await;
             let _ = this.update(cx, |workspace, cx| {
                 if workspace
                     .cards
@@ -303,7 +305,7 @@ mod tests {
         assert_eq!(stat.added, None);
         assert!(stat.running);
         assert!(stat.finish(new, Some(7), now));
-        assert_eq!((stat.dir.as_path(), stat.added), (other, Some(7)));
+        assert_eq!((stat.folder.as_path(), stat.added), (other, Some(7)));
     }
 
     #[test]

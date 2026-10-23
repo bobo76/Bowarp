@@ -24,6 +24,7 @@ pub mod links;
 mod location;
 mod osc133;
 pub mod pane_width;
+mod platform;
 mod progress;
 mod running;
 mod search;
@@ -49,6 +50,7 @@ pub use layout::{
 };
 pub use location::{Location, display_path};
 pub use osc133::{CommandLine, Osc133Scanner, PromptMark, new_mark_token};
+pub use platform::Platform;
 pub use progress::{ProgressScanner, ProgressState};
 pub use running::{
     COMMAND_LABEL_CHARS, RUNNING_AFTER, RUNNING_PULSE_FOR, RunningBadge, command_label,

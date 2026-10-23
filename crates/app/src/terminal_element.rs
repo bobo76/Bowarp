@@ -20,7 +20,7 @@ use term_core::alacritty_terminal::term::{RenderableContent, TermMode};
 use term_core::alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Rgb};
 use term_core::{Palette, TermDimensions, TerminalSearch, dim};
 use unicode_width::UnicodeWidthChar;
-use workspace_model::installed_font_family;
+use workspace_model::{Platform, installed_font_family};
 
 use crate::scrollbar::{ScrollMetrics, ScrollbarLayout, ScrollbarState};
 use crate::settings_file::{self, AppSettings};
@@ -37,6 +37,10 @@ const PADDING_X: f32 = 8.0;
 const PADDING_Y: f32 = 4.0;
 const SCROLLBAR_THUMB_WIDTH: f32 = 4.0;
 const SCROLLBAR_ACTIVE_THUMB_WIDTH: f32 = 6.0;
+const FALLBACK_CELL_WIDTH_FACTOR: f32 = 0.6;
+const SCROLLBAR_ACTIVE_OPACITY: f32 = 0.6;
+const SCROLLBAR_IDLE_OPACITY: f32 = 0.35;
+const SCROLLBAR_TRACK_OPACITY: f32 = 0.08;
 const SELECTION_BACKGROUND: Rgb = Rgb {
     r: 0x26,
     g: 0x4f,
@@ -71,9 +75,7 @@ impl TerminalElement {
 
 /// A run of cells on one line sharing a style, painted as one shaped line.
 struct TextBatch {
-    line: usize,
-    column: usize,
-    cells: usize,
+    span: CellSpan,
     text: String,
     style: CellStyle,
 }
@@ -81,17 +83,32 @@ struct TextBatch {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct CellStyle {
     foreground: Rgb,
-    bold: bool,
-    italic: bool,
-    underline: bool,
-    undercurl: bool,
-    strikeout: bool,
+    flags: Flags,
 }
 
-struct BackgroundRect {
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct CellSpan {
     line: usize,
     column: usize,
     cells: usize,
+}
+
+impl CellSpan {
+    fn new(line: usize, column: usize, cells: usize) -> Self {
+        Self {
+            line,
+            column,
+            cells,
+        }
+    }
+
+    fn continues(self, previous: Self) -> bool {
+        self.line == previous.line && self.column == previous.column + previous.cells
+    }
+}
+
+struct BackgroundRect {
+    span: CellSpan,
     color: Rgb,
 }
 
@@ -101,21 +118,12 @@ struct BackgroundRects(Vec<BackgroundRect>);
 
 impl BackgroundRects {
     /// Extend the last rect when this cell continues it, or start a new rect.
-    fn push(&mut self, line: usize, column: usize, cells: usize, color: Rgb) {
+    fn push(&mut self, span: CellSpan, color: Rgb) {
         match self.0.last_mut() {
-            Some(rect)
-                if rect.line == line
-                    && rect.column + rect.cells == column
-                    && rect.color == color =>
-            {
-                rect.cells += cells;
+            Some(rect) if span.continues(rect.span) && rect.color == color => {
+                rect.span.cells += span.cells;
             }
-            _ => self.0.push(BackgroundRect {
-                line,
-                column,
-                cells,
-                color,
-            }),
+            _ => self.0.push(BackgroundRect { span, color }),
         }
     }
 
@@ -125,9 +133,7 @@ impl BackgroundRects {
 }
 
 struct CursorCell {
-    line: usize,
-    column: usize,
-    cells: usize,
+    span: CellSpan,
     shape: CursorShape,
 }
 
@@ -138,6 +144,21 @@ struct GridSnapshot {
     batches: Vec<TextBatch>,
     backgrounds: BackgroundRects,
     cursor: Option<CursorCell>,
+}
+
+impl GridSnapshot {
+    fn paint_cursor(
+        &mut self,
+        span: CellSpan,
+        shape: CursorShape,
+        colors: (Rgb, Rgb),
+    ) -> (Rgb, Rgb) {
+        self.cursor = Some(CursorCell { span, shape });
+        if shape == CursorShape::Block {
+            return (colors.1, self.cursor_color);
+        }
+        colors
+    }
 }
 
 pub struct PrepaintState {
@@ -233,12 +254,7 @@ impl Element for TerminalElement {
         let backgrounds = snapshot
             .backgrounds
             .iter()
-            .map(|rect| {
-                fill(
-                    grid.bounds(rect.line, rect.column, rect.cells),
-                    to_hsla(rect.color),
-                )
-            })
+            .map(|rect| fill(grid.bounds(rect.span), to_hsla(rect.color)))
             .collect();
         let (cursor, cursor_origin) = prepare_cursor(
             snapshot.cursor.as_ref(),
@@ -247,8 +263,9 @@ impl Element for TerminalElement {
         );
         // Only next to a visible cursor, cut at the line's end.
         let ghost_text = snapshot.cursor.as_ref().and_then(|cursor| {
-            let room = (columns as usize).saturating_sub(cursor.column);
-            let text = fit_columns(view.ghost_text.as_deref()?, room);
+            let room = (columns as usize).saturating_sub(cursor.span.column);
+            let suggestion = view.history_suggestion(cx)?;
+            let text = fit_columns(&suggestion, room);
             let style = ghost_text_style(palette.foreground, snapshot.background);
             (!text.is_empty()).then(|| (cursor_origin, shaper.shape(text, style)))
         });
@@ -270,7 +287,7 @@ impl Element for TerminalElement {
             .iter()
             .flat_map(|link| &link.rows)
             .map(|row| {
-                let cells = grid.bounds(row.line, row.column, row.cells);
+                let cells = grid.bounds(CellSpan::new(row.line, row.column, row.cells));
                 let underline = Bounds::new(
                     point(cells.origin.x, cells.bottom() - px(2.)),
                     size(cells.size.width, px(1.)),
@@ -430,7 +447,7 @@ impl TextShaper {
         self.text_system
             .advance(font_id, self.font_size, 'm')
             .map(|advance| advance.width)
-            .unwrap_or(self.font_size * 0.6)
+            .unwrap_or(self.font_size * FALLBACK_CELL_WIDTH_FACTOR)
     }
 
     fn shape(&self, text: String, style: CellStyle) -> ShapedLine {
@@ -476,7 +493,7 @@ fn refresh_font_family(cx: &mut App) {
     } else {
         let installed = cx.text_system().all_font_names();
         // DirectWrite matches family names in any case; cosmic-text (Linux) only exactly.
-        installed_font_family(&installed, &requested, cfg!(target_os = "windows")).map_or_else(
+        installed_font_family(&installed, &requested, Platform::CURRENT).map_or_else(
             || DEFAULT_FONT_FAMILY.into(),
             |family| family.to_owned().into(),
         )
@@ -506,10 +523,10 @@ impl CellGrid {
         )
     }
 
-    fn bounds(&self, line: usize, column: usize, cells: usize) -> Bounds<Pixels> {
+    fn bounds(&self, span: CellSpan) -> Bounds<Pixels> {
         Bounds::new(
-            self.origin(line, column),
-            size(self.cell_width * cells as f32, self.line_height),
+            self.origin(span.line, span.column),
+            size(self.cell_width * span.cells as f32, self.line_height),
         )
     }
 }
@@ -560,7 +577,7 @@ fn shape_lines(
     batches
         .into_iter()
         .map(|batch| {
-            let origin = grid.origin(batch.line, batch.column);
+            let origin = grid.origin(batch.span.line, batch.span.column);
             (origin, shaper.shape(batch.text, batch.style))
         })
         .collect()
@@ -575,10 +592,10 @@ fn prepare_cursor(
     let Some(cursor) = cursor else {
         return (None, grid.origin);
     };
-    let cell = grid.bounds(cursor.line, cursor.column, cursor.cells);
+    let cell = grid.bounds(cursor.span);
     (
         cursor_quad(cursor.shape, cell, color),
-        grid.origin(cursor.line, cursor.column),
+        grid.origin(cursor.span.line, cursor.span.column),
     )
 }
 
@@ -627,12 +644,16 @@ fn scrollbar_quads(layout: ScrollbarLayout, active: bool, color: Hsla) -> Vec<Pa
         point(track.right() - width - px(1.), track.top() + px(top)),
         size(width, px(height)),
     );
-    let thumb_color = color.opacity(if active { 0.6 } else { 0.35 });
+    let thumb_color = color.opacity(if active {
+        SCROLLBAR_ACTIVE_OPACITY
+    } else {
+        SCROLLBAR_IDLE_OPACITY
+    });
     let thumb = fill(thumb, thumb_color).corner_radii(width / 2.);
     if !active {
         return vec![thumb];
     }
-    vec![fill(track, color.opacity(0.08)), thumb]
+    vec![fill(track, color.opacity(SCROLLBAR_TRACK_OPACITY)), thumb]
 }
 
 fn inset(bounds: Bounds<Pixels>, x: Pixels, y: Pixels) -> Bounds<Pixels> {
@@ -687,6 +708,7 @@ fn snapshot(
         } else {
             1
         };
+        let span = CellSpan::new(line, column, cells);
 
         let selected = content
             .selection
@@ -710,41 +732,25 @@ fn snapshot(
             };
         }
         if show_cursor && indexed.point == cursor_point {
-            if cursor_shape == CursorShape::Block {
-                foreground = background;
-                background = cursor_color;
-            }
-            snapshot.cursor = Some(CursorCell {
-                line,
-                column,
-                cells,
-                shape: cursor_shape,
-            });
+            (foreground, background) =
+                snapshot.paint_cursor(span, cursor_shape, (foreground, background));
         }
 
         if background != default_background {
-            snapshot.backgrounds.push(line, column, cells, background);
+            snapshot.backgrounds.push(span, background);
         }
 
-        let style = CellStyle {
-            foreground,
-            bold: cell.flags.contains(Flags::BOLD),
-            italic: cell.flags.contains(Flags::ITALIC),
-            underline: cell.flags.intersects(Flags::ALL_UNDERLINES),
-            undercurl: cell.flags.contains(Flags::UNDERCURL),
-            strikeout: cell.flags.contains(Flags::STRIKEOUT),
-        };
-        push_cell(
-            &mut snapshot.batches,
-            line,
-            column,
-            cells,
-            cell.c,
-            cell.zerowidth(),
-            style,
-        );
+        let style = cell_style(cell.flags, foreground);
+        push_cell(&mut snapshot.batches, span, cell.c, cell.zerowidth(), style);
     }
     snapshot
+}
+
+fn cell_style(flags: Flags, foreground: Rgb) -> CellStyle {
+    CellStyle {
+        foreground,
+        flags: flags & (Flags::BOLD | Flags::ITALIC | Flags::ALL_UNDERLINES | Flags::STRIKEOUT),
+    }
 }
 
 /// A cell's foreground and background after its DIM, INVERSE and HIDDEN attributes and the
@@ -798,11 +804,7 @@ fn cursor_quad(shape: CursorShape, cell: Bounds<Pixels>, color: Hsla) -> Option<
 fn marked_text_style(foreground: Rgb) -> CellStyle {
     CellStyle {
         foreground,
-        bold: false,
-        italic: false,
-        underline: true,
-        undercurl: false,
-        strikeout: false,
+        flags: Flags::UNDERLINE,
     }
 }
 
@@ -815,11 +817,7 @@ fn ghost_text_style(foreground: Rgb, background: Rgb) -> CellStyle {
             g: mix(foreground.g, background.g),
             b: mix(foreground.b, background.b),
         },
-        bold: false,
-        italic: false,
-        underline: false,
-        undercurl: false,
-        strikeout: false,
+        flags: Flags::empty(),
     }
 }
 
@@ -844,19 +842,20 @@ fn marked_text_overlay(
 /// positioned at their own column.
 fn push_cell(
     batches: &mut Vec<TextBatch>,
-    line: usize,
-    column: usize,
-    cells: usize,
+    span: CellSpan,
     character: char,
     zero_width: Option<&[char]>,
     style: CellStyle,
 ) {
-    let decorated = |style: &CellStyle| style.underline || style.strikeout;
+    let decorated = |style: &CellStyle| {
+        style
+            .flags
+            .intersects(Flags::ALL_UNDERLINES | Flags::STRIKEOUT)
+    };
     let blank = (character == ' ' || character == '\t') && zero_width.is_none();
     // An undecorated blank only needs a position, so it may join any undecorated batch.
     let continues = |batch: &TextBatch| {
-        batch.line == line
-            && batch.column + batch.cells == column
+        span.continues(batch.span)
             && batch.text.is_ascii()
             && (batch.style == style || blank && !decorated(&style) && !decorated(&batch.style))
     };
@@ -864,7 +863,7 @@ fn push_cell(
     if character.is_ascii() && zero_width.is_none() {
         if let Some(batch) = batches.last_mut().filter(|batch| continues(batch)) {
             batch.text.push(if blank { ' ' } else { character });
-            batch.cells += cells;
+            batch.span.cells += span.cells;
             return;
         }
         if blank && !decorated(&style) {
@@ -874,13 +873,7 @@ fn push_cell(
 
     let mut text = String::from(character);
     text.extend(zero_width.into_iter().flatten());
-    batches.push(TextBatch {
-        line,
-        column,
-        cells,
-        text,
-        style,
-    });
+    batches.push(TextBatch { span, text, style });
 }
 
 fn text_run(base: &Font, len: usize, style: CellStyle) -> TextRun {
@@ -888,12 +881,12 @@ fn text_run(base: &Font, len: usize, style: CellStyle) -> TextRun {
     TextRun {
         len,
         font: Font {
-            weight: if style.bold {
+            weight: if style.flags.contains(Flags::BOLD) {
                 FontWeight::BOLD
             } else {
                 FontWeight::NORMAL
             },
-            style: if style.italic {
+            style: if style.flags.contains(Flags::ITALIC) {
                 FontStyle::Italic
             } else {
                 FontStyle::Normal
@@ -902,15 +895,21 @@ fn text_run(base: &Font, len: usize, style: CellStyle) -> TextRun {
         },
         color,
         background_color: None,
-        underline: style.underline.then(|| UnderlineStyle {
-            thickness: px(1.),
-            color: Some(color),
-            wavy: style.undercurl,
-        }),
-        strikethrough: style.strikeout.then(|| StrikethroughStyle {
-            thickness: px(1.),
-            color: Some(color),
-        }),
+        underline: style
+            .flags
+            .intersects(Flags::ALL_UNDERLINES)
+            .then(|| UnderlineStyle {
+                thickness: px(1.),
+                color: Some(color),
+                wavy: style.flags.contains(Flags::UNDERCURL),
+            }),
+        strikethrough: style
+            .flags
+            .contains(Flags::STRIKEOUT)
+            .then(|| StrikethroughStyle {
+                thickness: px(1.),
+                color: Some(color),
+            }),
     }
 }
 
@@ -955,19 +954,19 @@ mod tests {
         let colors: Vec<_> = painted
             .backgrounds
             .iter()
-            .map(|rect| (rect.column, rect.cells, rect.color))
+            .map(|rect| (rect.span.column, rect.span.cells, rect.color))
             .collect();
         assert_eq!(
             colors,
             [(0, 3, ACTIVE_SEARCH_BACKGROUND), (4, 3, SEARCH_BACKGROUND)]
         );
-        search.step(true);
+        search.step(workspace_model::layout::Direction::Down);
         search.refresh(&mut term);
         let painted = snapshot(term.renderable_content(), &palette, false, &search);
         let colors: Vec<_> = painted
             .backgrounds
             .iter()
-            .map(|rect| (rect.column, rect.cells, rect.color))
+            .map(|rect| (rect.span.column, rect.span.cells, rect.color))
             .collect();
         assert_eq!(
             colors,
@@ -1030,17 +1029,13 @@ mod tests {
     fn plain(foreground: Rgb) -> CellStyle {
         CellStyle {
             foreground,
-            bold: false,
-            italic: false,
-            underline: false,
-            undercurl: false,
-            strikeout: false,
+            flags: Flags::empty(),
         }
     }
 
     fn underlined(foreground: Rgb) -> CellStyle {
         CellStyle {
-            underline: true,
+            flags: Flags::UNDERLINE,
             ..plain(foreground)
         }
     }
@@ -1049,7 +1044,13 @@ mod tests {
     fn push_line(cells: &[(char, CellStyle)]) -> Vec<TextBatch> {
         let mut batches = Vec::new();
         for (column, &(character, style)) in cells.iter().enumerate() {
-            push_cell(&mut batches, 0, column, 1, character, None, style);
+            push_cell(
+                &mut batches,
+                CellSpan::new(0, column, 1),
+                character,
+                None,
+                style,
+            );
         }
         batches
     }
@@ -1058,7 +1059,7 @@ mod tests {
     fn layout(batches: &[TextBatch]) -> Vec<(usize, usize, &str)> {
         batches
             .iter()
-            .map(|batch| (batch.column, batch.cells, batch.text.as_str()))
+            .map(|batch| (batch.span.column, batch.span.cells, batch.text.as_str()))
             .collect()
     }
 
@@ -1066,33 +1067,33 @@ mod tests {
     fn rects(backgrounds: &BackgroundRects) -> Vec<(usize, usize, usize)> {
         backgrounds
             .iter()
-            .map(|rect| (rect.line, rect.column, rect.cells))
+            .map(|rect| (rect.span.line, rect.span.column, rect.span.cells))
             .collect()
     }
 
     #[test]
     fn adjacent_backgrounds_with_same_color_merge() {
         let mut backgrounds = BackgroundRects::default();
-        backgrounds.push(0, 0, 1, RED);
-        backgrounds.push(0, 1, 2, RED);
-        backgrounds.push(0, 3, 1, RED);
+        backgrounds.push(CellSpan::new(0, 0, 1), RED);
+        backgrounds.push(CellSpan::new(0, 1, 2), RED);
+        backgrounds.push(CellSpan::new(0, 3, 1), RED);
         assert_eq!(rects(&backgrounds), [(0, 0, 4)]);
     }
 
     #[test]
     fn background_color_change_starts_a_new_rect() {
         let mut backgrounds = BackgroundRects::default();
-        backgrounds.push(0, 0, 1, RED);
-        backgrounds.push(0, 1, 1, BLUE);
+        backgrounds.push(CellSpan::new(0, 0, 1), RED);
+        backgrounds.push(CellSpan::new(0, 1, 1), BLUE);
         assert_eq!(rects(&backgrounds), [(0, 0, 1), (0, 1, 1)]);
     }
 
     #[test]
     fn background_gap_or_new_line_starts_a_new_rect() {
         let mut backgrounds = BackgroundRects::default();
-        backgrounds.push(0, 0, 1, RED);
-        backgrounds.push(0, 2, 1, RED);
-        backgrounds.push(1, 3, 1, RED);
+        backgrounds.push(CellSpan::new(0, 0, 1), RED);
+        backgrounds.push(CellSpan::new(0, 2, 1), RED);
+        backgrounds.push(CellSpan::new(1, 3, 1), RED);
         assert_eq!(rects(&backgrounds), [(0, 0, 1), (0, 2, 1), (1, 3, 1)]);
     }
 
@@ -1170,27 +1171,33 @@ mod tests {
     #[test]
     fn gap_in_columns_starts_a_new_batch() {
         let mut batches = Vec::new();
-        push_cell(&mut batches, 0, 0, 1, 'a', None, plain(RED));
-        push_cell(&mut batches, 0, 2, 1, 'b', None, plain(RED));
-        push_cell(&mut batches, 1, 3, 1, 'c', None, plain(RED));
+        push_cell(&mut batches, CellSpan::new(0, 0, 1), 'a', None, plain(RED));
+        push_cell(&mut batches, CellSpan::new(0, 2, 1), 'b', None, plain(RED));
+        push_cell(&mut batches, CellSpan::new(1, 3, 1), 'c', None, plain(RED));
         assert_eq!(layout(&batches), [(0, 1, "a"), (2, 1, "b"), (3, 1, "c")]);
     }
 
     #[test]
     fn wide_char_gets_its_own_batch() {
         let mut batches = Vec::new();
-        push_cell(&mut batches, 0, 0, 1, 'a', None, plain(RED));
-        push_cell(&mut batches, 0, 1, 2, '中', None, plain(RED));
-        push_cell(&mut batches, 0, 3, 1, 'b', None, plain(RED));
+        push_cell(&mut batches, CellSpan::new(0, 0, 1), 'a', None, plain(RED));
+        push_cell(&mut batches, CellSpan::new(0, 1, 2), '中', None, plain(RED));
+        push_cell(&mut batches, CellSpan::new(0, 3, 1), 'b', None, plain(RED));
         assert_eq!(layout(&batches), [(0, 1, "a"), (1, 2, "中"), (3, 1, "b")]);
     }
 
     #[test]
     fn ascii_with_combining_mark_does_not_merge() {
         let mut batches = Vec::new();
-        push_cell(&mut batches, 0, 0, 1, 'a', None, plain(RED));
-        push_cell(&mut batches, 0, 1, 1, 'e', Some(&['\u{301}']), plain(RED));
-        push_cell(&mut batches, 0, 2, 1, 'b', None, plain(RED));
+        push_cell(&mut batches, CellSpan::new(0, 0, 1), 'a', None, plain(RED));
+        push_cell(
+            &mut batches,
+            CellSpan::new(0, 1, 1),
+            'e',
+            Some(&['\u{301}']),
+            plain(RED),
+        );
+        push_cell(&mut batches, CellSpan::new(0, 2, 1), 'b', None, plain(RED));
         assert_eq!(
             layout(&batches),
             [(0, 1, "a"), (1, 1, "e\u{301}"), (2, 1, "b")]

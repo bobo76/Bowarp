@@ -9,14 +9,15 @@ use serde::de::IgnoredAny;
 use crate::file_tree::{FileKind, file_kind};
 
 /// Files larger than this are not opened: the editor slows down well before.
-pub const MAX_VIEW_BYTES: u64 = 2 * 1024 * 1024;
+const BYTES_PER_MIB: u64 = 1024 * 1024;
+pub const MAX_VIEW_BYTES: u64 = 2 * BYTES_PER_MIB;
 
 /// Still images larger than this are not shown. They are decoded and drawn by GPUI, never put
 /// in the editor. This bounds the file GPUI reads, not the decoded size: the `image` crate caps
 /// a still image's decode at 512 MiB, and [`MAX_IMAGE_SIDE`] keeps it within one GPU texture.
 /// GIF and WebP may be animated, and every frame is decoded with no cap, so they keep
 /// [`MAX_VIEW_BYTES`] (see [`image_size_limit`]).
-pub const MAX_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
+pub const MAX_IMAGE_BYTES: u64 = 50 * BYTES_PER_MIB;
 
 /// Images wider or taller than this many pixels are not shown: GPUI draws an image from one GPU
 /// texture, and a larger one draws blank. 16384 is the texture limit of most desktop GPUs.
@@ -24,6 +25,8 @@ pub const MAX_IMAGE_SIDE: u32 = 16384;
 
 /// How many bytes from the start of an image file [`image_size_limit`] needs.
 pub const IMAGE_HEADER_LEN: usize = 12;
+const WEBP_FORMAT_OFFSET: usize = 8;
+const WEBP_FORMAT: &[u8] = b"WEBP";
 
 /// How a file is shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,8 +112,8 @@ impl fmt::Display for Unviewable {
             Self::TooLarge { size, limit } => write!(
                 f,
                 "The file is too large to open ({:.1} MB, the limit is {} MB).",
-                *size as f64 / (1024. * 1024.),
-                limit / (1024 * 1024)
+                *size as f64 / BYTES_PER_MIB as f64,
+                limit / BYTES_PER_MIB
             ),
             Self::TooManyPixels {
                 width,
@@ -138,7 +141,8 @@ pub fn check_size(size: u64) -> Result<(), Unviewable> {
 /// the bytes, as GPUI does, so a misnamed file gets the limit of what it really is.
 pub fn image_size_limit(header: &[u8]) -> u64 {
     let gif = header.starts_with(b"GIF8");
-    let webp = header.len() >= 12 && header.starts_with(b"RIFF") && &header[8..12] == b"WEBP";
+    let webp = header.starts_with(b"RIFF")
+        && header.get(WEBP_FORMAT_OFFSET..IMAGE_HEADER_LEN) == Some(WEBP_FORMAT);
     if gif || webp {
         return MAX_VIEW_BYTES;
     }
@@ -228,19 +232,7 @@ fn layout_json(text: &str) -> String {
     };
     while let Some(c) = chars.next() {
         match c {
-            '"' => {
-                out.push(c);
-                let mut escaped = false;
-                for c in chars.by_ref() {
-                    out.push(c);
-                    match c {
-                        _ if escaped => escaped = false,
-                        '\\' => escaped = true,
-                        '"' => break,
-                        _ => {}
-                    }
-                }
-            }
+            '"' => copy_string_literal(&mut chars, &mut out),
             '{' | '[' => {
                 out.push(c);
                 while chars.next_if(|c| c.is_whitespace()).is_some() {}
@@ -267,6 +259,20 @@ fn layout_json(text: &str) -> String {
         }
     }
     out
+}
+
+fn copy_string_literal(chars: &mut impl Iterator<Item = char>, out: &mut String) {
+    out.push('"');
+    let mut escaped = false;
+    for character in chars {
+        out.push(character);
+        match character {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '"' => return,
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]

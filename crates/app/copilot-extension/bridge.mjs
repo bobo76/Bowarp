@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 
 const MODES = new Set(["interactive", "plan", "autopilot"]);
+const HOOK_TIMEOUT_MS = 5000;
 
 export function forwardMode(mode, env = process.env) {
     if (!MODES.has(mode)) {
@@ -10,7 +11,7 @@ export function forwardMode(mode, env = process.env) {
         const child = execFile(env.AGENTWS_HOOK, ["--report-errors"], {
             env,
             windowsHide: true,
-            timeout: 5000,
+            timeout: HOOK_TIMEOUT_MS,
         }, (error) => error ? reject(error) : resolve());
         child.stdin.on("error", reject);
         child.stdin.end(JSON.stringify({

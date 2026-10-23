@@ -35,6 +35,10 @@ the window itself are not verified. For those use a real Windows VM:
 
 ## Troubleshooting
 
+- GPUI's deterministic tests do not start native folder watchers: Windows watcher callbacks
+  and teardown run on a separate thread, which the test scheduler rejects as nondeterministic.
+  Folder-change batching is tested with injected events on the scheduler thread; native file
+  reload behavior still needs the real Windows UI checks.
 - `NotAttempted("llvm-rc")` or `failed to find tool "llvm-lib"`: install the `llvm` package.
 - Wine prints a first-run prefix setup message: harmless, it only happens once.
 - Slow first run: it compiles the whole dependency tree for the second target into

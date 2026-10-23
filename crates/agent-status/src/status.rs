@@ -1,3 +1,5 @@
+use workspace_model::ProgressState;
+
 /// What an agent session is doing, as reported by its hooks (Claude Code) or its progress
 /// reports (Copilot CLI).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,11 +98,11 @@ impl AgentState {
     /// Apply a progress report from the program's output, for an agent without hooks: it
     /// works while it shows progress, and is idle once the progress is removed. Reports arrive
     /// in order, and an exited session stays exited.
-    pub fn apply_progress(&mut self, shown: bool) {
+    pub fn apply_progress(&mut self, progress: ProgressState) {
         if self.status == AgentStatus::Exited {
             return;
         }
-        self.status = if shown {
+        self.status = if progress.is_shown() {
             AgentStatus::Working
         } else {
             AgentStatus::Idle
@@ -183,9 +185,9 @@ mod tests {
     #[test]
     fn progress_shown_means_working_until_removed() {
         let mut state = AgentState::default();
-        state.apply_progress(true);
+        state.apply_progress(ProgressState::Indeterminate);
         assert_eq!(state.status(), AgentStatus::Working);
-        state.apply_progress(false);
+        state.apply_progress(ProgressState::Hidden);
         assert_eq!(state.status(), AgentStatus::Idle);
     }
 
@@ -193,7 +195,7 @@ mod tests {
     fn progress_after_exit_is_ignored() {
         let mut state = AgentState::default();
         state.exit();
-        state.apply_progress(true);
+        state.apply_progress(ProgressState::Indeterminate);
         assert_eq!(state.status(), AgentStatus::Exited);
     }
 

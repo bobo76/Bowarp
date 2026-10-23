@@ -116,6 +116,31 @@ struct Shared {
 }
 
 impl Shared {
+    fn new(size: TermDimensions, palette: Palette, callback: EventCallback) -> Self {
+        let prompt_callback = callback.clone();
+        let prompt = Arc::new(PromptTracker::new(move |event| {
+            prompt_callback(match event {
+                PromptEvent::Started(command) => SessionEvent::CommandStarted(command),
+                PromptEvent::Executed(command) => SessionEvent::CommandExecuted(command),
+                PromptEvent::Finished => SessionEvent::CommandFinished,
+            });
+        }));
+        Self {
+            callback,
+            palette,
+            sender: OnceLock::new(),
+            size: Mutex::new(size),
+            wakeup_pending: AtomicBool::new(false),
+            started_at: Instant::now(),
+            last_output_ms: AtomicU64::new(0),
+            exited: AtomicBool::new(false),
+            exit_code: Mutex::new(None),
+            prompt,
+            inputs: AtomicU64::new(0),
+            inputs_before_output: AtomicU64::new(0),
+        }
+    }
+
     fn record_output(&self) {
         let inputs = self.inputs.load(Ordering::Acquire);
         self.inputs_before_output.store(inputs, Ordering::Release);
@@ -209,28 +234,7 @@ impl Session {
         palette: Palette,
         callback: EventCallback,
     ) -> io::Result<Self> {
-        let prompt_callback = callback.clone();
-        let prompt = Arc::new(PromptTracker::new(move |event| {
-            prompt_callback(match event {
-                PromptEvent::Started(command) => SessionEvent::CommandStarted(command),
-                PromptEvent::Executed(command) => SessionEvent::CommandExecuted(command),
-                PromptEvent::Finished => SessionEvent::CommandFinished,
-            });
-        }));
-        let shared = Arc::new(Shared {
-            callback,
-            palette,
-            sender: OnceLock::new(),
-            size: Mutex::new(size),
-            wakeup_pending: AtomicBool::new(false),
-            started_at: Instant::now(),
-            last_output_ms: AtomicU64::new(0),
-            exited: AtomicBool::new(false),
-            exit_code: Mutex::new(None),
-            prompt: prompt.clone(),
-            inputs: AtomicU64::new(0),
-            inputs_before_output: AtomicU64::new(0),
-        });
+        let shared = Arc::new(Shared::new(size, palette, callback));
         let listener = SessionListener(shared.clone());
         let term = Arc::new(FairMutex::new(Term::new(
             term::Config::default(),
@@ -238,28 +242,17 @@ impl Session {
             listener.clone(),
         )));
 
-        // Off Windows the struct update has nothing left to fill.
-        #[allow(clippy::needless_update)]
-        let options = tty::Options {
-            shell: spec.shell_command(),
-            working_directory: spec.cwd.clone(),
-            drain_on_exit: true,
-            env: session_env(spec.kind, &spec.env),
-            // Quote arguments holding spaces or quotes, so each reaches the program whole.
-            #[cfg(windows)]
-            escape_args: true,
-            ..Default::default()
-        };
+        let options = pty_options(spec);
         let pty = tty::new(&options, size.window_size(), id)?;
         let child_pid = child_pid(&pty);
         if let Some(pid) = child_pid {
-            prompt.set_child_pid(pid);
+            shared.prompt.set_child_pid(pid);
         }
         let progress_callback = shared.callback.clone();
         let pty = MarkedPty::new(
             pty,
             term.clone(),
-            prompt,
+            shared.prompt.clone(),
             spec.mark_token.as_deref(),
             Box::new(move |state| progress_callback(SessionEvent::ProgressChanged(state))),
         );
@@ -487,6 +480,20 @@ fn child_pid(pty: &tty::Pty) -> Option<u32> {
 #[cfg(windows)]
 fn child_pid(pty: &tty::Pty) -> Option<u32> {
     pty.child_watcher().pid().map(|pid| pid.get())
+}
+
+fn pty_options(spec: &LaunchSpec) -> tty::Options {
+    // Off Windows the struct update has nothing left to fill.
+    #[allow(clippy::needless_update)]
+    tty::Options {
+        shell: spec.shell_command(),
+        working_directory: spec.cwd.clone(),
+        drain_on_exit: true,
+        env: session_env(spec.kind, &spec.env),
+        #[cfg(windows)]
+        escape_args: true,
+        ..Default::default()
+    }
 }
 
 /// Environment for every child: advertise a capable terminal without mutating our own

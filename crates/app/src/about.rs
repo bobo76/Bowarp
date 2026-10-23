@@ -15,6 +15,8 @@ use crate::assets::APP_ICON;
 
 pub const APP_NAME: &str = "Agent Workspace";
 pub const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
+const DIALOG_WIDTH: f32 = 380.;
+const APP_ICON_SIZE: f32 = 72.;
 
 /// The line a bug report quotes: "agent-workspace 0.1.0 (abc1234)".
 pub fn version() -> String {
@@ -41,14 +43,14 @@ pub fn open(window: &mut Window, cx: &mut App) {
     window.open_dialog(cx, move |dialog, _, cx| {
         let copied = version.clone();
         dialog
-            .w(px(380.))
+            .w(px(DIALOG_WIDTH))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .items_center()
                     .gap_2()
-                    .child(img(APP_ICON).size(px(72.)))
+                    .child(img(APP_ICON).size(px(APP_ICON_SIZE)))
                     .child(
                         div()
                             .text_lg()

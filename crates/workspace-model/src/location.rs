@@ -5,16 +5,16 @@ use crate::git::GitHead;
 /// Where a session works: its folder and that folder's git HEAD.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Location {
-    pub dir: PathBuf,
+    pub folder: PathBuf,
     pub head: Option<GitHead>,
 }
 
 impl Location {
-    /// Read the git HEAD for `dir`. Touches only a few files, so it is cheap enough to call
+    /// Read the git HEAD for `folder`. Touches only a few files, so it is cheap enough to call
     /// whenever a tab's state changes.
-    pub fn read(dir: PathBuf) -> Self {
-        let head = GitHead::read(&dir);
-        Self { dir, head }
+    pub fn read(folder: PathBuf) -> Self {
+        let head = GitHead::read(&folder);
+        Self { folder, head }
     }
 }
 
@@ -44,7 +44,7 @@ mod tests {
         fs::write(repo.0.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
 
         let location = Location::read(repo.0.clone());
-        assert_eq!(location.dir, repo.0);
+        assert_eq!(location.folder, repo.0);
         assert_eq!(location.head, Some(GitHead::Branch("main".into())));
     }
 

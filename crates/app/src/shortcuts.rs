@@ -1,4 +1,4 @@
-//! Ctrl+Shift tab shortcuts, shared by the key handler and the hints drawn in menus and
+//! Ctrl+Shift tab shortcuts, shared by the action bindings and the hints drawn in menus and
 //! tooltips so the two can't drift apart.
 
 use gpui_kit::component::kbd::Kbd;
@@ -51,7 +51,7 @@ pub fn tab_shortcut_hint(key: &str) -> Kbd {
 }
 
 /// A menu entry's label with its shortcut on the right, for `PopupMenuItem::element`: the
-/// menu draws hints only for actions bound to a key, and these shortcuts are a key handler.
+/// menu draws hints only when the item itself carries an action.
 pub fn menu_label_with_hint(
     id: &'static str,
     label: impl Into<SharedString>,

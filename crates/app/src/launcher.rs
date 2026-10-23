@@ -5,7 +5,7 @@ use term_core::{LaunchSpec, SessionKind};
 #[cfg(any(windows, test))]
 use workspace_model::distro_icon;
 use workspace_model::file_tree::ShellSyntax;
-use workspace_model::{LauncherIcon, shell_icon};
+use workspace_model::{LauncherIcon, Platform, shell_icon};
 
 /// A program the new-tab menu offers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,7 +129,7 @@ pub fn discover() -> Vec<Launcher> {
 pub fn default_shell<'a>(launchers: &'a [Launcher], setting: Option<&str>) -> Option<&'a Launcher> {
     setting
         .and_then(|name| configured_shell(launchers, name))
-        .or_else(|| preferred_shell(launchers, cfg!(windows)))
+        .or_else(|| preferred_shell(launchers, Platform::CURRENT))
 }
 
 /// The session the first tab (no saved tabs) or a `shell` tab named on the command line starts
@@ -143,18 +143,22 @@ pub fn startup_shell(
     setting: Option<&str>,
     cwd: Option<PathBuf>,
 ) -> LaunchSpec {
-    startup_shell_on(launchers, setting, cfg!(windows), cwd)
+    startup_shell_on(launchers, setting, Platform::CURRENT, cwd)
 }
 
 fn startup_shell_on(
     launchers: &[Launcher],
     setting: Option<&str>,
-    windows: bool,
+    platform: Platform,
     cwd: Option<PathBuf>,
 ) -> LaunchSpec {
     setting
         .and_then(|name| configured_shell(launchers, name))
-        .or_else(|| windows.then(|| preferred_shell(launchers, true)).flatten())
+        .or_else(|| {
+            (platform == Platform::Windows)
+                .then(|| preferred_shell(launchers, platform))
+                .flatten()
+        })
         .and_then(|shell| shell.spec(cwd.clone()))
         .unwrap_or_else(|| LaunchSpec::shell(cwd))
 }
@@ -191,16 +195,16 @@ pub fn configured_shell<'a>(launchers: &'a [Launcher], value: &str) -> Option<&'
 /// `$SHELL` as is while Ctrl+Shift+T opens the first listed shell).
 pub fn automatic_shell(launchers: &[Launcher]) -> Option<&Launcher> {
     let login_shell = std::env::var_os("SHELL").map(PathBuf::from);
-    automatic_shell_on(launchers, cfg!(windows), login_shell.as_deref())
+    automatic_shell_on(launchers, Platform::CURRENT, login_shell.as_deref())
 }
 
 fn automatic_shell_on<'a>(
     launchers: &'a [Launcher],
-    windows: bool,
+    platform: Platform,
     login_shell: Option<&Path>,
 ) -> Option<&'a Launcher> {
-    let shell = preferred_shell(launchers, windows)?;
-    if windows {
+    let shell = preferred_shell(launchers, platform)?;
+    if platform == Platform::Windows {
         return Some(shell);
     }
     let stem = login_shell?.file_stem()?;
@@ -208,10 +212,10 @@ fn automatic_shell_on<'a>(
     (program_stem == Some(stem)).then_some(shell)
 }
 
-fn preferred_shell(launchers: &[Launcher], prefer_git_bash: bool) -> Option<&Launcher> {
+fn preferred_shell(launchers: &[Launcher], platform: Platform) -> Option<&Launcher> {
     let mut installed = installed_shells(launchers);
     let first = installed.clone().next();
-    if prefer_git_bash {
+    if platform == Platform::Windows {
         return installed
             .find(|launcher| launcher.icon == LauncherIcon::GitBash)
             .or(first);
@@ -535,10 +539,14 @@ mod tests {
         ];
         let program =
             |prefer| preferred_shell(&launchers, prefer).and_then(|shell| shell.program.as_deref());
-        assert_eq!(program(true), Some(Path::new("/git/bin/bash.exe")));
-        assert_eq!(program(false), Some(Path::new("/usr/bin/pwsh")));
         assert_eq!(
-            preferred_shell(&launchers[..1], true).and_then(|shell| shell.program.as_deref()),
+            program(Platform::Windows),
+            Some(Path::new("/git/bin/bash.exe"))
+        );
+        assert_eq!(program(Platform::Linux), Some(Path::new("/usr/bin/pwsh")));
+        assert_eq!(
+            preferred_shell(&launchers[..1], Platform::Windows)
+                .and_then(|shell| shell.program.as_deref()),
             Some(Path::new("/usr/bin/pwsh"))
         );
     }
@@ -658,18 +666,18 @@ mod tests {
     #[test]
     fn automatic_names_the_shell_both_entry_points_start() {
         let launchers = [named("Bash", "/usr/bin/bash"), named("Zsh", "/usr/bin/zsh")];
-        let label = |windows, login: Option<&str>| {
-            automatic_shell_on(&launchers, windows, login.map(Path::new))
+        let label = |platform, login: Option<&str>| {
+            automatic_shell_on(&launchers, platform, login.map(Path::new))
                 .map(|shell| shell.label.as_str())
         };
-        assert_eq!(label(false, Some("/bin/bash")), Some("Bash"));
+        assert_eq!(label(Platform::Linux, Some("/bin/bash")), Some("Bash"));
         // `$SHELL` isn't listed (or unset): the first tab runs it, Ctrl+Shift+T opens Bash.
-        assert_eq!(label(false, Some("/usr/bin/tcsh")), None);
-        assert_eq!(label(false, None), None);
-        assert_eq!(label(true, None), Some("Bash"));
+        assert_eq!(label(Platform::Linux, Some("/usr/bin/tcsh")), None);
+        assert_eq!(label(Platform::Linux, None), None);
+        assert_eq!(label(Platform::Windows, None), Some("Bash"));
         let windows = windows_launchers();
         assert_eq!(
-            automatic_shell_on(&windows, true, None).map(|shell| shell.id.as_str()),
+            automatic_shell_on(&windows, Platform::Windows, None).map(|shell| shell.id.as_str()),
             Some("git-bash")
         );
     }
@@ -691,11 +699,11 @@ mod tests {
         let launchers = [named("Bash", "/usr/bin/bash"), named("Zsh", "/usr/bin/zsh")];
         let cwd = Some(PathBuf::from("/work"));
         for setting in [None, Some("tcsh")] {
-            let spec = startup_shell_on(&launchers, setting, false, cwd.clone());
+            let spec = startup_shell_on(&launchers, setting, Platform::Linux, cwd.clone());
             assert_eq!(spec.program, None, "{setting:?}");
             assert_eq!(spec.cwd, cwd);
         }
-        let spec = startup_shell_on(&launchers, Some("Zsh"), false, cwd.clone());
+        let spec = startup_shell_on(&launchers, Some("Zsh"), Platform::Linux, cwd.clone());
         assert_eq!(spec.program.as_deref(), Some("/usr/bin/zsh"));
         assert_eq!(spec.cwd, cwd);
         assert_eq!(spec.kind, SessionKind::Shell);
@@ -708,14 +716,14 @@ mod tests {
             git_bash_launcher("/git/bin/bash.exe".into()),
         ];
         let cwd = Some(PathBuf::from("/work"));
-        let spec = startup_shell_on(&launchers, None, true, cwd.clone());
+        let spec = startup_shell_on(&launchers, None, Platform::Windows, cwd.clone());
         assert_eq!(spec.program.as_deref(), Some("/git/bin/bash.exe"));
         assert_eq!(spec.args, GIT_BASH_ARGS);
         assert_eq!(spec.cwd, cwd);
-        let spec = startup_shell_on(&launchers, Some("pwsh"), true, cwd.clone());
+        let spec = startup_shell_on(&launchers, Some("pwsh"), Platform::Windows, cwd.clone());
         assert_eq!(spec.program.as_deref(), Some("/pwsh.exe"));
         // No shell found: alacritty's default.
-        let spec = startup_shell_on(&[], None, true, cwd.clone());
+        let spec = startup_shell_on(&[], None, Platform::Windows, cwd.clone());
         assert_eq!(
             (spec.kind, spec.program, spec.cwd),
             (SessionKind::Shell, None, cwd)

@@ -34,25 +34,25 @@ use std::rc::Rc;
 
 use futures::channel::mpsc;
 use gpui_kit::component::TitleBar;
-use gpui_kit::{AppContext, WindowDecorations, WindowOptions};
+use gpui_kit::{App, AppContext, Context, Window, WindowDecorations, WindowOptions};
 use term_core::{LaunchSpec, SessionKind};
 
 use crate::hooks::ClaudeHooks;
 use crate::instance_lock::InstanceLock;
-use crate::workspace_view::WorkspaceView;
+use crate::workspace_view::{TabOwnership, WorkspaceView};
 
 /// Usage: `agent-workspace [shell|claude|copilot] [project-dir]`. `None` without arguments.
 fn launch_spec_from_args() -> Option<LaunchSpec> {
     let mut args = std::env::args().skip(1);
     let kind = args.next()?;
-    let cwd = args
+    let folder = args
         .next()
         .map(PathBuf::from)
         .or_else(|| std::env::current_dir().ok());
     Some(match kind.as_str() {
-        "claude" => LaunchSpec::claude_code(cwd),
-        "copilot" => LaunchSpec::copilot_cli(cwd),
-        _ => LaunchSpec::shell(cwd),
+        "claude" => LaunchSpec::claude_code(folder),
+        "copilot" => LaunchSpec::copilot_cli(folder),
+        _ => LaunchSpec::shell(folder),
     })
 }
 
@@ -75,22 +75,26 @@ const INHERITED_AGENT_MARKERS: &[&str] = &[
     "CLAUDE_PID",
 ];
 
-fn main() {
+fn scrub_inherited_agent_env() {
     for name in INHERITED_AGENT_MARKERS {
-        // SAFETY: runs first in `main`, before any other thread exists.
+        // SAFETY: called first in `main`, before any other thread exists.
         unsafe { std::env::remove_var(name) };
     }
-    let requested = launch_spec_from_args();
-    if let Some(cwd) = requested
-        .as_ref()
+}
+
+fn validate_requested_folder(requested: Option<&LaunchSpec>) {
+    if let Some(folder) = requested
         .and_then(|spec| spec.cwd.as_ref())
-        .filter(|cwd| !cwd.is_dir())
+        .filter(|folder| !folder.is_dir())
     {
-        eprintln!("agent-workspace: not a directory: {}", cwd.display());
+        eprintln!("agent-workspace: not a directory: {}", folder.display());
         process::exit(2);
     }
+}
 
-    let launchers: Rc<[launcher::Launcher]> = launcher::discover().into();
+type HookMessages = mpsc::UnboundedReceiver<agent_status::HookMessage>;
+
+fn start_hooks() -> (Option<Rc<ClaudeHooks>>, HookMessages) {
     let (hook_sender, hook_messages) = mpsc::unbounded();
     let hooks = match ClaudeHooks::start(move |message| {
         let _ = hook_sender.unbounded_send(message);
@@ -101,11 +105,31 @@ fn main() {
             None
         }
     };
+    (hooks, hook_messages)
+}
 
+struct WorkspaceStartup {
+    launchers: Rc<[launcher::Launcher]>,
+    hooks: Option<Rc<ClaudeHooks>>,
+    hook_messages: HookMessages,
+    ownership: TabOwnership,
+    requested: Option<LaunchSpec>,
+}
+
+fn main() {
+    scrub_inherited_agent_env();
+    let requested = launch_spec_from_args();
+    validate_requested_folder(requested.as_ref());
+    let launchers = launcher::discover().into();
+    let (hooks, hook_messages) = start_hooks();
     // Only the first running instance reopens and saves the tabs; a later one opens just the
     // requested tab (or a shell), so it neither duplicates the sessions nor overwrites the save.
     let lock = InstanceLock::acquire();
-    let owns_tabs = lock.is_some();
+    let ownership = if lock.is_some() {
+        TabOwnership::Owner
+    } else {
+        TabOwnership::Guest
+    };
 
     gpui_kit::application()
         .with_assets(assets::Assets)
@@ -130,84 +154,123 @@ fn main() {
             })
             .detach();
 
-            // The app draws its own title bar and frame: GNOME on Wayland offers no server-side
-            // decorations, and a drawn title bar looks the same on every platform.
-            let options = WindowOptions {
-                window_bounds: Some(window_bounds::initial(cx)),
-                window_decorations: Some(WindowDecorations::Client),
-                // Must match the .desktop file name, or GNOME shows a generic icon.
-                app_id: Some("agent-workspace".into()),
-                ..TitleBar::window_options()
-            };
-            // A `shell` tab named on the command line, or the first tab without saved tabs:
-            // the default shell (see `launcher::startup_shell`), in the folder asked for.
-            let shell_setting = settings_file::settings(cx)
-                .default_shell()
-                .map(str::to_owned);
-            let requested = requested.map(|spec| {
-                if spec.kind == SessionKind::Shell && spec.program.is_none() {
-                    launcher::startup_shell(&launchers, shell_setting.as_deref(), spec.cwd)
-                } else {
-                    spec
-                }
-            });
-            gpui_kit::open_window(options, cx, move |window, cx| {
-                let workspace = cx.new(|cx| {
-                    let launchers = launchers.clone();
-                    WorkspaceView::new(launchers, hooks, hook_messages, owns_tabs, window, cx)
-                });
-                // The tabs open at the last close come back; a tab named on the command line
-                // opens after them, at the top level. Without either, the default shell opens in
-                // the current folder.
-                workspace.update(cx, |workspace, cx| {
-                    let restored = owns_tabs
-                        && tabs_file::load()
-                            .is_some_and(|state| workspace.restore(state, window, cx));
-                    if restored {
-                        if let Some(spec) = requested {
-                            workspace.open_requested_tab(spec, window, cx);
-                        }
-                        return;
-                    }
-                    let spec = requested.unwrap_or_else(|| {
-                        let cwd = std::env::current_dir().ok();
-                        launcher::startup_shell(&launchers, shell_setting.as_deref(), cwd)
-                    });
-                    // A default shell that won't start (a broken install, a bad configured
-                    // program) falls back to `$SHELL` (alacritty's Windows PowerShell on
-                    // Windows), which has no stderr to explain an exit there.
-                    let fallback = (spec.kind == SessionKind::Shell && spec.program.is_some())
-                        .then(|| LaunchSpec::shell(spec.cwd.clone()));
-                    let mut program = launcher::launch_name(&spec).to_owned();
-                    let mut started = workspace.open_tab(spec, window, cx);
-                    if let (Err(err), Some(fallback)) = (&started, fallback) {
-                        eprintln!("agent-workspace: failed to start {program}: {err}");
-                        let failure = format!("Could not start {program}: {err}");
-                        program = launcher::launch_name(&fallback).to_owned();
-                        started = workspace.open_tab(fallback, window, cx);
-                        if started.is_ok() {
-                            workspace.warn_shell_fallback(failure, window, cx);
-                        }
-                    }
-                    if let Err(err) = started {
-                        eprintln!("agent-workspace: failed to start {program}: {err}");
-                        process::exit(1)
-                    }
-                });
-                // Closed by the window manager (its close button, Alt+F4) or, on Windows and
-                // macOS, by the title bar's close button. Closing the last tab and the Linux
-                // title bar button go through `WorkspaceView::close_window`.
-                let closing = workspace.downgrade();
-                window.on_window_should_close(cx, move |window, cx| {
-                    if let Some(workspace) = closing.upgrade() {
-                        workspace.read(cx).save_tabs(cx);
-                    }
-                    window_bounds::save(window.window_bounds());
-                    true
-                });
-                workspace
-            })
-            .expect("failed to open window");
+            open_workspace_window(
+                WorkspaceStartup {
+                    launchers,
+                    hooks,
+                    hook_messages,
+                    ownership,
+                    requested,
+                },
+                cx,
+            );
             cx.activate(true);
         });
+}
+
+fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
+    // Client decorations work on Wayland without server-side decorations, too.
+    let options = WindowOptions {
+        window_bounds: Some(window_bounds::initial(cx)),
+        window_decorations: Some(WindowDecorations::Client),
+        app_id: Some("agent-workspace".into()),
+        ..TitleBar::window_options()
+    };
+    let shell_setting = settings_file::settings(cx)
+        .default_shell()
+        .map(str::to_owned);
+    let requested = startup.requested.map(|spec| {
+        if spec.kind == SessionKind::Shell && spec.program.is_none() {
+            return launcher::startup_shell(&startup.launchers, shell_setting.as_deref(), spec.cwd);
+        }
+        spec
+    });
+    let initial = InitialTabs {
+        ownership: startup.ownership,
+        requested,
+        default_shell: launcher::startup_shell(
+            &startup.launchers,
+            shell_setting.as_deref(),
+            std::env::current_dir().ok(),
+        ),
+    };
+    gpui_kit::open_window(options, cx, move |window, cx| {
+        let workspace = cx.new(|cx| {
+            WorkspaceView::new(
+                startup.launchers,
+                startup.hooks,
+                startup.hook_messages,
+                startup.ownership,
+                window,
+                cx,
+            )
+        });
+        workspace.update(cx, |workspace, cx| {
+            restore_or_open_first_tab(workspace, initial, window, cx);
+        });
+        let closing = workspace.downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            if let Some(workspace) = closing.upgrade() {
+                workspace.read(cx).save_tabs(cx);
+            }
+            window_bounds::save(window.window_bounds());
+            true
+        });
+        workspace
+    })
+    .expect("failed to open window");
+}
+
+struct InitialTabs {
+    ownership: TabOwnership,
+    requested: Option<LaunchSpec>,
+    default_shell: LaunchSpec,
+}
+
+fn restore_or_open_first_tab(
+    workspace: &mut WorkspaceView,
+    initial: InitialTabs,
+    window: &mut Window,
+    cx: &mut Context<WorkspaceView>,
+) {
+    let restored = initial.ownership == TabOwnership::Owner
+        && tabs_file::load().is_some_and(|state| workspace.restore(state, window, cx));
+    if restored {
+        if let Some(spec) = initial.requested {
+            workspace.open_requested_tab(spec, window, cx);
+        }
+        return;
+    }
+    open_first_tab(
+        workspace,
+        initial.requested.unwrap_or(initial.default_shell),
+        window,
+        cx,
+    );
+}
+
+fn open_first_tab(
+    workspace: &mut WorkspaceView,
+    spec: LaunchSpec,
+    window: &mut Window,
+    cx: &mut Context<WorkspaceView>,
+) {
+    // An installed but broken shell falls back to the platform's automatic shell.
+    let fallback = (spec.kind == SessionKind::Shell && spec.program.is_some())
+        .then(|| LaunchSpec::shell(spec.cwd.clone()));
+    let mut program = launcher::launch_name(&spec).to_owned();
+    let mut started = workspace.open_tab(spec, window, cx);
+    if let (Err(err), Some(fallback)) = (&started, fallback) {
+        eprintln!("agent-workspace: failed to start {program}: {err}");
+        let failure = format!("Could not start {program}: {err}");
+        program = launcher::launch_name(&fallback).to_owned();
+        started = workspace.open_tab(fallback, window, cx);
+        if started.is_ok() {
+            workspace.warn_shell_fallback(failure, window, cx);
+        }
+    }
+    if let Err(err) = started {
+        eprintln!("agent-workspace: failed to start {program}: {err}");
+        process::exit(1)
+    }
 }

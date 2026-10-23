@@ -24,6 +24,8 @@ const ROW_HEIGHT: f32 = 26.;
 const HEADER_HEIGHT: f32 = 28.;
 const FOOTER_HEIGHT: f32 = 32.;
 const MAX_WIDTH: f32 = 720.;
+const FOLDER_MAX_WIDTH: f32 = 220.;
+const PROMPT_GAP: f32 = 2.;
 
 /// The open popup.
 #[derive(Default)]
@@ -31,8 +33,32 @@ pub(crate) struct HistoryPopup {
     selection: HistorySelection,
     /// The typed text the matches were last listed for; the selection resets when it changes.
     query: Option<String>,
-    /// Rows shown at the last render, for Page Up / Page Down.
+}
+
+impl HistoryPopup {
+    fn visible_selection(&self, query: &str, total: usize, rows: usize) -> HistorySelection {
+        let mut selection = if self.query.as_deref() == Some(query) {
+            self.selection
+        } else {
+            HistorySelection::default()
+        };
+        selection.keep_in_view(total, rows);
+        selection
+    }
+}
+
+struct HistoryRow {
+    index: usize,
+    command: String,
+    folder: Option<String>,
+    selected: bool,
+}
+
+struct PopupPlacement {
     rows: usize,
+    width: Pixels,
+    position: gpui_kit::Point<Pixels>,
+    anchor: Anchor,
 }
 
 fn is_plain(keystroke: &Keystroke) -> bool {
@@ -110,6 +136,7 @@ impl TerminalView {
         match keystroke.key.as_str() {
             "up" if self.prompt_input().is_some() => {
                 self.history_popup = Some(HistoryPopup::default());
+                self.refresh_history(cx);
                 cx.notify();
                 true
             }
@@ -128,10 +155,14 @@ impl TerminalView {
             .commands()
             .matching(&input.text)
             .len();
+        let rows = self
+            .popup_placement(&input)
+            .map_or(1, |placement| placement.rows);
+        self.refresh_history(cx);
         let Some(popup) = self.history_popup.as_mut() else {
             return false;
         };
-        let rows = popup.rows.max(1);
+        popup.selection.keep_in_view(total, rows);
         let by = |step: Rows| match step {
             Rows::One => 1,
             Rows::Page => rows,
@@ -154,6 +185,7 @@ impl TerminalView {
                 });
                 if let Some(command) = command {
                     history::forget(&command, cx);
+                    self.refresh_history(cx);
                 }
             }
             PopupKey::Dismiss => self.close_history_popup(cx),
@@ -169,6 +201,7 @@ impl TerminalView {
 
     pub(crate) fn close_history_popup(&mut self, cx: &mut Context<Self>) {
         if self.history_popup.take().is_some() {
+            self.refresh_history(cx);
             cx.notify();
         }
     }
@@ -203,30 +236,40 @@ impl TerminalView {
         history.suggestion(&input.before_cursor).map(str::to_string)
     }
 
-    /// Refresh the suggestion and the popup for the prompt as it is now; the popup closes when
-    /// the shell left its prompt. Returns the popup element when it is open.
-    pub(crate) fn update_history(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn history_suggestion(&self, cx: &App) -> Option<String> {
+        if self.history_popup.is_some() {
+            return None;
+        }
+        self.suggestion(cx)
+    }
+
+    /// Reconcile history state after a prompt, history or popup event, never during rendering.
+    pub(crate) fn refresh_history(&mut self, cx: &mut Context<Self>) {
         let input = self.prompt_input();
+        let rows = input
+            .as_ref()
+            .and_then(|input| self.popup_placement(input))
+            .map_or(MAX_ROWS, |placement| placement.rows);
         if input.is_none() {
             self.history_popup = None;
         }
-        self.ghost_text = if self.history_popup.is_none() {
-            self.suggestion(cx)
-        } else {
-            None
-        };
-        self.render_history_popup(input.as_ref()?, cx)
+        if let (Some(popup), Some(input)) = (&mut self.history_popup, &input) {
+            if popup.query.as_deref() != Some(input.text.as_str()) {
+                popup.query = Some(input.text.clone());
+                popup.selection = HistorySelection::default();
+            }
+            let total = cx
+                .global::<History>()
+                .commands()
+                .matching(&input.text)
+                .len();
+            popup.selection.keep_in_view(total, rows);
+        }
     }
 
-    fn render_history_popup(
-        &mut self,
-        input: &PromptInput,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    fn popup_placement(&self, input: &PromptInput) -> Option<PopupPlacement> {
         let geometry = self.geometry?;
         let display_offset = self.session.display_offset() as i32;
-        let popup = self.history_popup.as_mut()?;
-
         let line_height = geometry.line_height;
         let prompt_line = (input.prompt_line + display_offset).max(0) as f32;
         let prompt_top = geometry.origin.y + line_height * prompt_line;
@@ -238,41 +281,45 @@ impl TerminalView {
         let rows_below = fit(geometry.origin.y + line_height * geometry.lines as f32 - below_top);
         let above = rows_above >= MIN_ROWS_ABOVE || rows_above >= rows_below;
         let rows = if above { rows_above } else { rows_below }.clamp(1, MAX_ROWS);
-        popup.rows = rows;
-
-        let history = cx.global::<History>().commands();
-        let matches = history.matching(&input.text);
-        let total = matches.len();
-        if popup.query.as_deref() != Some(input.text.as_str()) {
-            popup.query = Some(input.text.clone());
-            popup.selection = HistorySelection::default();
-        }
-        popup.selection.keep_in_view(total, rows);
-        let selected = popup.selection.index(total);
-        let visible: Vec<(usize, HistoryEntry)> = popup
-            .selection
-            .visible(total, rows)
-            .map(|index| (index, matches[index].clone()))
-            .collect();
-
         let width = (geometry.cell_width * geometry.columns as f32).min(px(MAX_WIDTH));
         let (position, anchor) = if above {
             (
-                point(geometry.origin.x, prompt_top - px(2.)),
+                point(geometry.origin.x, prompt_top - px(PROMPT_GAP)),
                 Anchor::BottomLeft,
             )
         } else {
             (
-                point(geometry.origin.x, below_top + px(2.)),
+                point(geometry.origin.x, below_top + px(PROMPT_GAP)),
                 Anchor::TopLeft,
             )
         };
-        let panel = self.history_panel(visible, selected, width, cx);
+        Some(PopupPlacement {
+            rows,
+            width,
+            position,
+            anchor,
+        })
+    }
+
+    pub(crate) fn render_history_popup(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let input = self.prompt_input()?;
+        let popup = self.history_popup.as_ref()?;
+        let placement = self.popup_placement(&input)?;
+        let matches = cx.global::<History>().commands().matching(&input.text);
+        let total = matches.len();
+        // Resizing changes the visible range, not the stored navigation state.
+        let selection = popup.visible_selection(&input.text, total, placement.rows);
+        let selected = selection.index(total);
+        let visible = selection
+            .visible(total, placement.rows)
+            .map(|index| (index, matches[index].clone()))
+            .collect();
+        let panel = self.history_panel(visible, selected, placement.width, cx);
         Some(
             deferred(
                 anchored()
-                    .position(position)
-                    .anchor(anchor)
+                    .position(placement.position)
+                    .anchor(placement.anchor)
                     .snap_to_window()
                     .child(panel),
             )
@@ -300,9 +347,17 @@ impl TerminalView {
                 let folder = entry
                     .dir
                     .as_deref()
-                    .map(|dir| display_path(dir, home.as_deref()));
-                let selected = selected == Some(index);
-                self.history_row(index, entry.command, folder, selected, family.clone(), cx)
+                    .map(|folder| display_path(folder, home.as_deref()));
+                self.history_row(
+                    HistoryRow {
+                        index,
+                        command: entry.command,
+                        folder,
+                        selected: selected == Some(index),
+                    },
+                    family.clone(),
+                    cx,
+                )
             })
             .collect();
         div()
@@ -370,14 +425,17 @@ impl TerminalView {
 
     fn history_row(
         &self,
-        index: usize,
-        command: String,
-        folder: Option<String>,
-        selected: bool,
+        row: HistoryRow,
         family: SharedString,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.theme();
+        let HistoryRow {
+            index,
+            command,
+            folder,
+            selected,
+        } = row;
         let (muted, border, active) = (theme.muted_foreground, theme.border, theme.list_active);
         div()
             .id(("history-row", index))
@@ -407,7 +465,7 @@ impl TerminalView {
                 row.child(
                     div()
                         .flex_none()
-                        .max_w(px(220.))
+                        .max_w(px(FOLDER_MAX_WIDTH))
                         .px_1()
                         .flex()
                         .items_center()
@@ -486,5 +544,222 @@ mod tests {
         assert_eq!(key("alt-b->b"), PopupKey::Other);
         assert_eq!(key("left"), PopupKey::Other);
         assert_eq!(key("shift-up"), PopupKey::Other);
+    }
+
+    #[test]
+    fn rendering_new_prompt_text_resets_only_the_presented_selection() {
+        let popup = HistoryPopup {
+            selection: HistorySelection {
+                selected: 7,
+                hidden_below: 4,
+            },
+            query: Some("old".into()),
+        };
+        assert_eq!(
+            popup.visible_selection("new", 12, 3),
+            HistorySelection::default()
+        );
+        assert_eq!(
+            popup.selection,
+            HistorySelection {
+                selected: 7,
+                hidden_below: 4
+            }
+        );
+        assert_eq!(popup.query.as_deref(), Some("old"));
+    }
+
+    #[test]
+    fn resizing_keeps_the_selection_visible_without_mutating_navigation() {
+        let popup = HistoryPopup {
+            selection: HistorySelection {
+                selected: 7,
+                hidden_below: 4,
+            },
+            query: Some("same".into()),
+        };
+        assert_eq!(
+            popup.visible_selection("same", 12, 1),
+            HistorySelection {
+                selected: 7,
+                hidden_below: 7
+            }
+        );
+        assert_eq!(popup.selection.hidden_below, 4);
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    fn prompt_events_and_history_changes_reconcile_the_open_popup(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use std::sync::{Arc, mpsc};
+        use std::time::{Duration, Instant};
+
+        use gpui_kit::component::Root;
+        use gpui_kit::{AppContext, VisualTestContext};
+        use term_core::{
+            ExecutedCommand, LaunchSpec, Palette, Session, SessionEvent, TermDimensions,
+        };
+
+        fn draw(
+            cx: &mut VisualTestContext,
+            view: &gpui_kit::Entity<TerminalView>,
+            events: &mpsc::Receiver<SessionEvent>,
+        ) {
+            cx.update(|_, cx| {
+                view.update(cx, |view, cx| {
+                    for event in events.try_iter() {
+                        view.dispatch_test_event(event, cx);
+                    }
+                });
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+
+        fn wait_for_input(
+            cx: &mut VisualTestContext,
+            view: &gpui_kit::Entity<TerminalView>,
+            events: &mpsc::Receiver<SessionEvent>,
+            text: &str,
+        ) {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                draw(cx, view, events);
+                if view.read_with(cx, |view, _| {
+                    view.prompt_input().is_some_and(|input| input.text == text)
+                        && view
+                            .history_popup
+                            .as_ref()
+                            .is_none_or(|popup| popup.query.as_deref() == Some(text))
+                }) {
+                    return;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "prompt did not settle to {text:?}: {:?}",
+                    view.read_with(cx, |view, _| (
+                        view.prompt_input().map(|input| input.text),
+                        view.session.visible_text(),
+                        view.history_popup.as_ref().map(|popup| popup.query.clone()),
+                    ))
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::settings_file::init(cx);
+            crate::terminal_element::init(cx);
+            crate::terminal_view::init(cx);
+            history::init_in_memory(cx);
+            for command in ["git status", "git stash", "cargo test"] {
+                history::record(
+                    ExecutedCommand {
+                        command: command.into(),
+                        folder: None,
+                    },
+                    cx,
+                );
+            }
+        });
+        let mut spec = LaunchSpec::new(
+            SessionKind::Shell,
+            Some("sh".into()),
+            vec![
+                "-c".into(),
+                r"printf '\033]133;A;aw=tok\007$ \033]133;B;aw=tok\007git'; read line".into(),
+            ],
+            None,
+        );
+        spec.mark_token = Some("tok".into());
+        let (sender, events) = mpsc::channel();
+        let session = Session::spawn(
+            1,
+            &spec,
+            TermDimensions::new(80, 24),
+            Palette::default(),
+            Arc::new(move |event| {
+                let _ = sender.send(event);
+            }),
+        )
+        .unwrap();
+        let captured = Rc::new(RefCell::new(None));
+        let capture = captured.clone();
+        let window = cx.add_window(move |window, cx| {
+            let view = cx.new(|cx| TerminalView::from_test_session(session, &spec, cx));
+            view.update(cx, |view, cx| window.focus(&view.focus_handle, cx));
+            *capture.borrow_mut() = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = captured.borrow().clone().unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        wait_for_input(&mut cx, &view, &events, "git");
+        assert_eq!(
+            view.read_with(&cx, |view, cx| view.history_suggestion(cx)),
+            Some(" stash".into()),
+        );
+
+        cx.simulate_keystrokes("up");
+        draw(&mut cx, &view, &events);
+        cx.simulate_keystrokes("up");
+        draw(&mut cx, &view, &events);
+        let navigation = view.read_with(&cx, |view, cx| {
+            assert!(view.history_suggestion(cx).is_none());
+            let popup = view.history_popup.as_ref().unwrap();
+            assert_eq!(popup.selection.selected, 1);
+            (popup.selection, popup.query.clone())
+        });
+        draw(&mut cx, &view, &events);
+        draw(&mut cx, &view, &events);
+        assert_eq!(
+            view.read_with(&cx, |view, _| {
+                let popup = view.history_popup.as_ref().unwrap();
+                (popup.selection, popup.query.clone())
+            }),
+            navigation
+        );
+
+        cx.update(|window, cx| {
+            for (key, text) in [("space", " "), ("s", "s")] {
+                window.dispatch_keystroke(
+                    Keystroke {
+                        modifiers: Default::default(),
+                        key: key.into(),
+                        key_char: Some(text.into()),
+                    },
+                    cx,
+                );
+            }
+        });
+        wait_for_input(&mut cx, &view, &events, "git s");
+        assert_eq!(
+            view.read_with(&cx, |view, _| {
+                view.history_popup.as_ref().unwrap().selection.selected
+            }),
+            0
+        );
+        cx.simulate_keystrokes("up");
+        cx.update(|_, cx| history::forget("git status", cx));
+        draw(&mut cx, &view, &events);
+        assert_eq!(
+            view.read_with(&cx, |view, _| {
+                view.history_popup.as_ref().unwrap().selection.selected
+            }),
+            0
+        );
+        cx.simulate_keystrokes("delete");
+        draw(&mut cx, &view, &events);
+        cx.update(|_, cx| assert!(cx.global::<History>().commands().matching("git").is_empty()));
+        cx.simulate_keystrokes("escape");
+        draw(&mut cx, &view, &events);
+        view.read_with(&cx, |view, cx| {
+            assert!(view.history_popup.is_none());
+            assert!(view.history_suggestion(cx).is_none());
+        });
     }
 }

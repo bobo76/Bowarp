@@ -92,57 +92,8 @@ pub fn attach(spec: &mut LaunchSpec) -> bool {
         return false;
     };
     let token = new_mark_token();
-    match shell {
-        Shell::Bash => {
-            let login = !spec.args.is_empty();
-            spec.args = vec![
-                "--rcfile".into(),
-                dir.join(BASH_FILE).to_string_lossy().into_owned(),
-            ];
-            if login {
-                spec.args.push("-i".into());
-                spec.env.insert(BASH_LOGIN_ENV.into(), "1".into());
-            }
-        }
-        Shell::Zsh => {
-            if let Ok(user_zdotdir) = std::env::var(ZSH_DIR_ENV) {
-                spec.env.insert(USER_ZDOTDIR_ENV.into(), user_zdotdir);
-            }
-            spec.env.insert(
-                ZSH_DIR_ENV.into(),
-                dir.join(ZSH_DIR).to_string_lossy().into_owned(),
-            );
-        }
-        Shell::Pwsh => {
-            let script = dir.join(PWSH_FILE).to_string_lossy().into_owned();
-            spec.args = vec![
-                "-NoExit".into(),
-                "-Command".into(),
-                powershell_load(&script),
-            ];
-        }
-        Shell::Cmd => {
-            let prompt = std::env::var(CMD_PROMPT_ENV)
-                .ok()
-                .filter(|prompt| !prompt.is_empty());
-            spec.env.insert(
-                CMD_PROMPT_ENV.into(),
-                cmd_prompt(&token, prompt.as_deref().unwrap_or(CMD_DEFAULT_PROMPT)),
-            );
-        }
-        Shell::Wsl => {
-            let script = dir.join(BASH_FILE).to_string_lossy().into_owned();
-            spec.args
-                .extend(["-e", "sh", "-c", WSL_LAUNCH, "sh", script.as_str()].map(String::from));
-            let wsl_env = match std::env::var(WSL_ENV) {
-                Ok(names) if !names.is_empty() => format!("{names}:{MARK_TOKEN_ENV}"),
-                _ => MARK_TOKEN_ENV.into(),
-            };
-            spec.env.insert(WSL_ENV.into(), wsl_env);
-        }
-    }
-    // bash cannot redraw its prompt from a key binding (`bind -x`), so it gets a typed `cd`.
-    if matches!(shell, Shell::Zsh | Shell::Pwsh) {
+    shell.configure(spec, dir, &token);
+    if shell.has_hidden_cd() {
         let file = dir.join(CD_DIR).join(&token);
         spec.env
             .insert(CD_FILE_ENV.into(), file.to_string_lossy().into_owned());
@@ -151,6 +102,66 @@ pub fn attach(spec: &mut LaunchSpec) -> bool {
     spec.mark_token = Some(token);
     spec.program = Some(program);
     true
+}
+
+impl Shell {
+    fn has_hidden_cd(self) -> bool {
+        // bash cannot redraw its prompt from a key binding (`bind -x`), so it gets a typed cd.
+        matches!(self, Self::Zsh | Self::Pwsh)
+    }
+
+    fn configure(self, spec: &mut LaunchSpec, dir: &Path, token: &str) {
+        match self {
+            Shell::Bash => {
+                let login = !spec.args.is_empty();
+                spec.args = vec![
+                    "--rcfile".into(),
+                    dir.join(BASH_FILE).to_string_lossy().into_owned(),
+                ];
+                if login {
+                    spec.args.push("-i".into());
+                    spec.env.insert(BASH_LOGIN_ENV.into(), "1".into());
+                }
+            }
+            Shell::Zsh => {
+                if let Ok(user_zdotdir) = std::env::var(ZSH_DIR_ENV) {
+                    spec.env.insert(USER_ZDOTDIR_ENV.into(), user_zdotdir);
+                }
+                spec.env.insert(
+                    ZSH_DIR_ENV.into(),
+                    dir.join(ZSH_DIR).to_string_lossy().into_owned(),
+                );
+            }
+            Shell::Pwsh => {
+                let script = dir.join(PWSH_FILE).to_string_lossy().into_owned();
+                spec.args = vec![
+                    "-NoExit".into(),
+                    "-Command".into(),
+                    powershell_load(&script),
+                ];
+            }
+            Shell::Cmd => {
+                let prompt = std::env::var(CMD_PROMPT_ENV)
+                    .ok()
+                    .filter(|prompt| !prompt.is_empty());
+                spec.env.insert(
+                    CMD_PROMPT_ENV.into(),
+                    cmd_prompt(token, prompt.as_deref().unwrap_or(CMD_DEFAULT_PROMPT)),
+                );
+            }
+            Shell::Wsl => {
+                let script = dir.join(BASH_FILE).to_string_lossy().into_owned();
+                spec.args.extend(
+                    ["-e", "sh", "-c", WSL_LAUNCH, "sh", script.as_str()].map(String::from),
+                );
+                let wsl_env = match std::env::var(WSL_ENV) {
+                    Ok(names) if !names.is_empty() => format!("{names}:{MARK_TOKEN_ENV}"),
+                    _ => MARK_TOKEN_ENV.into(),
+                };
+                spec.env.insert(WSL_ENV.into(), wsl_env);
+            }
+        }
+    }
 }
 
 /// The shell a launch runs and its program, when it gets a script.
@@ -266,6 +277,36 @@ mod tests {
             cmd_prompt("t0k", "$P$G"),
             r"$e]133;D;aw=t0k;path=$P$e\$e]0;$P$e\$P$G"
         );
+    }
+
+    #[test]
+    fn hidden_cd_is_only_supported_by_zsh_and_powershell() {
+        for shell in [Shell::Bash, Shell::Cmd, Shell::Wsl] {
+            assert!(!shell.has_hidden_cd());
+        }
+        for shell in [Shell::Zsh, Shell::Pwsh] {
+            assert!(shell.has_hidden_cd());
+        }
+    }
+
+    #[test]
+    fn bash_configuration_preserves_login_startup() {
+        let mut spec = LaunchSpec::new(
+            SessionKind::Shell,
+            Some("bash".into()),
+            BASH_LOGIN_ARGS.map(String::from).to_vec(),
+            None,
+        );
+        Shell::Bash.configure(&mut spec, Path::new("scripts"), "token");
+        assert_eq!(
+            spec.args,
+            [
+                "--rcfile",
+                &Path::new("scripts").join(BASH_FILE).to_string_lossy(),
+                "-i"
+            ]
+        );
+        assert_eq!(spec.env.get(BASH_LOGIN_ENV).map(String::as_str), Some("1"));
     }
 
     #[test]

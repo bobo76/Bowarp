@@ -6,19 +6,27 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use crate::Platform;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum EntryKind {
+    File,
+    Folder,
+}
+
 /// One entry of a folder listing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DirEntry {
     pub name: String,
     /// A folder, or a symlink to one.
-    pub is_dir: bool,
+    pub kind: EntryKind,
 }
 
 impl DirEntry {
-    pub fn new(name: impl Into<String>, is_dir: bool) -> Self {
+    pub fn new(name: impl Into<String>, kind: EntryKind) -> Self {
         Self {
             name: name.into(),
-            is_dir,
+            kind,
         }
     }
 }
@@ -27,8 +35,8 @@ impl DirEntry {
 /// order is stable).
 pub fn sort_entries(entries: &mut [DirEntry]) {
     entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
+        b.kind
+            .cmp(&a.kind)
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
             .then_with(|| a.name.cmp(&b.name))
     });
@@ -78,7 +86,7 @@ pub struct TreeRow {
     pub name: String,
     /// 0 for the root.
     pub depth: usize,
-    pub is_dir: bool,
+    pub kind: EntryKind,
     pub expanded: bool,
 }
 
@@ -147,16 +155,13 @@ pub fn visible_rows<'a>(
     expanded: &HashSet<PathBuf>,
     listing: impl Fn(&Path) -> Option<&'a [DirEntry]>,
 ) -> Vec<TreeRow> {
-    let name = root.file_name().map_or_else(
-        || root.display().to_string(),
-        |name| name.to_string_lossy().into(),
-    );
+    let name = entry_name(root);
     let root_expanded = expanded.contains(root);
     let mut rows = vec![TreeRow {
         path: root.to_path_buf(),
         name,
         depth: 0,
-        is_dir: true,
+        kind: EntryKind::Folder,
         expanded: root_expanded,
     }];
     if root_expanded {
@@ -177,12 +182,12 @@ fn push_children<'a>(
     };
     for entry in entries {
         let path = folder.join(&entry.name);
-        let is_expanded = entry.is_dir && expanded.contains(&path);
+        let is_expanded = entry.kind == EntryKind::Folder && expanded.contains(&path);
         rows.push(TreeRow {
             path: path.clone(),
             name: entry.name.clone(),
             depth,
-            is_dir: entry.is_dir,
+            kind: entry.kind,
             expanded: is_expanded,
         });
         if is_expanded {
@@ -203,11 +208,19 @@ pub fn relative_path(root: &Path, path: &Path) -> String {
 
 /// The folder an entry's "cd to directory" and "Open in new tab" use: the folder itself, or
 /// a file's parent.
-pub fn entry_folder(path: &Path, is_dir: bool) -> &Path {
-    if is_dir {
+pub fn entry_folder(path: &Path, kind: EntryKind) -> &Path {
+    if kind == EntryKind::Folder {
         return path;
     }
     path.parent().unwrap_or(path)
+}
+
+/// An entry's name, or its path when it has no final component (such as a drive root).
+pub fn entry_name(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 /// The folder the explorer's "Parent folder (cd ..)" goes to from `root`; `None` at a
@@ -431,10 +444,10 @@ impl fmt::Display for NameError {
 /// The name to create or rename to: `name` without surrounding spaces, refused when empty,
 /// `.`/`..`, or holding a path separator (or, on Windows, a character it doesn't allow).
 pub fn validate_name(name: &str) -> Result<&str, NameError> {
-    validate_name_for(name, cfg!(windows))
+    validate_name_for(name, Platform::CURRENT)
 }
 
-fn validate_name_for(name: &str, windows: bool) -> Result<&str, NameError> {
+fn validate_name_for(name: &str, platform: Platform) -> Result<&str, NameError> {
     let name = name.trim();
     if name.is_empty() {
         return Err(NameError::Empty);
@@ -445,7 +458,7 @@ fn validate_name_for(name: &str, windows: bool) -> Result<&str, NameError> {
     if name.contains(['/', '\\', '\0']) {
         return Err(NameError::Separator);
     }
-    if windows && name.contains([':', '<', '>', '"', '|', '?', '*']) {
+    if platform == Platform::Windows && name.contains([':', '<', '>', '"', '|', '?', '*']) {
         return Err(NameError::WindowsCharacter);
     }
     Ok(name)
@@ -462,13 +475,13 @@ mod tests {
     #[test]
     fn folders_come_first_then_names_ignoring_case() {
         let mut entries = vec![
-            DirEntry::new("b.md", false),
-            DirEntry::new("Zeta", true),
-            DirEntry::new(".hidden", false),
-            DirEntry::new("alpha", true),
-            DirEntry::new("A.txt", false),
-            DirEntry::new(".git", true),
-            DirEntry::new("a.txt", false),
+            DirEntry::new("b.md", EntryKind::File),
+            DirEntry::new("Zeta", EntryKind::Folder),
+            DirEntry::new(".hidden", EntryKind::File),
+            DirEntry::new("alpha", EntryKind::Folder),
+            DirEntry::new("A.txt", EntryKind::File),
+            DirEntry::new(".git", EntryKind::Folder),
+            DirEntry::new("a.txt", EntryKind::File),
         ];
         sort_entries(&mut entries);
         assert_eq!(
@@ -524,14 +537,14 @@ mod tests {
             (
                 PathBuf::from("/r"),
                 vec![
-                    DirEntry::new("src", true),
-                    DirEntry::new("unread", true),
-                    DirEntry::new("README.md", false),
+                    DirEntry::new("src", EntryKind::Folder),
+                    DirEntry::new("unread", EntryKind::Folder),
+                    DirEntry::new("README.md", EntryKind::File),
                 ],
             ),
             (
                 PathBuf::from("/r/src"),
-                vec![DirEntry::new("lib.rs", false)],
+                vec![DirEntry::new("lib.rs", EntryKind::File)],
             ),
         ]);
         let expanded: HashSet<PathBuf> = ["/r", "/r/src", "/r/unread"]
@@ -563,6 +576,19 @@ mod tests {
         let rows = visible_rows(Path::new("/r"), &HashSet::new(), |_| Some(&[][..]));
         assert_eq!(rows.len(), 1);
         assert!(!rows[0].expanded);
+        assert_eq!(rows[0].kind, EntryKind::Folder);
+    }
+
+    #[test]
+    fn entry_names_use_the_final_component_or_the_root() {
+        assert_eq!(
+            entry_name(Path::new("project").join("notes.md").as_path()),
+            "notes.md"
+        );
+        assert_eq!(
+            entry_name(Path::new("/")),
+            Path::new("/").display().to_string()
+        );
     }
 
     #[test]
@@ -578,8 +604,14 @@ mod tests {
 
     #[test]
     fn an_entry_folder_is_a_file_parent() {
-        assert_eq!(entry_folder(Path::new("/r/a.md"), false), Path::new("/r"));
-        assert_eq!(entry_folder(Path::new("/r/src"), true), Path::new("/r/src"));
+        assert_eq!(
+            entry_folder(Path::new("/r/a.md"), EntryKind::File),
+            Path::new("/r")
+        );
+        assert_eq!(
+            entry_folder(Path::new("/r/src"), EntryKind::Folder),
+            Path::new("/r/src")
+        );
     }
 
     fn quote(path: &str, shell: ShellSyntax) -> Result<String, TypeError> {
@@ -784,18 +816,23 @@ mod tests {
     #[test]
     fn windows_names_refuse_drive_and_reserved_characters() {
         assert_eq!(
-            validate_name_for("C:x", true),
+            validate_name_for("C:x", Platform::Windows),
             Err(NameError::WindowsCharacter)
         );
         assert_eq!(
-            validate_name_for("a?.md", true),
+            validate_name_for("a?.md", Platform::Windows),
             Err(NameError::WindowsCharacter)
         );
         assert_eq!(
-            validate_name_for("a\"b", true),
+            validate_name_for("a\"b", Platform::Windows),
             Err(NameError::WindowsCharacter)
         );
-        assert_eq!(validate_name_for("C:x", false), Ok("C:x"));
-        assert_eq!(validate_name_for("notes.md", true), Ok("notes.md"));
+        for platform in [Platform::Linux, Platform::MacOs] {
+            assert_eq!(validate_name_for("C:x", platform), Ok("C:x"));
+        }
+        assert_eq!(
+            validate_name_for("notes.md", Platform::Windows),
+            Ok("notes.md")
+        );
     }
 }

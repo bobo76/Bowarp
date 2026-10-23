@@ -85,10 +85,12 @@ fn appearance_groups() -> Vec<SettingGroup> {
             switch_row(
                 "Light theme",
                 "Use the light UI instead of dark. Terminal colors stay unchanged.",
-                |settings| settings.ui_theme == UiTheme::Light,
-                |settings, light| {
-                    settings.ui_theme = if light { UiTheme::Light } else { UiTheme::Dark };
-                },
+                SettingsField::new(
+                    |settings| settings.ui_theme == UiTheme::Light,
+                    |settings, light| {
+                        settings.ui_theme = if light { UiTheme::Light } else { UiTheme::Dark };
+                    },
+                ),
             )
             .keywords(["appearance", "dark", "colors"]),
         ),
@@ -100,16 +102,20 @@ fn appearance_groups() -> Vec<SettingGroup> {
                      uses {DEFAULT_FONT_FAMILY}."
                 ),
                 DEFAULT_FONT_FAMILY,
-                |settings| settings.font_family.clone(),
-                |settings, family| settings.font_family = family.trim().to_owned(),
+                SettingsField::new(
+                    |settings| settings.font_family.clone(),
+                    |settings, family| settings.font_family = family.trim().to_owned(),
+                ),
             )
             .keywords(["typeface", "monospace", "text"]),
             slider_row(
                 "Font size",
                 "The terminal's font size, in points.",
                 FONT_SIZE_SLIDER,
-                |settings| settings.font_size.points(),
-                |settings, size| settings.font_size = FontSize::new(size),
+                SettingsField::new(
+                    |settings| settings.font_size.points(),
+                    |settings, size| settings.font_size = FontSize::new(size),
+                ),
             )
             .keywords(["text", "zoom", "points"]),
         ]),
@@ -159,15 +165,16 @@ fn default_shell_row(launchers: Rc<[Launcher]>) -> SettingItem {
              when no tabs are saved. Automatic is {automatic_is}. Tabs already open keep their \
              shell."
         ),
-        options,
-        |name| format!("{name} (not found)").into(),
-        move |settings| {
-            settings.default_shell().map_or_else(String::new, |value| {
-                launcher::configured_shell(&launchers, value)
-                    .map_or_else(|| value.to_owned(), |shell| shell.id.clone())
-            })
-        },
-        |settings, id| settings.default_shell = id,
+        DropdownChoices::new(options, |name| format!("{name} (not found)").into()),
+        SettingsField::new(
+            move |settings| {
+                settings.default_shell().map_or_else(String::new, |value| {
+                    launcher::configured_shell(&launchers, value)
+                        .map_or_else(|| value.to_owned(), |shell| shell.id.clone())
+                })
+            },
+            |settings, id| settings.default_shell = id,
+        ),
     )
     .keywords([
         "terminal",
@@ -333,6 +340,27 @@ impl<T> Binding<T> {
 /// Draws a row's control: given the current value and how to change it.
 pub type Control<T> = Rc<dyn Fn(T, &Binding<T>, &mut Window, &mut App) -> AnyElement>;
 
+type ReadSetting<T> = Rc<dyn Fn(&Settings) -> T>;
+type WriteSetting<T> = Rc<dyn Fn(&mut Settings, T)>;
+
+/// The read/write pair for one setting, shared by every row control.
+pub struct SettingsField<T> {
+    get: ReadSetting<T>,
+    set: WriteSetting<T>,
+}
+
+impl<T> SettingsField<T> {
+    pub fn new(
+        get: impl Fn(&Settings) -> T + 'static,
+        set: impl Fn(&mut Settings, T) + 'static,
+    ) -> Self {
+        Self {
+            get: Rc::new(get),
+            set: Rc::new(set),
+        }
+    }
+}
+
 /// A row bound to a field of `Settings`: `get` reads it, `set` writes it. `control` draws the
 /// value and changes it through its [`Binding`] (live with `apply`, to the file with `save`).
 /// "Reset to default" shows under the control, and the page's reset includes the row, while
@@ -341,13 +369,11 @@ pub type Control<T> = Rc<dyn Fn(T, &Binding<T>, &mut Window, &mut App) -> AnyEle
 pub fn bound_row<T: Clone + PartialEq + 'static>(
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
-    get: impl Fn(&Settings) -> T + 'static,
-    set: impl Fn(&mut Settings, T) + 'static,
+    field: SettingsField<T>,
     control: Control<T>,
 ) -> SettingItem {
     let title = title.into();
-    let get = Rc::new(get);
-    let set = Rc::new(set);
+    let SettingsField { get, set } = field;
     let binding = Binding {
         key: format!("settings-row-{title}").into(),
         apply: Rc::new({
@@ -403,14 +429,12 @@ pub fn bound_row<T: Clone + PartialEq + 'static>(
 pub fn switch_row(
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
-    get: impl Fn(&Settings) -> bool + 'static,
-    set: impl Fn(&mut Settings, bool) + 'static,
+    field: SettingsField<bool>,
 ) -> SettingItem {
     bound_row(
         title,
         description,
-        get,
-        set,
+        field,
         Rc::new(|checked, binding, _, _| {
             let binding = binding.clone();
             Switch::new("switch")
@@ -427,15 +451,13 @@ pub fn text_row(
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
     placeholder: impl Into<SharedString>,
-    get: impl Fn(&Settings) -> String + 'static,
-    set: impl Fn(&mut Settings, String) + 'static,
+    field: SettingsField<String>,
 ) -> SettingItem {
     let placeholder = placeholder.into();
     bound_row(
         title,
         description,
-        get,
-        set,
+        field,
         Rc::new(move |value, binding, window, cx| {
             text_field(value, binding, placeholder.clone(), window, cx)
         }),
@@ -496,14 +518,12 @@ pub fn slider_row(
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
     range: SliderRange,
-    get: impl Fn(&Settings) -> f32 + 'static,
-    set: impl Fn(&mut Settings, f32) + 'static,
+    field: SettingsField<f32>,
 ) -> SettingItem {
     bound_row(
         title,
         description,
-        get,
-        set,
+        field,
         Rc::new(move |value, binding, window, cx| slider_field(value, range, binding, window, cx)),
     )
 }
@@ -522,6 +542,24 @@ fn slider_field(
     cx: &mut App,
 ) -> AnyElement {
     let shown = value.clamp(range.min, range.max);
+    let slider = use_slider(range, shown, binding, window, cx);
+    sync_slider(&slider, shown, window, cx);
+    div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .child(Slider::new(&slider).w_48())
+        .child(div().w_8().text_sm().text_right().child(format!("{value}")))
+        .into_any_element()
+}
+
+fn use_slider(
+    range: SliderRange,
+    shown: f32,
+    binding: &Binding<f32>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<SliderState> {
     let state = window.use_keyed_state(binding.state_key("slider"), cx, |_, cx| {
         let slider = cx.new(|_| {
             SliderState::new()
@@ -540,18 +578,14 @@ fn slider_field(
             _events: events,
         }
     });
-    let slider = state.read(cx).slider.clone();
+    state.read(cx).slider.clone()
+}
+
+fn sync_slider(slider: &Entity<SliderState>, shown: f32, window: &mut Window, cx: &mut App) {
     // A value changed elsewhere (reset, the file reloaded) moves the thumb.
     if slider.read(cx).value().start() != shown {
         slider.update(cx, |slider, cx| slider.set_value(shown, window, cx));
     }
-    div()
-        .flex()
-        .items_center()
-        .gap_3()
-        .child(Slider::new(&slider).w_48())
-        .child(div().w_8().text_sm().text_right().child(format!("{value}")))
-        .into_any_element()
 }
 
 /// One choice of a [`dropdown_row`]: the value saved, the label shown, and an optional icon.
@@ -577,23 +611,37 @@ impl DropdownOption {
     }
 }
 
+pub struct DropdownChoices {
+    options: Rc<[DropdownOption]>,
+    unlisted: Rc<dyn Fn(&str) -> SharedString>,
+}
+
+impl DropdownChoices {
+    pub fn new(
+        options: impl Into<Rc<[DropdownOption]>>,
+        unlisted: impl Fn(&str) -> SharedString + 'static,
+    ) -> Self {
+        Self {
+            options: options.into(),
+            unlisted: Rc::new(unlisted),
+        }
+    }
+}
+
 /// A dropdown row for a `String` field of `Settings` (see [`bound_row`]): a button showing the
 /// chosen option's label that opens a menu of `options`; picking one saves it at once. A
 /// value that isn't one of them (set in the file) shows as `unlisted(value)`.
 pub fn dropdown_row(
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
-    options: impl Into<Rc<[DropdownOption]>>,
-    unlisted: impl Fn(&str) -> SharedString + 'static,
-    get: impl Fn(&Settings) -> String + 'static,
-    set: impl Fn(&mut Settings, String) + 'static,
+    choices: DropdownChoices,
+    field: SettingsField<String>,
 ) -> SettingItem {
-    let options: Rc<[DropdownOption]> = options.into();
+    let DropdownChoices { options, unlisted } = choices;
     bound_row(
         title,
         description,
-        get,
-        set,
+        field,
         Rc::new(move |value: String, binding, _, _| {
             let chosen = options.iter().find(|option| option.value == value.as_str());
             let label = chosen.map_or_else(|| unlisted(&value), |option| option.label.clone());

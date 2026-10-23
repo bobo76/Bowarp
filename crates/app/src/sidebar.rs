@@ -25,6 +25,28 @@ pub const SIDEBAR_WIDTH: f32 = 240.;
 /// Tab rows are tall enough for the name, the detail line and a large session icon.
 const TAB_ROW_HEIGHT: f32 = 56.;
 const GROUP_ROW_HEIGHT: f32 = 40.;
+const GROUP_CARD_WIDTH: f32 = 240.;
+const TAB_CARD_WIDTH: f32 = 280.;
+const ICON_TILE_SIZE: f32 = 32.;
+const SESSION_ICON_SIZE: f32 = 18.;
+const DETAIL_ICON_SIZE: f32 = 11.;
+const KIND_ICON_SIZE: f32 = 12.;
+const ATTENTION_ICON_SIZE: f32 = 13.;
+const GROUP_CHEVRON_SIZE: f32 = 14.;
+const GROUP_COLOR_SIZE: f32 = 8.;
+const STATUS_DOT_SIZE: f32 = 7.;
+const BADGE_SIZE: f32 = 12.;
+const DONE_BADGE_SIZE: f32 = 14.;
+const BADGE_OFFSET: f32 = -3.;
+const CHECK_MARK_SIZE: f32 = 8.;
+const HINT_ROW_HEIGHT: f32 = 28.;
+const DRAG_PREVIEW_INSET: f32 = 24.;
+const DRAG_PREVIEW_HEIGHT: f32 = 32.;
+const COLOR_STRIPE_INSET: f32 = 12.;
+const COLOR_STRIPE_WIDTH: f32 = 3.;
+const COLOR_STRIPE_OFFSET: f32 = 2.;
+const DROP_LINE_HEIGHT: f32 = 2.;
+const SECTION_HEADING_HEIGHT: f32 = 24.;
 /// Tabs selectable with Ctrl+1..9.
 pub const NUMBERED_TABS: usize = 9;
 
@@ -164,13 +186,19 @@ pub struct TabRow {
     pub detail: Option<TabDetail>,
     pub status: TabStatus,
     /// Whether a Running badge pulses rather than stays still.
-    pub pulse: bool,
+    pub pulse: RunningPulse,
     pub selected: bool,
     pub pinned: bool,
     /// The tab's own color, else its group's.
     pub color: Option<TabColor>,
     /// Shown in place of the name while the tab is being renamed.
     pub name_editor: Option<AnyElement>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunningPulse {
+    Animated,
+    Still,
 }
 
 /// Where a dragged tab would land, drawn on the row under the mouse.
@@ -198,8 +226,8 @@ impl Render for DraggedTab {
             .flex()
             .items_center()
             .gap_2()
-            .w(px(SIDEBAR_WIDTH - 24.))
-            .h(px(32.))
+            .w(px(SIDEBAR_WIDTH - DRAG_PREVIEW_INSET))
+            .h(px(DRAG_PREVIEW_HEIGHT))
             .px_2()
             .rounded_md()
             .border_1()
@@ -228,7 +256,7 @@ pub fn drop_slot(row: impl IntoElement, marker: Option<DropMarker>, cx: &App) ->
             .absolute()
             .left_1()
             .right_1()
-            .h(px(2.))
+            .h(px(DROP_LINE_HEIGHT))
             .rounded_full()
             .bg(theme.drag_border)
     };
@@ -264,9 +292,9 @@ struct RowBackground {
 }
 
 /// The Running badge's dot, pulsing or still.
-fn running_dot(color: Hsla, pulse: bool, index: usize) -> AnyElement {
+fn running_dot(color: Hsla, pulse: RunningPulse, index: usize) -> AnyElement {
     let dot = div().size_full().rounded_full().bg(color);
-    if !pulse {
+    if pulse == RunningPulse::Still {
         return dot.into_any_element();
     }
     dot.with_animation(
@@ -300,7 +328,7 @@ pub fn pulse_allowed(window: &Window) -> bool {
 /// pulses when `pulse` is set; `index` tells the rows' animations apart.
 fn status_badge(
     status: TabStatus,
-    pulse: bool,
+    pulse: RunningPulse,
     index: usize,
     background: &RowBackground,
 ) -> Option<AnyElement> {
@@ -308,8 +336,8 @@ fn status_badge(
     let hovered = background.hovered;
     let badge = div()
         .absolute()
-        .right(px(-3.))
-        .bottom(px(-3.))
+        .right(px(BADGE_OFFSET))
+        .bottom(px(BADGE_OFFSET))
         .rounded_full()
         .border_2()
         .border_color(ring)
@@ -322,17 +350,21 @@ fn status_badge(
             .flex()
             .items_center()
             .justify_center()
-            .size(px(14.))
+            .size(px(DONE_BADGE_SIZE))
             .bg(status.color())
-            .child(Icon::new(IconName::Check).size(px(8.)).text_color(ring)),
+            .child(
+                Icon::new(IconName::Check)
+                    .size(px(CHECK_MARK_SIZE))
+                    .text_color(ring),
+            ),
         // The dot fades over the ring color, so the icon never shows through it.
         TabStatus::Running => badge
-            .size(px(12.))
+            .size(px(BADGE_SIZE))
             .bg(ring)
             .group_hover(background.row_group.clone(), |style| style.bg(hovered))
             .child(running_dot(status.color(), pulse, index)),
         TabStatus::Exited => badge
-            .size(px(12.))
+            .size(px(BADGE_SIZE))
             .bg(ring)
             .group_hover(background.row_group.clone(), |style| style.bg(hovered))
             .child(
@@ -342,20 +374,13 @@ fn status_badge(
                     .border_1()
                     .border_color(status.color()),
             ),
-        _ => badge.size(px(12.)).bg(status.color()),
+        _ => badge.size(px(BADGE_SIZE)).bg(status.color()),
     };
     Some(badge.into_any_element())
 }
 
 /// The session icon in a rounded square, with the status badge.
-fn session_icon(
-    kind: SessionKind,
-    status: TabStatus,
-    pulse: bool,
-    index: usize,
-    background: &RowBackground,
-    cx: &App,
-) -> impl IntoElement {
+fn session_icon(row: &TabRow, background: &RowBackground, cx: &App) -> impl IntoElement + use<> {
     let theme = cx.theme();
     div()
         .relative()
@@ -363,11 +388,11 @@ fn session_icon(
         .flex_none()
         .items_center()
         .justify_center()
-        .size(px(32.))
+        .size(px(ICON_TILE_SIZE))
         .rounded_md()
         .bg(theme.secondary)
-        .child(kind_icon(kind).size(px(18.)))
-        .children(status_badge(status, pulse, index, background))
+        .child(kind_icon(row.kind).size(px(SESSION_ICON_SIZE)))
+        .children(status_badge(row.status, row.pulse, row.index, background))
 }
 
 fn detail_line(detail: TabDetail, color: Hsla) -> impl IntoElement {
@@ -382,7 +407,7 @@ fn detail_line(detail: TabDetail, color: Hsla) -> impl IntoElement {
         .min_w_0()
         .text_xs()
         .text_color(color)
-        .children(icon.map(|icon| icon.size(px(11.)).text_color(color)))
+        .children(icon.map(|icon| icon.size(px(DETAIL_ICON_SIZE)).text_color(color)))
         .child(single_line(text))
 }
 
@@ -406,13 +431,18 @@ fn name_line(row: &mut TabRow, muted: Hsla) -> impl IntoElement {
     line.when(row.status == TabStatus::NeedsAttention, |line| {
         line.child(
             Icon::new(IconName::TriangleAlert)
-                .size(px(13.))
+                .size(px(ATTENTION_ICON_SIZE))
                 .text_color(TabStatus::NeedsAttention.color()),
         )
     })
     .child(single_line(row.name.clone()))
     .when(row.pinned, |line| {
-        line.child(Icon::empty().path(PIN_ICON).size(px(11.)).text_color(muted))
+        line.child(
+            Icon::empty()
+                .path(PIN_ICON)
+                .size(px(DETAIL_ICON_SIZE))
+                .text_color(muted),
+        )
     })
 }
 
@@ -425,16 +455,7 @@ pub fn tab_row(
 ) -> impl IntoElement {
     let theme = cx.theme();
     let group = SharedString::from(format!("tab-{}", row.index));
-    let (background, foreground) = if row.selected {
-        (theme.sidebar_accent, theme.sidebar_accent_foreground)
-    } else {
-        (theme.sidebar, theme.sidebar_foreground)
-    };
-    let hovered = if row.selected {
-        background
-    } else {
-        hover_background(cx)
-    };
+    let (background, foreground, hovered) = row_colors(row.selected, cx);
     let muted = theme.muted_foreground;
     let row_background = RowBackground {
         normal: background,
@@ -462,22 +483,15 @@ pub fn tab_row(
             tab.child(
                 div()
                     .absolute()
-                    .left(px(2.))
-                    .top(px(12.))
-                    .bottom(px(12.))
-                    .w(px(3.))
+                    .left(px(COLOR_STRIPE_OFFSET))
+                    .top(px(COLOR_STRIPE_INSET))
+                    .bottom(px(COLOR_STRIPE_INSET))
+                    .w(px(COLOR_STRIPE_WIDTH))
                     .rounded_full()
                     .bg(tab_color(color)),
             )
         })
-        .child(session_icon(
-            row.kind,
-            row.status,
-            row.pulse,
-            row.index,
-            &row_background,
-            cx,
-        ))
+        .child(session_icon(&row, &row_background, cx))
         .child(
             div()
                 .flex()
@@ -554,17 +568,7 @@ fn status_chip(
     running_label: Option<SharedString>,
 ) -> impl IntoElement {
     let color = status.color();
-    let mark = match status {
-        TabStatus::Done => Icon::new(IconName::Check).size(px(11.)).into_any_element(),
-        TabStatus::NeedsAttention => Icon::new(IconName::TriangleAlert)
-            .size(px(11.))
-            .into_any_element(),
-        _ => div()
-            .size(px(7.))
-            .rounded_full()
-            .bg(color)
-            .into_any_element(),
-    };
+    let mark = status_mark(status);
     div()
         .flex()
         .items_center()
@@ -597,7 +601,7 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
         .flex()
         .flex_col()
         .gap_1()
-        .w(px(280.))
+        .w(px(TAB_CARD_WIDTH))
         .text_sm()
         .child(
             div()
@@ -648,7 +652,7 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
                 .gap_1p5()
                 .text_xs()
                 .text_color(muted)
-                .child(kind_icon(card.kind).size(px(12.)))
+                .child(kind_icon(card.kind).size(px(KIND_ICON_SIZE)))
                 .child(single_line(card.kind_label))
                 .children(card.lines_added.filter(|&added| added > 0).map(|added| {
                     div()
@@ -668,20 +672,11 @@ pub fn settings_row(
     cx: &App,
 ) -> impl IntoElement {
     let theme = cx.theme();
-    let (background, foreground) = if selected {
-        (theme.sidebar_accent, theme.sidebar_accent_foreground)
-    } else {
-        (theme.sidebar, theme.sidebar_foreground)
-    };
-    let hovered = if selected {
-        background
-    } else {
-        hover_background(cx)
-    };
+    let (background, foreground, hovered) = row_colors(selected, cx);
     let heading = div()
         .flex()
         .items_end()
-        .h(px(24.))
+        .h(px(SECTION_HEADING_HEIGHT))
         .pl_3()
         .pb_1()
         .text_xs()
@@ -706,10 +701,10 @@ pub fn settings_row(
                 .flex_none()
                 .items_center()
                 .justify_center()
-                .size(px(32.))
+                .size(px(ICON_TILE_SIZE))
                 .rounded_md()
                 .bg(theme.secondary)
-                .child(Icon::new(IconName::Settings).size(px(18.))),
+                .child(Icon::new(IconName::Settings).size(px(SESSION_ICON_SIZE))),
         )
         .child(div().flex_1().min_w_0().text_sm().child("Settings"))
         .child(
@@ -736,7 +731,7 @@ pub fn no_matches_hint(cx: &App) -> impl IntoElement {
     div()
         .flex()
         .items_center()
-        .h(px(28.))
+        .h(px(HINT_ROW_HEIGHT))
         .pl_3()
         .text_xs()
         .text_color(cx.theme().muted_foreground)
@@ -790,7 +785,7 @@ pub fn group_card(
         .flex()
         .flex_col()
         .gap_1()
-        .w(px(240.))
+        .w(px(GROUP_CARD_WIDTH))
         .text_sm()
         .text_color(cx.theme().foreground)
         .child(single_line(name))
@@ -818,27 +813,49 @@ pub struct GroupRow {
     pub name_editor: Option<AnyElement>,
 }
 
-fn summary_chip(status: TabStatus, count: usize) -> impl IntoElement {
+fn status_mark(status: TabStatus) -> AnyElement {
     let color = status.color();
-    let mark = match status {
+    match status {
         TabStatus::NeedsAttention => Icon::new(IconName::TriangleAlert)
-            .size(px(11.))
+            .size(px(DETAIL_ICON_SIZE))
             .into_any_element(),
-        TabStatus::Done => Icon::new(IconName::Check).size(px(11.)).into_any_element(),
+        TabStatus::Done => Icon::new(IconName::Check)
+            .size(px(DETAIL_ICON_SIZE))
+            .into_any_element(),
         // The same dot as the Working and Running badges on a tab icon (not pulsing here).
         _ => div()
-            .size(px(7.))
+            .size(px(STATUS_DOT_SIZE))
             .rounded_full()
             .bg(color)
             .into_any_element(),
-    };
+    }
+}
+
+fn row_colors(selected: bool, cx: &App) -> (Hsla, Hsla, Hsla) {
+    let theme = cx.theme();
+    if selected {
+        return (
+            theme.sidebar_accent,
+            theme.sidebar_accent_foreground,
+            theme.sidebar_accent,
+        );
+    }
+    (
+        theme.sidebar,
+        theme.sidebar_foreground,
+        hover_background(cx),
+    )
+}
+
+fn summary_chip(status: TabStatus, count: usize) -> impl IntoElement {
+    let color = status.color();
     div()
         .flex()
         .items_center()
         .gap_0p5()
         .text_xs()
         .text_color(color)
-        .child(mark)
+        .child(status_mark(status))
         .child(count.to_string())
 }
 
@@ -894,12 +911,16 @@ pub fn group_header(
         .text_color(theme.sidebar_foreground)
         .hover(|style| style.bg(hovered))
         .on_click(on_toggle)
-        .child(Icon::new(chevron).size(px(14.)).text_color(muted))
+        .child(
+            Icon::new(chevron)
+                .size(px(GROUP_CHEVRON_SIZE))
+                .text_color(muted),
+        )
         .when_some(row.color, |header, color| {
             header.child(
                 div()
                     .flex_none()
-                    .size(px(8.))
+                    .size(px(GROUP_COLOR_SIZE))
                     .rounded_full()
                     .bg(tab_color(color)),
             )
@@ -935,7 +956,7 @@ pub fn empty_group_hint(cx: &App) -> impl IntoElement {
     div()
         .flex()
         .items_center()
-        .h(px(28.))
+        .h(px(HINT_ROW_HEIGHT))
         .pl_3()
         .text_xs()
         .text_color(cx.theme().muted_foreground)

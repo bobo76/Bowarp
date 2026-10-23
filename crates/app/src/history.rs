@@ -35,6 +35,14 @@ pub fn init(cx: &mut App) {
     cx.set_global(History { commands, path });
 }
 
+#[cfg(test)]
+pub fn init_in_memory(cx: &mut App) {
+    cx.set_global(History {
+        commands: CommandHistory::default(),
+        path: None,
+    });
+}
+
 /// Record a command a shell ran. A failed save is only reported: the command stays in this
 /// run's history.
 pub fn record(command: ExecutedCommand, cx: &mut App) {
