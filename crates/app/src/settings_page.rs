@@ -3,36 +3,44 @@
 //! descriptions and keywords, pages on the left, groups of rows on the right), with a banner
 //! for the settings file's load or save error and an "Open settings file" button.
 //!
-//! A row bound to a field of `Settings` ([`bound_row`], [`switch_row`], [`text_row`]) applies
-//! a change live and saves it once per gesture, and offers "Reset to default" while the value
-//! differs from the default. Rows go into the page functions below ([`appearance_groups`],
-//! [`terminal_groups`]).
+//! A row bound to a field of `Settings` ([`bound_row`], [`switch_row`], [`text_row`],
+//! [`slider_row`], [`dropdown_row`]) applies a change live and saves it once per gesture, and
+//! offers "Reset to default" while the value differs from the default. Rows go into the page
+//! functions below ([`appearance_groups`], [`terminal_groups`]).
 
 use std::rc::Rc;
 use std::sync::LazyLock;
 
 use gpui_kit::component::alert::Alert;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::link::Link;
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::setting::{
     SettingField, SettingGroup, SettingItem, SettingPage, Settings as SettingsView,
 };
+use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
+use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Side, Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, App, AppContext, Axis, ClickEvent, ClipboardItem, Entity, Focusable, IntoElement,
-    ParentElement, SharedString, Styled, Subscription, Window, div, px,
+    Anchor, AnyElement, App, AppContext, Axis, ClickEvent, ClipboardItem, Entity, Focusable,
+    IntoElement, ParentElement, SharedString, Styled, Subscription, Window, div, px,
 };
-use workspace_model::Settings;
+use workspace_model::{DependentState, FeatureSwitch, FontSize, Settings, UiTheme};
 
 use crate::about;
 use crate::assets::CODE_ICON;
+use crate::history;
+use crate::launcher::{self, Launcher};
 use crate::settings_file;
+use crate::sidebar;
+use crate::terminal_element::DEFAULT_FONT_FAMILY;
 
 /// The settings page: the error banners, the pages, and the "Open settings file" button.
 pub fn render(
+    launchers: Rc<[Launcher]>,
     on_open_file: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     cx: &App,
 ) -> impl IntoElement {
@@ -49,7 +57,9 @@ pub fn render(
                 .min_h_0()
                 .child(SettingsView::new("settings-page").pages([
                     page("Appearance", appearance_groups()),
-                    page("Terminal", terminal_groups()),
+                    page("Terminal", terminal_groups(launchers)),
+                    page("Workspace", workspace_groups()),
+                    page("Notifications", notification_groups()),
                     page("About", about_groups(cx)),
                 ])),
         )
@@ -66,36 +76,482 @@ pub fn render(
                         .outline()
                         .small()
                         .w(px(234.))
-                        .tooltip("Show settings.json in the file viewer")
+                        .tooltip("Show settings.json in the file viewer (or the system's app)")
                         .on_click(on_open_file),
                 ),
         )
 }
 
-/// The Appearance page's groups. Later steps add their rows (font, theme, opacity) here.
+/// The Appearance page's UI theme and terminal font.
 fn appearance_groups() -> Vec<SettingGroup> {
-    Vec::new()
+    vec![
+        SettingGroup::new().title("Theme").item(
+            switch_row(
+                "Light theme",
+                "Use the light UI instead of dark. Terminal colors stay unchanged.",
+                SettingsField::new(
+                    |settings| settings.ui_theme == UiTheme::Light,
+                    |settings, light| {
+                        settings.ui_theme = if light { UiTheme::Light } else { UiTheme::Dark };
+                    },
+                ),
+            )
+            .keywords(["appearance", "dark", "colors"]),
+        ),
+        SettingGroup::new().title("Font").items([
+            text_row(
+                "Font family",
+                format!(
+                    "The terminal's font, as installed. Empty, or a font that isn't installed, \
+                     uses {DEFAULT_FONT_FAMILY}."
+                ),
+                DEFAULT_FONT_FAMILY,
+                SettingsField::new(
+                    |settings| settings.font_family.clone(),
+                    |settings, family| settings.font_family = family.trim().to_owned(),
+                ),
+            )
+            .keywords(["typeface", "monospace", "text"]),
+            slider_row(
+                "Font size",
+                "The terminal's font size, in points.",
+                FONT_SIZE_SLIDER,
+                SettingsField::new(
+                    |settings| settings.font_size.points(),
+                    |settings, size| settings.font_size = FontSize::new(size),
+                ),
+            )
+            .keywords(["text", "zoom", "points"]),
+        ]),
+        tab_card_group(),
+        SettingGroup::new().title("Group hover card").item(
+            switch_row(
+                "Group hover cards",
+                "Show a card beside a hovered group header. Off: no group cards; a collapsed \
+                 group still shows its status. Independent of the tab hover card.",
+                SettingsField::new(
+                    |settings| settings.group_hover_cards.is_on(),
+                    |settings, value| settings.group_hover_cards = FeatureSwitch::new(value),
+                ),
+            )
+            .keywords(["group", "hover", "card", "sidebar"]),
+        ),
+        SettingGroup::new().title("Animation").item(
+            switch_row(
+                "Activity animations",
+                "Animate the sidebar's activity indicators (the Running badge's pulse). Off: \
+                 static indicators and no animation timers; status still updates.",
+                SettingsField::new(
+                    |settings| settings.activity_animations.is_on(),
+                    |settings, value| settings.activity_animations = FeatureSwitch::new(value),
+                ),
+            )
+            .keywords(["motion", "pulse", "working", "spinner", "sidebar"]),
+        ),
+    ]
 }
 
-/// The Terminal page's groups. Later steps add their rows (shell, launcher paths and icons)
-/// here.
-fn terminal_groups() -> Vec<SettingGroup> {
-    Vec::new()
+/// The font size slider's range and step; the file accepts `FontSize::MIN..=MAX`.
+const FONT_SIZE_SLIDER: SliderRange = SliderRange {
+    min: 8.,
+    max: 32.,
+    step: 1.,
+};
+
+/// The Terminal page's groups. Later steps add their rows (launcher paths and icons) here.
+fn terminal_groups(launchers: Rc<[Launcher]>) -> Vec<SettingGroup> {
+    vec![
+        SettingGroup::new()
+            .title("Shell")
+            .item(default_shell_row(launchers.clone())),
+        command_history_group(),
+        agent_arguments_group(&launchers),
+    ]
 }
 
-/// A page of `groups`. The setting module hides a page without a row, so a page with none yet
-/// gets a "nothing here yet" row instead (hidden while searching).
-fn page(title: &'static str, groups: Vec<SettingGroup>) -> SettingPage {
-    let groups = if groups.is_empty() {
-        vec![SettingGroup::new().item(SettingItem::render(|_, _, cx| {
-            div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("Nothing to set here yet.")
-        }))]
+/// The Workspace page: the automatic tab snapshot and what it keeps per tab.
+fn workspace_groups() -> Vec<SettingGroup> {
+    vec![
+        SettingGroup::new().title("Tabs").items([
+            switch_row(
+                "Restore previous tabs",
+                "Reopen the tabs from the last close at start. Off: a fresh default tab, and the \
+             saved tabs are neither read nor updated (tabs.json is kept, so turning this on \
+             again restores it at a later start). Takes effect at the next start; saving \
+             stops at once. Window size and position are separate and still saved.",
+                SettingsField::new(
+                    |settings| settings.restore_tabs.is_on(),
+                    |settings, value| settings.restore_tabs = FeatureSwitch::new(value),
+                ),
+            )
+            .keywords(["tabs", "session", "reopen", "startup", "snapshot"]),
+            bound_row(
+                "Remember last shell command",
+                "Save each shell tab's last command with the tabs and offer it as dimmed text \
+             after a restart (needs Inline suggestions too). Off: no new command is captured \
+             or saved and none is offered; commands already saved are kept, not erased.",
+                SettingsField::new(
+                    |settings| settings.remember_last_command.is_on(),
+                    |settings, value| settings.remember_last_command = FeatureSwitch::new(value),
+                ),
+                dependent_switch_control_all(vec![
+                    (
+                        "Command history",
+                        Rc::new(|settings: &Settings| settings.command_history.is_on()),
+                    ),
+                    (
+                        "Restore previous tabs",
+                        Rc::new(|settings: &Settings| settings.restore_tabs.is_on()),
+                    ),
+                ]),
+            )
+            .keywords(["last command", "suggestion", "session", "history"]),
+        ]),
+        SettingGroup::new().title("Files").item(
+            switch_row(
+                "File explorer and viewer",
+                "Show the file explorer and the file viewer (Ctrl+Shift+|, the title bar \
+                 button, Ctrl+clicked file links). Off: both panes are hidden and their \
+                 buttons and shortcut do nothing, no folders are scanned or watched and no \
+                 files loaded, open files are closed (you are asked first when one has unsaved \
+                 edits; Cancel keeps this on), and file links offer to open the file with \
+                 the system's application. Pane widths are kept.",
+                SettingsField::new(
+                    |settings| settings.file_panes.is_on(),
+                    |settings, value| settings.file_panes = FeatureSwitch::new(value),
+                ),
+            )
+            .keywords(["files", "explorer", "viewer", "editor", "panes", "folder"]),
+        ),
+    ]
+}
+
+/// The Notifications page. Sound and long-command switches join it in later steps.
+fn notification_groups() -> Vec<SettingGroup> {
+    vec![
+        SettingGroup::new().title("Toasts").item(
+            switch_row(
+                "In-app notifications",
+                "Show a toast when a background tab's agent needs attention, is ready for review \
+             or exits. Off: no such toasts; status dots, attention badges and the sidebar \
+             status stay. Toasts for your own actions (such as save errors) and persistent \
+             warnings always show. Sound is a separate setting.",
+                SettingsField::new(
+                    |settings| settings.in_app_notifications.is_on(),
+                    |settings, value| settings.in_app_notifications = FeatureSwitch::new(value),
+                ),
+            )
+            .keywords(["toast", "notification", "agent", "alert", "popup"]),
+        ),
+    ]
+}
+
+/// Command history, its two dependent switches, and the actions that delete what it kept.
+fn command_history_group() -> SettingGroup {
+    let master: Rc<dyn Fn(&Settings) -> bool> =
+        Rc::new(|settings| settings.command_history.is_on());
+    SettingGroup::new().title("Command history").items([
+        switch_row(
+            "Command history",
+            "Collect the commands you run into Bowarp's history. Off: nothing is recorded in \
+                 memory or on disk, and there is no history popup, inline suggestion or saved \
+                 last command. Your shell's own history is unchanged, and working-directory \
+                 tracking, agent status and busy-close warnings keep working. Stored history is \
+                 kept, not erased.",
+            SettingsField::new(
+                |settings| settings.command_history.is_on(),
+                |settings, value| settings.command_history = FeatureSwitch::new(value),
+            ),
+        )
+        .keywords(["history", "commands", "record", "suggestions"]),
+        bound_row(
+            "History popup",
+            "Open the HISTORY list with Up at a shell prompt. Off: no panel and Up goes to \
+                 the shell. Commands are still recorded while Command history is on.",
+            SettingsField::new(
+                |settings| settings.history_popup.is_on(),
+                |settings, value| settings.history_popup = FeatureSwitch::new(value),
+            ),
+            dependent_switch_control("Command history", master.clone()),
+        )
+        .keywords(["history", "up", "panel", "list"]),
+        bound_row(
+            "Inline suggestions",
+            "Show the rest of the newest matching command as dimmed text after the cursor, \
+                 accepted with Right, End or Tab, including the last session's command. Off: \
+                 no ghost text and those keys go to the shell; shell plugins are unchanged.",
+            SettingsField::new(
+                |settings| settings.inline_suggestions.is_on(),
+                |settings, value| settings.inline_suggestions = FeatureSwitch::new(value),
+            ),
+            dependent_switch_control("Command history", master),
+        )
+        .keywords(["ghost", "autosuggest", "completion", "history"]),
+        clear_action_row(
+            "Clear history",
+            "Delete every command in Bowarp's history, in memory and in history.jsonl. \
+                 Tabs' saved last commands are separate.",
+            "Clear history",
+            "Clear the command history?",
+            "Every stored command is deleted. This can't be undone.",
+            "Command history cleared",
+            history::clear,
+        ),
+        clear_action_row(
+            "Clear saved session commands",
+            "Forget the last command saved for each tab, so none is offered after a \
+                 restart. Saved commands are never run automatically.",
+            "Clear saved commands",
+            "Clear saved session commands?",
+            "The last command saved in each tab is deleted. This can't be undone.",
+            "Saved session commands cleared",
+            history::clear_saved_session_commands,
+        ),
+    ])
+}
+
+/// A row with one button that, after a confirmation, runs `action` and says it was done.
+fn clear_action_row(
+    title: &'static str,
+    description: &'static str,
+    label: &'static str,
+    question: &'static str,
+    warning: &'static str,
+    done: &'static str,
+    action: fn(&mut App) -> Result<(), String>,
+) -> SettingItem {
+    SettingItem::new(
+        title,
+        SettingField::render(move |_, _, _| {
+            Button::new(title)
+                .label(label)
+                .outline()
+                .small()
+                .on_click(move |_, window, cx| {
+                    window.open_alert_dialog(cx, move |alert, _, _| {
+                        alert
+                            .title(question)
+                            .description(warning)
+                            .ok_text("Clear")
+                            .ok_variant(ButtonVariant::Danger)
+                            .show_cancel(true)
+                            .on_ok(move |_, window, cx| {
+                                let notification = match action(cx) {
+                                    Ok(()) => Notification::success(done),
+                                    Err(message) => Notification::error(message),
+                                };
+                                window.push_notification(notification, cx);
+                                true
+                            })
+                    });
+                })
+        }),
+    )
+    .description(description)
+    .keywords(["delete", "erase", "forget", "history"])
+}
+
+fn agent_arguments_group(launchers: &[Launcher]) -> SettingGroup {
+    let mut group = SettingGroup::new().title("Agent launch arguments");
+    for (id, label, placeholder, field) in [
+        (
+            "claude",
+            "Claude Code arguments",
+            "--model opus",
+            SettingsField::new(
+                |settings| settings.claude_args.clone(),
+                |settings, value| settings.claude_args = value,
+            ),
+        ),
+        (
+            "copilot",
+            "Copilot CLI arguments",
+            "--yolo",
+            SettingsField::new(
+                |settings| settings.copilot_args.clone(),
+                |settings, value| settings.copilot_args = value,
+            ),
+        ),
+    ] {
+        let path = launchers
+            .iter()
+            .find(|launcher| launcher.id == id)
+            .and_then(|launcher| launcher.program.as_deref())
+            .map_or_else(|| "Not installed".into(), |path| path.display().to_string());
+        group = group.item(
+            text_row(
+                label,
+                format!(
+                    "{path}\nExtra arguments for new tabs, after the app's own arguments. \
+                Quotes group words; no shell expansion. Put Windows paths in single quotes \
+                (for example 'C:\\Users\\me\\settings.json') or double each backslash. \
+                Restored tabs keep their original arguments."
+                ),
+                placeholder,
+                field,
+            )
+            .keywords(["launcher", "permissions", "mode", "command line", "path"]),
+        );
+    }
+    group
+}
+
+fn tab_card_group() -> SettingGroup {
+    let mut group = SettingGroup::new().title("Tab hover card").item(switch_row(
+        "Tab hover card",
+        "Show details beside a hovered tab. Turning every piece off also hides the card; \
+         the switch keeps its value. Group cards are unchanged.",
+        SettingsField::new(
+            |settings| settings.tab_card.enabled,
+            |settings, value| settings.tab_card.enabled = value,
+        ),
+    ));
+    type Piece = (
+        &'static str,
+        &'static str,
+        fn(&Settings) -> bool,
+        fn(&mut Settings, bool),
+    );
+    let pieces: [Piece; 5] = [
+        (
+            "Status",
+            "Status chip, command and elapsed working or running time.",
+            |s| s.tab_card.status,
+            |s, v| s.tab_card.status = v,
+        ),
+        (
+            "Location",
+            "Full folder and git branch.",
+            |s| s.tab_card.location,
+            |s, v| s.tab_card.location = v,
+        ),
+        (
+            "Changes",
+            "Lines added in the working tree (+N from git diff).",
+            |s| s.tab_card.changes,
+            |s, v| s.tab_card.changes = v,
+        ),
+        (
+            "Program title",
+            "The program's title when a custom tab name hides it.",
+            |s| s.tab_card.program_title,
+            |s, v| s.tab_card.program_title = v,
+        ),
+        (
+            "Session kind",
+            "Kind icon, agent or shell name, and agent mode.",
+            |s| s.tab_card.session_kind,
+            |s, v| s.tab_card.session_kind = v,
+        ),
+    ];
+    for (title, description, get, set) in pieces {
+        group = group.item(
+            bound_row(
+                title,
+                description,
+                SettingsField::new(get, set),
+                dependent_switch_control(
+                    "Tab hover card",
+                    Rc::new(|settings: &Settings| settings.tab_card.enabled),
+                ),
+            )
+            .keywords(["tab", "hover", "card", "sidebar"]),
+        );
+    }
+    group
+}
+
+/// Reads whether a parent option is on.
+type ParentFn = dyn Fn(&Settings) -> bool;
+
+/// The control of a switch row that needs another option: while `parent` reads false the
+/// switch is disabled, keeps its value, and a caption names `parent_name` (see
+/// [`DependentState`]). The next steps' history switches use it too.
+pub fn dependent_switch_control(parent_name: &'static str, parent: Rc<ParentFn>) -> Control<bool> {
+    dependent_switch_control_all(vec![(parent_name, parent)])
+}
+
+/// Like [`dependent_switch_control`] for a switch that needs several options: the caption
+/// names the first of `parents` (in order) that is off.
+pub fn dependent_switch_control_all(parents: Vec<(&'static str, Rc<ParentFn>)>) -> Control<bool> {
+    Rc::new(move |checked, binding, _, cx| {
+        let binding = binding.clone();
+        let settings = settings_file::settings(cx);
+        let states: Vec<_> = parents
+            .iter()
+            .map(|(name, parent)| (*name, parent(settings)))
+            .collect();
+        let state = DependentState::requiring(&states);
+        let switch = Switch::new("switch")
+            .checked(checked)
+            .disabled(!state.enabled)
+            .on_click(move |checked: &bool, _, cx| binding.save(*checked, cx));
+        div()
+            .flex()
+            .flex_col()
+            .items_end()
+            .gap_0p5()
+            .child(switch)
+            .children(state.caption.map(|caption| {
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(caption)
+            }))
+            .into_any_element()
+    })
+}
+
+/// The `default_shell` setting: "Automatic" (empty) or one of the installed shells, shown by
+/// its menu name and saved by its [`Launcher::id`]. A value typed in the file shows as the
+/// shell it picks (`Zsh` as Zsh), one that isn't installed as "(not found)".
+fn default_shell_row(launchers: Rc<[Launcher]>) -> SettingItem {
+    let automatic = launcher::automatic_shell(&launchers).map_or_else(
+        || SharedString::from("Automatic"),
+        |shell| format!("Automatic ({})", shell.label).into(),
+    );
+    let options: Vec<_> = std::iter::once(DropdownOption::new("", automatic))
+        .chain(launcher::installed_shells(&launchers).map(|shell| {
+            DropdownOption::new(shell.id.clone(), shell.label.clone())
+                .icon(sidebar::launcher_icon(shell.icon))
+        }))
+        .collect();
+    let automatic_is = if cfg!(windows) {
+        "Git Bash when installed"
     } else {
-        groups
+        "your login shell ($SHELL); when the list doesn't hold it, Ctrl+Shift+T opens the first \
+         shell listed"
     };
+    dropdown_row(
+        "Default shell",
+        format!(
+            "The shell the + menu lists first and Ctrl+Shift+T opens, also for the first tab \
+             when no tabs are saved. Automatic is {automatic_is}. Tabs already open keep their \
+             shell."
+        ),
+        DropdownChoices::new(options, |name| format!("{name} (not found)").into()),
+        SettingsField::new(
+            move |settings| {
+                settings.default_shell().map_or_else(String::new, |value| {
+                    launcher::configured_shell(&launchers, value)
+                        .map_or_else(|| value.to_owned(), |shell| shell.id.clone())
+                })
+            },
+            |settings, id| settings.default_shell = id,
+        ),
+    )
+    .keywords([
+        "terminal",
+        "bash",
+        "zsh",
+        "powershell",
+        "new tab",
+        "program",
+    ])
+}
+
+/// A page of `groups`. The setting module hides a page without a row: each page needs one.
+fn page(title: &'static str, groups: Vec<SettingGroup>) -> SettingPage {
     SettingPage::new(title).groups(groups)
 }
 
@@ -109,6 +565,9 @@ fn about_groups(cx: &App) -> Vec<SettingGroup> {
         .and_then(|path| path.parent())
         .map(|folder| SharedString::from(folder.display().to_string()))
         .unwrap_or_else(|| "None (no home folder): settings are not saved".into());
+    let executable: SharedString = std::env::current_exe()
+        .map(|path| path.display().to_string().into())
+        .unwrap_or_else(|_| "Unknown".into());
     vec![
         SettingGroup::new().title(about::APP_NAME).items([
             SettingItem::new(
@@ -145,6 +604,13 @@ fn about_groups(cx: &App) -> Vec<SettingGroup> {
             // Under the title: a path is too long to share the line.
             .layout(Axis::Vertical)
             .keywords(["path", "directory", "configuration"]),
+            SettingItem::new(
+                "Executable",
+                SettingField::render(move |_, _, _| div().text_sm().child(executable.clone())),
+            )
+            .description("The running copy, when several are installed.")
+            .layout(Axis::Vertical)
+            .keywords(["path", "binary", "exe", "install"]),
             SettingItem::new(
                 "Repository",
                 SettingField::render(|_, _, _| {
@@ -217,7 +683,6 @@ impl<T> Clone for Binding<T> {
 impl<T> Binding<T> {
     /// Apply `value` live for this run without writing the file (`settings_file::preview`):
     /// for each step of a gesture (a slider moved). [`Binding::save`] must end the gesture.
-    #[expect(dead_code, reason = "the font size row (next step) applies live")]
     pub fn apply(&self, value: T, cx: &mut App) {
         (self.apply)(value, cx);
     }
@@ -239,22 +704,40 @@ impl<T> Binding<T> {
 /// Draws a row's control: given the current value and how to change it.
 pub type Control<T> = Rc<dyn Fn(T, &Binding<T>, &mut Window, &mut App) -> AnyElement>;
 
+type ReadSetting<T> = Rc<dyn Fn(&Settings) -> T>;
+type WriteSetting<T> = Rc<dyn Fn(&mut Settings, T)>;
+
+/// The read/write pair for one setting, shared by every row control.
+pub struct SettingsField<T> {
+    get: ReadSetting<T>,
+    set: WriteSetting<T>,
+}
+
+impl<T> SettingsField<T> {
+    pub fn new(
+        get: impl Fn(&Settings) -> T + 'static,
+        set: impl Fn(&mut Settings, T) + 'static,
+    ) -> Self {
+        Self {
+            get: Rc::new(get),
+            set: Rc::new(set),
+        }
+    }
+}
+
 /// A row bound to a field of `Settings`: `get` reads it, `set` writes it. `control` draws the
 /// value and changes it through its [`Binding`] (live with `apply`, to the file with `save`).
 /// "Reset to default" shows under the control, and the page's reset includes the row, while
 /// the value differs from `get(&Settings::default())`. Titles must differ between rows: they
 /// key the rows' control states.
-#[expect(dead_code, reason = "rows come with the next steps")]
 pub fn bound_row<T: Clone + PartialEq + 'static>(
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
-    get: impl Fn(&Settings) -> T + 'static,
-    set: impl Fn(&mut Settings, T) + 'static,
+    field: SettingsField<T>,
     control: Control<T>,
 ) -> SettingItem {
     let title = title.into();
-    let get = Rc::new(get);
-    let set = Rc::new(set);
+    let SettingsField { get, set } = field;
     let binding = Binding {
         key: format!("settings-row-{title}").into(),
         apply: Rc::new({
@@ -307,18 +790,15 @@ pub fn bound_row<T: Clone + PartialEq + 'static>(
 }
 
 /// A switch row for a `bool` field of `Settings` (see [`bound_row`]); each click saves.
-#[expect(dead_code, reason = "rows come with the next steps")]
 pub fn switch_row(
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
-    get: impl Fn(&Settings) -> bool + 'static,
-    set: impl Fn(&mut Settings, bool) + 'static,
+    field: SettingsField<bool>,
 ) -> SettingItem {
     bound_row(
         title,
         description,
-        get,
-        set,
+        field,
         Rc::new(|checked, binding, _, _| {
             let binding = binding.clone();
             Switch::new("switch")
@@ -331,20 +811,17 @@ pub fn switch_row(
 
 /// A text field row for a `String` field of `Settings` (see [`bound_row`]): saved when the
 /// field loses the keyboard or on Enter, not per key.
-#[expect(dead_code, reason = "rows come with the next steps")]
 pub fn text_row(
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
     placeholder: impl Into<SharedString>,
-    get: impl Fn(&Settings) -> String + 'static,
-    set: impl Fn(&mut Settings, String) + 'static,
+    field: SettingsField<String>,
 ) -> SettingItem {
     let placeholder = placeholder.into();
     bound_row(
         title,
         description,
-        get,
-        set,
+        field,
         Rc::new(move |value, binding, window, cx| {
             text_field(value, binding, placeholder.clone(), window, cx)
         }),
@@ -388,4 +865,173 @@ fn text_field(
         input.update(cx, |input, cx| input.set_value(value, window, cx));
     }
     Input::new(&input).small().w_64().into_any_element()
+}
+
+/// A slider's bounds and step (see [`slider_row`]).
+#[derive(Clone, Copy)]
+pub struct SliderRange {
+    pub min: f32,
+    pub max: f32,
+    pub step: f32,
+}
+
+/// A slider row for an `f32` field of `Settings` (see [`bound_row`]), with the value written
+/// next to it: applied live while dragged, saved once when released. A value outside `range`
+/// (set in the file) shows with the thumb at the end.
+pub fn slider_row(
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
+    range: SliderRange,
+    field: SettingsField<f32>,
+) -> SettingItem {
+    bound_row(
+        title,
+        description,
+        field,
+        Rc::new(move |value, binding, window, cx| slider_field(value, range, binding, window, cx)),
+    )
+}
+
+/// A slider's state, kept across renders (see [`Binding::state_key`]).
+struct SliderField {
+    slider: Entity<SliderState>,
+    _events: Subscription,
+}
+
+fn slider_field(
+    value: f32,
+    range: SliderRange,
+    binding: &Binding<f32>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let shown = value.clamp(range.min, range.max);
+    let slider = use_slider(range, shown, binding, window, cx);
+    sync_slider(&slider, shown, window, cx);
+    div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .child(Slider::new(&slider).w_48())
+        .child(div().w_8().text_sm().text_right().child(format!("{value}")))
+        .into_any_element()
+}
+
+fn use_slider(
+    range: SliderRange,
+    shown: f32,
+    binding: &Binding<f32>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<SliderState> {
+    let state = window.use_keyed_state(binding.state_key("slider"), cx, |_, cx| {
+        let slider = cx.new(|_| {
+            SliderState::new()
+                .min(range.min)
+                .max(range.max)
+                .step(range.step)
+                .default_value(shown)
+        });
+        let binding = binding.clone();
+        let events = cx.subscribe(&slider, move |_, _, event: &SliderEvent, cx| match event {
+            SliderEvent::Change(value) => binding.apply(value.start(), cx),
+            SliderEvent::Release(value) => binding.save(value.start(), cx),
+        });
+        SliderField {
+            slider,
+            _events: events,
+        }
+    });
+    state.read(cx).slider.clone()
+}
+
+fn sync_slider(slider: &Entity<SliderState>, shown: f32, window: &mut Window, cx: &mut App) {
+    // A value changed elsewhere (reset, the file reloaded) moves the thumb.
+    if slider.read(cx).value().start() != shown {
+        slider.update(cx, |slider, cx| slider.set_value(shown, window, cx));
+    }
+}
+
+/// One choice of a [`dropdown_row`]: the value saved, the label shown, and an optional icon.
+#[derive(Clone)]
+pub struct DropdownOption {
+    pub value: SharedString,
+    pub label: SharedString,
+    pub icon: Option<Icon>,
+}
+
+impl DropdownOption {
+    pub fn new(value: impl Into<SharedString>, label: impl Into<SharedString>) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+            icon: None,
+        }
+    }
+
+    pub fn icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+}
+
+pub struct DropdownChoices {
+    options: Rc<[DropdownOption]>,
+    unlisted: Rc<dyn Fn(&str) -> SharedString>,
+}
+
+impl DropdownChoices {
+    pub fn new(
+        options: impl Into<Rc<[DropdownOption]>>,
+        unlisted: impl Fn(&str) -> SharedString + 'static,
+    ) -> Self {
+        Self {
+            options: options.into(),
+            unlisted: Rc::new(unlisted),
+        }
+    }
+}
+
+/// A dropdown row for a `String` field of `Settings` (see [`bound_row`]): a button showing the
+/// chosen option's label that opens a menu of `options`; picking one saves it at once. A
+/// value that isn't one of them (set in the file) shows as `unlisted(value)`.
+pub fn dropdown_row(
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
+    choices: DropdownChoices,
+    field: SettingsField<String>,
+) -> SettingItem {
+    let DropdownChoices { options, unlisted } = choices;
+    bound_row(
+        title,
+        description,
+        field,
+        Rc::new(move |value: String, binding, _, _| {
+            let chosen = options.iter().find(|option| option.value == value.as_str());
+            let label = chosen.map_or_else(|| unlisted(&value), |option| option.label.clone());
+            let (options, binding) = (options.clone(), binding.clone());
+            // The id keys the menu's open state: unique per row (see `Binding::state_key`).
+            Button::new(binding.state_key("dropdown"))
+                .label(label)
+                .when_some(chosen.and_then(|option| option.icon.clone()), Button::icon)
+                .dropdown_caret(true)
+                .outline()
+                .small()
+                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                    let menu = options.iter().fold(menu, |menu, option| {
+                        let binding = binding.clone();
+                        let picked = option.value.to_string();
+                        menu.item(
+                            PopupMenuItem::new(option.label.clone())
+                                .when_some(option.icon.clone(), PopupMenuItem::icon)
+                                .checked(option.value == value.as_str())
+                                .on_click(move |_, _, cx| binding.save(picked.clone(), cx)),
+                        )
+                    });
+                    // The check on the right: on the left an option's icon would hide it.
+                    menu.check_side(Side::Right).scrollable(true)
+                })
+                .into_any_element()
+        }),
+    )
 }

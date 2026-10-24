@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use term_core::alacritty_terminal::index::{Column, Line, Point, Side};
 use term_core::alacritty_terminal::selection::SelectionType;
+use term_core::alacritty_terminal::term::ClipboardType;
 use term_core::{LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions};
 use workspace_model::ProgressState;
 
@@ -107,13 +108,13 @@ fn exit_code_is_reported() {
 }
 
 #[test]
-fn progress_changes_are_reported_once_each() {
-    let script = r"printf '\033]9;4;3\007\033]9;4;3\033\\'; sleep 0.2; printf '\033]9;4;0\007'";
+fn progress_reports_in_each_read_are_forwarded() {
+    let script = r"printf '\033]9;4;3\033\\'; sleep 0.2; printf '\033]9;4;0\007'";
     let (_session, rx) = spawn_sh(script, TermDimensions::new(80, 24));
     let progress: Vec<_> = wait_for_exit(&rx)
         .into_iter()
         .filter_map(|event| match event {
-            SessionEvent::ProgressChanged(state) => Some(state),
+            SessionEvent::ProgressChanged { state, .. } => Some(state),
             _ => None,
         })
         .collect();
@@ -122,6 +123,42 @@ fn progress_changes_are_reported_once_each() {
         progress,
         vec![ProgressState::Indeterminate, ProgressState::Hidden]
     );
+}
+
+#[test]
+fn repeated_progress_reports_keep_their_io_observation_times() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let before = SystemTime::now();
+    let script = r"printf '\033]9;4;3\007'; read _; printf '\033]9;4;3\007'";
+    let (session, rx) = spawn_sh(script, TermDimensions::new(80, 24));
+    let deadline = Instant::now() + TIMEOUT;
+    let first_at = loop {
+        let event = rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .expect("first progress report");
+        if let SessionEvent::ProgressChanged { state, at } = event {
+            assert_eq!(state, ProgressState::Indeterminate);
+            break at;
+        }
+    };
+    let released_at = SystemTime::now();
+    session.write(&b"\r"[..]);
+    let progress: Vec<_> = wait_for_exit(&rx)
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::ProgressChanged { state, at } => Some((state, at)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(progress.len(), 1, "the repeated state must reach the UI");
+    let (state, second_at) = progress[0];
+    assert_eq!(state, ProgressState::Indeterminate);
+    let micros = |time: SystemTime| time.duration_since(UNIX_EPOCH).unwrap().as_micros() as u64;
+    assert!(first_at >= micros(before));
+    assert!(first_at <= micros(released_at));
+    assert!(second_at >= micros(released_at));
+    assert!(second_at <= micros(SystemTime::now()));
 }
 
 #[test]
@@ -186,6 +223,21 @@ fn title_changes_are_forwarded() {
     let events = wait_for_exit(&rx);
 
     assert!(events.contains(&SessionEvent::TitleChanged(Some("agent title".into()))));
+}
+
+#[test]
+fn clipboard_writes_are_forwarded() {
+    // "copied" in base64.
+    let (_session, rx) = spawn_sh(
+        "printf '\\033]52;c;Y29waWVk\\007'",
+        TermDimensions::new(80, 24),
+    );
+    let events = wait_for_exit(&rx);
+
+    assert!(events.contains(&SessionEvent::ClipboardStore(
+        ClipboardType::Clipboard,
+        "copied".into()
+    )));
 }
 
 #[cfg(target_os = "linux")]

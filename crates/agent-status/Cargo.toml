@@ -9,6 +9,7 @@ publish.workspace = true
 interprocess.workspace = true
 log.workspace = true
 serde_json.workspace = true
+workspace-model.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

@@ -55,6 +55,12 @@ const SUB: u8 = 0x1a;
 const MARK_PREFIX: &[u8] = b"133;";
 /// The folder as text: the last parameter, everything after it being the path.
 const PATH_PARAM: &[u8] = b";path=";
+const TOKEN_KEY: &[u8] = b"aw";
+const COMMAND_KEY: &[u8] = b"cmd";
+const FOLDER_KEY: &[u8] = b"cwd";
+const CURSOR_KEY: &[u8] = b"cur";
+const BUFFER_KEY: &[u8] = b"buf";
+const POST_KEY: &[u8] = b"post";
 /// Kept of a mark's payload: the scripts send command lines of up to 4096 bytes, hex-encoded.
 const MAX_PAYLOAD: usize = 8192 + 256;
 /// Kept of a CSI's parameters: enough for `?2026`.
@@ -122,28 +128,7 @@ impl Osc133Scanner {
                 }
             }
             State::Escape => self.escape(byte),
-            State::Csi => match byte {
-                ESC => self.state = State::Escape,
-                CAN | SUB => self.state = State::Ground,
-                0x20..=0x3f => {
-                    if self.csi.len() <= MAX_CSI {
-                        self.csi.push(byte);
-                    }
-                }
-                0x40..=0x7e => {
-                    self.state = State::Ground;
-                    if self.csi == SYNC_MODE {
-                        match byte {
-                            b'h' => self.in_sync = true,
-                            b'l' => self.in_sync = false,
-                            _ => {}
-                        }
-                    }
-                }
-                // Other C0 controls run inside a CSI without ending it.
-                0x00..=0x1f => {}
-                _ => self.state = State::Ground,
-            },
+            State::Csi => self.advance_csi(byte),
             State::Osc => match byte {
                 BEL => return self.finish(),
                 ESC => self.state = State::OscEscape,
@@ -158,6 +143,27 @@ impl Osc133Scanner {
             }
         }
         None
+    }
+
+    fn advance_csi(&mut self, byte: u8) {
+        match byte {
+            ESC => self.state = State::Escape,
+            CAN | SUB => self.state = State::Ground,
+            0x20..=0x3f => {
+                if self.csi.len() <= MAX_CSI {
+                    self.csi.push(byte);
+                }
+            }
+            0x40..=0x7e => {
+                self.state = State::Ground;
+                if self.csi == SYNC_MODE && matches!(byte, b'h' | b'l') {
+                    self.in_sync = byte == b'h';
+                }
+            }
+            // Other C0 controls run inside a CSI without ending it.
+            0x00..=0x1f => {}
+            _ => self.state = State::Ground,
+        }
     }
 
     /// Keep a payload byte, as long as the payload may still be a mark.
@@ -199,67 +205,11 @@ impl Osc133Scanner {
         self.state = State::Ground;
         let rest = self.payload.strip_prefix(MARK_PREFIX)?;
         let (&letter, after) = rest.split_first()?;
-        let mut params = Params::default();
-        let (after, path) = match after
-            .windows(PATH_PARAM.len())
-            .position(|window| window == PATH_PARAM)
-        {
-            Some(at) => (&after[..at], Some(&after[at + PATH_PARAM.len()..])),
-            None => (after, None),
-        };
-        if !after.is_empty() {
-            let after = after.strip_prefix(b";")?;
-            for param in after.split(|&byte| byte == b';') {
-                let (key, value) = match param.iter().position(|&byte| byte == b'=') {
-                    Some(at) => (&param[..at], &param[at + 1..]),
-                    None => (param, &b""[..]),
-                };
-                match key {
-                    b"aw" => params.token = Some(value),
-                    b"cmd" => params.command = Some(value),
-                    b"cwd" => params.folder = Some(value),
-                    b"cur" => params.cursor = Some(value),
-                    b"buf" => params.buffer = Some(value),
-                    b"post" => params.post = value == b"1",
-                    _ => {}
-                }
-            }
-        }
+        let params = Params::parse(after)?;
         if self.token.is_empty() || params.token != Some(self.token.as_slice()) {
             return None;
         }
-        // A cut payload may end in the middle of the text.
-        let text = |value: Option<&[u8]>| {
-            value
-                .filter(|_| !self.truncated)
-                .and_then(decode_hex)
-                .and_then(|bytes| String::from_utf8(bytes).ok())
-        };
-        Some(match letter {
-            b'A' => PromptMark::PromptStart,
-            b'B' => PromptMark::CommandStart,
-            b'C' => PromptMark::CommandExecuted(text(params.command)),
-            b'D' => {
-                let path = path
-                    .filter(|path| !self.truncated && !path.is_empty())
-                    .and_then(|path| String::from_utf8(path.to_vec()).ok());
-                PromptMark::CommandFinished(text(params.folder).or(path).map(PathBuf::from))
-            }
-            b'L' => {
-                let cursor = params
-                    .cursor
-                    .and_then(|value| std::str::from_utf8(value).ok()?.parse().ok());
-                let line = text(params.buffer)
-                    .zip(cursor)
-                    .map(|(text, cursor)| CommandLine {
-                        text,
-                        cursor,
-                        shell_suggests: params.post,
-                    });
-                PromptMark::CommandLine(line)
-            }
-            _ => return None,
-        })
+        params.into_mark(letter, self.truncated)
     }
 }
 
@@ -270,7 +220,83 @@ struct Params<'a> {
     folder: Option<&'a [u8]>,
     cursor: Option<&'a [u8]>,
     buffer: Option<&'a [u8]>,
+    path: Option<&'a [u8]>,
     post: bool,
+}
+
+impl<'a> Params<'a> {
+    fn parse(after: &'a [u8]) -> Option<Self> {
+        let (after, path) = match after
+            .windows(PATH_PARAM.len())
+            .position(|window| window == PATH_PARAM)
+        {
+            Some(at) => (&after[..at], Some(&after[at + PATH_PARAM.len()..])),
+            None => (after, None),
+        };
+        let mut params = Self {
+            path,
+            ..Self::default()
+        };
+        if !after.is_empty() {
+            let after = after.strip_prefix(b";")?;
+            for param in after.split(|&byte| byte == b';') {
+                let (key, value) = match param.iter().position(|&byte| byte == b'=') {
+                    Some(at) => (&param[..at], &param[at + 1..]),
+                    None => (param, &b""[..]),
+                };
+                params.set(key, value);
+            }
+        }
+        Some(params)
+    }
+
+    fn set(&mut self, key: &[u8], value: &'a [u8]) {
+        match key {
+            TOKEN_KEY => self.token = Some(value),
+            COMMAND_KEY => self.command = Some(value),
+            FOLDER_KEY => self.folder = Some(value),
+            CURSOR_KEY => self.cursor = Some(value),
+            BUFFER_KEY => self.buffer = Some(value),
+            POST_KEY => self.post = value == b"1",
+            _ => {}
+        }
+    }
+
+    fn into_mark(self, letter: u8, truncated: bool) -> Option<PromptMark> {
+        // A cut payload may end in the middle of the text.
+        let text = |value: Option<&[u8]>| {
+            value
+                .filter(|_| !truncated)
+                .and_then(decode_hex)
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+        };
+        Some(match letter {
+            b'A' => PromptMark::PromptStart,
+            b'B' => PromptMark::CommandStart,
+            b'C' => PromptMark::CommandExecuted(text(self.command)),
+            b'D' => {
+                let path = self
+                    .path
+                    .filter(|path| !truncated && !path.is_empty())
+                    .and_then(|path| String::from_utf8(path.to_vec()).ok());
+                PromptMark::CommandFinished(text(self.folder).or(path).map(PathBuf::from))
+            }
+            b'L' => {
+                let cursor = self
+                    .cursor
+                    .and_then(|value| std::str::from_utf8(value).ok()?.parse().ok());
+                let line = text(self.buffer)
+                    .zip(cursor)
+                    .map(|(text, cursor)| CommandLine {
+                        text,
+                        cursor,
+                        shell_suggests: self.post,
+                    });
+                PromptMark::CommandLine(line)
+            }
+            _ => return None,
+        })
+    }
 }
 
 /// Bytes from hex digits (either case); `None` when `hex` is not hex.
@@ -302,173 +328,4 @@ pub fn new_mark_token() -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const TOKEN: &str = "t0k";
-
-    fn marks(chunks: &[&[u8]]) -> Vec<(usize, usize, PromptMark)> {
-        let mut scanner = Osc133Scanner::new(TOKEN);
-        let mut found = Vec::new();
-        for (chunk_index, chunk) in chunks.iter().enumerate() {
-            let mut offset = 0;
-            while let Some((end, mark)) = scanner.scan(&chunk[offset..]) {
-                offset += end;
-                found.push((chunk_index, offset, mark));
-            }
-        }
-        found
-    }
-
-    fn kinds(chunks: &[&[u8]]) -> Vec<PromptMark> {
-        marks(chunks).into_iter().map(|(_, _, mark)| mark).collect()
-    }
-
-    #[test]
-    fn finds_marks_with_either_terminator() {
-        let output = b"\x1b]133;A;aw=t0k\x07$ \x1b]133;B;aw=t0k\x1b\\ls\r\n\x1b]133;C;aw=t0k\x07";
-        let found = marks(&[output]);
-        assert_eq!(
-            found,
-            vec![
-                (0, 15, PromptMark::PromptStart),
-                (0, 33, PromptMark::CommandStart),
-                (0, 52, PromptMark::CommandExecuted(None)),
-            ]
-        );
-    }
-
-    #[test]
-    fn marks_without_the_token_are_ignored() {
-        assert!(marks(&[b"\x1b]133;A\x07"]).is_empty());
-        assert!(marks(&[b"\x1b]133;B;aw=other\x07"]).is_empty());
-        assert!(marks(&[b"\x1b]133;C;cmd=6c73;aw=t0kx\x07"]).is_empty());
-        let mut scanner = Osc133Scanner::new("");
-        assert_eq!(scanner.scan(b"\x1b]133;A;aw=\x07"), None);
-    }
-
-    #[test]
-    fn command_lines_are_decoded() {
-        assert_eq!(
-            kinds(&[b"\x1b]133;C;aw=t0k;cmd=6769742073C3A9\x07"]),
-            [PromptMark::CommandExecuted(Some("git s\u{e9}".into()))]
-        );
-        // Not hex, odd length, not UTF-8: the mark counts, without its command.
-        for bad in [&b"zz"[..], b"676", b"ff"] {
-            let mut output = b"\x1b]133;C;aw=t0k;cmd=".to_vec();
-            output.extend_from_slice(bad);
-            output.push(BEL);
-            assert_eq!(kinds(&[&output]), [PromptMark::CommandExecuted(None)]);
-        }
-        assert_eq!(
-            kinds(&[b"\x1b]133;L;aw=t0k;cur=1;buf=6c73;post=1\x07"]),
-            [PromptMark::CommandLine(Some(CommandLine {
-                text: "ls".into(),
-                cursor: 1,
-                shell_suggests: true,
-            }))]
-        );
-        assert_eq!(
-            kinds(&[b"\x1b]133;L;aw=t0k\x07"]),
-            [PromptMark::CommandLine(None)]
-        );
-    }
-
-    #[test]
-    fn folders_are_decoded() {
-        assert_eq!(
-            kinds(&[b"\x1b]133;D;aw=t0k;cwd=433a5cc3a9\x07"]),
-            [PromptMark::CommandFinished(Some(PathBuf::from(
-                "C:\\\u{e9}"
-            )))]
-        );
-        assert_eq!(
-            kinds(&[b"\x1b]133;D;aw=t0k;cwd=zz\x07"]),
-            [PromptMark::CommandFinished(None)]
-        );
-    }
-
-    #[test]
-    fn text_paths_run_to_the_end_of_the_mark() {
-        assert_eq!(
-            kinds(&[b"\x1b]133;D;aw=t0k;path=C:\\a;b=c\x1b\\"]),
-            [PromptMark::CommandFinished(Some(PathBuf::from(
-                "C:\\a;b=c"
-            )))]
-        );
-        // The token must come before the path.
-        assert!(kinds(&[b"\x1b]133;D;path=C:\\;aw=t0k\x07"]).is_empty());
-    }
-
-    #[test]
-    fn mark_split_across_reads_is_found_where_it_ends() {
-        let found = marks(&[b"text\x1b]13", b"3;B;aw=", b"t0k\x07rest"]);
-        assert_eq!(found, vec![(2, 4, PromptMark::CommandStart)]);
-        let found = marks(&[b"\x1b]133;D;aw=t0k\x1b", b"\\"]);
-        assert_eq!(found, vec![(1, 1, PromptMark::CommandFinished(None))]);
-    }
-
-    #[test]
-    fn other_sequences_are_ignored() {
-        assert!(marks(&[b"\x1b]0;133;A;aw=t0k\x07"]).is_empty());
-        assert!(marks(&[b"\x1b]1337;A;aw=t0k\x07"]).is_empty());
-        assert!(marks(&[b"\x1b]133;AB;aw=t0k\x07"]).is_empty());
-        assert!(marks(&[b"\x1b]133;E;aw=t0k\x07"]).is_empty());
-        assert!(marks(&[b"\x1b[133;A;aw=t0k\x07"]).is_empty());
-        assert!(marks(&[b"]133;A;aw=t0k\x07"]).is_empty());
-    }
-
-    #[test]
-    fn aborted_osc_is_not_a_mark() {
-        assert!(marks(&[b"\x1b]133;A;aw=t0k\x18\x07"]).is_empty());
-        // ESC that is not ST aborts the OSC and starts a new sequence.
-        let found = marks(&[b"\x1b]133;A\x1b]133;B;aw=t0k\x07"]);
-        assert_eq!(found, vec![(0, 22, PromptMark::CommandStart)]);
-    }
-
-    #[test]
-    fn long_payloads_do_not_grow_the_buffer() {
-        let mut scanner = Osc133Scanner::new(TOKEN);
-        let mut long = b"\x1b]52;c;".to_vec();
-        long.extend(std::iter::repeat_n(b'x', 100_000));
-        assert_eq!(scanner.scan(&long), None);
-        assert!(scanner.payload.len() <= MARK_PREFIX.len());
-        assert_eq!(
-            scanner.scan(b"\x07\x1b]133;B;aw=t0k\x07"),
-            Some((16, PromptMark::CommandStart))
-        );
-        // A mark too long to keep still counts, without its text.
-        let mut long = b"\x1b]133;C;aw=t0k;cmd=".to_vec();
-        long.extend(std::iter::repeat_n(b'6', 100_000));
-        long.push(BEL);
-        assert_eq!(
-            scanner.scan(&long),
-            Some((long.len(), PromptMark::CommandExecuted(None)))
-        );
-        assert!(scanner.payload.len() <= MAX_PAYLOAD);
-    }
-
-    #[test]
-    fn synchronized_updates_are_followed() {
-        let mut scanner = Osc133Scanner::new(TOKEN);
-        assert_eq!(scanner.scan(b"\x1b[?2026h"), None);
-        assert!(scanner.in_sync());
-        assert!(scanner.scan(b"\x1b]133;A;aw=t0k\x07").is_some());
-        assert!(scanner.in_sync());
-        scanner.scan(b"\x1b[?20");
-        assert!(scanner.in_sync());
-        scanner.scan(b"26l");
-        assert!(!scanner.in_sync());
-        // Other modes and other final bytes leave it alone.
-        scanner.scan(b"\x1b[?2026$p\x1b[?25h\x1b[2026h");
-        assert!(!scanner.in_sync());
-    }
-
-    #[test]
-    fn tokens_are_random_hex() {
-        let token = new_mark_token();
-        assert_eq!(token.len(), 32);
-        assert!(token.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        assert_ne!(token, new_mark_token());
-    }
-}
+mod tests;

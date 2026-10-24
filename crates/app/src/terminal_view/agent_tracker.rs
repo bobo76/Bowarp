@@ -1,5 +1,5 @@
 //! An agent session's status: from Claude Code hooks, or from Copilot CLI's progress reports
-//! once it sent one.
+//! once it sent one (or a permission hook requested attention).
 
 use std::time::{Duration, Instant};
 
@@ -62,6 +62,7 @@ impl AgentTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use workspace_model::ProgressState;
 
     #[test]
     fn a_status_change_starts_a_new_lap() {
@@ -70,7 +71,10 @@ mod tests {
         assert_eq!(agent.working_for(start), None);
 
         let later = start + Duration::from_secs(3);
-        let change = agent.update(|state| state.apply_progress(true), later);
+        let change = agent.update(
+            |state| state.apply_progress(ProgressState::Indeterminate, 1),
+            later,
+        );
         assert_eq!(
             change,
             Some(StatusChange {
@@ -88,15 +92,27 @@ mod tests {
     fn the_same_status_again_is_no_change() {
         let now = Instant::now();
         let mut agent = AgentTracker::new(now);
-        agent.update(|state| state.apply_progress(true), now);
-        assert_eq!(agent.update(|state| state.apply_progress(true), now), None);
+        agent.update(
+            |state| state.apply_progress(ProgressState::Indeterminate, 1),
+            now,
+        );
+        assert_eq!(
+            agent.update(
+                |state| state.apply_progress(ProgressState::Indeterminate, 2),
+                now
+            ),
+            None
+        );
     }
 
     #[test]
     fn exit_stops_the_working_lap() {
         let now = Instant::now();
         let mut agent = AgentTracker::new(now);
-        agent.update(|state| state.apply_progress(true), now);
+        agent.update(
+            |state| state.apply_progress(ProgressState::Indeterminate, 1),
+            now,
+        );
         agent.exit(now);
         assert_eq!(agent.status(), AgentStatus::Exited);
         assert_eq!(agent.working_for(now), None);

@@ -21,8 +21,8 @@ use gpui_kit::{
 use notify::EventKind;
 use notify::event::ModifyKind;
 use workspace_model::file_tree::{
-    self, DirEntry, ExpandedFolders, FileKind, TreeRow, entry_folder, parent_folder, relative_path,
-    validate_name,
+    self, DirEntry, EntryKind, ExpandedFolders, FileKind, TreeRow, entry_folder, entry_name,
+    parent_folder, relative_path, validate_name,
 };
 
 use crate::assets::{
@@ -33,9 +33,15 @@ use crate::folder_watcher::{FolderWatcher, WatchedFolders, WatchesFolders};
 use crate::launcher::Launcher;
 use crate::sidebar;
 
-pub const EXPLORER_WIDTH: f32 = 300.;
 const ROW_HEIGHT: f32 = 24.;
 const INDENT: f32 = 14.;
+const ROW_LEFT_PADDING: f32 = 6.;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CdAvailability {
+    Available,
+    Unavailable,
+}
 
 /// What the explorer asks of the workspace.
 pub enum ExplorerEvent {
@@ -93,7 +99,7 @@ enum ListRow {
 pub struct FileExplorer {
     root: Option<PathBuf>,
     /// Whether the selected tab runs a shell, which "cd to directory" needs.
-    can_cd: bool,
+    cd: CdAvailability,
     /// The agent CLIs "Open in new tab with" offers.
     agents: Rc<[Launcher]>,
     expanded: ExpandedFolders,
@@ -139,7 +145,7 @@ impl FileExplorer {
     pub fn new(agents: Vec<Launcher>, window: &Window, cx: &mut Context<Self>) -> Self {
         Self {
             root: None,
-            can_cd: false,
+            cd: CdAvailability::Unavailable,
             agents: agents.into(),
             expanded: ExpandedFolders::default(),
             listings: HashMap::new(),
@@ -150,10 +156,10 @@ impl FileExplorer {
         }
     }
 
-    /// Show `root` (the selected tab's folder). `can_cd`: whether that tab runs a shell.
-    pub fn set_root(&mut self, root: Option<PathBuf>, can_cd: bool, cx: &mut Context<Self>) {
-        if can_cd != self.can_cd {
-            self.can_cd = can_cd;
+    /// Show `root` (the selected tab's folder) with the tab's directory-change capability.
+    pub fn set_root(&mut self, root: Option<PathBuf>, cd: CdAvailability, cx: &mut Context<Self>) {
+        if cd != self.cd {
+            self.cd = cd;
             cx.notify();
         }
         if root == self.root {
@@ -267,28 +273,30 @@ impl FileExplorer {
         list
     }
 
-    fn click(&mut self, path: PathBuf, is_dir: bool, cx: &mut Context<Self>) {
-        if is_dir && let Some(root) = self.root.clone() {
-            self.expanded.toggle(&root, &path);
-            self.selected = Some(path);
+    fn click(&mut self, row: TreeRow, cx: &mut Context<Self>) {
+        if row.kind == EntryKind::Folder
+            && let Some(root) = self.root.clone()
+        {
+            self.expanded.toggle(&root, &row.path);
+            self.selected = Some(row.path);
             self.refresh(cx);
             return;
         }
-        self.selected = Some(path.clone());
-        cx.emit(ExplorerEvent::OpenFile(path));
+        self.selected = Some(row.path.clone());
+        cx.emit(ExplorerEvent::OpenFile(row.path));
         cx.notify();
     }
 
     fn run_command(
         &mut self,
         command: EntryCommand,
-        path: PathBuf,
-        is_dir: bool,
+        row: TreeRow,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let path = row.path.clone();
         self.selected = Some(path.clone());
-        let folder = entry_folder(&path, is_dir).to_path_buf();
+        let folder = entry_folder(&path, row.kind).to_path_buf();
         match command {
             EntryCommand::NewFile => self.start_edit(EditTarget::NewFile(folder), window, cx),
             EntryCommand::CdTo => cx.emit(ExplorerEvent::CdTo(folder)),
@@ -300,7 +308,7 @@ impl FileExplorer {
             }
             EntryCommand::Reveal => cx.reveal_path(&path),
             EntryCommand::Rename => self.start_edit(EditTarget::Rename(path), window, cx),
-            EntryCommand::Delete => self.confirm_delete(path, is_dir, window, cx),
+            EntryCommand::Delete => self.confirm_delete(row, window, cx),
             EntryCommand::CopyPath => copy_text(path.display().to_string(), cx),
             EntryCommand::CopyRelativePath => {
                 if let Some(root) = &self.root {
@@ -320,10 +328,7 @@ impl FileExplorer {
                 }
                 String::new()
             }
-            EditTarget::Rename(path) => path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+            EditTarget::Rename(path) => entry_name(path),
         };
         let input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -402,21 +407,14 @@ impl FileExplorer {
         Ok(Some(target))
     }
 
-    fn confirm_delete(
-        &mut self,
-        path: PathBuf,
-        is_dir: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let description = if is_dir {
-            "The folder and everything in it are deleted permanently, not moved to the trash."
-        } else {
-            "The file is deleted permanently, not moved to the trash."
+    fn confirm_delete(&mut self, row: TreeRow, window: &mut Window, cx: &mut Context<Self>) {
+        let name = entry_name(&row.path);
+        let path = row.path;
+        let description = match row.kind {
+            EntryKind::Folder => {
+                "The folder and everything in it are deleted permanently, not moved to the trash."
+            }
+            EntryKind::File => "The file is deleted permanently, not moved to the trash.",
         };
         let explorer = cx.entity().downgrade();
         window.open_alert_dialog(cx, move |alert, _, _| {
@@ -468,23 +466,28 @@ impl FileExplorer {
     }
 
     fn entry_menu(
-        explorer: WeakEntity<Self>,
-        path: PathBuf,
-        is_dir: bool,
-        is_root: bool,
-        can_cd: bool,
-        agents: Rc<[Launcher]>,
-    ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+        &self,
+        row: TreeRow,
+        cx: &Context<Self>,
+    ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static + use<>
+    {
+        let explorer = cx.entity().downgrade();
+        let agents = self.agents.clone();
+        let cd = self.cd;
         move |menu, window, cx| {
             let item = |label: &'static str, command: EntryCommand, enabled: bool| {
-                command_item(&explorer, &path, is_dir, label.into(), command, enabled)
+                command_item(&explorer, &row, label.into(), command, enabled)
             };
-            let (submenu_explorer, submenu_path) = (explorer.clone(), path.clone());
+            let (submenu_explorer, submenu_row) = (explorer.clone(), row.clone());
             let agents = agents.clone();
-            menu.min_w(px(200.))
+            menu.min_w(px(crate::ui_dimensions::MENU_WIDTH))
                 .item(item("New file", EntryCommand::NewFile, true))
                 .separator()
-                .item(item("cd to directory", EntryCommand::CdTo, can_cd))
+                .item(item(
+                    "cd to directory",
+                    EntryCommand::CdTo,
+                    cd == CdAvailability::Available,
+                ))
                 .item(item("Open in new tab", EntryCommand::OpenInNewTab, true))
                 .submenu("Open in new tab with", window, cx, move |menu, _, _| {
                     agents
@@ -492,16 +495,11 @@ impl FileExplorer {
                         .enumerate()
                         .fold(menu, |menu, (index, agent)| {
                             let installed = agent.program.is_some();
-                            let label = if installed {
-                                agent.label.clone()
-                            } else {
-                                format!("{} (not installed)", agent.label)
-                            };
+                            let label = agent.display_label();
                             menu.item(
                                 command_item(
                                     &submenu_explorer,
-                                    &submenu_path,
-                                    is_dir,
+                                    &submenu_row,
                                     label.into(),
                                     EntryCommand::OpenInNewTabWith(index),
                                     installed,
@@ -511,8 +509,8 @@ impl FileExplorer {
                         })
                 })
                 .item(item("Reveal in file manager", EntryCommand::Reveal, true))
-                .item(item("Rename", EntryCommand::Rename, !is_root))
-                .item(item("Delete", EntryCommand::Delete, !is_root))
+                .item(item("Rename", EntryCommand::Rename, row.depth != 0))
+                .item(item("Delete", EntryCommand::Delete, row.depth != 0))
                 .separator()
                 .item(item("Copy path", EntryCommand::CopyPath, true))
                 .item(item(
@@ -526,13 +524,12 @@ impl FileExplorer {
     fn render_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
-        let indent = |depth: usize| px(6. + depth as f32 * INDENT);
         match &self.rows[index] {
             ListRow::Error { depth, message } => div()
                 .h(px(ROW_HEIGHT))
                 .flex()
                 .items_center()
-                .pl(indent(*depth) + px(INDENT + 4.))
+                .pl(row_indent(*depth) + px(INDENT + 4.))
                 .text_xs()
                 .text_color(muted)
                 .child(format!("Can't read: {message}"))
@@ -543,62 +540,45 @@ impl FileExplorer {
                 .child(Icon::new(IconName::File).small().text_color(muted))
                 .children(self.name_editor(cx))
                 .into_any_element(),
-            ListRow::Entry(row) => {
-                let path = row.path.clone();
-                let is_dir = row.is_dir;
-                let selected = self.selected.as_ref() == Some(&row.path);
-                let renaming = matches!(
-                    &self.editing,
-                    Some(NameEdit { target: EditTarget::Rename(target), .. }) if *target == row.path
-                );
-                let hovered = sidebar::hover_background(cx);
-                let menu = Self::entry_menu(
-                    cx.entity().downgrade(),
-                    row.path.clone(),
-                    is_dir,
-                    row.depth == 0,
-                    self.can_cd,
-                    self.agents.clone(),
-                );
-                let chevron = if !is_dir {
-                    div().w(px(INDENT)).flex_none().into_any_element()
-                } else {
-                    let icon = if row.expanded {
-                        IconName::ChevronDown
-                    } else {
-                        IconName::ChevronRight
-                    };
-                    Icon::new(icon).small().text_color(muted).into_any_element()
-                };
-                let theme = cx.theme();
-                self.row_shell(row.depth, cx)
-                    .id(("explorer-row", index))
-                    .when(selected, |row| row.bg(theme.sidebar_accent))
-                    .when(!selected, |row| row.hover(|style| style.bg(hovered)))
-                    .on_click(cx.listener(move |explorer, _, _, cx| {
-                        explorer.click(path.clone(), is_dir, cx)
-                    }))
-                    .child(chevron)
-                    .child(entry_icon(row, cx))
-                    .map(|line| {
-                        if renaming {
-                            line.children(self.name_editor(cx))
-                        } else {
-                            line.child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .child(row.name.clone()),
-                            )
-                        }
-                    })
-                    .context_menu(menu)
-                    .into_any_element()
-            }
+            ListRow::Entry(row) => self.render_entry(index, row, cx),
         }
+    }
+
+    fn render_entry(&self, index: usize, row: &TreeRow, cx: &mut Context<Self>) -> AnyElement {
+        let clicked = row.clone();
+        let selected = self.selected.as_ref() == Some(&row.path);
+        let renaming = matches!(
+            &self.editing,
+            Some(NameEdit { target: EditTarget::Rename(target), .. }) if *target == row.path
+        );
+        let hovered = sidebar::hover_background(cx);
+        let menu = self.entry_menu(row.clone(), cx);
+        let chevron = entry_chevron(row, cx);
+        let theme = cx.theme();
+        self.row_shell(row.depth, cx)
+            .id(("explorer-row", index))
+            .when(selected, |row| row.bg(theme.sidebar_accent))
+            .when(!selected, |row| row.hover(|style| style.bg(hovered)))
+            .on_click(cx.listener(move |explorer, _, _, cx| explorer.click(clicked.clone(), cx)))
+            .child(chevron)
+            .child(entry_icon(row, cx))
+            .map(|line| {
+                if renaming {
+                    line.children(self.name_editor(cx))
+                } else {
+                    line.child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(row.name.clone()),
+                    )
+                }
+            })
+            .context_menu(menu)
+            .into_any_element()
     }
 
     fn row_shell(&self, depth: usize, cx: &App) -> gpui_kit::Div {
@@ -608,7 +588,7 @@ impl FileExplorer {
             .flex()
             .items_center()
             .gap_1p5()
-            .pl(px(6. + depth as f32 * INDENT))
+            .pl(row_indent(depth))
             .pr_2()
             .text_sm()
             .text_color(cx.theme().sidebar_foreground)
@@ -633,7 +613,7 @@ impl FileExplorer {
             .flex_none()
             .items_center()
             .justify_between()
-            .h(px(40.))
+            .h(px(crate::ui_dimensions::HEADER_HEIGHT))
             .pl_2()
             .pr_1()
             .child(
@@ -673,7 +653,7 @@ impl FileExplorer {
             .as_deref()
             .and_then(parent_folder)
             .map(Path::to_path_buf)
-            .filter(|_| self.can_cd);
+            .filter(|_| self.cd == CdAvailability::Available);
         Button::new("explorer-parent")
             .icon(Icon::empty().path(FOLDER_UP_ICON))
             .ghost()
@@ -717,9 +697,7 @@ impl Render for FileExplorer {
             .id("file-explorer")
             .flex()
             .flex_col()
-            .flex_none()
-            .w(px(EXPLORER_WIDTH))
-            .h_full()
+            .size_full()
             .bg(background)
             .border_r_1()
             .border_color(border)
@@ -731,18 +709,17 @@ impl Render for FileExplorer {
 /// A context menu entry running `command` on the entry at `path`.
 fn command_item(
     explorer: &WeakEntity<FileExplorer>,
-    path: &Path,
-    is_dir: bool,
+    row: &TreeRow,
     label: SharedString,
     command: EntryCommand,
     enabled: bool,
 ) -> PopupMenuItem {
-    let (explorer, path) = (explorer.clone(), path.to_path_buf());
+    let (explorer, row) = (explorer.clone(), row.clone());
     PopupMenuItem::new(label)
         .disabled(!enabled)
         .on_click(move |_, window, cx| {
             let _ = explorer.update(cx, |explorer, cx| {
-                explorer.run_command(command, path.clone(), is_dir, window, cx)
+                explorer.run_command(command, row.clone(), window, cx)
             });
         })
 }
@@ -750,7 +727,7 @@ fn command_item(
 /// The icon for a row: an open or closed folder, or the file's kind.
 fn entry_icon(row: &TreeRow, cx: &App) -> Icon {
     let muted = cx.theme().muted_foreground;
-    let icon = if row.is_dir {
+    let icon = if row.kind == EntryKind::Folder {
         Icon::new(if row.expanded {
             IconName::FolderOpen
         } else {
@@ -782,7 +759,12 @@ fn read_folder(folder: &Path) -> Listing {
                 Ok(kind) => kind.is_dir(),
                 Err(_) => false,
             };
-            DirEntry::new(entry.file_name().to_string_lossy(), is_dir)
+            let kind = if is_dir {
+                EntryKind::Folder
+            } else {
+                EntryKind::File
+            };
+            DirEntry::new(entry.file_name().to_string_lossy(), kind)
         })
         .collect();
     file_tree::sort_entries(&mut listing);
@@ -839,4 +821,23 @@ fn same_entry(a: &Path, b: &Path) -> bool {
 
 fn copy_text(text: String, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(text));
+}
+
+fn row_indent(depth: usize) -> gpui_kit::Pixels {
+    px(ROW_LEFT_PADDING + depth as f32 * INDENT)
+}
+
+fn entry_chevron(row: &TreeRow, cx: &App) -> AnyElement {
+    if row.kind == EntryKind::Folder {
+        let icon = if row.expanded {
+            IconName::ChevronDown
+        } else {
+            IconName::ChevronRight
+        };
+        return Icon::new(icon)
+            .small()
+            .text_color(cx.theme().muted_foreground)
+            .into_any_element();
+    }
+    div().w(px(INDENT)).flex_none().into_any_element()
 }

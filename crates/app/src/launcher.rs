@@ -5,11 +5,16 @@ use term_core::{LaunchSpec, SessionKind};
 #[cfg(any(windows, test))]
 use workspace_model::distro_icon;
 use workspace_model::file_tree::ShellSyntax;
-use workspace_model::{LauncherIcon, shell_icon};
+use workspace_model::{LauncherIcon, Platform, Settings, shell_icon};
 
 /// A program the new-tab menu offers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Launcher {
+    /// Stable key that settings.json saves (`default_shell`; later per-launcher settings): the
+    /// program name of a `SHELLS`/`AGENTS` entry (`bash`, `zsh`, `fish`, `pwsh`, `powershell`,
+    /// `cmd`, `claude`, `copilot`), `git-bash` for Git Bash (its program is `bash.exe` too) and
+    /// `wsl:<distro>` for a WSL distro. Unique in a [`discover`] list; `label` is only shown.
+    pub id: String,
     pub label: String,
     pub kind: SessionKind,
     /// Resolved path, or `None` when the program is not on `PATH`.
@@ -19,6 +24,15 @@ pub struct Launcher {
 }
 
 impl Launcher {
+    /// The launcher name shown in menus, including why it cannot currently be opened.
+    pub fn display_label(&self) -> String {
+        if self.program.is_some() {
+            self.label.clone()
+        } else {
+            format!("{} (not installed)", self.label)
+        }
+    }
+
     pub fn spec(&self, cwd: Option<PathBuf>) -> Option<LaunchSpec> {
         let program = self.program.as_ref()?.to_string_lossy().into_owned();
         Some(LaunchSpec::new(
@@ -28,9 +42,28 @@ impl Launcher {
             cwd,
         ))
     }
+
+    /// Current settings apply only to new launches. Saved and duplicated tabs use their spec.
+    pub fn configured_spec(
+        &self,
+        cwd: Option<PathBuf>,
+        settings: &Settings,
+    ) -> Result<Option<LaunchSpec>, shell_words::ParseError> {
+        let Some(mut spec) = self.spec(cwd) else {
+            return Ok(None);
+        };
+        let arguments = match self.kind {
+            SessionKind::ClaudeCode => &settings.claude_args,
+            SessionKind::CopilotCli => &settings.copilot_args,
+            SessionKind::Shell => return Ok(Some(spec)),
+        };
+        spec.args.extend(shell_words::split(arguments)?);
+        Ok(Some(spec))
+    }
 }
 
-/// Shells offered when found on `PATH`: (program, label).
+/// Shells offered when found on `PATH`: (program, label). The program name is also the
+/// launcher's [`Launcher::id`], saved in settings.json: don't rename it.
 #[cfg(unix)]
 const SHELLS: &[(&str, &str)] = &[
     ("bash", "Bash"),
@@ -54,7 +87,7 @@ pub(crate) const WSL_DISTRO_FLAG: &str = "-d";
 #[cfg(any(windows, test))]
 const GIT_BASH_ARGS: &[&str] = &["-i", "-l"];
 
-/// Agent CLIs: (program, label, kind, icon).
+/// Agent CLIs: (program, label, kind, icon). The program name is the [`Launcher::id`].
 const AGENTS: &[(&str, &str, SessionKind, LauncherIcon)] = &[
     (
         "claude",
@@ -80,6 +113,7 @@ pub fn discover() -> Vec<Launcher> {
         .filter_map(|&(name, label)| {
             let program = find_program(name, &path)?;
             Some(Launcher {
+                id: name.into(),
                 label: label.into(),
                 kind: SessionKind::Shell,
                 program: Some(program),
@@ -97,6 +131,7 @@ pub fn discover() -> Vec<Launcher> {
         launchers[..=index].rotate_right(1);
     }
     launchers.extend(AGENTS.iter().map(|&(name, label, kind, icon)| Launcher {
+        id: name.into(),
         label: label.into(),
         kind,
         program: find_program(name, &path),
@@ -106,18 +141,99 @@ pub fn discover() -> Vec<Launcher> {
     launchers
 }
 
-/// The launcher the menu's first entry and Ctrl+Shift+T open: Git Bash on
-/// Windows, else the first installed shell, which is `$SHELL` when `discover` found it.
-pub fn default_shell(launchers: &[Launcher]) -> Option<&Launcher> {
-    preferred_shell(launchers, cfg!(windows))
+/// The launcher the menu's first entry and Ctrl+Shift+T open: the installed shell `setting`
+/// (the `default_shell` setting) names, else Git Bash on Windows, else the first installed
+/// shell, which is `$SHELL` when `discover` found it.
+pub fn default_shell<'a>(launchers: &'a [Launcher], setting: Option<&str>) -> Option<&'a Launcher> {
+    setting
+        .and_then(|name| configured_shell(launchers, name))
+        .or_else(|| preferred_shell(launchers, Platform::CURRENT))
 }
 
-fn preferred_shell(launchers: &[Launcher], prefer_git_bash: bool) -> Option<&Launcher> {
-    let mut installed = launchers
+/// The session the first tab (no saved tabs) or a `shell` tab named on the command line starts
+/// in `cwd`: the default shell (see [`default_shell`]), except that with no shell set (or
+/// none installed by that name) outside Windows it is the user's `$SHELL` as is
+/// (`LaunchSpec::shell`), even one the menu doesn't list. On Windows `LaunchSpec::shell` would
+/// be alacritty's Windows PowerShell, unlike Ctrl+Shift+T; it stays the fallback when no shell
+/// is found.
+pub fn startup_shell(
+    launchers: &[Launcher],
+    setting: Option<&str>,
+    cwd: Option<PathBuf>,
+) -> LaunchSpec {
+    startup_shell_on(launchers, setting, Platform::CURRENT, cwd)
+}
+
+fn startup_shell_on(
+    launchers: &[Launcher],
+    setting: Option<&str>,
+    platform: Platform,
+    cwd: Option<PathBuf>,
+) -> LaunchSpec {
+    setting
+        .and_then(|name| configured_shell(launchers, name))
+        .or_else(|| {
+            (platform == Platform::Windows)
+                .then(|| preferred_shell(launchers, platform))
+                .flatten()
+        })
+        .and_then(|shell| shell.spec(cwd.clone()))
+        .unwrap_or_else(|| LaunchSpec::shell(cwd))
+}
+
+/// The shells found on this machine, in menu order: the choices for the `default_shell`
+/// setting.
+pub fn installed_shells(launchers: &[Launcher]) -> impl Iterator<Item = &Launcher> + Clone {
+    launchers
         .iter()
-        .filter(|launcher| launcher.kind == SessionKind::Shell && launcher.program.is_some());
+        .filter(|launcher| launcher.kind == SessionKind::Shell && launcher.program.is_some())
+}
+
+/// The installed shell the `default_shell` setting `value` names: by [`Launcher::id`] (as the
+/// settings page saves it), else by exact menu name (`PowerShell` is pwsh, as earlier versions
+/// saved it, although its id ignoring case is Windows PowerShell's), else, for a hand-edited
+/// file, by id and then by menu name, ignoring case (`ZSH`, `git bash`).
+pub fn configured_shell<'a>(launchers: &'a [Launcher], value: &str) -> Option<&'a Launcher> {
+    let value = value.trim();
+    let matchers: [&dyn Fn(&Launcher) -> bool; 4] = [
+        &|launcher| launcher.id == value,
+        &|launcher| launcher.label == value,
+        &|launcher| launcher.id.eq_ignore_ascii_case(value),
+        &|launcher| launcher.label.eq_ignore_ascii_case(value),
+    ];
+    let installed = installed_shells(launchers);
+    matchers
+        .into_iter()
+        .find_map(|matches| installed.clone().find(|launcher| matches(launcher)))
+}
+
+/// The shell "Automatic" (an empty `default_shell`) starts both for the first tab and for
+/// Ctrl+Shift+T, for the settings page to name: Git Bash (else the first shell) on Windows; on
+/// Unix the listed shell `$SHELL` names, `None` when it isn't listed (the first tab then runs
+/// `$SHELL` as is while Ctrl+Shift+T opens the first listed shell).
+pub fn automatic_shell(launchers: &[Launcher]) -> Option<&Launcher> {
+    let login_shell = std::env::var_os("SHELL").map(PathBuf::from);
+    automatic_shell_on(launchers, Platform::CURRENT, login_shell.as_deref())
+}
+
+fn automatic_shell_on<'a>(
+    launchers: &'a [Launcher],
+    platform: Platform,
+    login_shell: Option<&Path>,
+) -> Option<&'a Launcher> {
+    let shell = preferred_shell(launchers, platform)?;
+    if platform == Platform::Windows {
+        return Some(shell);
+    }
+    let stem = login_shell?.file_stem()?;
+    let program_stem = shell.program.as_deref().and_then(Path::file_stem);
+    (program_stem == Some(stem)).then_some(shell)
+}
+
+fn preferred_shell(launchers: &[Launcher], platform: Platform) -> Option<&Launcher> {
+    let mut installed = installed_shells(launchers);
     let first = installed.clone().next();
-    if prefer_git_bash {
+    if platform == Platform::Windows {
         return installed
             .find(|launcher| launcher.icon == LauncherIcon::GitBash)
             .or(first);
@@ -125,12 +241,13 @@ fn preferred_shell(launchers: &[Launcher], prefer_git_bash: bool) -> Option<&Lau
     first
 }
 
-/// The `+` menu's entries: the default shell (with the shortcut hint), then the other shells, then
-/// the agents.
-pub fn menu_sections(
-    launchers: &[Launcher],
-) -> (Option<&Launcher>, Vec<&Launcher>, Vec<&Launcher>) {
-    let default = default_shell(launchers);
+/// The `+` menu's entries: the default shell (with the shortcut hint, see [`default_shell`]),
+/// then the other shells, then the agents.
+pub fn menu_sections<'a>(
+    launchers: &'a [Launcher],
+    setting: Option<&str>,
+) -> (Option<&'a Launcher>, Vec<&'a Launcher>, Vec<&'a Launcher>) {
+    let default = default_shell(launchers, setting);
     let (shells, agents) = launchers
         .iter()
         .filter(|&launcher| default.is_none_or(|default| !std::ptr::eq(launcher, default)))
@@ -196,6 +313,7 @@ fn wsl_distro(spec: &LaunchSpec) -> Option<&str> {
 #[cfg(any(windows, test))]
 fn wsl_launcher(wsl: &Path, distro: &str) -> Launcher {
     Launcher {
+        id: format!("wsl:{distro}"),
         label: distro.into(),
         kind: SessionKind::Shell,
         program: Some(wsl.into()),
@@ -207,6 +325,7 @@ fn wsl_launcher(wsl: &Path, distro: &str) -> Launcher {
 #[cfg(any(windows, test))]
 fn git_bash_launcher(program: PathBuf) -> Launcher {
     Launcher {
+        id: "git-bash".into(),
         label: "Git Bash".into(),
         kind: SessionKind::Shell,
         program: Some(program),
@@ -372,121 +491,39 @@ mod windows_tests {
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt;
+mod tests;
 
+#[cfg(test)]
+mod argument_tests {
     use super::*;
 
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("agentws-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    fn write_file(path: &Path, mode: u32) {
-        fs::write(path, "").unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
-    }
-
     #[test]
-    fn finds_first_executable_on_path() {
-        let first = temp_dir("path-a");
-        let second = temp_dir("path-b");
-        write_file(&first.join("tool"), 0o644);
-        write_file(&second.join("tool"), 0o755);
-        let path = std::env::join_paths([&first, &second]).unwrap();
-
-        assert_eq!(find_program("tool", &path), Some(second.join("tool")));
-        assert_eq!(find_program("missing", &path), None);
-        fs::remove_dir_all(first).unwrap();
-        fs::remove_dir_all(second).unwrap();
-    }
-
-    fn shell(path: &str) -> Launcher {
-        Launcher {
-            label: path.into(),
-            kind: SessionKind::Shell,
-            program: Some(path.into()),
-            args: Vec::new(),
-            icon: shell_icon(path),
+    fn quoted_or_escaped_windows_paths_survive_agent_argument_parsing() {
+        for arguments in [
+            r"--settings 'C:\Users\my name\settings.json'",
+            r#"--settings C:\\Users\\my\ name\\settings.json"#,
+        ] {
+            let settings = Settings {
+                claude_args: arguments.into(),
+                copilot_args: arguments.into(),
+                ..Settings::default()
+            };
+            for kind in [SessionKind::ClaudeCode, SessionKind::CopilotCli] {
+                let launcher = Launcher {
+                    id: "agent".into(),
+                    label: "Agent".into(),
+                    kind,
+                    program: Some("agent".into()),
+                    args: Vec::new(),
+                    icon: LauncherIcon::Copilot,
+                };
+                let spec = launcher.configured_spec(None, &settings).unwrap().unwrap();
+                assert_eq!(
+                    spec.args,
+                    ["--settings", r"C:\Users\my name\settings.json"],
+                    "{kind:?}: {arguments}"
+                );
+            }
         }
-    }
-
-    #[test]
-    fn terminal_entry_opens_first_installed_shell() {
-        let mut missing = shell("/usr/bin/zsh");
-        missing.program = None;
-        let mut claude = shell("/usr/bin/claude");
-        claude.kind = SessionKind::ClaudeCode;
-        let launchers = [claude, missing, shell("/usr/bin/bash")];
-        assert_eq!(
-            default_shell(&launchers).and_then(|shell| shell.program.as_deref()),
-            Some(Path::new("/usr/bin/bash"))
-        );
-        assert_eq!(default_shell(&launchers[..2]), None);
-    }
-
-    #[test]
-    fn windows_terminal_entry_prefers_git_bash() {
-        let launchers = [
-            shell("/usr/bin/pwsh"),
-            git_bash_launcher("/git/bin/bash.exe".into()),
-        ];
-        let program =
-            |prefer| preferred_shell(&launchers, prefer).and_then(|shell| shell.program.as_deref());
-        assert_eq!(program(true), Some(Path::new("/git/bin/bash.exe")));
-        assert_eq!(program(false), Some(Path::new("/usr/bin/pwsh")));
-        assert_eq!(
-            preferred_shell(&launchers[..1], true).and_then(|shell| shell.program.as_deref()),
-            Some(Path::new("/usr/bin/pwsh"))
-        );
-    }
-
-    #[test]
-    fn menu_lists_other_shells_then_agents() {
-        let mut claude = shell("/usr/bin/claude");
-        claude.kind = SessionKind::ClaudeCode;
-        let launchers = [shell("/usr/bin/zsh"), claude, shell("/usr/bin/bash")];
-        let (default, shells, agents) = menu_sections(&launchers);
-        let programs = |group: Vec<&Launcher>| {
-            group
-                .into_iter()
-                .map(|launcher| launcher.program.clone().unwrap())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            default.and_then(|shell| shell.program.as_deref()),
-            Some(Path::new("/usr/bin/zsh"))
-        );
-        assert_eq!(programs(shells), [PathBuf::from("/usr/bin/bash")]);
-        assert_eq!(programs(agents), [PathBuf::from("/usr/bin/claude")]);
-    }
-
-    #[test]
-    fn finds_default_shell_by_name() {
-        let launchers = [shell("/usr/bin/bash"), shell("/usr/bin/zsh")];
-        assert_eq!(
-            default_shell_index(&launchers, Path::new("/bin/zsh")),
-            Some(1)
-        );
-        assert_eq!(
-            default_shell_index(&launchers, Path::new("/bin/fish")),
-            None
-        );
-    }
-
-    #[test]
-    fn default_names() {
-        let claude = LaunchSpec::claude_code(None);
-        assert_eq!(default_name(&claude), "Claude Code");
-        let bash = LaunchSpec::new(
-            SessionKind::Shell,
-            Some("/usr/bin/bash".into()),
-            vec![],
-            None,
-        );
-        assert_eq!(default_name(&bash), "bash");
     }
 }

@@ -1,4 +1,4 @@
-//! Ctrl+Shift tab shortcuts, shared by the key handler and the hints drawn in menus and
+//! Ctrl+Shift tab shortcuts, shared by the action bindings and the hints drawn in menus and
 //! tooltips so the two can't drift apart.
 
 use gpui_kit::component::kbd::Kbd;
@@ -11,6 +11,14 @@ use gpui_kit::{
 pub const NEW_TAB_KEY: &str = "t";
 /// Ctrl+Shift+D: another tab like the selected one.
 pub const DUPLICATE_TAB_KEY: &str = "d";
+/// Ctrl+Shift+W: close the selected tab.
+pub const CLOSE_TAB_KEY: &str = "w";
+/// Ctrl+Shift+B: show or hide the sidebar.
+pub const SIDEBAR_KEY: &str = "b";
+/// Ctrl+Shift+S: search tabs.
+pub const SEARCH_KEY: &str = "s";
+/// Ctrl+Shift+A: jump to the next tab needing attention.
+pub const ATTENTION_KEY: &str = "a";
 /// Ctrl+Shift+|: show or hide the file explorer. Bound as the key that produces `|`, whatever
 /// the layout; GPUI reports it without Shift (Ctrl+|).
 pub const EXPLORER_KEY: &str = "|";
@@ -43,7 +51,7 @@ pub fn tab_shortcut_hint(key: &str) -> Kbd {
 }
 
 /// A menu entry's label with its shortcut on the right, for `PopupMenuItem::element`: the
-/// menu draws hints only for actions bound to a key, and these shortcuts are a key handler.
+/// menu draws hints only when the item itself carries an action.
 pub fn menu_label_with_hint(
     id: &'static str,
     label: impl Into<SharedString>,

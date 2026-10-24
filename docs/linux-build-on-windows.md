@@ -28,7 +28,7 @@ WORKDIR /src
 ```
 
 `rust:1` is the latest stable, as CI's `dtolnay/rust-toolchain@stable`; the workspace needs
-1.88 or later (`rust-version`). Build the image once, from the folder holding the `Dockerfile`:
+1.95 or later (`rust-version`). Build the image once, from the folder holding the `Dockerfile`:
 
 ```powershell
 docker build -t bowarp-build .
@@ -55,8 +55,8 @@ Clean up with `docker rmi bowarp-build` and `docker volume rm bowarp-target bowa
 
 ## WSL Ubuntu
 
-The same as on a Linux machine ([README](../README.md#build-and-run)), not tried yet on this
-machine. Inside Ubuntu:
+The same as on a Linux machine ([README](../README.md#build-and-run)). Targeted tests,
+formatting and Clippy were run in WSL Ubuntu on 2026-10-24. Inside Ubuntu:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -69,6 +69,10 @@ CARGO_TARGET_DIR=~/bowarp-target cargo test --workspace --locked
 `CARGO_TARGET_DIR` keeps the build on the Linux file system: building under `/mnt/c` is much
 slower, and the Linux output would mix with the Windows `target/` folder. The sources can stay
 on `C:`; cloning into the Linux home instead speeds up the build further.
+
+Permission tests need temporary files on the Linux filesystem: a Windows-mounted directory
+without DrvFS metadata cannot enforce Unix `0600` permissions. If `/tmp` is Windows-backed,
+set `TMPDIR` to a private directory in the Linux home before running tests.
 
 ## Windows code from Linux
 

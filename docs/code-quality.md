@@ -1,5 +1,49 @@
 # Code quality
 
+## Rust test organization
+
+Inline unit tests are idiomatic Rust, but large test suites can live in separate files:
+
+| Test type | Location | Access |
+|---|---|---|
+| Unit tests | A child module, such as `src\parser\tests.rs` for `src\parser.rs` | Parent module's private items via `use super::*;` |
+| Integration tests | The crate's `tests\` directory, alongside its `src\` directory | Library's public API only |
+
+For separate unit tests, keep this declaration in the production module:
+
+```rust
+#[cfg(test)]
+mod tests;
+```
+
+Put `use super::*;` and the `#[test]` functions in the child module's `tests.rs`.
+For a module defined in `mod.rs`, put `tests.rs` beside that file.
+Prefer this arrangement when inline tests make production code harder to navigate.
+Large suites now follow this layout, for example in
+`crates\workspace-model\src\settings\tests.rs` and `crates\term-core\src\prompt\tests.rs`.
+Small unit-test modules can stay inline.
+
+Use integration tests for behavior exercised through a library's public API. A function
+must be reachable through public modules or a `pub use` export; `pub fn` inside a private
+module alone does not expose it outside the crate. Do not make private functions public
+solely for testing.
+
+This repository already has integration tests in `crates\term-core\tests\session.rs` and
+`crates\agentws-hook\tests\round_trip.rs`. The latter tests a binary by running it rather
+than importing its private functions.
+
+Examples of public APIs with production callers across crate boundaries:
+
+| API | Consumer |
+|---|---|
+| `workspace_model::next_attention` | The app's `jump_to_attention` in `workspace_view.rs` |
+| `workspace_model::file_tree::sort_entries` | The app's `read_folder` in `file_explorer.rs` |
+| `workspace_model::file_view::decode_text` | The app's `read_text` in `file_viewer.rs` |
+| `agent_status::forward_hook` | The hook binary's `run` in `main.rs` |
+
+Keep these APIs public for their consumers, independently of where their tests live.
+Moving tests should not change production visibility or behavior.
+
 ## Clippy locally
 
 Clippy is Rust's linter. Install it once with `rustup component add clippy`, then from the

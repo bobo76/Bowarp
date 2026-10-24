@@ -7,10 +7,11 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::{Anchor, AnyElement, App, AppContext, Context, IntoElement, Styled, Task, div};
-use workspace_model::{display_path, lines_added, until_next_second};
+use workspace_model::{TabCardField, display_path, lines_added, until_next_second};
 
 use super::WorkspaceView;
 use crate::launcher;
+use crate::settings_file;
 use crate::sidebar::{self, TabCard};
 
 /// How long a hover card's `+N` is reused before `git diff` runs again.
@@ -18,8 +19,8 @@ const DIFF_STAT_TTL: Duration = Duration::from_secs(5);
 
 /// The `+N` shown in a tab's hover card, for the folder it was computed in.
 struct DiffStat {
-    dir: PathBuf,
-    /// When `git diff` last answered for `dir`.
+    folder: PathBuf,
+    /// When `git diff` last answered for `folder`.
     checked: Option<Instant>,
     /// The run whose answer is awaited; an answer from an older run is stale.
     generation: u64,
@@ -29,9 +30,9 @@ struct DiffStat {
 }
 
 impl DiffStat {
-    fn new(dir: PathBuf) -> Self {
+    fn new(folder: PathBuf) -> Self {
         Self {
-            dir,
+            folder,
             checked: None,
             generation: 0,
             running: false,
@@ -39,10 +40,10 @@ impl DiffStat {
         }
     }
 
-    /// Whether `git diff` should run for `dir`: not while a run for it is going, nor when one
+    /// Whether `git diff` should run for `folder`: not while a run for it is going, nor when one
     /// answered within [`DIFF_STAT_TTL`].
-    fn needs_run(&self, dir: &Path, now: Instant) -> bool {
-        if self.dir != dir {
+    fn needs_run(&self, folder: &Path, now: Instant) -> bool {
+        if self.folder != folder {
             return true;
         }
         let fresh = self
@@ -51,13 +52,13 @@ impl DiffStat {
         !self.running && !fresh
     }
 
-    /// Start a run for `dir` and return its generation. The last answer stays shown while it
+    /// Start a run for `folder` and return its generation. The last answer stays shown while it
     /// runs, unless the folder changed.
-    fn start(&mut self, dir: &Path) -> u64 {
-        if self.dir != dir {
+    fn start(&mut self, folder: &Path) -> u64 {
+        if self.folder != folder {
             *self = Self {
                 generation: self.generation,
-                ..Self::new(dir.to_path_buf())
+                ..Self::new(folder.to_path_buf())
             };
         }
         self.generation += 1;
@@ -83,6 +84,7 @@ impl DiffStat {
 pub(super) struct TabCards {
     /// Lines added per tab, fetched when its hover card opens.
     diff_stats: HashMap<u64, DiffStat>,
+    shown: Option<u64>,
     /// The tab whose hover card shows, and the task repainting its lap time each second.
     clock: Option<(u64, Task<()>)>,
 }
@@ -91,16 +93,20 @@ impl TabCards {
     /// Forget tab `id`'s `+N`: the tab is gone, or runs another session.
     pub fn forget(&mut self, id: u64) {
         self.diff_stats.remove(&id);
+        if self.shown == Some(id) {
+            self.shown = None;
+            self.clock = None;
+        }
     }
 
-    /// Start a `git diff` run for tab `id` in `dir`, unless one is going or answered recently.
+    /// Start a `git diff` run for tab `id` in `folder`, unless one is going or answered recently.
     /// Returns the run's generation.
-    fn start_diff_stat(&mut self, id: u64, dir: &Path, now: Instant) -> Option<u64> {
+    fn start_diff_stat(&mut self, id: u64, folder: &Path, now: Instant) -> Option<u64> {
         let stat = self
             .diff_stats
             .entry(id)
-            .or_insert_with(|| DiffStat::new(dir.to_path_buf()));
-        stat.needs_run(dir, now).then(|| stat.start(dir))
+            .or_insert_with(|| DiffStat::new(folder.to_path_buf()));
+        stat.needs_run(folder, now).then(|| stat.start(folder))
     }
 
     /// Take the answer of tab `id`'s run `generation`. Returns whether it is kept (no newer run
@@ -117,11 +123,11 @@ impl TabCards {
             .is_some_and(|stat| stat.finish(generation, added, now))
     }
 
-    /// Lines added in `dir` for tab `id`, once `git diff` answered there.
-    fn lines_added(&self, id: u64, dir: &Path) -> Option<u64> {
+    /// Lines added in `folder` for tab `id`, once `git diff` answered there.
+    fn lines_added(&self, id: u64, folder: &Path) -> Option<u64> {
         self.diff_stats
             .get(&id)
-            .filter(|stat| stat.dir == dir)
+            .filter(|stat| stat.folder == folder)
             .and_then(|stat| stat.added)
     }
 }
@@ -137,7 +143,7 @@ impl WorkspaceView {
         id: u64,
         cx: &Context<Self>,
     ) -> AnyElement {
-        if cx.has_active_drag() {
+        if cx.has_active_drag() || !settings_file::settings(cx).tab_card.active() {
             return row;
         }
         let workspace = cx.entity().downgrade();
@@ -158,15 +164,25 @@ impl WorkspaceView {
             .on_open_change(move |open, _, cx| {
                 let _ = workspace.update(cx, |workspace, cx| {
                     if *open {
+                        workspace.cards.shown = Some(id);
                         workspace.refresh_diff_stat(id, cx);
+                        workspace.start_card_clock(id, cx);
+                    } else {
+                        workspace.stop_card_clock(id);
+                        if workspace.cards.shown == Some(id) {
+                            workspace.cards.shown = None;
+                        }
                     }
-                    workspace.set_card_clock(id, *open, cx);
                 });
             })
             .into_any_element()
     }
 
     fn tab_card(&self, id: u64, cx: &App) -> Option<TabCard> {
+        let fields = settings_file::settings(cx).tab_card;
+        if !fields.active() {
+            return None;
+        }
         let index = self.tab_index(id)?;
         let tab = &self.tabs[index];
         let view = tab.view.read(cx);
@@ -174,37 +190,94 @@ impl WorkspaceView {
         let now = Instant::now();
         Some(TabCard {
             index,
-            status: view.tab_status(),
-            working_for: view.working_for(now),
-            running_for: view.running_for(now),
-            running_label: view.running_label().map(|label| label.to_string().into()),
-            folder: location
-                .map(|location| display_path(&location.dir, self.home.as_deref()).into()),
-            branch: location
-                .and_then(|location| location.head.as_ref())
-                .map(|head| head.name().to_string().into()),
-            title: view.name().to_string().into(),
-            kind: view.kind(),
-            kind_label: launcher::default_name(&tab.spec).into(),
-            lines_added: location.and_then(|location| self.cards.lines_added(id, &location.dir)),
+            name: Self::tab_name(tab, cx).into(),
+            status: fields.keep(TabCardField::Status, || view.tab_status()),
+            mode: fields
+                .keep(TabCardField::SessionKind, || view.agent_mode())
+                .flatten(),
+            working_for: fields
+                .keep(TabCardField::Status, || view.working_for(now))
+                .flatten(),
+            running_for: fields
+                .keep(TabCardField::Status, || view.running_for(now))
+                .flatten(),
+            running_label: fields
+                .keep(TabCardField::Status, || {
+                    view.running_label().map(|label| label.to_string().into())
+                })
+                .flatten(),
+            folder: fields
+                .keep(TabCardField::Location, || {
+                    location
+                        .map(|location| display_path(&location.folder, self.home.as_deref()).into())
+                })
+                .flatten(),
+            branch: fields
+                .keep(TabCardField::Location, || {
+                    location
+                        .and_then(|location| location.head.as_ref())
+                        .map(|head| head.name().to_string().into())
+                })
+                .flatten(),
+            title: fields
+                .keep(TabCardField::ProgramTitle, || {
+                    tab.meta
+                        .custom_name
+                        .as_ref()
+                        .filter(|name| name.as_str() != view.name())
+                        .map(|_| view.name().to_string().into())
+                })
+                .flatten(),
+            kind: fields.keep(TabCardField::SessionKind, || view.kind()),
+            kind_label: fields.keep(TabCardField::SessionKind, || {
+                launcher::default_name(&tab.spec).into()
+            }),
+            lines_added: fields
+                .keep(TabCardField::Changes, || {
+                    location.and_then(|location| self.cards.lines_added(id, &location.folder))
+                })
+                .flatten(),
         })
     }
 
-    /// Start or stop repainting the lap time or running time in the tab's hover card. While
-    /// the card shows, the window repaints on each whole second of the time, and only while
-    /// the agent is working or a command runs; otherwise the task just checks once a second
-    /// whether one started. Closing a card stops the task, so nothing runs while no card
-    /// shows.
-    fn set_card_clock(&mut self, id: u64, open: bool, cx: &mut Context<Self>) {
-        if !open {
-            if self
-                .cards
-                .clock
-                .as_ref()
-                .is_some_and(|(shown, _)| *shown == id)
-            {
-                self.cards.clock = None;
+    pub(super) fn update_card_settings(&mut self, cx: &mut Context<Self>) {
+        let fields = settings_file::settings(cx).tab_card;
+        if !fields.keeps(TabCardField::Status) {
+            self.cards.clock = None;
+        }
+        if !fields.active() {
+            self.cards.shown = None;
+            return;
+        }
+        if let Some(id) = self.cards.shown {
+            if self.cards.clock.is_none() {
+                self.start_card_clock(id, cx);
             }
+            self.refresh_diff_stat(id, cx);
+        }
+    }
+
+    /// Stop the clock when this tab's card closes.
+    fn stop_card_clock(&mut self, id: u64) {
+        if self
+            .cards
+            .clock
+            .as_ref()
+            .is_some_and(|(shown, _)| *shown == id)
+        {
+            self.cards.clock = None;
+        }
+    }
+
+    /// Repaint the hover card while it shows. The window repaints on each whole second while
+    /// the agent is working or a command runs; otherwise the task checks once a second whether
+    /// one started.
+    fn start_card_clock(&mut self, id: u64, cx: &mut Context<Self>) {
+        if !settings_file::settings(cx)
+            .tab_card
+            .keeps(TabCardField::Status)
+        {
+            self.stop_card_clock(id);
             return;
         }
         let task = cx.spawn(async move |this, cx| {
@@ -229,6 +302,12 @@ impl WorkspaceView {
 
     /// Run `git diff` for the tab's hover card unless a recent answer for its folder is cached.
     fn refresh_diff_stat(&mut self, id: u64, cx: &mut Context<Self>) {
+        if !settings_file::settings(cx)
+            .tab_card
+            .keeps(TabCardField::Changes)
+        {
+            return;
+        }
         let Some(location) = self
             .tab_index(id)
             .and_then(|index| self.tabs[index].view.read(cx).location())
@@ -236,12 +315,14 @@ impl WorkspaceView {
         else {
             return;
         };
-        let dir = location.dir.clone();
-        let Some(generation) = self.cards.start_diff_stat(id, &dir, Instant::now()) else {
+        let folder = location.folder.clone();
+        let Some(generation) = self.cards.start_diff_stat(id, &folder, Instant::now()) else {
             return;
         };
         cx.spawn(async move |this, cx| {
-            let added = cx.background_spawn(async move { lines_added(&dir) }).await;
+            let added = cx
+                .background_spawn(async move { lines_added(&folder) })
+                .await;
             let _ = this.update(cx, |workspace, cx| {
                 if workspace
                     .cards
@@ -258,6 +339,152 @@ impl WorkspaceView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn card_settings_stop_existing_clocks_and_skip_disabled_work(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use crate::terminal_view::{TabChanged, TerminalView};
+        use gpui_kit::VisualTestContext;
+        use gpui_kit::component::Root;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use std::sync::{Arc, mpsc};
+        use term_core::{LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions};
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            settings_file::init(cx);
+            crate::terminal_element::init(cx);
+            settings_file::preview(cx, |settings| settings.tab_card = Default::default());
+        });
+        #[cfg(windows)]
+        let (program, args) = ("cmd", vec!["/C", "exit 0"]);
+        #[cfg(not(windows))]
+        let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+        let spec = LaunchSpec::new(
+            SessionKind::Shell,
+            Some(program.into()),
+            args.into_iter().map(String::from).collect(),
+            Some(std::env::current_dir().unwrap()),
+        );
+        let (exited, exits) = mpsc::channel();
+        let session = Session::spawn(
+            1,
+            &spec,
+            TermDimensions::new(80, 24),
+            Palette::default(),
+            Arc::new(move |event| {
+                if matches!(event, SessionEvent::Exited(_)) {
+                    let _ = exited.send(());
+                }
+            }),
+        )
+        .unwrap();
+        exits.recv_timeout(Duration::from_secs(30)).unwrap();
+        let captured = Rc::new(RefCell::new(None));
+        let capture = captured.clone();
+        let window = cx.add_window(move |window, cx| {
+            let (_, messages) = futures::channel::mpsc::unbounded();
+            let workspace = cx.new(|cx| {
+                WorkspaceView::new(
+                    Rc::from([]),
+                    None,
+                    messages,
+                    Rc::new(crate::tabs_file::TabsWriter::new(false)),
+                    window,
+                    cx,
+                )
+            });
+            workspace.update(cx, |workspace, cx| {
+                let view = cx.new(|cx| TerminalView::from_test_session(session, &spec, cx));
+                let events =
+                    std::array::from_fn(|_| cx.subscribe(&view, |_, _, _: &TabChanged, _| {}));
+                workspace.tabs.push(super::super::Tab {
+                    id: 1,
+                    view,
+                    spec,
+                    meta: workspace_model::TabMeta {
+                        custom_name: Some("Custom tab name".into()),
+                        ..Default::default()
+                    },
+                    viewer: None,
+                    _view_events: events,
+                });
+                workspace.layout.add(1, None);
+                let card = workspace.tab_card(1, cx).unwrap();
+                assert_eq!(card.name.as_ref(), "Custom tab name");
+                assert!(card.title.is_some());
+                assert!(card.status.is_some());
+                assert!(card.kind.is_some());
+                assert!(card.folder.is_some());
+                workspace.cards.shown = Some(1);
+                workspace.cards.clock = Some((
+                    1,
+                    cx.spawn(async |_, _| {
+                        futures::future::pending::<()>().await;
+                    }),
+                ));
+            });
+            *capture.borrow_mut() = Some(workspace.clone());
+            Root::new(workspace, window, cx)
+        });
+        let workspace = captured.borrow().clone().unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|_, cx| {
+            settings_file::preview(cx, |settings| {
+                settings.tab_card.status = false;
+                settings.tab_card.changes = false;
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            workspace.update(cx, |workspace, cx| {
+                assert!(workspace.cards.clock.is_none());
+                workspace.start_card_clock(1, cx);
+                workspace.refresh_diff_stat(1, cx);
+                assert!(workspace.cards.clock.is_none());
+                assert!(workspace.cards.diff_stats.is_empty());
+                let card = workspace.tab_card(1, cx).unwrap();
+                assert!(card.status.is_none());
+                assert!(card.working_for.is_none());
+                assert!(card.running_for.is_none());
+                assert!(card.running_label.is_none());
+                assert!(card.lines_added.is_none());
+                assert!(card.title.is_some());
+                assert!(card.kind.is_some());
+            })
+        });
+        cx.update(|_, cx| {
+            settings_file::preview(cx, |settings| {
+                settings.tab_card.location = false;
+                settings.tab_card.program_title = false;
+                settings.tab_card.session_kind = false;
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            workspace.update(cx, |workspace, cx| {
+                let fields = settings_file::settings(cx).tab_card;
+                assert!(fields.enabled);
+                assert!(!fields.active());
+                assert!(workspace.tab_card(1, cx).is_none());
+                assert!(workspace.cards.shown.is_none());
+                workspace.start_card_clock(1, cx);
+                workspace.refresh_diff_stat(1, cx);
+                assert!(workspace.cards.clock.is_none());
+                assert!(workspace.cards.diff_stats.is_empty());
+            })
+        });
+        cx.update(|_, cx| settings_file::preview(cx, |settings| settings.tab_card.enabled = false));
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            workspace.update(cx, |workspace, cx| {
+                assert!(workspace.cards.shown.is_none());
+                assert!(workspace.tab_card(1, cx).is_none());
+            })
+        });
+    }
 
     #[test]
     fn diff_stat_is_reused_for_the_same_folder_only_briefly() {
@@ -301,7 +528,7 @@ mod tests {
         assert_eq!(stat.added, None);
         assert!(stat.running);
         assert!(stat.finish(new, Some(7), now));
-        assert_eq!((stat.dir.as_path(), stat.added), (other, Some(7)));
+        assert_eq!((stat.folder.as_path(), stat.added), (other, Some(7)));
     }
 
     #[test]

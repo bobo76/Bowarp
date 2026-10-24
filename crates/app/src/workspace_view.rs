@@ -1,3 +1,4 @@
+mod divider_drag;
 mod settings_pane;
 mod sidebar_rows;
 mod tab_card;
@@ -12,54 +13,88 @@ use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
-use gpui_kit::component::notification::Notification;
+use gpui_kit::component::notification::{Notification, NotificationDelivery};
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Selectable, Sizable, TitleBar, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, App, AppContext, ClipboardItem, Context, CursorStyle, DragMoveEvent, Empty, Entity,
-    FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, Keystroke,
-    MouseButton, MouseDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, Task, Window, actions, div, px,
+    FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, MouseButton,
+    MouseDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task,
+    WeakEntity, Window, actions, div, px,
 };
 use term_core::{LaunchSpec, SessionKind};
 use workspace_model::layout::Direction;
-use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION};
+use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION, ExplorerWidth, ViewerFraction};
 use workspace_model::{
-    Attention, DropTarget, GroupId, Layout, TabColor, TabMeta, TabsState, next_attention,
+    Attention, DropTarget, FeatureSwitch, FileLinkAction, GroupId, Layout, PaneChange, PaneEntry,
+    TabColor, TabId, TabMeta, TabsState, ToastKind, exit_toast_kind, next_attention, pane_change,
     waiting_count,
 };
 
+use self::divider_drag::DividerDrag;
 use self::settings_pane::SettingsPane;
 use self::tab_card::TabCards;
 use self::tab_search::TabSearch;
 use crate::about;
 use crate::assets::FILES_ICON;
-use crate::file_explorer::{EXPLORER_WIDTH, ExplorerEvent, FileExplorer};
+use crate::file_explorer::{CdAvailability, ExplorerEvent, FileExplorer};
 use crate::file_viewer::{FilePlace, FileViewer, ViewerEvent};
+use crate::history;
 use crate::hooks::ClaudeHooks;
 use crate::launcher::{self, Launcher, launch_name};
 use crate::settings_file;
 use crate::settings_page;
 use crate::shell_integration;
-use crate::shortcuts::{self, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY};
-use crate::sidebar::{self, NUMBERED_TABS, SIDEBAR_WIDTH};
+use crate::shortcuts::{
+    self, ATTENTION_KEY, CLOSE_TAB_KEY, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY, SEARCH_KEY,
+    SIDEBAR_KEY,
+};
+use crate::sidebar::{self, SIDEBAR_WIDTH};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
-use crate::terminal_view::{AgentExited, OpenFileRequest, TabChanged, TerminalView};
+use crate::terminal_view::{
+    AgentExited, AgentNotice, LastCommandChanged, OpenFileRequest, StatusReporting, TabChanged,
+    TerminalView,
+};
 use crate::window_bounds;
 
 const NEW_GROUP_NAME: &str = "New group";
+const KEY_CONTEXT: &str = "Workspace";
 
 /// The width of the strip on the file viewer's left edge that resizes it.
 const DIVIDER_WIDTH: f32 = 6.;
 
-actions!(workspace, [ToggleFullScreen]);
+actions!(
+    workspace,
+    [
+        ToggleFullScreen,
+        NextTab,
+        PreviousTab,
+        NewTab,
+        DuplicateTab,
+        CloseTab,
+        ToggleSidebar,
+        ToggleExplorer,
+        SearchTabs,
+        NextAttention,
+        SelectTab1,
+        SelectTab2,
+        SelectTab3,
+        SelectTab4,
+        SelectTab5,
+        SelectTab6,
+        SelectTab7,
+        SelectTab8,
+        SelectTab9,
+    ]
+);
 
 /// F11 toggles full screen. Bound for the whole window, so it works whichever pane has the
 /// keyboard: bindings match before the terminal's key handler, so F11 is not sent to the
 /// program.
 pub fn init(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("f11", ToggleFullScreen, None)]);
+    cx.bind_keys(default_bindings());
     // A global listener, so F11 also works while a dialog or notification has the keyboard
     // (they are not inside the workspace view) or nothing does.
     cx.on_action(|_: &ToggleFullScreen, cx| {
@@ -78,6 +113,49 @@ pub fn init(cx: &mut App) {
     });
 }
 
+fn default_bindings() -> Vec<KeyBinding> {
+    let mut bindings = vec![
+        KeyBinding::new("ctrl-tab", NextTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-shift-tab", PreviousTab, Some(KEY_CONTEXT)),
+        KeyBinding::new(
+            &format!("ctrl-{EXPLORER_KEY}"),
+            ToggleExplorer,
+            Some(KEY_CONTEXT),
+        ),
+        KeyBinding::new("ctrl-1", SelectTab1, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-2", SelectTab2, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-3", SelectTab3, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-4", SelectTab4, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-5", SelectTab5, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-6", SelectTab6, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-7", SelectTab7, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-8", SelectTab8, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-9", SelectTab9, Some(KEY_CONTEXT)),
+    ];
+    macro_rules! bind {
+        ($key:expr, $action:expr) => {
+            bindings.push(KeyBinding::new(
+                &format!("ctrl-shift-{}", $key),
+                $action,
+                Some(KEY_CONTEXT),
+            ));
+        };
+    }
+    bind!(NEW_TAB_KEY, NewTab);
+    bind!(DUPLICATE_TAB_KEY, DuplicateTab);
+    bind!(CLOSE_TAB_KEY, CloseTab);
+    bind!(SIDEBAR_KEY, ToggleSidebar);
+    bind!(SEARCH_KEY, SearchTabs);
+    bind!(ATTENTION_KEY, NextAttention);
+    bindings
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabOwnership {
+    Owner,
+    Guest,
+}
+
 struct Tab {
     /// The first session's id, which stays with the tab when tabs move (and when an agent's
     /// tab goes on as a shell, a new session).
@@ -88,7 +166,7 @@ struct Tab {
     meta: TabMeta,
     /// The file the tab shows beside its terminal; `None` when the viewer is closed.
     viewer: Option<TabViewer>,
-    _view_events: [Subscription; 3],
+    _view_events: [Subscription; 5],
 }
 
 struct TabViewer {
@@ -104,6 +182,24 @@ impl Render for ViewerDivider {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         Empty
     }
+}
+
+/// Dragged when the file explorer's right edge is.
+struct ExplorerDivider;
+
+impl Render for ExplorerDivider {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
+/// Where `open_tab_in` puts a new tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NewTabPlace {
+    /// At the end of the group (`None`: of the top level).
+    EndOf(Option<GroupId>),
+    /// Right below this tab (duplicates).
+    After(TabId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,13 +222,21 @@ pub struct WorkspaceView {
     layout: Layout,
     active: usize,
     sidebar_visible: bool,
-    /// Whether Running badges may pulse in this window ([`sidebar::pulse_allowed`]), read each
-    /// render.
+    /// GPU capability is fixed for the lifetime of this window.
     pulse_running: bool,
     explorer: Entity<FileExplorer>,
     explorer_visible: bool,
-    /// The file viewer's share of the window width, the same in every tab.
-    viewer_fraction: f32,
+    /// Whether the file explorer and viewer panes work: the "File explorer and viewer" switch
+    /// as last applied (it stays on while unsaved edits wait for an answer).
+    file_panes_on: bool,
+    /// Set while the discard questions for turning the panes off wait for answers, so a second
+    /// "off" cannot start a second set. Cleared by Cancel and by the end of the chain.
+    file_panes_off_pending: bool,
+    /// The file viewer's share of the window width while its divider is dragged; otherwise
+    /// the share saved in the settings (`viewer_fraction`), the same in every tab.
+    viewer_drag: DividerDrag<f32>,
+    /// The same for the explorer's width, in pixels (`explorer_width`).
+    explorer_drag: DividerDrag<ExplorerWidth>,
     renaming: Option<Rename>,
     search: TabSearch,
     cards: TabCards,
@@ -140,22 +244,45 @@ pub struct WorkspaceView {
     drop_hint: Option<DropTarget>,
     /// For shortening folders to `~` in the sidebar.
     home: Option<PathBuf>,
-    /// Whether this instance reopens and saves the tabs (it holds the instance lock).
-    owns_tabs: bool,
+    tabs_writer: Rc<tabs_file::TabsWriter>,
     next_session_id: u64,
     launchers: Rc<[Launcher]>,
     hooks: Option<Rc<ClaudeHooks>>,
     settings: SettingsPane,
     _hook_messages: Task<()>,
     _explorer_events: Subscription,
+    _file_panes_observer: Subscription,
+    /// `History::saved_cleared` / `forgets` as last handled by `scrub_retained_commands`.
+    history_seen: (u32, u32),
+    _history_observer: Subscription,
+}
+
+fn history_counts(cx: &App) -> (u32, u32) {
+    cx.try_global::<history::History>()
+        .map_or((0, 0), |history| {
+            (history.saved_cleared(), history.forgets())
+        })
 }
 
 impl WorkspaceView {
+    pub fn warn_shell_fallback(
+        &self,
+        failure: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let message = format!("{failure}. Started a fallback shell instead.");
+        // Startup runs before the notification layer's root exists.
+        cx.defer_in(window, move |_, window, cx| {
+            window.push_notification(Notification::warning(message).autohide(false), cx);
+        });
+    }
+
     pub fn new(
         launchers: Rc<[Launcher]>,
         hooks: Option<Rc<ClaudeHooks>>,
         mut hook_messages: UnboundedReceiver<HookMessage>,
-        owns_tabs: bool,
+        tabs_writer: Rc<tabs_file::TabsWriter>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -176,27 +303,61 @@ impl WorkspaceView {
             .collect();
         let explorer = cx.new(|cx| FileExplorer::new(agents, window, cx));
         let explorer_events = cx.subscribe_in(&explorer, window, Self::on_explorer_event);
+        window.set_window_title(about::APP_NAME);
+        let file_panes_observer = cx.observe_global_in::<settings_file::AppSettings>(
+            window,
+            Self::apply_file_panes_setting,
+        );
+        let history_seen = history_counts(cx);
+        let history_observer = cx.observe_global::<history::History>(Self::scrub_retained_commands);
         Self {
             tabs: Vec::new(),
             layout: Layout::default(),
             active: 0,
             sidebar_visible: true,
-            pulse_running: false,
+            pulse_running: sidebar::pulse_allowed(window),
             explorer,
             explorer_visible: false,
-            viewer_fraction: DEFAULT_VIEWER_FRACTION,
+            file_panes_on: settings_file::file_panes(cx).panes_enabled(),
+            file_panes_off_pending: false,
+            viewer_drag: DividerDrag::new(Self::save_viewer_fraction),
+            explorer_drag: DividerDrag::new(Self::save_explorer_width),
             renaming: None,
             search: TabSearch::new(window, cx),
             cards: TabCards::default(),
             drop_hint: None,
             home: std::env::home_dir(),
-            owns_tabs,
+            tabs_writer,
             next_session_id: 1,
             launchers,
             hooks,
             settings: SettingsPane::new(cx),
             _hook_messages: hook_task,
             _explorer_events: explorer_events,
+            _file_panes_observer: file_panes_observer,
+            history_seen,
+            _history_observer: history_observer,
+        }
+    }
+
+    /// "Restore previous tabs" off keeps `tabs.json` as it is, so a cleared or forgotten
+    /// command would stay in it and return once restoring is turned on. Remove just the last
+    /// commands from that file, through the ordered writer (never on this thread, never from a
+    /// guest instance).
+    fn scrub_retained_commands(&mut self, cx: &mut Context<Self>) {
+        let seen = history_counts(cx);
+        let (cleared_seen, forgets_seen) = std::mem::replace(&mut self.history_seen, seen);
+        if !self.tabs_writer.is_active() || settings_file::workspace_features(cx).saves_tabs() {
+            return;
+        }
+        if seen.0 != cleared_seen {
+            self.tabs_writer.scrub_last_commands(None);
+        }
+        if seen.1 != forgets_seen
+            && let Some(command) = cx.global::<history::History>().forgotten()
+        {
+            self.tabs_writer
+                .scrub_last_commands(Some(command.to_owned()));
         }
     }
 
@@ -207,23 +368,23 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> io::Result<()> {
-        let group = self
-            .active_tab()
-            .and_then(|tab| self.layout.group_of(tab.id))
-            .map(|group| group.id);
-        self.open_tab_in(spec, group, window, cx)
+        let group = self.active_group();
+        self.open_tab_in(spec, NewTabPlace::EndOf(group), window, cx)
     }
 
-    /// Start `spec` in a new tab at the end of `group` (`None`: of the top level) and select it.
+    /// Start `spec` in a new tab at `place` and select it.
     fn open_tab_in(
         &mut self,
         spec: LaunchSpec,
-        group: Option<GroupId>,
+        place: NewTabPlace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> io::Result<()> {
         let id = self.spawn_tab(spec, TabMeta::default(), window, cx)?;
-        self.layout.add(id, group);
+        match place {
+            NewTabPlace::EndOf(group) => self.layout.add(id, group),
+            NewTabPlace::After(tab) => self.layout.add_after(id, tab),
+        }
         self.sync_order(cx);
         if let Some(index) = self.tab_index(id) {
             self.activate(index, window, cx);
@@ -259,15 +420,24 @@ impl WorkspaceView {
         spec: &LaunchSpec,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> io::Result<(Entity<TerminalView>, [Subscription; 3])> {
+    ) -> io::Result<(Entity<TerminalView>, [Subscription; 5])> {
         let session_id = self.next_session_id;
         let mut launch = spec.clone();
-        let reports_status = self
+        let reporting = if self
             .hooks
             .as_ref()
-            .is_some_and(|hooks| hooks.attach(session_id, &mut launch));
+            .is_some_and(|hooks| hooks.attach(session_id, &mut launch))
+        {
+            StatusReporting::Hooks
+        } else {
+            StatusReporting::OutputActivity
+        };
         shell_integration::attach(&mut launch);
-        let view = TerminalView::spawn(session_id, &launch, reports_status, cx)?;
+        let view = TerminalView::spawn(session_id, &launch, reporting, cx).inspect_err(|_| {
+            if let Some(hooks) = &self.hooks {
+                hooks.remove_session(session_id);
+            }
+        })?;
         self.next_session_id += 1;
         let changed = cx.subscribe(&view, |workspace, _, _: &TabChanged, cx| {
             workspace.sync_explorer(cx);
@@ -287,7 +457,61 @@ impl WorkspaceView {
                 workspace.open_file_in(tab_id, request.path.clone(), request.place, window, cx);
             },
         );
-        Ok((view, [changed, exited, open_file]))
+        let notice = cx.subscribe_in(
+            &view,
+            window,
+            move |workspace, _, notice: &AgentNotice, window, cx| {
+                workspace.notify_agent(tab_id, *notice, window, cx);
+            },
+        );
+        let last_command = cx.subscribe(&view, |workspace, _, _: &LastCommandChanged, cx| {
+            workspace.save_tabs(cx);
+        });
+        Ok((view, [changed, exited, open_file, notice, last_command]))
+    }
+
+    fn notify_agent(
+        &self,
+        tab_id: u64,
+        notice: AgentNotice,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let kind = match notice {
+            AgentNotice::Exited(code) => exit_toast_kind(code),
+            AgentNotice::NeedsAttention | AgentNotice::Finished => ToastKind::AgentStatus,
+        };
+        if !settings_file::notifications(cx).shows(kind) {
+            return;
+        }
+        let Some(index) = self.tab_index(tab_id) else {
+            return;
+        };
+        let name = Self::tab_name(&self.tabs[index], cx);
+        let notification = match notice {
+            AgentNotice::NeedsAttention => Notification::warning("Needs attention"),
+            AgentNotice::Finished => Notification::info(sidebar::TabStatus::ReadyForReview.label()),
+            AgentNotice::Exited(Some(0)) => Notification::success("Agent finished"),
+            AgentNotice::Exited(Some(code)) => {
+                Notification::error(format!("Agent exited with code {code}"))
+            }
+            AgentNotice::Exited(None) => Notification::error("Agent exited without an exit code"),
+        };
+        let workspace = cx.entity().downgrade();
+        window.push_notification(
+            notification
+                .id1::<AgentNotice>(("agent-notice", tab_id as usize))
+                .title(name)
+                .delivery(NotificationDelivery::InApp)
+                .on_click(move |_, window, cx| {
+                    let _ = workspace.update(cx, |workspace, cx| {
+                        if let Some(index) = workspace.tab_index(tab_id) {
+                            workspace.activate(index, window, cx);
+                        }
+                    });
+                }),
+            cx,
+        );
     }
 
     /// Go on with the default shell in tab `tab_id` once its agent exited, in the agent's last
@@ -297,7 +521,13 @@ impl WorkspaceView {
         let Some(index) = self.tab_index(tab_id) else {
             return;
         };
-        let Some(shell) = launcher::default_shell(&self.launchers).cloned() else {
+        if let Some(hooks) = &self.hooks {
+            hooks.remove_session(self.tabs[index].view.read(cx).id());
+        }
+        let Some(shell) =
+            launcher::default_shell(&self.launchers, settings_file::settings(cx).default_shell())
+                .cloned()
+        else {
             return;
         };
         // The child is gone: the last folder it reported, else the one it started in.
@@ -305,37 +535,50 @@ impl WorkspaceView {
         let Some(spec) = shell.spec(folder) else {
             return;
         };
-        let (view, view_events) = match self.start_session(tab_id, &spec, window, cx) {
-            Ok(started) => started,
-            Err(err) => {
-                log::error!("failed to start {}: {err}", launch_name(&spec));
-                window.push_notification(
-                    Notification::error(format!("Failed to start {}: {err}", launch_name(&spec))),
-                    cx,
-                );
-                return;
-            }
-        };
+        if let Err(err) = self.replace_tab_session(index, spec.clone(), window, cx) {
+            log::error!("failed to start {}: {err}", launch_name(&spec));
+            window.push_notification(
+                Notification::error(format!("Failed to start {}: {err}", launch_name(&spec))),
+                cx,
+            );
+        }
+    }
+
+    fn replace_tab_session(
+        &mut self,
+        index: usize,
+        spec: LaunchSpec,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> io::Result<()> {
+        let tab_id = self.tabs[index].id;
+        let (view, view_events) = self.start_session(tab_id, &spec, window, cx)?;
         let had_focus = self.tabs[index]
             .view
             .read(cx)
             .focus_handle
             .is_focused(window);
         let tab = &mut self.tabs[index];
+        if let Some(hooks) = &self.hooks {
+            hooks.remove_session(tab.view.read(cx).id());
+        }
         tab.view = view.clone();
         tab.spec = spec;
         tab._view_events = view_events;
         self.cards.forget(tab_id);
-        if index == self.active && !self.settings.shows_page() {
-            view.update(cx, |view, cx| view.show(cx));
-            if had_focus {
-                window.focus(&view.focus_handle(cx), cx);
-            }
-        } else {
+        if index != self.active || self.settings.shows_page() {
             view.update(cx, |view, _| view.hide());
+            self.sync_explorer(cx);
+            cx.notify();
+            return Ok(());
+        }
+        view.update(cx, |view, cx| view.show(cx));
+        if had_focus {
+            window.focus(&view.focus_handle(cx), cx);
         }
         self.sync_explorer(cx);
         cx.notify();
+        Ok(())
     }
 
     /// Show `path` in tab `tab_id`'s file viewer, opening the viewer when it is closed.
@@ -350,6 +593,11 @@ impl WorkspaceView {
         let Some(index) = self.tab_index(tab_id) else {
             return;
         };
+        if let FileLinkAction::OpenExternally(path) = settings_file::file_panes(cx).file_link(&path)
+        {
+            Self::offer_external_open(path, window, cx);
+            return;
+        }
         let viewer = match &self.tabs[index].viewer {
             Some(viewer) => viewer.view.clone(),
             None => {
@@ -388,7 +636,14 @@ impl WorkspaceView {
         let (layout, selected) = state.layout.filter_map_selected(state.selected, |saved| {
             let spec = tabs_file::launch_spec(&saved);
             match self.spawn_tab(spec.clone(), saved.meta, window, cx) {
-                Ok(id) => Some(id),
+                Ok(id) => {
+                    if let Some(index) = self.tab_index(id) {
+                        self.tabs[index].view.update(cx, |view, cx| {
+                            view.restore_last_command(saved.last_command, cx);
+                        });
+                    }
+                    Some(id)
+                }
                 Err(err) => {
                     failures.push(format!("{}: {err}", launch_name(&spec)));
                     None
@@ -419,24 +674,34 @@ impl WorkspaceView {
     }
 
     /// The tabs as they are now, for reopening them at the next start. Nothing is saved when
-    /// another instance owns the tabs (`instance_lock`).
+    /// another instance owns the tabs (`instance_lock`) or "Restore previous tabs" is off.
     pub fn save_tabs(&self, cx: &App) {
-        if !self.owns_tabs {
+        // "Restore previous tabs" off: tabs.json stays as it is (checked at every save, so
+        // the switch applies at once and turning it on saves again from the next change).
+        if !self.tabs_writer.is_active() || !settings_file::workspace_features(cx).saves_tabs() {
             return;
         }
         let active = self.active_tab().map(|tab| tab.id);
         let (layout, selected) = self.layout.save_selected(active, |id| {
             let tab = self.tabs.iter().find(|tab| tab.id == id)?;
             let folder = tab.view.read(cx).current_folder();
-            Some(tabs_file::saved_tab(&tab.spec, folder, tab.meta.clone()))
+            let mut saved = tabs_file::saved_tab(&tab.spec, folder, tab.meta.clone());
+            saved.last_command = tab.view.read(cx).last_command().map(str::to_owned);
+            Some(saved)
         });
-        tabs_file::save(&TabsState { layout, selected });
+        self.tabs_writer.save(TabsState { layout, selected });
+    }
+
+    /// Queue the final UI snapshot behind earlier saves, then wait for the worker to stop.
+    pub fn save_tabs_and_flush(&self, cx: &App) {
+        self.save_tabs(cx);
+        self.tabs_writer.finish();
     }
 
     /// Close the window from inside the app (closing the last tab, or the title bar button on
     /// Linux), saving the tabs and the window bounds first.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.save_tabs(cx);
+        self.save_tabs_and_flush(cx);
         window_bounds::close(window);
     }
 
@@ -446,11 +711,8 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let group = self
-            .active_tab()
-            .and_then(|tab| self.layout.group_of(tab.id))
-            .map(|group| group.id);
-        self.open_tab_in_or_notify(spec, group, window, cx);
+        let group = self.active_group();
+        self.open_tab_in_or_notify(spec, NewTabPlace::EndOf(group), window, cx);
     }
 
     /// Open the tab named on the command line after the restored ones: at the end of the top
@@ -461,18 +723,18 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_tab_in_or_notify(spec, None, window, cx);
+        self.open_tab_in_or_notify(spec, NewTabPlace::EndOf(None), window, cx);
     }
 
     fn open_tab_in_or_notify(
         &mut self,
         spec: LaunchSpec,
-        group: Option<GroupId>,
+        place: NewTabPlace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let program = launch_name(&spec).to_string();
-        if let Err(err) = self.open_tab_in(spec, group, window, cx) {
+        if let Err(err) = self.open_tab_in(spec, place, window, cx) {
             log::error!("failed to start {program}: {err}");
             window.push_notification(
                 Notification::error(format!("Failed to start {program}: {err}")),
@@ -482,12 +744,12 @@ impl WorkspaceView {
     }
 
     /// Folder for new tabs: the selected tab's current one, else the app's working directory.
-    fn new_tab_cwd(&self, cx: &App) -> Option<PathBuf> {
-        self.tab_cwd(self.active, cx)
+    fn new_tab_folder(&self, cx: &App) -> Option<PathBuf> {
+        self.tab_folder(self.active, cx)
     }
 
     /// The tab's current folder, else the app's working directory.
-    fn tab_cwd(&self, index: usize, cx: &App) -> Option<PathBuf> {
+    fn tab_folder(&self, index: usize, cx: &App) -> Option<PathBuf> {
         self.tabs
             .get(index)
             .and_then(|tab| tab.view.read(cx).current_folder())
@@ -495,19 +757,48 @@ impl WorkspaceView {
     }
 
     fn open_launcher(&mut self, launcher: &Launcher, window: &mut Window, cx: &mut Context<Self>) {
-        let cwd = self.new_tab_cwd(cx);
-        if let Some(spec) = launcher.spec(cwd) {
-            self.open_tab_or_notify(spec, window, cx);
+        let folder = self.new_tab_folder(cx);
+        self.open_launcher_in(launcher, folder, window, cx);
+    }
+
+    fn open_launcher_in(
+        &mut self,
+        launcher: &Launcher,
+        folder: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match launcher.configured_spec(folder, settings_file::settings(cx)) {
+            Ok(Some(spec)) => self.open_tab_or_notify(spec, window, cx),
+            Ok(None) => {}
+            Err(error) => window.push_notification(
+                Notification::error(format!("{} arguments: {error}", launcher.label)),
+                cx,
+            ),
         }
     }
 
     /// Open the default shell (the `+` menu's first entry) in the selected tab's folder.
     fn open_default_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(shell) = launcher::default_shell(&self.launchers).cloned() else {
+        self.open_default_shell_in(self.new_tab_folder(cx), window, cx);
+    }
+
+    fn open_default_shell_in(
+        &mut self,
+        folder: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(shell) =
+            launcher::default_shell(&self.launchers, settings_file::settings(cx).default_shell())
+                .cloned()
+        else {
             window.push_notification(Notification::error("No shell found"), cx);
             return;
         };
-        self.open_launcher(&shell, window, cx);
+        if let Some(spec) = shell.spec(folder) {
+            self.open_tab_or_notify(spec, window, cx);
+        }
     }
 
     /// Open another tab running what the tab runs, in its current folder and group.
@@ -515,10 +806,9 @@ impl WorkspaceView {
         let Some(tab) = self.tabs.get(index) else {
             return;
         };
-        let mut spec = tab.spec.clone();
-        let group = self.layout.group_of(tab.id).map(|group| group.id);
-        spec.cwd = self.tab_cwd(index, cx);
-        self.open_tab_in_or_notify(spec, group, window, cx);
+        let (mut spec, id) = (tab.spec.clone(), tab.id);
+        spec.cwd = self.tab_folder(index, cx);
+        self.open_tab_in_or_notify(spec, NewTabPlace::After(id), window, cx);
     }
 
     /// Select a tab, expanding its group if it is collapsed and ending a search that hides it.
@@ -558,21 +848,32 @@ impl WorkspaceView {
         let (tab_id, workspace) = (tab.id, cx.entity().downgrade());
         viewer.update(cx, |viewer, cx| {
             viewer.discard_then(window, cx, move |_, window, cx| {
-                // Run outside the viewer's update: closing the tab updates the viewer.
-                let workspace = workspace.clone();
-                window.defer(cx, move |window, cx| {
-                    let _ = workspace.update(cx, |workspace, cx| {
-                        if let Some(index) = workspace.tab_index(tab_id) {
-                            workspace.remove_tab(index, window, cx);
-                        }
-                    });
-                });
+                Self::defer_remove_tab(workspace.clone(), tab_id, window, cx);
+            });
+        });
+    }
+
+    fn defer_remove_tab(
+        workspace: WeakEntity<Self>,
+        tab_id: u64,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        // Closing a tab updates its viewer, so wait until the viewer's update has ended.
+        window.defer(cx, move |window, cx| {
+            let _ = workspace.update(cx, |workspace, cx| {
+                if let Some(index) = workspace.tab_index(tab_id) {
+                    workspace.remove_tab(index, window, cx);
+                }
             });
         });
     }
 
     fn remove_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let tab = self.tabs.remove(index);
+        if let Some(hooks) = &self.hooks {
+            hooks.remove_session(tab.view.read(cx).id());
+        }
         // GPUI keeps a decoded image and its textures until told to drop them.
         if let Some(viewer) = &tab.viewer {
             viewer
@@ -609,6 +910,12 @@ impl WorkspaceView {
 
     fn active_tab(&self) -> Option<&Tab> {
         self.tabs.get(self.active)
+    }
+
+    fn active_group(&self) -> Option<GroupId> {
+        self.active_tab()
+            .and_then(|tab| self.layout.group_of(tab.id))
+            .map(|group| group.id)
     }
 
     fn tab_index(&self, id: u64) -> Option<usize> {
@@ -707,7 +1014,7 @@ impl WorkspaceView {
             }
             TabCommand::CopyFolder => {
                 if let Some(location) = location {
-                    copy_text(location.dir.display().to_string(), cx);
+                    copy_text(location.folder.display().to_string(), cx);
                 }
             }
             TabCommand::Rename => self.start_rename(RenameTarget::Tab(id), window, cx),
@@ -896,15 +1203,14 @@ impl WorkspaceView {
         waiting_count(&self.attention(cx), self.current_index())
     }
 
-    fn cycle(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn cycle(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.tabs.len();
         if count == 0 {
             return;
         }
-        let next = if forward {
-            (self.active + 1) % count
-        } else {
-            (self.active + count - 1) % count
+        let next = match direction {
+            Direction::Down => (self.active + 1) % count,
+            Direction::Up => (self.active + count - 1) % count,
         };
         self.activate(next, window, cx);
     }
@@ -922,31 +1228,23 @@ impl WorkspaceView {
         });
     }
 
-    /// Tab shortcuts run in the capture phase, before the terminal turns keys into input.
-    fn on_key_down_capture(
-        &mut self,
-        event: &KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.handle_tab_shortcut(&event.keystroke, window, cx) {
-            cx.stop_propagation();
-        }
-    }
-
     fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_visible = !self.sidebar_visible;
         cx.notify();
     }
 
     fn toggle_explorer(&mut self, cx: &mut Context<Self>) {
+        if !settings_file::file_panes(cx).allows(PaneEntry::ToggleExplorer) {
+            return;
+        }
         self.explorer_visible = !self.explorer_visible;
         if self.explorer_visible {
             self.sync_explorer(cx);
         } else {
             // Drop the watches while hidden; showing it again reads the folders afresh.
-            self.explorer
-                .update(cx, |explorer, cx| explorer.set_root(None, false, cx));
+            self.explorer.update(cx, |explorer, cx| {
+                explorer.set_root(None, CdAvailability::Unavailable, cx)
+            });
         }
         cx.notify();
     }
@@ -957,20 +1255,197 @@ impl WorkspaceView {
         if !self.explorer_visible {
             return;
         }
-        let (root, can_cd) = match self.active_tab() {
+        let (root, cd) = match self.active_tab() {
             Some(tab) => {
                 let view = tab.view.read(cx);
                 let root = view
                     .location()
-                    .map(|location| location.dir.clone())
+                    .map(|location| location.folder.clone())
                     .or_else(|| view.current_folder());
                 // Typing `cd` into a running program would feed it keys.
-                (root, view.kind() == SessionKind::Shell && view.at_prompt())
+                let cd = if view.kind() == SessionKind::Shell && view.at_prompt() {
+                    CdAvailability::Available
+                } else {
+                    CdAvailability::Unavailable
+                };
+                (root, cd)
             }
-            None => (None, false),
+            None => (None, CdAvailability::Unavailable),
         };
         self.explorer
-            .update(cx, |explorer, cx| explorer.set_root(root, can_cd, cx));
+            .update(cx, |explorer, cx| explorer.set_root(root, cd, cx));
+    }
+
+    /// With the panes off, a file link asks whether to open the file with the system's
+    /// handler (a program or script there may run, so it is not done unasked).
+    fn offer_external_open(path: PathBuf, window: &mut Window, cx: &mut App) {
+        let name = format!("{path:?}");
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let path = path.clone();
+            alert
+                .title("Open externally?")
+                .description(format!(
+                    "The file explorer and viewer are off. Open {name} with the system's \
+                     default application?"
+                ))
+                .ok_text("Open externally")
+                .show_cancel(true)
+                .on_ok(move |_, _, cx| {
+                    cx.open_with_system(&path);
+                    true
+                })
+        });
+    }
+
+    /// The ids of tabs whose viewer shows a file with unsaved edits.
+    fn unsaved_viewer_tabs(&self, cx: &App) -> Vec<u64> {
+        self.tabs
+            .iter()
+            .filter(|tab| {
+                tab.viewer
+                    .as_ref()
+                    .is_some_and(|viewer| viewer.view.read(cx).is_dirty())
+            })
+            .map(|tab| tab.id)
+            .collect()
+    }
+
+    /// Settings changed: show or drop the file panes to match the switch. Turning it off with
+    /// unsaved edits puts the switch back on and asks (see `refuse_file_panes_off`).
+    fn apply_file_panes_setting(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let wanted = settings_file::file_panes(cx).panes_enabled();
+        let shown = self.file_panes_on;
+        let unsaved = if shown && !wanted {
+            self.unsaved_viewer_tabs(cx)
+        } else {
+            Vec::new()
+        };
+        match pane_change(shown, wanted, unsaved.len()) {
+            PaneChange::Unchanged => {}
+            PaneChange::Show => {
+                self.file_panes_on = true;
+                cx.notify();
+            }
+            PaneChange::Hide => self.drop_file_panes(window, cx),
+            PaneChange::ResolveEdits => self.refuse_file_panes_off(unsaved, window, cx),
+        }
+    }
+
+    /// The page's switch (or a hand edit) already wrote "off": write "on" back (settings.json
+    /// is off for a moment, see PLAN.md) and start the discard questions, unless a chain of
+    /// them is already waiting for answers.
+    fn refuse_file_panes_off(
+        &mut self,
+        unsaved: Vec<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        settings_file::update(cx, |settings| {
+            settings.file_panes = FeatureSwitch::new(true);
+        });
+        if self.file_panes_off_pending {
+            return;
+        }
+        self.file_panes_off_pending = true;
+        Self::confirm_next(cx.entity().downgrade(), unsaved, window, cx);
+    }
+
+    fn confirm_next(
+        workspace: WeakEntity<Self>,
+        unsaved: Vec<u64>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.defer(cx, move |window, cx| {
+            Self::confirm_file_panes_off(workspace, unsaved, window, cx);
+        });
+    }
+
+    /// Ask, with the viewer's own discard prompt, about each unsaved file in turn. Cancel
+    /// anywhere leaves everything as it was; after the last answer the switch goes off.
+    fn confirm_file_panes_off(
+        workspace: WeakEntity<Self>,
+        mut unsaved: Vec<u64>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(tab_id) = unsaved.pop() else {
+            Self::finish_file_panes_off(&workspace, window, cx);
+            return;
+        };
+        let _ = workspace.update(cx, |workspace, cx| {
+            workspace.ask_to_discard(tab_id, unsaved, window, cx);
+        });
+    }
+
+    /// Every edit may go: drop the panes and write the switch off. The chain is over.
+    fn finish_file_panes_off(workspace: &WeakEntity<Self>, window: &mut Window, cx: &mut App) {
+        let alive = workspace.update(cx, |workspace, cx| {
+            workspace.file_panes_off_pending = false;
+            workspace.drop_file_panes(window, cx);
+        });
+        if alive.is_err() {
+            return;
+        }
+        settings_file::update(cx, |settings| {
+            settings.file_panes = FeatureSwitch::new(false);
+        });
+    }
+
+    /// One step of the chain: the tab's discard prompt, then the next file. A tab closed
+    /// meanwhile is skipped.
+    fn ask_to_discard(
+        &mut self,
+        tab_id: u64,
+        rest: Vec<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let weak = cx.entity().downgrade();
+        let viewer = self
+            .tab_index(tab_id)
+            .and_then(|index| self.tabs[index].viewer.as_ref())
+            .map(|viewer| viewer.view.clone());
+        let Some(viewer) = viewer else {
+            Self::confirm_next(weak, rest, window, cx);
+            return;
+        };
+        let cancelled = weak.clone();
+        viewer.update(cx, |viewer, cx| {
+            viewer.discard_then_or(
+                window,
+                cx,
+                move |_, window, cx| {
+                    Self::confirm_next(weak.clone(), rest.clone(), window, cx);
+                },
+                move |cx| {
+                    let _ = cancelled.update(cx, |workspace, _| {
+                        workspace.file_panes_off_pending = false;
+                    });
+                },
+            );
+        });
+    }
+
+    /// Hide both panes and stop their work: the explorer loses its folder (and watches), the
+    /// viewers go with their files and watches. Widths stay in the settings.
+    fn drop_file_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.file_panes_on = false;
+        self.explorer_visible = false;
+        self.explorer.update(cx, |explorer, cx| {
+            explorer.set_root(None, CdAvailability::Unavailable, cx)
+        });
+        for tab in &mut self.tabs {
+            if let Some(viewer) = tab.viewer.take() {
+                viewer
+                    .view
+                    .update(cx, |viewer, cx| viewer.forget_image(window, cx));
+            }
+        }
+        if !self.settings.shows_page() {
+            self.focus_active(window, cx);
+        }
+        cx.notify();
     }
 
     fn on_explorer_event(
@@ -983,33 +1458,14 @@ impl WorkspaceView {
         match event {
             ExplorerEvent::Close => self.toggle_explorer(cx),
             ExplorerEvent::CdTo(folder) => {
-                if let Some(tab) = self.active_tab() {
-                    // Stale when a command started since the explorer last synced.
-                    if !tab.view.read(cx).at_prompt() {
-                        return;
-                    }
-                    let changed = tab.view.update(cx, |view, cx| view.change_dir(folder, cx));
-                    if let Err(err) = changed {
-                        window.push_notification(Notification::error(err.to_string()), cx);
-                        return;
-                    }
-                }
-                self.focus_active(window, cx);
+                self.change_active_folder(folder, window, cx);
             }
             ExplorerEvent::OpenTab(folder, agent) => {
-                let launcher = match agent {
-                    Some(agent) => agent.clone(),
-                    None => match launcher::default_shell(&self.launchers) {
-                        Some(shell) => shell.clone(),
-                        None => {
-                            window.push_notification(Notification::error("No shell found"), cx);
-                            return;
-                        }
-                    },
+                let Some(agent) = agent else {
+                    self.open_default_shell_in(Some(folder.clone()), window, cx);
+                    return;
                 };
-                if let Some(spec) = launcher.spec(Some(folder.clone())) {
-                    self.open_tab_or_notify(spec, window, cx);
-                }
+                self.open_launcher_in(agent, Some(folder.clone()), window, cx);
             }
             ExplorerEvent::EditEnded => self.focus_active(window, cx),
             ExplorerEvent::OpenFile(path) => {
@@ -1018,6 +1474,27 @@ impl WorkspaceView {
                 }
             }
         }
+    }
+
+    fn change_active_folder(
+        &mut self,
+        folder: &std::path::Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.active_tab() else {
+            self.focus_active(window, cx);
+            return;
+        };
+        // A command may have started since the explorer last synchronized.
+        if !tab.view.read(cx).at_prompt() {
+            return;
+        }
+        if let Err(err) = tab.view.update(cx, |view, cx| view.change_dir(folder, cx)) {
+            window.push_notification(Notification::error(err.to_string()), cx);
+            return;
+        }
+        self.focus_active(window, cx);
     }
 
     fn on_viewer_event(
@@ -1058,29 +1535,110 @@ impl WorkspaceView {
     }
 
     /// The width the sidebar and the explorer take from the row of panes.
-    fn fixed_panes_width(&self) -> f32 {
-        let sidebar = if self.sidebar_visible {
+    fn fixed_panes_width(&self, cx: &App) -> f32 {
+        let explorer = if self.explorer_visible {
+            self.explorer_width(cx)
+        } else {
+            0.
+        };
+        self.sidebar_width() + explorer
+    }
+
+    fn sidebar_width(&self) -> f32 {
+        if self.sidebar_visible {
             SIDEBAR_WIDTH
         } else {
             0.
-        };
-        let explorer = if self.explorer_visible {
-            EXPLORER_WIDTH
-        } else {
-            0.
-        };
-        sidebar + explorer
+        }
     }
 
+    /// The file viewer's share of the window width: the one being dragged, else the saved one
+    /// (which follows the settings file when it is reloaded).
+    fn viewer_fraction(&self, cx: &App) -> f32 {
+        self.viewer_drag
+            .current(|| settings_file::settings(cx).file_viewer_fraction.get())
+    }
+
+    /// Follow a divider drag in memory only: [`Self::end_divider_drag`] saves it.
     fn drag_divider(&mut self, event: &DragMoveEvent<ViewerDivider>, cx: &mut Context<Self>) {
         let row = event.bounds;
         let x = f32::from(event.event.position.x - row.origin.x);
         let fraction =
-            pane_width::fraction_at(x, f32::from(row.size.width), self.fixed_panes_width());
-        if fraction != self.viewer_fraction {
-            self.viewer_fraction = fraction;
+            pane_width::fraction_at(x, f32::from(row.size.width), self.fixed_panes_width(cx));
+        if self.viewer_drag.follow(fraction, self.viewer_fraction(cx)) {
             cx.notify();
         }
+    }
+
+    /// The explorer's width in pixels: the one being dragged, else the saved one.
+    fn explorer_width(&self, cx: &App) -> f32 {
+        self.explorer_drag
+            .current(|| settings_file::settings(cx).file_explorer_width)
+            .get()
+    }
+
+    /// Follow a drag of the explorer's edge in memory only, like [`Self::drag_divider`].
+    fn drag_explorer_edge(
+        &mut self,
+        event: &DragMoveEvent<ExplorerDivider>,
+        cx: &mut Context<Self>,
+    ) {
+        let x = f32::from(event.event.position.x - event.bounds.origin.x);
+        let width = ExplorerWidth::at(x, self.sidebar_width());
+        let shown = ExplorerWidth::new(self.explorer_width(cx));
+        if self.explorer_drag.follow(width, shown) {
+            cx.notify();
+        }
+    }
+
+    /// On any mouse button release: save the width a divider drag left, once per drag.
+    fn end_divider_drag(&mut self, cx: &mut Context<Self>) {
+        self.viewer_drag.finish(cx);
+        self.explorer_drag.finish(cx);
+    }
+
+    fn save_explorer_width(width: ExplorerWidth, cx: &mut App) {
+        settings_file::save_layout(cx, |settings| settings.file_explorer_width = width);
+    }
+
+    /// The explorer in a box of its width, with a strip on its right edge: drag it to resize
+    /// the explorer, double-click it for the default width.
+    fn explorer_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let hovered = cx.theme().border;
+        div()
+            .relative()
+            .flex_none()
+            .w(px(self.explorer_width(cx)))
+            .h_full()
+            .child(self.explorer.clone())
+            .child(
+                div()
+                    .id("explorer-divider")
+                    // Keeps presses on the strip from reaching the explorer rows under it.
+                    .occlude()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .h_full()
+                    .w(px(DIVIDER_WIDTH))
+                    .hover(move |style| style.bg(hovered))
+                    .cursor(CursorStyle::ResizeLeftRight)
+                    .on_drag(ExplorerDivider, |_, _, _, cx| cx.new(|_| ExplorerDivider))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|workspace, event: &MouseDownEvent, _, cx| {
+                            if event.click_count == 2 {
+                                workspace.explorer_drag.reset(ExplorerWidth::default(), cx);
+                            }
+                        }),
+                    ),
+            )
+    }
+
+    fn save_viewer_fraction(fraction: f32, cx: &mut App) {
+        settings_file::save_layout(cx, |settings| {
+            settings.file_viewer_fraction = ViewerFraction::new(fraction);
+        });
     }
 
     /// The strip on the viewer's left edge: drag it to resize the viewer, double-click it for
@@ -1101,8 +1659,7 @@ impl WorkspaceView {
                 MouseButton::Left,
                 cx.listener(|workspace, event: &MouseDownEvent, _, cx| {
                     if event.click_count == 2 {
-                        workspace.viewer_fraction = DEFAULT_VIEWER_FRACTION;
-                        cx.notify();
+                        workspace.viewer_drag.reset(DEFAULT_VIEWER_FRACTION, cx);
                     }
                 }),
             )
@@ -1117,51 +1674,25 @@ impl WorkspaceView {
         }
     }
 
-    /// Ctrl+Tab / Ctrl+Shift+Tab cycle tabs, Ctrl+1..9 select one, Ctrl+Shift+T opens the
-    /// default shell, Ctrl+Shift+D another tab like the selected one, Ctrl+Shift+W closes it,
-    /// Ctrl+Shift+B shows or hides the sidebar, Ctrl+Shift+S searches tabs, Ctrl+Shift+A jumps
-    /// to the next tab needing attention, Ctrl+Shift+| shows or hides the file explorer.
-    fn handle_tab_shortcut(
-        &mut self,
-        keystroke: &Keystroke,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let modifiers = &keystroke.modifiers;
-        if !modifiers.control || modifiers.alt || modifiers.platform {
-            return false;
+    fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings.shows_page() {
+            self.close_settings(window, cx);
+            return;
         }
-        match (keystroke.key.as_str(), modifiers.shift) {
-            ("tab", shift) => self.cycle(!shift, window, cx),
-            (NEW_TAB_KEY, true) => self.open_default_shell(window, cx),
-            (DUPLICATE_TAB_KEY, true) => self.duplicate_tab(self.active, window, cx),
-            ("w", true) if self.settings.shows_page() => self.close_settings(window, cx),
-            ("w", true) => self.close_tab(self.active, window, cx),
-            ("b", true) => self.toggle_sidebar(cx),
-            // GPUI drops Shift from a shifted symbol: Ctrl+Shift+\ arrives as Ctrl+|.
-            (EXPLORER_KEY, _) => self.toggle_explorer(cx),
-            ("s", true) => self.focus_search(window, cx),
-            ("a", true) => self.jump_to_attention(window, cx),
-            (key, false) => match tab_number(key) {
-                Some(number) => self.activate(number - 1, window, cx),
-                None => return false,
-            },
-            _ => return false,
-        }
-        true
+        self.close_tab(self.active, window, cx);
     }
 
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (icon, tooltip) = if self.sidebar_visible {
-            (IconName::PanelLeftClose, "Hide sidebar (Ctrl+Shift+B)")
+        let (icon, label) = if self.sidebar_visible {
+            (IconName::PanelLeftClose, "Hide sidebar")
         } else {
-            (IconName::PanelLeftOpen, "Show sidebar (Ctrl+Shift+B)")
+            (IconName::PanelLeftOpen, "Show sidebar")
         };
         Button::new("toggle-sidebar")
             .icon(icon)
             .ghost()
             .small()
-            .tooltip(tooltip)
+            .tooltip(shortcuts::with_shortcut(label, SIDEBAR_KEY))
             .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_sidebar(cx)))
     }
 
@@ -1185,13 +1716,6 @@ fn copy_text(text: String, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(text));
 }
 
-/// The tab number for Ctrl+1..9.
-fn tab_number(key: &str) -> Option<usize> {
-    key.parse()
-        .ok()
-        .filter(|number| (1..=NUMBERED_TABS).contains(number))
-}
-
 impl Focusable for WorkspaceView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         if self.settings.shows_page() {
@@ -1206,26 +1730,105 @@ impl Focusable for WorkspaceView {
 
 impl Render for WorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.pulse_running = sidebar::pulse_allowed(window);
         let active = self
             .active_tab()
             .filter(|_| !self.settings.shows_page())
             .map(|tab| tab.view.clone());
+        let file_panes = settings_file::file_panes(cx);
         let viewer = self.active_viewer(cx);
         let viewer_width = pane_width::viewer_width(
-            self.viewer_fraction,
+            self.viewer_fraction(cx),
             f32::from(window.viewport_size().width),
-            self.fixed_panes_width(),
+            self.fixed_panes_width(cx),
         );
-        if window.window_title() != about::APP_NAME {
-            window.set_window_title(about::APP_NAME);
-        }
-
         div()
             .size_full()
             .flex()
             .flex_col()
-            .capture_key_down(cx.listener(Self::on_key_down_capture))
+            .key_context(KEY_CONTEXT)
+            // Capture handlers propagate by default; consume workspace shortcuts before
+            // the terminal can translate them into control bytes.
+            .capture_action(cx.listener(|workspace, _: &NextTab, window, cx| {
+                workspace.cycle(Direction::Down, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &PreviousTab, window, cx| {
+                workspace.cycle(Direction::Up, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &NewTab, window, cx| {
+                workspace.open_default_shell(window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &DuplicateTab, window, cx| {
+                workspace.duplicate_tab(workspace.active, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &CloseTab, window, cx| {
+                workspace.close_active(window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &ToggleSidebar, _, cx| {
+                workspace.toggle_sidebar(cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &ToggleExplorer, _, cx| {
+                workspace.toggle_explorer(cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &SearchTabs, window, cx| {
+                workspace.focus_search(window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &NextAttention, window, cx| {
+                workspace.jump_to_attention(window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab1, window, cx| {
+                workspace.activate(0, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab2, window, cx| {
+                workspace.activate(1, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab3, window, cx| {
+                workspace.activate(2, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab4, window, cx| {
+                workspace.activate(3, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab5, window, cx| {
+                workspace.activate(4, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab6, window, cx| {
+                workspace.activate(5, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab7, window, cx| {
+                workspace.activate(6, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab8, window, cx| {
+                workspace.activate(7, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &SelectTab9, window, cx| {
+                workspace.activate(8, window, cx);
+                cx.stop_propagation();
+            }))
+            // Both halves of "any release": over this view, and outside it (an overlay, or
+            // past the window's edge).
+            .capture_any_mouse_up(cx.listener(|workspace, _, _, cx| {
+                workspace.end_divider_drag(cx);
+            }))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|workspace, _, _, cx| workspace.end_divider_drag(cx)),
+            )
             .child(
                 TitleBar::new()
                     .on_close_window(
@@ -1240,7 +1843,9 @@ impl Render for WorkspaceView {
                             .gap_1()
                             .occlude()
                             .child(self.sidebar_toggle(cx))
-                            .child(self.explorer_toggle(cx))
+                            .when(file_panes.panes_enabled(), |buttons| {
+                                buttons.child(self.explorer_toggle(cx))
+                            })
                             .child(about::about_button())
                             .child(self.settings_button(cx)),
                     ),
@@ -1255,17 +1860,23 @@ impl Render for WorkspaceView {
                             workspace.drag_divider(event, cx);
                         },
                     ))
+                    .on_drag_move(cx.listener(
+                        |workspace, event: &DragMoveEvent<ExplorerDivider>, _, cx| {
+                            workspace.drag_explorer_edge(event, cx);
+                        },
+                    ))
                     .when(self.sidebar_visible, |content| {
                         content.child(self.render_sidebar(cx))
                     })
                     .when(self.explorer_visible, |content| {
-                        content.child(self.explorer.clone())
+                        content.child(self.explorer_panel(cx))
                     })
                     .child(div().flex_1().min_w_0().h_full().children(active).when(
                         self.settings.shows_page(),
                         |area| {
                             area.track_focus(self.settings.focus())
                                 .child(settings_page::render(
+                                    self.launchers.clone(),
                                     cx.listener(|workspace, _, window, cx| {
                                         workspace.open_settings_file(window, cx)
                                     }),
@@ -1291,10 +1902,637 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tab_numbers() {
-        assert_eq!(tab_number("1"), Some(1));
-        assert_eq!(tab_number("9"), Some(9));
-        assert_eq!(tab_number("0"), None);
-        assert_eq!(tab_number("a"), None);
+    fn default_bindings_parse() {
+        assert_eq!(default_bindings().len(), 18);
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    fn last_command_events_and_history_deletion_are_flushed_with_the_final_snapshot(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use gpui_kit::VisualTestContext;
+        use gpui_kit::component::Root;
+        use std::cell::RefCell;
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+        use term_core::{ExecutedCommand, SessionEvent};
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            settings_file::init(cx);
+            crate::terminal_element::init(cx);
+            crate::terminal_view::init(cx);
+            crate::history::init_in_memory(cx);
+            init(cx);
+        });
+        let (saved, snapshots) = mpsc::channel();
+        let writer = Rc::new(tabs_file::TabsWriter::for_test(move |state| {
+            saved.send(state).unwrap();
+        }));
+        let closing_writer = writer.clone();
+        let captured = Rc::new(RefCell::new(None));
+        let capture = captured.clone();
+        let window = cx.add_window(move |window, cx| {
+            let (_, messages) = futures::channel::mpsc::unbounded();
+            let workspace =
+                cx.new(|cx| WorkspaceView::new(Rc::from([]), None, messages, writer, window, cx));
+            workspace.update(cx, |workspace, cx| {
+                let mut spec = LaunchSpec::new(
+                    SessionKind::Shell,
+                    Some("/bin/sh".into()),
+                    vec!["-c".into(), "exit 0".into()],
+                    None,
+                );
+                spec.mark_token = Some("test".into());
+                for _ in 0..2 {
+                    workspace.open_tab(spec.clone(), window, cx).unwrap();
+                    let session = &workspace.tabs.last().unwrap().view.read(cx).session;
+                    let deadline = Instant::now() + Duration::from_secs(30);
+                    while !session.has_exited() {
+                        assert!(Instant::now() < deadline, "test child did not exit");
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            });
+            *capture.borrow_mut() = Some(workspace.clone());
+            Root::new(workspace, window, cx)
+        });
+        let workspace = captured.borrow().clone().unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            workspace.update(cx, |workspace, cx| {
+                for tab in &workspace.tabs {
+                    tab.view.update(cx, |view, cx| {
+                        view.dispatch_test_event(
+                            SessionEvent::CommandExecuted(ExecutedCommand {
+                                command: "cargo test".into(),
+                                folder: None,
+                            }),
+                            cx,
+                        );
+                    });
+                }
+            });
+        });
+        cx.run_until_parked();
+        for _ in 0..2 {
+            let state = snapshots.recv_timeout(Duration::from_secs(10)).unwrap();
+            assert_eq!(state.layout.tabs().len(), 2);
+            assert!(
+                state
+                    .layout
+                    .tabs()
+                    .iter()
+                    .all(|tab| { tab.last_command.as_deref() == Some("cargo test") })
+            );
+        }
+
+        // "Restore previous tabs" off: no snapshot is queued; on again: saving resumes.
+        let set_restore = |cx: &mut VisualTestContext, on: bool| {
+            cx.update(|_, cx| {
+                settings_file::preview(cx, |settings| {
+                    settings.restore_tabs = workspace_model::FeatureSwitch::new(on);
+                });
+            });
+        };
+        let save = |cx: &mut VisualTestContext| {
+            cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.save_tabs(cx)));
+            cx.run_until_parked();
+        };
+        set_restore(&mut cx, false);
+        save(&mut cx);
+        assert!(snapshots.recv_timeout(Duration::from_millis(300)).is_err());
+        set_restore(&mut cx, true);
+        save(&mut cx);
+        assert!(snapshots.recv_timeout(Duration::from_secs(10)).is_ok());
+
+        cx.update(|_, cx| crate::history::forget("cargo test", cx));
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.tabs[0].meta.custom_name = Some("final name".into());
+                workspace.save_tabs_and_flush(cx);
+            });
+        });
+        assert!(!closing_writer.is_active());
+        let states: Vec<_> = snapshots.try_iter().collect();
+        assert!(states.len() >= 2, "deletion must queue saves before close");
+        let final_state = states.last().unwrap();
+        assert!(
+            final_state
+                .layout
+                .tabs()
+                .iter()
+                .all(|tab| tab.last_command.is_none())
+        );
+        assert_eq!(
+            final_state.layout.tabs()[0].meta.custom_name.as_deref(),
+            Some("final name")
+        );
+        // A retained workspace must not keep writing after the lock can change owners.
+        workspace.read_with(&cx, |workspace, cx| workspace.save_tabs(cx));
+        assert!(snapshots.try_recv().is_err());
+    }
+
+    /// A window with one tab, an in-memory settings file and a text file to open.
+    struct PanesHarness {
+        cx: gpui_kit::VisualTestContext,
+        workspace: Entity<WorkspaceView>,
+        folder: PathBuf,
+        file: PathBuf,
+    }
+
+    impl PanesHarness {
+        fn new(name: &str, cx: &mut gpui_kit::TestAppContext) -> Self {
+            use gpui_kit::VisualTestContext;
+            use gpui_kit::component::Root;
+            use std::cell::RefCell;
+
+            cx.update(|cx| {
+                gpui_kit::init(cx);
+                settings_file::init_in_memory(cx);
+                crate::terminal_element::init(cx);
+                crate::terminal_view::init(cx);
+                init(cx);
+            });
+            let folder =
+                std::env::temp_dir().join(format!("agentws-{name}-{}", std::process::id()));
+            std::fs::create_dir_all(&folder).unwrap();
+            let file = folder.join("note.txt");
+            std::fs::write(&file, "hello").unwrap();
+            #[cfg(windows)]
+            let (program, args) = ("cmd", vec!["/C", "exit 0"]);
+            #[cfg(not(windows))]
+            let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+            let spec = LaunchSpec::new(
+                SessionKind::Shell,
+                Some(program.into()),
+                args.into_iter().map(String::from).collect(),
+                None,
+            );
+            let captured = Rc::new(RefCell::new(None));
+            let capture = captured.clone();
+            let window = cx.add_window(move |window, cx| {
+                let (_, messages) = futures::channel::mpsc::unbounded();
+                let workspace = cx.new(|cx| {
+                    WorkspaceView::new(
+                        Rc::from([]),
+                        None,
+                        messages,
+                        Rc::new(tabs_file::TabsWriter::new(false)),
+                        window,
+                        cx,
+                    )
+                });
+                workspace.update(cx, |workspace, cx| {
+                    workspace.open_tab(spec, window, cx).unwrap();
+                    // Let the PTY reader finish before GPUI's deterministic executor polls
+                    // the event receiver; a later wake from that thread fails the test.
+                    let session = &workspace.tabs[0].view.read(cx).session;
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                    while !session.has_exited() {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "test child did not exit"
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                });
+                *capture.borrow_mut() = Some(workspace.clone());
+                Root::new(workspace, window, cx)
+            });
+            let workspace = captured.borrow().clone().unwrap();
+            let cx = VisualTestContext::from_window(window.into(), cx);
+            cx.run_until_parked();
+            Self {
+                cx,
+                workspace,
+                folder,
+                file,
+            }
+        }
+
+        fn widths(&mut self) -> (ViewerFraction, ExplorerWidth) {
+            self.cx.update(|_, cx| {
+                let settings = settings_file::settings(cx);
+                (settings.file_viewer_fraction, settings.file_explorer_width)
+            })
+        }
+
+        /// Saves widths other than the defaults and returns them.
+        fn save_widths(&mut self) -> (ViewerFraction, ExplorerWidth) {
+            self.cx.update(|_, cx| {
+                settings_file::preview(cx, |settings| {
+                    settings.file_viewer_fraction = ViewerFraction::new(0.4);
+                    settings.file_explorer_width = ExplorerWidth::new(321.);
+                });
+            });
+            self.widths()
+        }
+
+        fn set_panes(&mut self, on: bool) {
+            self.cx.update(|_, cx| {
+                settings_file::update(cx, |settings| {
+                    settings.file_panes = FeatureSwitch::new(on);
+                });
+            });
+            self.cx.run_until_parked();
+        }
+
+        fn open_file(&mut self) {
+            let file = self.file.clone();
+            let workspace = self.workspace.clone();
+            self.cx.update(|window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    let id = workspace.tabs[0].id;
+                    workspace.open_file_in(id, file, FilePlace::default(), window, cx);
+                });
+            });
+            self.cx.run_until_parked();
+        }
+
+        fn toggle_explorer(&mut self) {
+            let workspace = self.workspace.clone();
+            self.cx.update(|_, cx| {
+                workspace.update(cx, |workspace, cx| workspace.toggle_explorer(cx))
+            });
+        }
+
+        /// (panes on, explorer shown, the first tab's viewer).
+        fn state(&mut self) -> (bool, bool, Option<WeakEntity<FileViewer>>) {
+            self.workspace.read_with(&self.cx, |workspace, _| {
+                (
+                    workspace.file_panes_on,
+                    workspace.explorer_visible,
+                    workspace.tabs[0]
+                        .viewer
+                        .as_ref()
+                        .map(|v| v.view.downgrade()),
+                )
+            })
+        }
+
+        fn mark_dirty(&mut self, viewer: &WeakEntity<FileViewer>, dirty: bool) {
+            self.cx.update(|_, cx| {
+                viewer
+                    .upgrade()
+                    .unwrap()
+                    .update(cx, |viewer, _| viewer.mark_dirty_for_test(dirty));
+            });
+        }
+
+        fn switch_on(&mut self) -> bool {
+            self.cx
+                .update(|_, cx| settings_file::file_panes(cx).panes_enabled())
+        }
+
+        fn pending(&mut self) -> bool {
+            self.workspace
+                .read_with(&self.cx, |workspace, _| workspace.file_panes_off_pending)
+        }
+
+        /// Opens the file and the explorer, then makes the file's edits unsaved.
+        fn open_dirty_viewer(&mut self) -> WeakEntity<FileViewer> {
+            self.toggle_explorer();
+            self.open_file();
+            let (on, explorer, viewer) = self.state();
+            assert!(on && explorer);
+            let viewer = viewer.expect("the viewer opens while the panes are on");
+            self.mark_dirty(&viewer, true);
+            viewer
+        }
+    }
+
+    impl Drop for PanesHarness {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.folder);
+        }
+    }
+
+    #[gpui::test]
+    fn in_app_notifications_switch_gates_agent_toasts_live(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::component::WindowExt;
+
+        let mut h = PanesHarness::new("toasts-live", cx);
+        let count = |h: &mut PanesHarness| h.cx.update(|window, cx| window.notifications(cx).len());
+        let notify = |h: &mut PanesHarness, notice: AgentNotice| {
+            let workspace = h.workspace.clone();
+            h.cx.update(|window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    let id = workspace.tabs[0].id;
+                    workspace.notify_agent(id, notice, window, cx);
+                })
+            });
+            h.cx.run_until_parked();
+        };
+        let switch_to = |h: &mut PanesHarness, on: bool| {
+            h.cx.update(|_, cx| {
+                settings_file::update(cx, |settings| {
+                    settings.in_app_notifications = FeatureSwitch::new(on);
+                });
+            });
+            h.cx.run_until_parked();
+        };
+        let turn_off = |h: &mut PanesHarness| switch_to(h, false);
+        let turn_on = |h: &mut PanesHarness| switch_to(h, true);
+
+        notify(&mut h, AgentNotice::NeedsAttention);
+        assert_eq!(count(&mut h), 1, "on by default");
+        turn_off(&mut h);
+        assert_eq!(count(&mut h), 1, "turning off keeps what is shown");
+        notify(&mut h, AgentNotice::Finished);
+        notify(&mut h, AgentNotice::Exited(Some(0)));
+        assert_eq!(count(&mut h), 1, "off: no agent status toasts");
+        // Toasts are keyed by tab, so clear them to tell a new one from a replaced one.
+        h.cx.update(|window, cx| window.clear_notifications(cx));
+        h.cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        h.cx.run_until_parked();
+        assert_eq!(count(&mut h), 0);
+        notify(&mut h, AgentNotice::Exited(Some(0)));
+        assert_eq!(count(&mut h), 0, "off: a clean exit does not toast");
+        notify(&mut h, AgentNotice::Exited(Some(1)));
+        assert_eq!(count(&mut h), 1, "off: a failed exit still toasts");
+        // A user-action toast is not an agent toast.
+        h.cx.update(|window, cx| {
+            window.push_notification(Notification::info("feedback"), cx);
+        });
+        assert_eq!(count(&mut h), 2);
+        // Toasts are keyed by tab, so clear them to tell a new one from a replaced one.
+        h.cx.update(|window, cx| window.clear_notifications(cx));
+        h.cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        h.cx.run_until_parked();
+        assert_eq!(count(&mut h), 0);
+        turn_on(&mut h);
+        notify(&mut h, AgentNotice::Exited(Some(0)));
+        assert_eq!(count(&mut h), 1, "on again: toasts return");
+    }
+
+    #[gpui::test]
+    fn file_panes_switch_refuses_off_with_unsaved_edits(cx: &mut gpui_kit::TestAppContext) {
+        let mut h = PanesHarness::new("panes-refuse", cx);
+        let viewer = h.open_dirty_viewer();
+
+        h.set_panes(false);
+        let (on, explorer, kept) = h.state();
+        assert!(on && explorer && kept.is_some());
+        assert!(h.switch_on());
+        assert!(h.pending(), "the discard question waits for an answer");
+        // A second "off" while the question is open starts no second chain.
+        h.set_panes(false);
+        assert!(h.switch_on() && h.pending());
+
+        // Cancel ends the chain: nothing closes, and a later "off" asks again.
+        h.cx.simulate_keystrokes("escape");
+        h.cx.run_until_parked();
+        assert!(!h.pending());
+        assert!(h.state().0 && h.switch_on() && viewer.upgrade().is_some());
+        h.set_panes(false);
+        assert!(h.pending());
+    }
+
+    #[gpui::test]
+    fn file_panes_switch_off_after_discarding_every_edit(cx: &mut gpui_kit::TestAppContext) {
+        let mut h = PanesHarness::new("panes-discard", cx);
+        let viewer = h.open_dirty_viewer();
+
+        h.set_panes(false);
+        assert!(h.pending());
+        // Discard is the dialog's confirm button.
+        h.cx.simulate_keystrokes("enter");
+        h.cx.run_until_parked();
+        let (on, explorer, none) = h.state();
+        assert!(!on && !explorer && none.is_none());
+        assert!(!h.switch_on() && !h.pending());
+        assert!(viewer.upgrade().is_none(), "the viewer must be dropped");
+    }
+
+    #[gpui::test]
+    fn file_panes_switch_hides_both_panes_and_keeps_widths(cx: &mut gpui_kit::TestAppContext) {
+        let mut h = PanesHarness::new("panes-widths", cx);
+        let saved_widths = h.save_widths();
+
+        // On: the explorer toggles and a file opens in the viewer.
+        h.toggle_explorer();
+        h.open_file();
+        let (on, explorer, viewer) = h.state();
+        assert!(on && explorer);
+        let viewer = viewer.expect("the viewer opens while the panes are on");
+
+        // Edits resolved: both panes go, the viewer entity (and its watcher) is dropped.
+        h.mark_dirty(&viewer, false);
+        h.set_panes(false);
+        let (on, explorer, none) = h.state();
+        assert!(!on && !explorer && none.is_none());
+        assert!(viewer.upgrade().is_none(), "the viewer must be dropped");
+        assert_eq!(h.widths(), saved_widths);
+
+        // Off: the toggle does nothing, a file link opens no viewer.
+        h.toggle_explorer();
+        h.open_file();
+        let (_, explorer, none) = h.state();
+        assert!(!explorer && none.is_none());
+        assert_eq!(h.widths(), saved_widths);
+
+        // On again: the toggle works, the widths are what they were.
+        h.set_panes(true);
+        h.toggle_explorer();
+        let (on, explorer, none) = h.state();
+        assert!(on && explorer && none.is_none());
+        assert_eq!(h.widths(), saved_widths);
+        h.open_file();
+        assert!(h.state().2.is_some());
+    }
+
+    #[gpui::test]
+    fn duplicate_shortcut_does_not_send_eof_to_the_original_terminal(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use gpui_kit::VisualTestContext;
+        use gpui_kit::component::Root;
+        use std::cell::RefCell;
+        use std::time::{Duration, Instant};
+
+        fn wait_for_exit(session: &term_core::Session) {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !session.has_exited() {
+                assert!(Instant::now() < deadline, "test child did not exit");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            settings_file::init(cx);
+            crate::terminal_element::init(cx);
+            crate::terminal_view::init(cx);
+            init(cx);
+        });
+        #[cfg(windows)]
+        let (program, args) = ("cmd", vec!["/C", "exit 0"]);
+        #[cfg(not(windows))]
+        let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+        let spec = LaunchSpec::new(
+            SessionKind::Shell,
+            Some(program.into()),
+            args.into_iter().map(String::from).collect(),
+            None,
+        );
+        let captured = Rc::new(RefCell::new(None));
+        let capture = captured.clone();
+        let window = cx.add_window(move |window, cx| {
+            let (_, messages) = futures::channel::mpsc::unbounded();
+            let workspace = cx.new(|cx| {
+                WorkspaceView::new(
+                    Rc::from([]),
+                    None,
+                    messages,
+                    Rc::new(tabs_file::TabsWriter::new(false)),
+                    window,
+                    cx,
+                )
+            });
+            workspace.update(cx, |workspace, cx| {
+                workspace.open_tab(spec, window, cx).unwrap();
+                // Drain startup output so any later input remains observable through
+                // awaiting_echo, independently of the child process's response.
+                wait_for_exit(&workspace.tabs[0].view.read(cx).session);
+            });
+            *capture.borrow_mut() = Some(workspace.clone());
+            Root::new(workspace, window, cx)
+        });
+        let workspace = captured.borrow().clone().unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let original = workspace.read_with(&cx, |workspace, _| workspace.tabs[0].view.clone());
+        // Dispatch synchronously so the new child's output drains before GPUI's
+        // deterministic executor starts polling its event receiver.
+        cx.update(|window, cx| {
+            window.dispatch_keystroke(gpui_kit::Keystroke::parse("ctrl-shift-d").unwrap(), cx);
+        });
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(workspace.tabs.len(), 2);
+            assert_eq!(workspace.active, 1);
+            assert_eq!(workspace.tabs[0].view, original);
+            assert_eq!(
+                workspace.tabs[1].spec.program,
+                workspace.tabs[0].spec.program
+            );
+            assert_eq!(workspace.tabs[1].spec.args, workspace.tabs[0].spec.args);
+            assert!(
+                !original.read(cx).session.awaiting_echo(),
+                "the duplicate shortcut must not send Ctrl+D to the original terminal"
+            );
+            wait_for_exit(&workspace.tabs[1].view.read(cx).session);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_keystrokes("ctrl-1");
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        for shortcut in [
+            "ctrl-shift-b",
+            "ctrl-shift-b",
+            "ctrl-|",
+            "ctrl-|",
+            "ctrl-shift-a",
+        ] {
+            cx.simulate_keystrokes(shortcut);
+            assert!(
+                !original.read_with(&cx, |view, _| view.session.awaiting_echo()),
+                "{shortcut} must not reach the terminal"
+            );
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+        assert_eq!(workspace.read_with(&cx, |workspace, _| workspace.active), 0);
+        cx.simulate_keystrokes("ctrl-d");
+        assert!(
+            original.read_with(&cx, |view, _| view.session.awaiting_echo()),
+            "plain Ctrl+D must still reach the terminal"
+        );
+    }
+
+    #[gpui::test]
+    fn tab_actions_capture_shortcuts_while_search_has_focus(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::VisualTestContext;
+        use gpui_kit::component::Root;
+        use std::cell::RefCell;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            settings_file::init(cx);
+            init(cx);
+        });
+        let captured = Rc::new(RefCell::new(None));
+        let capture = captured.clone();
+        let window = cx.add_window(move |window, cx| {
+            let (_, messages) = futures::channel::mpsc::unbounded();
+            let workspace = cx.new(|cx| {
+                WorkspaceView::new(
+                    Rc::from([]),
+                    None,
+                    messages,
+                    Rc::new(tabs_file::TabsWriter::new(false)),
+                    window,
+                    cx,
+                )
+            });
+            workspace.update(cx, |workspace, cx| workspace.focus_search(window, cx));
+            *capture.borrow_mut() = Some(workspace.clone());
+            Root::new(workspace, window, cx)
+        });
+        let workspace = captured.borrow().clone().unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_keystrokes("ctrl-alt-shift-b");
+        assert!(workspace.read_with(&cx, |workspace, _| workspace.sidebar_visible));
+        cx.simulate_keystrokes("ctrl-b");
+        assert!(workspace.read_with(&cx, |workspace, _| workspace.sidebar_visible));
+        cx.simulate_keystrokes("ctrl-shift-b");
+        assert!(!workspace.read_with(&cx, |workspace, _| workspace.sidebar_visible));
+        assert!(workspace.read_with(&cx, |workspace, cx| workspace.search.query(cx).is_empty()));
+    }
+
+    #[gpui::test]
+    fn startup_fallback_warning_is_deferred_until_the_root_exists(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use gpui_kit::VisualTestContext;
+        use gpui_kit::component::Root;
+
+        cx.update(gpui_kit::init);
+        cx.update(settings_file::init);
+        let window = cx.add_window(move |window, cx| {
+            let (_, messages) = futures::channel::mpsc::unbounded();
+            let workspace = cx.new(|cx| {
+                WorkspaceView::new(
+                    Rc::from([]),
+                    None,
+                    messages,
+                    Rc::new(tabs_file::TabsWriter::new(false)),
+                    window,
+                    cx,
+                )
+            });
+            workspace.update(cx, |workspace, cx| {
+                workspace.warn_shell_fallback(
+                    "Could not start broken-shell: executable not found".into(),
+                    window,
+                    cx,
+                );
+            });
+            Root::new(workspace, window, cx)
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some(about::APP_NAME));
+        cx.update(|window, cx| assert_eq!(window.notifications(cx).len(), 1));
+        assert!(cx.shown_system_notifications().is_empty());
     }
 }

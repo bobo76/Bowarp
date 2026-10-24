@@ -14,6 +14,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
+use crate::pane_width::{ExplorerWidth, ViewerFraction};
 use crate::window_state::write_atomic;
 
 /// The settings. A new field gets a default (through `Default`, as `#[serde(default)]` asks
@@ -23,12 +24,168 @@ use crate::window_state::write_atomic;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// The application UI theme; terminal colors are independent.
+    #[serde(deserialize_with = "lenient")]
+    pub ui_theme: UiTheme,
+    /// The terminal's font family; empty (the default) for the built-in one. A family that
+    /// isn't installed falls back to the built-in one too (the app checks).
+    #[serde(deserialize_with = "lenient")]
+    pub font_family: String,
+    /// The terminal's font size.
+    #[serde(deserialize_with = "lenient")]
+    pub font_size: FontSize,
+    /// The shell the new-tab menu lists first and Ctrl+Shift+T opens, by its launcher id (`zsh`,
+    /// `pwsh`, `powershell`, `git-bash`, `wsl:Ubuntu`; see the app's `Launcher::id`) or menu
+    /// name (`Zsh`); empty (the default) for the automatic choice (`$SHELL`, Git Bash on
+    /// Windows). A shell that isn't installed gets the automatic one too (the app checks).
+    #[serde(deserialize_with = "lenient")]
+    pub default_shell: String,
+    /// Extra shell-style words for new Claude Code and Copilot CLI tabs.
+    #[serde(deserialize_with = "lenient")]
+    pub claude_args: String,
+    #[serde(deserialize_with = "lenient")]
+    pub copilot_args: String,
+    #[serde(deserialize_with = "lenient")]
+    pub tab_card: TabCardFields,
+    /// Whether group headers show a hover card (basic and extended); the collapsed-group
+    /// status stays either way. Independent of `tab_card`.
+    #[serde(deserialize_with = "lenient")]
+    pub group_hover_cards: FeatureSwitch<true>,
+    /// Whether activity indicators animate (the Running badge's pulse, and later Copilot's
+    /// working animation); off gives static indicators and no animation timers.
+    #[serde(deserialize_with = "lenient")]
+    pub activity_animations: FeatureSwitch<true>,
+    /// Master switch for Bowarp's command history: off stops collecting commands (memory and
+    /// disk) and turns off the popup, inline suggestions and last-command capture and
+    /// restoration. Stored data is kept. See [`crate::HistoryFeatures`].
+    #[serde(deserialize_with = "lenient")]
+    pub command_history: FeatureSwitch<true>,
+    /// The HISTORY popup and its Up-key interception; needs `command_history`.
+    #[serde(deserialize_with = "lenient")]
+    pub history_popup: FeatureSwitch<true>,
+    /// Ghost-text suggestions and their acceptance keys; needs `command_history`.
+    #[serde(deserialize_with = "lenient")]
+    pub inline_suggestions: FeatureSwitch<true>,
+    /// Reopen the tabs saved at the last close. Off: start with a fresh tab and neither read
+    /// nor write `tabs.json` (it is kept as it is). Read at start; saving stops at once.
+    #[serde(deserialize_with = "lenient")]
+    pub restore_tabs: FeatureSwitch<true>,
+    /// Capture each tab's last shell command, save it with the tabs and offer it after a
+    /// restart; needs `command_history` and `restore_tabs`. See [`crate::WorkspaceFeatures`].
+    #[serde(deserialize_with = "lenient")]
+    pub remember_last_command: FeatureSwitch<true>,
+    /// The file explorer and file viewer panes and everything that scans, watches or loads
+    /// files for them. Off hides both, closes the open files and sends file links to the
+    /// system's handler; the pane widths below are kept. See [`crate::FilePaneFeatures`].
+    #[serde(deserialize_with = "lenient")]
+    pub file_panes: FeatureSwitch<true>,
+    /// Toasts about agents (needs attention, ready for review, exited); status dots and
+    /// badges stay either way. See [`crate::NotificationFeatures`].
+    #[serde(deserialize_with = "lenient")]
+    pub in_app_notifications: FeatureSwitch<true>,
+    /// The file viewer's share of the window width, set by dragging its divider (not on the
+    /// settings page).
+    #[serde(deserialize_with = "lenient")]
+    pub file_viewer_fraction: ViewerFraction,
+    /// The file explorer's width in pixels (150-600), set by dragging its edge (not on the
+    /// settings page).
+    #[serde(deserialize_with = "lenient")]
+    pub file_explorer_width: ExplorerWidth,
     /// Fields this version doesn't know, written back as they were.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UiTheme {
+    Light,
+    #[default]
+    Dark,
+}
+
+/// Optional pieces of a sidebar tab hover card. The name and shortcut are unconditional.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabCardField {
+    Status,
+    Location,
+    Changes,
+    ProgramTitle,
+    SessionKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TabCardFields {
+    #[serde(deserialize_with = "lenient_enabled")]
+    pub enabled: bool,
+    #[serde(deserialize_with = "lenient_enabled")]
+    pub status: bool,
+    #[serde(deserialize_with = "lenient_enabled")]
+    pub location: bool,
+    #[serde(deserialize_with = "lenient_enabled")]
+    pub changes: bool,
+    #[serde(deserialize_with = "lenient_enabled")]
+    pub program_title: bool,
+    #[serde(deserialize_with = "lenient_enabled")]
+    pub session_kind: bool,
+}
+
+impl Default for TabCardFields {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            status: true,
+            location: true,
+            changes: true,
+            program_title: true,
+            session_kind: true,
+        }
+    }
+}
+
+impl TabCardFields {
+    pub fn active(self) -> bool {
+        self.enabled
+            && (self.status
+                || self.location
+                || self.changes
+                || self.program_title
+                || self.session_kind)
+    }
+
+    pub fn keeps(self, field: TabCardField) -> bool {
+        self.active()
+            && match field {
+                TabCardField::Status => self.status,
+                TabCardField::Location => self.location,
+                TabCardField::Changes => self.changes,
+                TabCardField::ProgramTitle => self.program_title,
+                TabCardField::SessionKind => self.session_kind,
+            }
+    }
+
+    /// Do not even compute a piece that is unchecked or whose card is disabled.
+    pub fn keep<T>(self, field: TabCardField, value: impl FnOnce() -> T) -> Option<T> {
+        self.keeps(field).then(value)
+    }
+}
+
+fn lenient_enabled<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    Ok(Value::deserialize(deserializer)?.as_bool().unwrap_or(true))
+}
+
 impl Settings {
+    /// The font family the user set, trimmed; `None` for the built-in one.
+    pub fn font_family(&self) -> Option<&str> {
+        Some(self.font_family.trim()).filter(|family| !family.is_empty())
+    }
+
+    /// The default shell the user set, trimmed; `None` for the automatic one.
+    pub fn default_shell(&self) -> Option<&str> {
+        Some(self.default_shell.trim()).filter(|shell| !shell.is_empty())
+    }
+
     pub fn from_json(text: &str) -> serde_json::Result<Self> {
         serde_json::from_str(text)
     }
@@ -39,12 +196,92 @@ impl Settings {
     }
 }
 
+/// A persisted on/off switch whose default is `DEFAULT`: a missing value, or one that isn't a
+/// JSON boolean, reads as `DEFAULT` (through `lenient`, since `Default` gives it) and is
+/// written back as a plain boolean. The pattern for every feature switch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FeatureSwitch<const DEFAULT: bool>(bool);
+
+impl<const DEFAULT: bool> FeatureSwitch<DEFAULT> {
+    pub fn new(on: bool) -> Self {
+        Self(on)
+    }
+
+    pub fn is_on(self) -> bool {
+        self.0
+    }
+}
+
+impl<const DEFAULT: bool> Default for FeatureSwitch<DEFAULT> {
+    fn default() -> Self {
+        Self(DEFAULT)
+    }
+}
+
+/// How a switch that needs a parent option looks: it keeps its value but can't be changed
+/// while the parent is off, and says which option it needs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependentState {
+    pub enabled: bool,
+    /// Shown beside the disabled control; `None` while enabled.
+    pub caption: Option<String>,
+}
+
+impl DependentState {
+    pub fn new(parent_on: bool, parent_name: &str) -> Self {
+        Self::requiring(&[(parent_name, parent_on)])
+    }
+
+    /// A switch that needs every parent: disabled while any is off, the caption names the
+    /// first one that is.
+    pub fn requiring(parents: &[(&str, bool)]) -> Self {
+        let unmet = parents.iter().find(|(_, on)| !on);
+        Self {
+            enabled: unmet.is_none(),
+            caption: unmet.map(|(name, _)| format!("Needs \"{name}\" to be on.")),
+        }
+    }
+}
+
+/// The terminal's font size in points, kept within [`FontSize::MIN`]..=[`FontSize::MAX`]: a
+/// value outside is clamped when read, a value of the wrong type gives [`FontSize::DEFAULT`].
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct FontSize(f32);
+
+impl FontSize {
+    pub const MIN: f32 = 6.0;
+    pub const MAX: f32 = 72.0;
+    pub const DEFAULT: f32 = 14.0;
+
+    /// `points` clamped to the range; not a number gives the default.
+    pub fn new(points: f32) -> Self {
+        if points.is_nan() {
+            return Self::default();
+        }
+        Self(points.clamp(Self::MIN, Self::MAX))
+    }
+
+    pub fn points(self) -> f32 {
+        self.0
+    }
+}
+
+impl Default for FontSize {
+    fn default() -> Self {
+        Self(Self::DEFAULT)
+    }
+}
+
+impl<'de> Deserialize<'de> for FontSize {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        f32::deserialize(deserializer).map(Self::new)
+    }
+}
+
 /// `deserialize_with` for every `Settings` field: a value of the wrong type (or `null`) gives
 /// `T::default()` and is dropped at the next save. Fails only on invalid JSON.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used by the fields the next steps add")
-)]
 fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
@@ -153,6 +390,24 @@ impl SettingsFile {
     /// continuously (slider, pane width), call it once when the gesture ends, not per frame.
     pub fn update(&mut self, change: impl FnOnce(&mut Settings)) -> io::Result<bool> {
         self.reload();
+        self.change_and_save(change)
+    }
+
+    /// Like `update`, but while the file is broken the change applies in memory only (as with
+    /// `set_unsaved`, `Ok(false)`) and the file is left as it is. For layout changes (a pane
+    /// resized): the user isn't looking at the settings then, so the broken file they may be
+    /// fixing in an editor mustn't be moved to `settings_backup_path` under them. The change
+    /// lasts until the file is read again; the next save of a still broken file keeps it.
+    pub fn update_unless_broken(&mut self, change: impl FnOnce(&mut Settings)) -> io::Result<bool> {
+        self.reload();
+        if self.load_error.is_some() {
+            self.set_unsaved(change);
+            return Ok(false);
+        }
+        self.change_and_save(change)
+    }
+
+    fn change_and_save(&mut self, change: impl FnOnce(&mut Settings)) -> io::Result<bool> {
         let before = self.settings.clone();
         change(&mut self.settings);
         if self.settings == before {
@@ -211,379 +466,30 @@ impl SettingsFile {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::git::tests::TempDir;
-    use crate::window_state::temp_path;
-
-    fn with_extra(key: &str, value: Value) -> Settings {
-        let mut settings = Settings::default();
-        settings.extra.insert(key.into(), value);
-        settings
+/// The installed family to draw `requested` in: its name as listed in `installed` (the
+/// platform's family names), or `None` when it isn't listed. Windows matches names ignoring
+/// case. Names starting with `.` (GPUI's aliases, like `.SystemUIFont`) are
+/// refused: they stand for proportional fonts.
+pub fn installed_font_family<'a>(
+    installed: &'a [String],
+    requested: &str,
+    platform: crate::Platform,
+) -> Option<&'a str> {
+    if requested.is_empty() || requested.starts_with('.') {
+        return None;
     }
-
-    #[test]
-    fn empty_object_gives_the_defaults() {
-        assert_eq!(Settings::from_json("{}").unwrap(), Settings::default());
+    if platform == crate::Platform::Windows {
+        let requested_lower = requested.to_lowercase();
+        return installed
+            .iter()
+            .find(|name| name.to_lowercase() == requested_lower)
+            .map(String::as_str);
     }
-
-    #[test]
-    fn unknown_fields_survive_a_round_trip() {
-        let text = r#"{"future": {"nested": [1, 2]}, "fontSize": 14}"#;
-        let settings = Settings::from_json(text).unwrap();
-        assert_eq!(settings.extra.len(), 2);
-        let again = Settings::from_json(&settings.to_json().unwrap()).unwrap();
-        assert_eq!(again, settings);
-        assert_eq!(again.extra["fontSize"], Value::from(14));
-    }
-
-    #[test]
-    fn not_an_object_is_broken() {
-        for text in ["", "{", "[]", "3", "null", "{\"a\": }"] {
-            assert!(Settings::from_json(text).is_err(), "{text:?}");
-        }
-    }
-
-    #[test]
-    fn read_tells_missing_loaded_and_broken_apart() {
-        let root = TempDir::new();
-        let path = root.0.join("settings.json");
-        assert_eq!(SettingsLoad::read(&path), SettingsLoad::Missing);
-        fs::write(&path, r#"{"a": true}"#).unwrap();
-        assert_eq!(
-            SettingsLoad::read(&path),
-            SettingsLoad::Loaded(with_extra("a", Value::Bool(true)))
-        );
-        fs::write(&path, "{").unwrap();
-        assert!(matches!(SettingsLoad::read(&path), SettingsLoad::Broken(_)));
-        // A folder in the file's place can't be read.
-        fs::remove_file(&path).unwrap();
-        fs::create_dir(&path).unwrap();
-        assert!(matches!(SettingsLoad::read(&path), SettingsLoad::Broken(_)));
-    }
-
-    #[test]
-    fn backup_path_appends_bak() {
-        assert_eq!(
-            settings_backup_path(Path::new("/c/settings.json")),
-            Path::new("/c/settings.json.bak")
-        );
-    }
-
-    #[test]
-    fn missing_file_loads_defaults_and_save_creates_it() {
-        let root = TempDir::new();
-        let path = root.0.join("nested").join("settings.json");
-        let mut file = SettingsFile::load(path.clone());
-        assert_eq!(file.load_error(), None);
-        assert_eq!(file.settings(), &Settings::default());
-        assert!(!path.exists());
-        file.save().unwrap();
-        assert!(!temp_path(&path).exists());
-        assert_eq!(
-            SettingsLoad::read(&path),
-            SettingsLoad::Loaded(Settings::default())
-        );
-    }
-
-    #[test]
-    fn create_if_missing_writes_only_a_missing_file() {
-        let root = TempDir::new();
-        let path = root.0.join("settings.json");
-        let mut file = SettingsFile::load(path.clone());
-        assert!(file.create_if_missing().unwrap());
-        assert_eq!(
-            SettingsLoad::read(&path),
-            SettingsLoad::Loaded(Settings::default())
-        );
-        // An existing file keeps its text, broken or not.
-        fs::write(&path, r#"{"a": 1}"#).unwrap();
-        assert!(!file.create_if_missing().unwrap());
-        assert_eq!(fs::read_to_string(&path).unwrap(), r#"{"a": 1}"#);
-        fs::write(&path, "{ broken").unwrap();
-        assert!(!file.create_if_missing().unwrap());
-        assert_eq!(fs::read_to_string(&path).unwrap(), "{ broken");
-        assert!(!settings_backup_path(&path).exists());
-        assert!(!SettingsFile::default().create_if_missing().unwrap());
-    }
-
-    #[test]
-    fn update_saves_only_a_change() {
-        let root = TempDir::new();
-        let path = root.0.join("settings.json");
-        let mut file = SettingsFile::load(path.clone());
-        assert!(!file.update(|_| {}).unwrap());
-        assert!(!path.exists());
-        let changed = file
-            .update(|settings| {
-                settings.extra.insert("a".into(), Value::from(1));
-            })
-            .unwrap();
-        assert!(changed);
-        let reloaded = SettingsFile::load(path);
-        assert_eq!(reloaded.load_error(), None);
-        assert_eq!(reloaded.settings(), &with_extra("a", Value::from(1)));
-    }
-
-    #[test]
-    fn broken_file_is_kept_until_the_first_save_moves_it_aside() {
-        let root = TempDir::new();
-        let path = root.0.join("settings.json");
-        let backup = settings_backup_path(&path);
-        fs::write(&backup, "older backup").unwrap();
-        fs::write(&path, "{ broken").unwrap();
-        let mut file = SettingsFile::load(path.clone());
-        assert!(file.load_error().is_some());
-        assert_eq!(file.settings(), &Settings::default());
-        assert_eq!(fs::read_to_string(&path).unwrap(), "{ broken");
-        // An update that changes nothing doesn't touch the file either.
-        assert!(!file.update(|_| {}).unwrap());
-        assert_eq!(fs::read_to_string(&path).unwrap(), "{ broken");
-
-        file.save().unwrap();
-        assert_eq!(file.load_error(), None);
-        assert_eq!(fs::read_to_string(&backup).unwrap(), "{ broken");
-        assert_eq!(
-            SettingsLoad::read(&path),
-            SettingsLoad::Loaded(Settings::default())
-        );
-        // Later saves keep the backup.
-        file.update(|settings| {
-            settings.extra.insert("a".into(), Value::from(1));
-        })
-        .unwrap();
-        assert_eq!(fs::read_to_string(&backup).unwrap(), "{ broken");
-    }
-
-    #[test]
-    fn broken_file_removed_meanwhile_still_saves() {
-        let root = TempDir::new();
-        let path = root.0.join("settings.json");
-        fs::write(&path, "[]").unwrap();
-        let mut file = SettingsFile::load(path.clone());
-        assert!(file.load_error().is_some());
-        fs::remove_file(&path).unwrap();
-        file.save().unwrap();
-        assert!(!settings_backup_path(&path).exists());
-        assert!(path.exists());
-    }
-
-    #[test]
-    fn without_a_path_saving_does_nothing() {
-        let mut file = SettingsFile::default();
-        assert_eq!(file.path(), None);
-        assert!(
-            file.update(|settings| {
-                settings.extra.insert("a".into(), Value::from(1));
-            })
-            .unwrap()
-        );
-        assert_eq!(file.settings(), &with_extra("a", Value::from(1)));
-    }
-
-    #[test]
-    fn set_unsaved_changes_memory_only_until_the_update_saves() {
-        let root = TempDir::new();
-        let path = root.0.join("settings.json");
-        fs::write(&path, r#"{"a": 1}"#).unwrap();
-        let mut file = SettingsFile::load(path.clone());
-        file.set_unsaved(|settings| {
-            settings.extra.insert("a".into(), Value::from(2));
-        });
-        file.set_unsaved(|settings| {
-            settings.extra.insert("a".into(), Value::from(3));
-        });
-        assert_eq!(file.settings(), &with_extra("a", Value::from(3)));
-        assert_eq!(fs::read_to_string(&path).unwrap(), r#"{"a": 1}"#);
-        // Edited on disk meanwhile: the save at the end of the gesture keeps that edit.
-        fs::write(&path, r#"{"a": 1, "b": 2}"#).unwrap();
-        assert!(
-            file.update(|settings| {
-                settings.extra.insert("a".into(), Value::from(3));
-            })
-            .unwrap()
-        );
-        let mut expected = with_extra("a", Value::from(3));
-        expected.extra.insert("b".into(), Value::from(2));
-        assert_eq!(file.settings(), &expected);
-        assert_eq!(SettingsLoad::read(&path), SettingsLoad::Loaded(expected));
-    }
-
-    #[test]
-    fn reload_drops_unsaved_changes_and_clears_a_fixed_load_error() {
-        let root = TempDir::new();
-        let path = root.0.join("settings.json");
-        fs::write(&path, "{ broken").unwrap();
-        let mut file = SettingsFile::load(path.clone());
-        assert!(file.load_error().is_some());
-        file.set_unsaved(|settings| {
-            settings.extra.insert("a".into(), Value::from(2));
-        });
-        // Fixed by hand (in the file viewer).
-        fs::write(&path, r#"{"b": 1}"#).unwrap();
-        file.reload();
-        assert_eq!(file.load_error(), None);
-        assert_eq!(file.settings(), &with_extra("b", Value::from(1)));
-    }
-
-    #[test]
-    fn update_keeps_changes_made_on_disk_since_the_load() {
-        let root = TempDir::new();
-        let path = root.0.join("settings.json");
-        fs::write(&path, r#"{"a": 1}"#).unwrap();
-        let mut file = SettingsFile::load(path.clone());
-        // By hand, or by another instance.
-        fs::write(&path, r#"{"a": 1, "b": 2}"#).unwrap();
-        file.update(|settings| {
-            settings.extra.insert("c".into(), Value::from(3));
-        })
-        .unwrap();
-        let mut expected = with_extra("a", Value::from(1));
-        expected.extra.insert("b".into(), Value::from(2));
-        expected.extra.insert("c".into(), Value::from(3));
-        assert_eq!(file.settings(), &expected);
-        assert_eq!(SettingsLoad::read(&path), SettingsLoad::Loaded(expected));
-    }
-
-    #[test]
-    fn file_fixed_by_hand_before_the_update_is_not_moved_aside() {
-        let root = TempDir::new();
-        let path = root.0.join("settings.json");
-        fs::write(&path, "{ broken").unwrap();
-        let mut file = SettingsFile::load(path.clone());
-        assert!(file.load_error().is_some());
-        fs::write(&path, r#"{"a": 1}"#).unwrap();
-        file.update(|settings| {
-            settings.extra.insert("b".into(), Value::from(2));
-        })
-        .unwrap();
-        assert_eq!(file.load_error(), None);
-        assert!(!settings_backup_path(&path).exists());
-        let mut expected = with_extra("a", Value::from(1));
-        expected.extra.insert("b".into(), Value::from(2));
-        assert_eq!(SettingsLoad::read(&path), SettingsLoad::Loaded(expected));
-    }
-
-    #[test]
-    fn broken_file_saved_by_another_instance_keeps_its_backup() {
-        let root = TempDir::new();
-        let path = root.0.join("settings.json");
-        let backup = settings_backup_path(&path);
-        fs::write(&path, "{ broken").unwrap();
-        let mut first = SettingsFile::load(path.clone());
-        let mut second = SettingsFile::load(path.clone());
-        first
-            .update(|settings| {
-                settings.extra.insert("a".into(), Value::from(1));
-            })
-            .unwrap();
-        assert_eq!(fs::read_to_string(&backup).unwrap(), "{ broken");
-        second
-            .update(|settings| {
-                settings.extra.insert("b".into(), Value::from(2));
-            })
-            .unwrap();
-        assert_eq!(fs::read_to_string(&backup).unwrap(), "{ broken");
-        let mut expected = with_extra("a", Value::from(1));
-        expected.extra.insert("b".into(), Value::from(2));
-        assert_eq!(SettingsLoad::read(&path), SettingsLoad::Loaded(expected));
-    }
-
-    #[test]
-    fn file_broken_after_the_load_is_moved_aside_at_the_next_change() {
-        let root = TempDir::new();
-        let path = root.0.join("settings.json");
-        fs::write(&path, r#"{"a": 1}"#).unwrap();
-        let mut file = SettingsFile::load(path.clone());
-        fs::write(&path, "{ oops").unwrap();
-        // A change that does nothing reports the broken file but leaves it.
-        assert!(!file.update(|_| {}).unwrap());
-        assert!(file.load_error().is_some());
-        assert_eq!(fs::read_to_string(&path).unwrap(), "{ oops");
-        file.update(|settings| {
-            settings.extra.insert("b".into(), Value::from(2));
-        })
-        .unwrap();
-        assert_eq!(file.load_error(), None);
-        assert_eq!(
-            fs::read_to_string(settings_backup_path(&path)).unwrap(),
-            "{ oops"
-        );
-        // The last good settings plus the change.
-        let mut expected = with_extra("a", Value::from(1));
-        expected.extra.insert("b".into(), Value::from(2));
-        assert_eq!(SettingsLoad::read(&path), SettingsLoad::Loaded(expected));
-    }
-
-    #[test]
-    fn failed_save_is_kept_until_one_succeeds() {
-        let root = TempDir::new();
-        // A file where the config folder should be: saving fails. Reading it is broken on Unix
-        // (not a directory) but missing on Windows (path not found), so not asserted.
-        let folder = root.0.join("config");
-        fs::write(&folder, "").unwrap();
-        let path = folder.join("settings.json");
-        let mut file = SettingsFile::load(path);
-        assert!(
-            file.update(|settings| {
-                settings.extra.insert("a".into(), Value::from(1));
-            })
-            .is_err()
-        );
-        assert!(file.save_error().is_some());
-        assert_eq!(file.settings(), &with_extra("a", Value::from(1)));
-        fs::remove_file(&folder).unwrap();
-        file.save().unwrap();
-        assert_eq!(file.save_error(), None);
-        assert_eq!(file.load_error(), None);
-    }
-
-    #[derive(Debug, Default, PartialEq, Deserialize)]
-    #[serde(default)]
-    struct Sample {
-        #[serde(deserialize_with = "lenient")]
-        size: u16,
-        #[serde(deserialize_with = "lenient")]
-        name: String,
-        #[serde(flatten)]
-        extra: Map<String, Value>,
-    }
-
-    fn sample(text: &str) -> serde_json::Result<Sample> {
-        serde_json::from_str(text)
-    }
-
-    #[test]
-    fn lenient_field_reads_a_good_value() {
-        let parsed = sample(r#"{"size": 14, "name": "Mono", "other": true}"#).unwrap();
-        assert_eq!(parsed.size, 14);
-        assert_eq!(parsed.name, "Mono");
-        assert_eq!(parsed.extra.len(), 1);
-        assert_eq!(sample("{}").unwrap(), Sample::default());
-    }
-
-    #[test]
-    fn lenient_field_with_a_wrong_value_gets_its_default() {
-        for text in [
-            r#"{"size": "14", "name": "Mono"}"#,
-            r#"{"size": null, "name": "Mono"}"#,
-            r#"{"size": 70000, "name": "Mono"}"#,
-            r#"{"size": -1, "name": "Mono"}"#,
-            r#"{"size": {"a": [1]}, "name": "Mono"}"#,
-        ] {
-            let parsed = sample(text).unwrap();
-            assert_eq!(parsed.size, 0, "{text}");
-            assert_eq!(parsed.name, "Mono", "{text}");
-            // Dropped, not kept with the unknown fields.
-            assert!(parsed.extra.is_empty(), "{text}");
-        }
-    }
-
-    #[test]
-    fn lenient_fields_still_need_a_json_object() {
-        for text in ["", "[]", "3", "null", r#"{"size": }"#, r#"{"size": 1"#] {
-            assert!(sample(text).is_err(), "{text:?}");
-        }
-    }
+    installed
+        .iter()
+        .find(|name| name.as_str() == requested)
+        .map(String::as_str)
 }
+
+#[cfg(test)]
+mod tests;

@@ -61,7 +61,7 @@ impl Default for CommandHistory {
 }
 
 impl CommandHistory {
-    pub const DEFAULT_CAP: usize = 10_000;
+    pub const DEFAULT_CAP: usize = 2_000;
 
     pub fn new(cap: usize) -> Self {
         Self {
@@ -125,6 +125,18 @@ impl CommandHistory {
         true
     }
 
+    /// Forget `command`. Returns whether it was in the history.
+    pub fn remove(&mut self, command: &str) -> bool {
+        let before = self.entries.len();
+        self.entries.retain(|entry| entry.command != command);
+        self.entries.len() != before
+    }
+
+    /// Forget every command.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
     /// Oldest first.
     pub fn entries(&self) -> &[HistoryEntry] {
         &self.entries
@@ -186,6 +198,13 @@ impl CommandHistory {
     /// Load the history saved at `path`, rewriting the file compacted when it has grown too
     /// long. A missing or unreadable file gives an empty history.
     pub fn load(path: &Path, cap: usize) -> Self {
+        let _lock = match lock_history(path) {
+            Ok(lock) => lock,
+            Err(err) => {
+                eprintln!("agent-workspace: failed to lock {}: {err}", path.display());
+                return Self::new(cap);
+            }
+        };
         let Ok(bytes) = fs::read(path) else {
             return Self::new(cap);
         };
@@ -199,7 +218,7 @@ impl CommandHistory {
         }
         let (history, lines) = Self::from_jsonl(&text, cap);
         if history.needs_compaction(lines)
-            && let Err(err) = compact(path, &history.to_jsonl(), bytes.len() as u64)
+            && let Err(err) = compact_locked(path, history.to_jsonl().as_bytes())
         {
             eprintln!(
                 "agent-workspace: failed to compact {}: {err}",
@@ -273,9 +292,25 @@ fn private_file() -> OpenOptions {
     options
 }
 
-/// Rewrite the history file at `path` with `text`, unless it is no longer `read_len` bytes
-/// long: another instance appended a line since it was read, which the rewrite would lose.
-fn compact(path: &Path, text: &str, read_len: u64) -> io::Result<()> {
+/// Lock a stable sibling, not the history inode that compaction replaces. Keep it open for the
+/// entire read/modify/write operation; an appender must acquire it before opening the history.
+fn lock_history(path: &Path) -> io::Result<File> {
+    if let Some(folder) = path
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+    {
+        fs::create_dir_all(folder)?;
+    }
+    let file = private_file()
+        .read(true)
+        .write(true)
+        .open(path.with_extension("lock"))?;
+    file.lock()?;
+    Ok(file)
+}
+
+/// Replace the history while the caller holds its sibling lock.
+fn compact_locked(path: &Path, text: &[u8]) -> io::Result<()> {
     let temp = path.with_extension(format!("jsonl.{}.tmp", std::process::id()));
     // A leftover from a crash keeps its mode when reopened.
     let _ = fs::remove_file(&temp);
@@ -283,11 +318,44 @@ fn compact(path: &Path, text: &str, read_len: u64) -> io::Result<()> {
         .write(true)
         .truncate(true)
         .open(&temp)?
-        .write_all(text.as_bytes())?;
-    if fs::metadata(path)?.len() != read_len {
-        return fs::remove_file(&temp);
+        .write_all(text)?;
+    fs::rename(&temp, path)?;
+    Ok(())
+}
+
+/// Empty the history file at `path` (the "Clear history" action). A missing file is fine.
+pub fn clear_history_file(path: &Path) -> io::Result<()> {
+    let _lock = lock_history(path)?;
+    match fs::metadata(path) {
+        Ok(_) => compact_locked(path, b""),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
     }
-    fs::rename(&temp, path)
+}
+
+/// Drop every line of the history file at `path` that holds `command`, keeping the other lines
+/// as they are (damaged ones too). A missing file is fine.
+pub fn remove_command(path: &Path, command: &str) -> io::Result<()> {
+    let _lock = lock_history(path)?;
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    let kept: Vec<&[u8]> = bytes
+        .split(|&byte| byte == b'\n')
+        .filter(|line| !line.is_empty() && !holds_command(line, command))
+        .collect();
+    let text = kept.iter().fold(Vec::new(), |mut text, line| {
+        text.extend_from_slice(line);
+        text.push(b'\n');
+        text
+    });
+    compact_locked(path, &text)
+}
+
+fn holds_command(line: &[u8], command: &str) -> bool {
+    serde_json::from_slice::<HistoryEntry>(line).is_ok_and(|entry| entry.command == command)
 }
 
 /// Append `entry` to the history file at `path`, creating it and its folder.
@@ -295,9 +363,7 @@ pub fn append_entry(path: &Path, entry: &HistoryEntry) -> io::Result<()> {
     let Some(line) = entry_line(entry) else {
         return Ok(());
     };
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
+    let _lock = lock_history(path)?;
     let mut file = private_file().read(true).append(true).open(path)?;
     // After a crash in the middle of a write the last line has no end; start a new one, so
     // this line is not glued to it.
@@ -306,7 +372,7 @@ pub fn append_entry(path: &Path, entry: &HistoryEntry) -> io::Result<()> {
     } else {
         line
     };
-    // One write per line, so lines appended by two instances don't interleave.
+    // The lock also keeps partial writes and repairs of unterminated lines together.
     file.write_all(text.as_bytes())
 }
 
@@ -321,202 +387,4 @@ fn ends_unterminated(file: &mut File) -> io::Result<bool> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn entry(command: &str, time: u64) -> HistoryEntry {
-        HistoryEntry::new(command, Some("/tmp".into()), time)
-    }
-
-    fn commands(history: &CommandHistory) -> Vec<&str> {
-        history
-            .entries()
-            .iter()
-            .map(|entry| entry.command.as_str())
-            .collect()
-    }
-
-    #[test]
-    fn latest_use_wins() {
-        let mut history = CommandHistory::new(10);
-        history.add(entry("ls", 1));
-        history.add(entry("cd src", 2));
-        history.add(HistoryEntry::new("ls", Some("/home".into()), 3));
-        assert_eq!(commands(&history), ["cd src", "ls"]);
-        assert_eq!(history.entries()[1].dir, Some("/home".into()));
-        assert_eq!(history.entries()[1].time, 3);
-    }
-
-    #[test]
-    fn oldest_entries_beyond_the_cap_are_dropped() {
-        let mut history = CommandHistory::new(3);
-        for (time, command) in ["a", "b", "c", "d", "e"].into_iter().enumerate() {
-            history.add(entry(command, time as u64));
-        }
-        assert_eq!(commands(&history), ["c", "d", "e"]);
-    }
-
-    #[test]
-    fn unrecordable_commands_are_refused() {
-        let mut history = CommandHistory::new(10);
-        for command in ["", "   ", " secret", "a\nb", "echo \x1b[31m", "tab\there"] {
-            assert!(!history.add(entry(command, 0)), "{command:?}");
-        }
-        assert!(history.add(entry("echo ok ", 0)));
-        assert!(!history.is_empty() && history.len() == 1);
-    }
-
-    #[test]
-    fn suggestion_is_the_rest_of_the_newest_prefix_match() {
-        let mut history = CommandHistory::new(10);
-        history.add(entry("clear", 1));
-        history.add(entry("cargo test", 2));
-        history.add(entry("cargo build", 3));
-        assert_eq!(history.suggestion("c"), Some("argo build"));
-        assert_eq!(history.suggestion("cl"), Some("ear"));
-        assert_eq!(history.suggestion("cargo t"), Some("est"));
-        assert_eq!(history.suggestion("clear"), None);
-        assert_eq!(history.suggestion("Cl"), None);
-        assert_eq!(history.suggestion(""), None);
-        assert_eq!(history.suggestion("x"), None);
-    }
-
-    #[test]
-    fn matching_is_a_case_insensitive_substring_oldest_first() {
-        let mut history = CommandHistory::new(10);
-        history.add(entry("cd vi", 1));
-        history.add(entry("ls", 2));
-        history.add(entry("cd VI_opl", 3));
-        history.add(entry("cd vi_afp/", 4));
-        let found: Vec<&str> = history
-            .matching(" vi ")
-            .iter()
-            .map(|entry| entry.command.as_str())
-            .collect();
-        assert_eq!(found, ["cd vi", "cd VI_opl", "cd vi_afp/"]);
-        assert_eq!(history.matching("").len(), 4);
-        assert!(history.matching("zzz").is_empty());
-        history.add(entry("echo \u{c9}t\u{c9}", 5));
-        assert_eq!(history.matching("\u{e9}t\u{e9}").len(), 1);
-        assert_eq!(history.matching("O T").len(), 0);
-        assert_eq!(history.matching("ECHO").len(), 1);
-    }
-
-    #[test]
-    fn jsonl_round_trip_dedups_and_caps() {
-        let text = concat!(
-            "{\"cmd\":\"ls\",\"dir\":\"/a\",\"time\":1}\n",
-            "not json\n",
-            "{\"cmd\":\"pwd\",\"time\":2}\n",
-            "\n",
-            "{\"cmd\":\"ls\",\"dir\":\"/b\",\"time\":3}\n",
-            "{\"cmd\":\"a\\nb\",\"time\":4}\n",
-            "{\"cmd\":\"make\",\"time\":5}\n",
-        );
-        let (history, lines) = CommandHistory::from_jsonl(text, 10);
-        assert_eq!(lines, 6);
-        assert_eq!(commands(&history), ["pwd", "ls", "make"]);
-        assert_eq!(history.entries()[1].dir, Some("/b".into()));
-        let (again, _) = CommandHistory::from_jsonl(&history.to_jsonl(), 10);
-        assert_eq!(again, history);
-        let (capped, _) = CommandHistory::from_jsonl(text, 2);
-        assert_eq!(commands(&capped), ["ls", "make"]);
-    }
-
-    #[test]
-    fn selection_scrolls_to_stay_in_view() {
-        let mut selection = HistorySelection::default();
-        assert_eq!(selection.visible(25, 10), 15..25);
-        assert_eq!(selection.index(25), Some(24));
-        for _ in 0..9 {
-            selection.older(1, 25, 10);
-        }
-        assert_eq!(selection.visible(25, 10), 15..25);
-        selection.older(1, 25, 10);
-        assert_eq!((selection.selected, selection.hidden_below), (10, 1));
-        assert_eq!(selection.visible(25, 10), 14..24);
-        assert_eq!(selection.index(25), Some(14));
-        selection.older(100, 25, 10);
-        assert_eq!(selection.visible(25, 10), 0..10);
-        assert_eq!(selection.index(25), Some(0));
-        selection.newer(10, 25, 10);
-        assert_eq!(selection.visible(25, 10), 1..11);
-        assert_eq!(selection.index(25), Some(10));
-        selection.newer(100, 25, 10);
-        assert_eq!(selection, HistorySelection::default());
-    }
-
-    #[test]
-    fn selection_follows_fewer_matches() {
-        let mut selection = HistorySelection {
-            selected: 20,
-            hidden_below: 15,
-        };
-        selection.keep_in_view(3, 10);
-        assert_eq!(selection.visible(3, 10), 0..3);
-        assert_eq!(selection.index(3), Some(0));
-        selection.keep_in_view(0, 10);
-        assert_eq!(selection.visible(0, 10), 0..0);
-        assert_eq!(selection.index(0), None);
-    }
-
-    #[test]
-    fn compaction_once_lines_pass_half_again_the_cap() {
-        let history = CommandHistory::new(10);
-        assert!(!history.needs_compaction(15));
-        assert!(history.needs_compaction(16));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn non_utf8_folders_are_dropped() {
-        use std::ffi::OsStr;
-        use std::os::unix::ffi::OsStrExt;
-
-        let bad = PathBuf::from(OsStr::from_bytes(b"/tmp/\xff"));
-        let entry = HistoryEntry::new("ls", Some(bad), 1);
-        assert_eq!(entry.dir, None);
-        assert!(entry_line(&entry).is_some());
-    }
-
-    #[test]
-    fn appended_lines_load_back_and_compact() {
-        let dir = std::env::temp_dir().join(format!("agentws-history-{}", std::process::id()));
-        let path = dir.join("history.jsonl");
-        let _ = fs::remove_dir_all(&dir);
-        for time in 0..8 {
-            append_entry(&path, &entry(&format!("cmd {}", time % 3), time)).unwrap();
-        }
-        let history = CommandHistory::load(&path, 2);
-        assert_eq!(commands(&history), ["cmd 0", "cmd 1"]);
-        // 8 lines > 2 + 1: the file was rewritten with just the kept entries.
-        let text = fs::read_to_string(&path).unwrap();
-        assert_eq!(text.lines().count(), 2);
-        assert_eq!(CommandHistory::load(&dir.join("missing"), 5).len(), 0);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(&path).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o600, "compacted file is owner-only");
-        }
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn damaged_files_keep_their_other_lines() {
-        let dir = std::env::temp_dir().join(format!("agentws-damaged-{}", std::process::id()));
-        let path = dir.join("history.jsonl");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        // A non-UTF-8 line, and a last line cut off by a crash.
-        fs::write(
-            &path,
-            b"{\"cmd\":\"ls\"}\n{\"cmd\":\"\xff\"}\n{\"cmd\":\"pw",
-        )
-        .unwrap();
-        append_entry(&path, &entry("make", 1)).unwrap();
-        let history = CommandHistory::load(&path, 10);
-        assert_eq!(commands(&history), ["ls", "make"]);
-        fs::remove_dir_all(&dir).unwrap();
-    }
-}
+mod tests;
