@@ -74,7 +74,8 @@ directly to model APIs.
 - Show when a command typed at a shell tab's prompt is running, and which command (shell
   integration).
 - Show how long the current command has been running in a shell tab.
-- Mark an agent that finished while its tab was not selected as done until it is viewed.
+- Mark an agent that finished while its tab was not selected as "Ready for review" until it
+  is viewed; this indicates unread work, not confirmation that the work is correct.
 - Mark a tab that rang the bell, or whose long shell command finished (or failed), while
   it was not selected, until it is viewed.
 - Read agent status from the CLI's own hooks without changing the user's CLI settings.

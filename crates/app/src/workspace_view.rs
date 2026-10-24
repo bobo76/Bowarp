@@ -429,7 +429,7 @@ impl WorkspaceView {
         let name = Self::tab_name(&self.tabs[index], cx);
         let notification = match notice {
             AgentNotice::NeedsAttention => Notification::warning("Needs attention"),
-            AgentNotice::Finished => Notification::success("Finished"),
+            AgentNotice::Finished => Notification::info(sidebar::TabStatus::ReadyForReview.label()),
             AgentNotice::Exited(Some(0)) => Notification::success("Agent finished"),
             AgentNotice::Exited(Some(code)) => {
                 Notification::error(format!("Agent exited with code {code}"))

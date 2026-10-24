@@ -3,14 +3,15 @@
 A terminal workspace for running Claude Code, Copilot CLI and shell sessions side by side, with
 per-tab agent status. Feature spec: [FEATURES.md](FEATURES.md). Plan and status: [PLAN.md](PLAN.md).
 
-## What's new in 0.2.17
+## What's new in 0.2.18
 
-Restored bash/zsh tabs offer their last useful command as a one-shot suggestion. Tab hover
-cards and their details are configurable, and Copilot CLI permission requests mark tabs as
-Waiting. Extra Claude Code and Copilot CLI launch arguments can now be configured in Settings.
-See the [changelog](CHANGELOG.md#0217) for release notes.
+Unread background agent completions now say **Ready for review** in the sidebar, tab hover
+cards, group summaries and completion toast. Selecting the tab restores Idle; new Working or
+Needs attention reports replace the unread status. This does not certify the work's correctness.
+See the [changelog](CHANGELOG.md#0218) for release notes.
 
-Native Windows UI checks remain pending; see the [manual checklist](#six-ux-improvements-manual-checks-pending).
+Native Windows/Linux UI checks remain pending; see the [manual check](#manual-check) and
+[six UX improvements checklist](#six-ux-improvements-manual-checks-pending).
 
 ## Install on Windows
 
@@ -77,7 +78,7 @@ Code or Copilot CLI; agents that are not installed are listed but disabled. New 
 | Ctrl+Shift+B | Hide or show the sidebar (also the title bar button) |
 | Ctrl+Shift+S | Search tabs (shows the sidebar if hidden) |
 | Ctrl+Shift+\| | Hide or show the file explorer (also the title bar button; the key that types `\|`) |
-| Ctrl+Shift+A | Go to the next tab needing attention; with none, the next one that is Done |
+| Ctrl+Shift+A | Go to the next tab needing attention; with none, the next one that is Ready for review |
 | F11 | Full screen on or off, also from a dialog (F11 is not sent to the program; on Linux the window manager applies it). Quitting in full screen starts maximized next time |
 
 ## Terminal
@@ -257,12 +258,18 @@ Run the extension's tests with `node --test .\crates\app\copilot-extension\bridg
 |---|---|
 | blue | Working |
 | orange, plus a warning triangle before the title | Needs attention |
-| green with a check | Done: finished while you were on another tab (until you select it) |
+| green with a check | Ready for review: finished while you were on another tab (until you select it) |
 | green | Idle |
 | teal, pulsing for the first 10 s | Running: a command typed at the prompt of a bash, zsh or PowerShell tab has run for half a second; the card shows it and how long it has run (`Running for 2:14`, ticking while the card is open; no pulse on a software-rendered GPU) |
 | light grey | Recent output (shell or Copilot) |
 | none | No recent output |
 | hollow ring | Exited |
+
+Ready for review marks an unread Working-to-Idle transition, not confirmation that the
+agent's work is correct. Selecting the tab acknowledges it and restores Idle; a turn that
+finishes in the selected tab stays Idle. New Working or Needs attention reports replace
+the unread status. The sidebar, tab hover card, group totals and completion toast use the
+same status; there is no extra completion notice.
 
 A tab whose program rings the bell (BEL: Copilot, scripts, anything without status hooks)
 while you are on another tab shows Needs attention until you select it. Claude Code tabs with
@@ -295,16 +302,16 @@ Selecting a tab the search hides (Ctrl+1..9, Ctrl+Tab, the attention jump) also 
 While a tab other than the selected one needs attention, a warning button with the number of
 those tabs shows next to the search field. It and Ctrl+Shift+A go to the next tab needing
 attention after the selected one; when no other tab needs attention, they go to the next tab
-that is Done. A tab in a collapsed group is revealed.
+that is Ready for review. A tab in a collapsed group is revealed.
 
 ## Groups
 
 Click a group header to collapse or expand it; a collapsed group shows how many of its tabs
-need attention, are working, run a command, or are done. Selecting a tab in a collapsed group
+need attention, are working, run a command, or are ready for review. Selecting a tab in a collapsed group
 (Ctrl+1..9, Ctrl+Tab) expands it. New tabs join the selected tab's group. A tab without its own
 color shows its group's color. Groups stay when their last tab leaves.
 
-Hover any group header for its tab count and Working, Waiting and Done totals, including
+Hover any group header for its tab count and Working, Waiting and Ready for review totals, including
 zero totals for an empty group. Counts cover the whole group even while searching. The card
 does not show individual tabs or run a timer, and is suppressed while dragging a tab.
 
@@ -482,9 +489,13 @@ Open 3 Claude Code tabs and 1 shell tab, then check:
 2. **Working:** give a Claude tab a prompt and switch to another tab. Its badge turns blue.
 3. **Needs attention:** ask a Claude tab for something that needs a permission prompt and switch
    away. Its badge turns orange and a warning triangle shows before the title.
-4. **Done / Idle:** give a Claude tab a short prompt (`say hi in one word`) and switch away right
+4. **Ready for review / Idle:** give a Claude tab a short prompt (`say hi in one word`) and switch away right
    away. The badge goes blue, then green with a check when the reply finishes; selecting the
-   tab turns it into a plain green Idle badge. If you interrupt a turn with Esc instead, the
+   tab turns it into a plain green Idle badge. Confirm "Ready for review" in its hover card,
+   group totals and single completion toast; dismissing the toast must not clear the status.
+   Repeat with Copilot. Finish a turn without switching away and confirm Idle with no toast;
+   start new work or request permission in an unread tab and confirm Working or Needs attention
+   replaces Ready for review. If you interrupt a turn with Esc instead, the
    tab stays blue for about a minute, because Claude Code fires no hook on interrupt.
 5. **Activity badge:** in the shell tab run
 
@@ -523,7 +534,7 @@ Last passed: Ubuntu, Wayland, 2026-10-17 (checks 1–5; checks 6–9 were added 
    contrast while the terminal palette stays unchanged. Restart to check persistence; also
    edit `ui_theme` in the settings file and save it in the viewer.
 5. Hover expanded, collapsed and empty groups, including while filtering tabs. Confirm total
-   tab count and Working/Waiting/Done counts, and no group card during a tab drag.
+   tab count and Working/Waiting/Ready for review counts, and no group card during a tab drag.
 6. Run Claude Code and Copilot in background tabs through waiting and finished states.
    Confirm one toast per transition, none for foreground turns or ordinary output, notices
    while Settings hides the terminal, click-to-select (including collapsed groups), close

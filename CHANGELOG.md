@@ -3,6 +3,14 @@
 User-visible changes are listed by release. Maintenance work and internal refactors are
 omitted unless they affect how the app is used.
 
+## Unreleased
+
+## 0.2.18
+
+- Label unread background agent completions "Ready for review" in the sidebar, tab hover
+  cards, group summaries and existing completion toast. Selecting the tab restores Idle;
+  new Working or Needs attention reports replace it. This does not certify the work's correctness.
+
 ## 0.2.17
 
 - Offer a restored bash/zsh tab's last useful command as a one-shot suggestion, accepted

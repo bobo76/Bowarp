@@ -36,7 +36,7 @@ const GROUP_CHEVRON_SIZE: f32 = 14.;
 const GROUP_COLOR_SIZE: f32 = 8.;
 const STATUS_DOT_SIZE: f32 = 7.;
 const BADGE_SIZE: f32 = 12.;
-const DONE_BADGE_SIZE: f32 = 14.;
+const DONE_BADGE_SIZE: f32 = 16.;
 const BADGE_OFFSET: f32 = -3.;
 const CHECK_MARK_SIZE: f32 = 8.;
 const HINT_ROW_HEIGHT: f32 = 28.;
@@ -67,8 +67,8 @@ pub enum TabStatus {
     Working,
     /// An agent waits for a permission decision or an answer.
     NeedsAttention,
-    /// An agent finished a turn while the tab was hidden; shown until the tab is selected.
-    Done,
+    /// An unread completed turn, not a claim that the agent's work is correct.
+    ReadyForReview,
     /// An agent finished and waits for the next prompt.
     Idle,
     /// A command typed at a shell's prompt runs (shell integration).
@@ -85,7 +85,7 @@ impl TabStatus {
         match self {
             Self::Working => rgb(0x4c9aff),
             Self::NeedsAttention => rgb(0xf5a524),
-            Self::Done | Self::Idle => rgb(0x3fb950),
+            Self::ReadyForReview | Self::Idle => rgb(0x3fb950),
             Self::Running => rgb(0x2dd4bf),
             Self::Active => rgb(0xc9d1d9),
             Self::Quiet | Self::Exited => rgb(0x545d68),
@@ -97,7 +97,7 @@ impl TabStatus {
         match self {
             Self::Working => "Working",
             Self::NeedsAttention => "Needs attention",
-            Self::Done => "Done",
+            Self::ReadyForReview => "Ready for review",
             Self::Idle => "Idle",
             Self::Running => "Running",
             Self::Active => "Recent output",
@@ -110,7 +110,7 @@ impl TabStatus {
     pub fn attention(self) -> Option<Attention> {
         match self {
             Self::NeedsAttention => Some(Attention::Needed),
-            Self::Done => Some(Attention::Done),
+            Self::ReadyForReview => Some(Attention::Done),
             Self::Working
             | Self::Idle
             | Self::Running
@@ -346,7 +346,7 @@ fn status_badge(
         });
     let badge = match status {
         TabStatus::Quiet => return None,
-        TabStatus::Done => badge
+        TabStatus::ReadyForReview => badge
             .flex()
             .items_center()
             .justify_center()
@@ -740,7 +740,7 @@ pub struct GroupSummary {
     pub needs_attention: usize,
     pub working: usize,
     pub running: usize,
-    pub done: usize,
+    pub ready_for_review: usize,
 }
 
 impl GroupSummary {
@@ -751,7 +751,7 @@ impl GroupSummary {
                 TabStatus::NeedsAttention => summary.needs_attention += 1,
                 TabStatus::Working => summary.working += 1,
                 TabStatus::Running => summary.running += 1,
-                TabStatus::Done => summary.done += 1,
+                TabStatus::ReadyForReview => summary.ready_for_review += 1,
                 _ => {}
             }
         }
@@ -764,7 +764,7 @@ impl GroupSummary {
             (TabStatus::NeedsAttention, self.needs_attention),
             (TabStatus::Working, self.working),
             (TabStatus::Running, self.running),
-            (TabStatus::Done, self.done),
+            (TabStatus::ReadyForReview, self.ready_for_review),
         ]
         .into_iter()
         .filter(|(_, count)| *count > 0)
@@ -791,7 +791,11 @@ pub fn group_card(
         ))
         .child(format!("Working: {}", summary.working))
         .child(format!("Waiting: {}", summary.needs_attention))
-        .child(format!("Done: {}", summary.done))
+        .child(format!(
+            "{}: {}",
+            TabStatus::ReadyForReview.label(),
+            summary.ready_for_review
+        ))
 }
 
 /// What a sidebar row shows for one group.
@@ -815,7 +819,7 @@ fn status_mark(status: TabStatus) -> AnyElement {
         TabStatus::NeedsAttention => Icon::new(IconName::TriangleAlert)
             .size(px(DETAIL_ICON_SIZE))
             .into_any_element(),
-        TabStatus::Done => Icon::new(IconName::Check)
+        TabStatus::ReadyForReview => Icon::new(IconName::Check)
             .size(px(DETAIL_ICON_SIZE))
             .into_any_element(),
         // The same dot as the Working and Running badges on a tab icon (not pulsing here).
@@ -964,6 +968,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unread_completion_has_one_label_and_remains_an_attention_target() {
+        assert_eq!(TabStatus::ReadyForReview.label(), "Ready for review");
+        assert_eq!(TabStatus::ReadyForReview.attention(), Some(Attention::Done));
+        assert_eq!(TabStatus::Idle.attention(), None);
+    }
+
+    #[test]
     fn summary_counts_the_statuses_worth_showing() {
         let summary = GroupSummary::of([
             TabStatus::Working,
@@ -971,7 +982,7 @@ mod tests {
             TabStatus::Working,
             TabStatus::Idle,
             TabStatus::Running,
-            TabStatus::Done,
+            TabStatus::ReadyForReview,
             TabStatus::Quiet,
             TabStatus::Active,
         ]);
@@ -981,7 +992,7 @@ mod tests {
                 needs_attention: 1,
                 working: 2,
                 running: 1,
-                done: 1,
+                ready_for_review: 1,
             }
         );
         let chips: Vec<_> = summary.chips().collect();
@@ -991,7 +1002,7 @@ mod tests {
                 (TabStatus::NeedsAttention, 1),
                 (TabStatus::Working, 2),
                 (TabStatus::Running, 1),
-                (TabStatus::Done, 1),
+                (TabStatus::ReadyForReview, 1),
             ]
         );
         assert_eq!(GroupSummary::of([TabStatus::Idle]).chips().count(), 0);

@@ -1,13 +1,109 @@
 use super::*;
 
 #[test]
-fn only_a_hidden_finished_turn_is_done() {
+fn only_a_hidden_finished_turn_is_ready_for_review() {
     use AgentStatus::*;
     assert!(finished_unseen(Working, Idle, false));
     assert!(!finished_unseen(Working, Idle, true));
     assert!(!finished_unseen(NeedsAttention, Idle, false));
     assert!(!finished_unseen(Working, NeedsAttention, false));
     assert!(!finished_unseen(Working, Exited, false));
+}
+
+#[gpui::test]
+fn unread_completions_are_acknowledged_and_replaced_for_both_agents(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use agent_status::HookEvent;
+
+    for kind in [SessionKind::ClaudeCode, SessionKind::CopilotCli] {
+        #[cfg(windows)]
+        let (program, args) = ("cmd", vec!["/C", "exit 0"]);
+        #[cfg(not(windows))]
+        let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+        let spec = LaunchSpec::new(
+            kind,
+            Some(program.into()),
+            args.into_iter().map(String::from).collect(),
+            None,
+        );
+        let session = Session::spawn(
+            1,
+            &spec,
+            TermDimensions::new(80, 24),
+            Palette::default(),
+            Arc::new(|_| {}),
+        )
+        .unwrap();
+        let view = cx.new(|cx| {
+            TerminalView::new(session, &spec, StatusReporting::Hooks, Task::ready(()), cx)
+        });
+        view.update(cx, |view, cx| {
+            let mut at = 0;
+            let mut report = |view: &mut TerminalView, working, cx: &mut Context<TerminalView>| {
+                at += 1;
+                match kind {
+                    SessionKind::ClaudeCode => view.apply_hook_event(
+                        AgentEvent::Hook(if working {
+                            HookEvent::PromptSubmitted
+                        } else {
+                            HookEvent::Stopped
+                        }),
+                        at,
+                        cx,
+                    ),
+                    SessionKind::CopilotCli => view.apply_progress(
+                        if working {
+                            ProgressState::Indeterminate
+                        } else {
+                            ProgressState::Hidden
+                        },
+                        at,
+                        cx,
+                    ),
+                    SessionKind::Shell => unreachable!(),
+                }
+            };
+            report(view, true, cx);
+            report(view, false, cx);
+            assert_eq!(view.tab_status(), TabStatus::Idle);
+
+            view.hide();
+            report(view, true, cx);
+            report(view, false, cx);
+            assert_eq!(view.tab_status(), TabStatus::ReadyForReview);
+            report(view, false, cx);
+            view.on_session_event(SessionEvent::TitleChanged(Some("Agent".into())), cx);
+            view.on_session_event(SessionEvent::Wakeup, cx);
+            view.apply_hook_event(
+                AgentEvent::ModeChanged(agent_status::AgentMode::Plan),
+                0,
+                cx,
+            );
+            assert_eq!(view.tab_status(), TabStatus::ReadyForReview);
+
+            view.show(cx);
+            assert_eq!(view.tab_status(), TabStatus::Idle);
+            view.hide();
+            report(view, false, cx);
+            assert_eq!(view.tab_status(), TabStatus::Idle);
+
+            report(view, true, cx);
+            report(view, false, cx);
+            report(view, true, cx);
+            assert_eq!(view.tab_status(), TabStatus::Working);
+            assert!(!view.finished_unseen);
+            report(view, false, cx);
+            assert_eq!(view.tab_status(), TabStatus::ReadyForReview);
+            view.apply_hook_event(
+                AgentEvent::Hook(HookEvent::InputRequested),
+                agent_status::now_micros(),
+                cx,
+            );
+            assert_eq!(view.tab_status(), TabStatus::NeedsAttention);
+            assert!(!view.finished_unseen);
+        });
+    }
 }
 
 #[test]

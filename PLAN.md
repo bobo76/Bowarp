@@ -2,29 +2,24 @@
 
 Feature spec: [FEATURES.md](FEATURES.md)
 
-## Top priority: Ready for review
-
-- Background agent completion status: when an unfocused agent tab transitions from Working
-  to Idle, show **Ready for review** instead of Idle until the user focuses that tab.
-  - Focusing the tab acknowledges the completed work and clears the status back to Idle;
-    a Working-to-Idle transition in an already focused tab stays Idle.
-  - This is an unread-completion indicator, not confirmation that the work is correct.
-    New Working or Waiting events replace it with the agent's current status.
-  - Show it consistently in the sidebar, tab hover cards and group summaries; align existing
-    Done notifications with this status rather than introducing duplicate completion notices.
-
-## Status (0.2.16, 2026-10-22)
+## Status (0.2.18, 2026-10-23)
 
 [FEATURES.md](FEATURES.md) is the target; what is not built yet is in the next steps and the
 backlog below. Details of finished work are in the git history and [CHANGELOG.md](CHANGELOG.md).
 
-Version 0.2.16 includes the six UX improvements below. Keep them under "Fixed, not tested
-yet" until the native Windows UI checks have passed; publishing a version does not mark
+Version 0.2.18 labels unread background agent completions "Ready for review". Keep this,
+the four features from 0.2.17 and the six UX improvements from 0.2.16 under "Fixed, not
+tested yet" until their native UI checks have passed; publishing a version does not mark
 those checks complete.
 
 **Keeping this file current:** when something is completely done (built, tested and checked
 where it has to be), remove it from this file; the git history keeps the record. Until then
 it stays, under "Fixed, not tested yet" if only the manual check is missing.
+
+**0.2.18 verification, 2026-10-23:** formatting, strict workspace Clippy, workspace tests
+and the release workspace build passed in Linux Docker. Native Windows Clippy, tests and
+build are blocked locally by the missing MSVC linker (`link.exe`). Windows/Linux UI checks
+and packaged-app smoke tests remain pending.
 
 **Known limitations**
 
@@ -80,7 +75,7 @@ it stays, under "Fixed, not tested yet" if only the manual check is missing.
      `C` without `D`) or an agent is Working or Waiting; idle prompts and idle agents close
      silently. Applies to closing a tab, closing a group and quitting the window (one dialog
      listing every busy tab).
-   - Sound for agent events (Waiting, Done): one bundled sound for both events, with an on/off
+   - Sound for agent events (Waiting, Ready for review): one bundled sound for both events, with an on/off
      switch and a volume setting. Basic silent in-app toasts are implemented, awaiting the
      manual checks below.
    - Clipboard notice: a banner above the terminal when a program writes the clipboard
@@ -195,7 +190,7 @@ then rebuild from `v0.2.16` and run all six checks again.
   **Not shown:** no menu in the viewer.
 - Initial shell fallback: a persistent warning retains the requested shell's failure reason.
   Not tested yet.
-- Group hover card: whole-group tab count and Working/Waiting/Done totals, including empty
+- Group hover card: whole-group tab count and Working/Waiting/Ready for review totals, including empty
   groups; no timer, per-tab rows or card during dragging. **Not shown:** no card when
   hovering a group. (Dragging a group header doesn't work either, but that was never built:
   see the Backlog.)
@@ -205,7 +200,7 @@ then rebuild from `v0.2.16` and run all six checks again.
 - Persisted Light theme switch: live UI changes, dark by default, terminal palette unchanged.
   **Not shown:** no theme setting on the settings page.
 
-### Four requested features (unreleased, 2026-10-23)
+### Four requested features (0.2.17, 2026-10-23)
 
 Implemented with automated coverage; native Windows UI and live Copilot permission-dialog
 checks remain pending. README documents the settings and behavior.
@@ -242,6 +237,18 @@ checks remain pending. README documents the settings and behavior.
   Manual check: launch with quoted arguments, empty fields, malformed quotes, Claude
   `--permission-mode plan`/`--model opus` and Copilot `--mode plan`/`--yolo`; change settings
   and confirm duplication/restoration keep the old arguments.
+
+### Ready for review (0.2.18, 2026-10-23)
+
+Implemented with automated coverage; native Windows/Linux UI checks remain pending (README's
+manual check 4).
+
+- An agent's background Working-to-Idle transition shows **Ready for review** in the
+  sidebar, tab hover card and group summaries, reusing the existing completion toast.
+  Selecting the tab acknowledges it and restores Idle; foreground completions stay Idle.
+  New Working or Waiting events replace it. This marks unread work, not verified correctness.
+- Manually check both Claude and Copilot, collapsed-group totals, toast dismissal versus
+  click-to-select, completions while Settings is shown and no duplicate completion notices.
 
 ## Decisions
 
@@ -422,7 +429,7 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   so the palette must keep text readable in light and dark themes.
 - Extended group hover card (basic counts are implemented): one line per tab with kind icon,
     name, status and lap time ("Working · 2m 14s", "Running for 40s") and branch, in sidebar
-    order; tabs that need attention (Waiting, unviewed Done or failed) first.
+    order; tabs that need attention (Waiting, Ready for review or failed) first.
   - Common folder or branch shown once in the header when every tab shares it.
   - Clicking a line selects that tab (expanding the group). The card ticks the lap times while
     it shows (`set_card_clock` for each working tab) and is built only while it shows; no

@@ -391,7 +391,7 @@ impl TerminalView {
         }
         if let Some(agent) = &self.agent {
             return match agent.status() {
-                AgentStatus::Idle if self.finished_unseen => TabStatus::Done,
+                AgentStatus::Idle if self.finished_unseen => TabStatus::ReadyForReview,
                 AgentStatus::Idle => TabStatus::Idle,
                 AgentStatus::Working => TabStatus::Working,
                 AgentStatus::NeedsAttention => TabStatus::NeedsAttention,
@@ -1138,7 +1138,7 @@ impl EntityInputHandler for TerminalView {
 }
 
 /// Whether a status change is a turn ending (Working -> Idle) on a tab the user is not looking
-/// at, which the sidebar shows as Done until the tab is selected.
+/// at, which the sidebar shows as Ready for review until the tab is selected.
 fn finished_unseen(before: AgentStatus, after: AgentStatus, visible: bool) -> bool {
     !visible && before == AgentStatus::Working && after == AgentStatus::Idle
 }
