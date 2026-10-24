@@ -711,3 +711,84 @@ fn installed_font_family_refuses_aliases_and_empty_names() {
         None
     );
 }
+
+#[test]
+fn feature_switches_default_on_and_round_trip() {
+    let settings = Settings::default();
+    assert!(settings.group_hover_cards.is_on());
+    assert!(settings.activity_animations.is_on());
+
+    let off = Settings {
+        group_hover_cards: FeatureSwitch::new(false),
+        activity_animations: FeatureSwitch::new(false),
+        ..Settings::default()
+    };
+    let json = off.to_json().unwrap();
+    let value: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["group_hover_cards"], Value::Bool(false));
+    assert_eq!(value["activity_animations"], Value::Bool(false));
+    assert_eq!(Settings::from_json(&json).unwrap(), off);
+}
+
+#[test]
+fn feature_switches_with_a_wrong_type_use_their_default() {
+    for wrong in ["\"false\"", "0", "null", "[]", "{}"] {
+        let settings = Settings::from_json(&format!(
+            r#"{{"group_hover_cards": {wrong}, "activity_animations": {wrong}, "font_size": 20}}"#
+        ))
+        .unwrap();
+        assert!(settings.group_hover_cards.is_on(), "{wrong}");
+        assert!(settings.activity_animations.is_on(), "{wrong}");
+        assert_eq!(settings.font_size.points(), 20.);
+    }
+    let one_off = Settings::from_json(r#"{"group_hover_cards": false}"#).unwrap();
+    assert!(!one_off.group_hover_cards.is_on());
+    assert!(one_off.activity_animations.is_on());
+}
+
+#[test]
+fn a_switch_defaulting_off_reads_missing_or_wrong_typed_as_off() {
+    #[derive(Debug, Default, PartialEq, Deserialize)]
+    #[serde(default)]
+    struct Probe {
+        #[serde(deserialize_with = "lenient")]
+        sounds: FeatureSwitch<false>,
+    }
+    assert!(!Probe::default().sounds.is_on());
+    assert!(!serde_json::from_str::<Probe>("{}").unwrap().sounds.is_on());
+    assert!(
+        !serde_json::from_str::<Probe>(r#"{"sounds":"on"}"#)
+            .unwrap()
+            .sounds
+            .is_on()
+    );
+    assert!(
+        serde_json::from_str::<Probe>(r#"{"sounds":true}"#)
+            .unwrap()
+            .sounds
+            .is_on()
+    );
+}
+
+#[test]
+fn dependent_switch_is_disabled_with_a_caption_naming_the_parent() {
+    let on = DependentState::new(true, "Command history");
+    assert!(on.enabled);
+    assert_eq!(on.caption, None);
+
+    let off = DependentState::new(false, "Command history");
+    assert!(!off.enabled);
+    assert!(off.caption.unwrap().contains("\"Command history\""));
+}
+
+#[test]
+fn a_dependent_value_is_kept_while_its_parent_is_off() {
+    let mut settings =
+        Settings::from_json(r#"{"tab_card": {"enabled": false, "status": false}}"#).unwrap();
+    let state = DependentState::new(settings.tab_card.enabled, "Tab hover card");
+    assert!(!state.enabled);
+    assert!(!settings.tab_card.status);
+    settings.tab_card.enabled = true;
+    assert!(DependentState::new(settings.tab_card.enabled, "Tab hover card").enabled);
+    assert!(!settings.tab_card.status);
+}

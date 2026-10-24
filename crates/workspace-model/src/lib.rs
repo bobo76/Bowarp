@@ -60,8 +60,8 @@ pub use running::{
 };
 pub use search::{SearchedTab, TabQuery, step_match};
 pub use settings::{
-    FontSize, Settings, SettingsFile, SettingsLoad, TabCardField, TabCardFields, UiTheme,
-    installed_font_family, settings_backup_path,
+    DependentState, FeatureSwitch, FontSize, Settings, SettingsFile, SettingsLoad, TabCardField,
+    TabCardFields, UiTheme, installed_font_family, settings_backup_path,
 };
 pub use tab::{TabColor, TabMeta};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};

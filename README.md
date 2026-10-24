@@ -194,6 +194,10 @@ title and Session kind pieces (all on initially). The tab name and Ctrl+number s
 always remain. Program title appears when a custom name hides it. Turning the card off
 disables, but remembers, the piece switches; turning every piece off also hides the card.
 Changes off skips `git diff`; Status off stops the card's clock. Group cards are unaffected.
+Appearance → Group hover cards (on) turns the cards beside group headers off (a collapsed
+group still shows its status); Activity animations (on) off makes the Running badge static
+and starts no animation timers. Both apply live and are saved as `group_hover_cards` and
+`activity_animations` (missing or non-boolean means on).
 
 ### Copilot permission status (CLI 1.0.103)
 

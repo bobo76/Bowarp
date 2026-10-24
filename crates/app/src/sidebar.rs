@@ -311,6 +311,16 @@ fn running_dot(color: Hsla, pulse: RunningPulse, index: usize) -> AnyElement {
     .into_any_element()
 }
 
+/// Whether a Running badge pulses: animation is allowed (the window, see [`pulse_allowed`], and
+/// the "Activity animations" switch) and the command is within its first seconds.
+pub fn running_pulse(may_animate: bool, pulsing: bool) -> RunningPulse {
+    if may_animate && pulsing {
+        RunningPulse::Animated
+    } else {
+        RunningPulse::Still
+    }
+}
+
 /// Whether Running badges may pulse in `window`: not on a software-emulated GPU (a VM, remote
 /// X, Xvfb), where every frame costs CPU. `AGENTWS_FORCE_PULSE` set makes debug builds pulse
 /// anyway, to check the pulse under Xvfb.
@@ -966,6 +976,14 @@ pub fn empty_group_hint(cx: &App) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn running_badge_pulses_only_with_every_condition_including_the_switch() {
+        assert_eq!(running_pulse(true, true), RunningPulse::Animated);
+        for (may_animate, pulsing) in [(false, true), (true, false), (false, false)] {
+            assert_eq!(running_pulse(may_animate, pulsing), RunningPulse::Still);
+        }
+    }
 
     #[test]
     fn unread_completion_has_one_label_and_remains_an_attention_target() {

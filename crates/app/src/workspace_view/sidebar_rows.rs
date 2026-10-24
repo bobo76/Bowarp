@@ -19,8 +19,8 @@ use crate::launcher::{self, Launcher};
 use crate::settings_file;
 use crate::shortcuts::{self, ATTENTION_KEY, NEW_TAB_KEY};
 use crate::sidebar::{
-    self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, RunningPulse, SIDEBAR_WIDTH,
-    TabDetail, TabRow,
+    self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabDetail,
+    TabRow,
 };
 use crate::tab_menu;
 
@@ -215,6 +215,7 @@ impl WorkspaceView {
         let view = tab.view.read(cx);
         let name = SharedString::from(Self::tab_name(tab, cx));
         let kind = view.kind();
+        let may_animate = self.pulse_running && settings_file::activity_animations(cx);
         let row = TabRow {
             index,
             kind,
@@ -223,11 +224,7 @@ impl WorkspaceView {
                 .location()
                 .map(|location| tab_detail(location, self.home.as_deref())),
             status: view.tab_status(),
-            pulse: if self.pulse_running && view.running_pulses() {
-                RunningPulse::Animated
-            } else {
-                RunningPulse::Still
-            },
+            pulse: sidebar::running_pulse(may_animate, view.running_pulses()),
             selected: index == self.active && !self.settings.shows_page(),
             pinned: self.layout.is_pinned(id),
             color: self.tab_color(tab),
@@ -318,7 +315,9 @@ impl WorkspaceView {
             cx,
         );
         let header = header.into_any_element();
-        let header = if cx.has_active_drag() {
+        let cards_on =
+            !cx.has_active_drag() && settings_file::settings(cx).group_hover_cards.is_on();
+        let header = if !cards_on {
             header
         } else {
             let workspace = cx.entity().downgrade();

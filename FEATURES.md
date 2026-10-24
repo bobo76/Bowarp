@@ -103,6 +103,8 @@ directly to model APIs.
 - Edit preferences on a settings page opened from the title bar: searchable pages of
   settings applied as they change, a reset per setting, the file's errors shown, and a
   button to open the settings file itself.
+- Let the user switch optional behavior on or off (hover cards, activity animations),
+  applied live; a setting that depends on another is shown disabled with the reason.
 
 ## Performance and Usability
 

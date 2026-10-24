@@ -47,6 +47,14 @@ pub struct Settings {
     pub copilot_args: String,
     #[serde(deserialize_with = "lenient")]
     pub tab_card: TabCardFields,
+    /// Whether group headers show a hover card (basic and extended); the collapsed-group
+    /// status stays either way. Independent of `tab_card`.
+    #[serde(deserialize_with = "lenient")]
+    pub group_hover_cards: FeatureSwitch<true>,
+    /// Whether activity indicators animate (the Running badge's pulse, and later Copilot's
+    /// working animation); off gives static indicators and no animation timers.
+    #[serde(deserialize_with = "lenient")]
+    pub activity_animations: FeatureSwitch<true>,
     /// The file viewer's share of the window width, set by dragging its divider (not on the
     /// settings page).
     #[serde(deserialize_with = "lenient")]
@@ -157,6 +165,47 @@ impl Settings {
     /// Pretty JSON. Fails only for a value JSON can't hold (a non-UTF-8 path).
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string_pretty(self)
+    }
+}
+
+/// A persisted on/off switch whose default is `DEFAULT`: a missing value, or one that isn't a
+/// JSON boolean, reads as `DEFAULT` (through `lenient`, since `Default` gives it) and is
+/// written back as a plain boolean. The pattern for every feature switch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FeatureSwitch<const DEFAULT: bool>(bool);
+
+impl<const DEFAULT: bool> FeatureSwitch<DEFAULT> {
+    pub fn new(on: bool) -> Self {
+        Self(on)
+    }
+
+    pub fn is_on(self) -> bool {
+        self.0
+    }
+}
+
+impl<const DEFAULT: bool> Default for FeatureSwitch<DEFAULT> {
+    fn default() -> Self {
+        Self(DEFAULT)
+    }
+}
+
+/// How a switch that needs a parent option looks: it keeps its value but can't be changed
+/// while the parent is off, and says which option it needs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependentState {
+    pub enabled: bool,
+    /// Shown beside the disabled control; `None` while enabled.
+    pub caption: Option<String>,
+}
+
+impl DependentState {
+    pub fn new(parent_on: bool, parent_name: &str) -> Self {
+        Self {
+            enabled: parent_on,
+            caption: (!parent_on).then(|| format!("Needs \"{parent_name}\" to be on.")),
+        }
     }
 }
 

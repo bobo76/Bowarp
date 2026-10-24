@@ -47,6 +47,12 @@ pub fn settings(cx: &App) -> &Settings {
     cx.global::<AppSettings>().0.settings()
 }
 
+/// Whether activity indicators animate (the "Activity animations" switch). Animation code
+/// asks this at draw time and starts no timer or animation while it is false.
+pub fn activity_animations(cx: &App) -> bool {
+    settings(cx).activity_animations.is_on()
+}
+
 /// The settings file, for its `load_error` and `save_error` (shown on the settings page).
 pub fn file(cx: &App) -> &SettingsFile {
     &cx.global::<AppSettings>().0
@@ -148,5 +154,43 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|cx| assert_eq!(cx.theme().mode, ThemeMode::Dark));
+    }
+
+    #[gpui::test]
+    fn feature_switches_apply_live_and_come_back(cx: &mut TestAppContext) {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        use workspace_model::FeatureSwitch;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_global(AppSettings(SettingsFile::default()));
+        });
+        let notified = Rc::new(Cell::new(0));
+        let count = notified.clone();
+        cx.update(|cx| {
+            assert!(activity_animations(cx));
+            assert!(settings(cx).group_hover_cards.is_on());
+            cx.observe_global::<AppSettings>(move |_| count.set(count.get() + 1))
+                .detach();
+            preview(cx, |settings| {
+                settings.activity_animations = FeatureSwitch::new(false);
+                settings.group_hover_cards = FeatureSwitch::new(false);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert!(!activity_animations(cx));
+            assert!(!settings(cx).group_hover_cards.is_on());
+            preview(cx, |settings| {
+                settings.activity_animations = FeatureSwitch::new(true);
+            });
+        });
+        cx.update(|cx| {
+            assert!(activity_animations(cx));
+            assert!(!settings(cx).group_hover_cards.is_on());
+        });
+        assert_eq!(notified.get(), 2);
     }
 }

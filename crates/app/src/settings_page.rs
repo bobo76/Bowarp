@@ -27,7 +27,7 @@ use gpui_kit::{
     Anchor, AnyElement, App, AppContext, Axis, ClickEvent, ClipboardItem, Entity, Focusable,
     IntoElement, ParentElement, SharedString, Styled, Subscription, Window, div, px,
 };
-use workspace_model::{FontSize, Settings, UiTheme};
+use workspace_model::{DependentState, FeatureSwitch, FontSize, Settings, UiTheme};
 
 use crate::about;
 use crate::assets::CODE_ICON;
@@ -120,6 +120,30 @@ fn appearance_groups() -> Vec<SettingGroup> {
             .keywords(["text", "zoom", "points"]),
         ]),
         tab_card_group(),
+        SettingGroup::new().title("Group hover card").item(
+            switch_row(
+                "Group hover cards",
+                "Show a card beside a hovered group header. Off: no group cards; a collapsed \
+                 group still shows its status. Independent of the tab hover card.",
+                SettingsField::new(
+                    |settings| settings.group_hover_cards.is_on(),
+                    |settings, value| settings.group_hover_cards = FeatureSwitch::new(value),
+                ),
+            )
+            .keywords(["group", "hover", "card", "sidebar"]),
+        ),
+        SettingGroup::new().title("Animation").item(
+            switch_row(
+                "Activity animations",
+                "Animate the sidebar's activity indicators (the Running badge's pulse). Off: \
+                 static indicators and no animation timers; status still updates.",
+                SettingsField::new(
+                    |settings| settings.activity_animations.is_on(),
+                    |settings, value| settings.activity_animations = FeatureSwitch::new(value),
+                ),
+            )
+            .keywords(["motion", "pulse", "working", "spinner", "sidebar"]),
+        ),
     ]
 }
 
@@ -239,19 +263,45 @@ fn tab_card_group() -> SettingGroup {
                 title,
                 description,
                 SettingsField::new(get, set),
-                Rc::new(|checked, binding, _, cx| {
-                    let binding = binding.clone();
-                    Switch::new("switch")
-                        .checked(checked)
-                        .disabled(!settings_file::settings(cx).tab_card.enabled)
-                        .on_click(move |checked: &bool, _, cx| binding.save(*checked, cx))
-                        .into_any_element()
-                }),
+                dependent_switch_control(
+                    "Tab hover card",
+                    Rc::new(|settings: &Settings| settings.tab_card.enabled),
+                ),
             )
             .keywords(["tab", "hover", "card", "sidebar"]),
         );
     }
     group
+}
+
+/// The control of a switch row that needs another option: while `parent` reads false the
+/// switch is disabled, keeps its value, and a caption names `parent_name` (see
+/// [`DependentState`]). The next steps' history switches use it too.
+pub fn dependent_switch_control(
+    parent_name: &'static str,
+    parent: Rc<dyn Fn(&Settings) -> bool>,
+) -> Control<bool> {
+    Rc::new(move |checked, binding, _, cx| {
+        let binding = binding.clone();
+        let state = DependentState::new(parent(settings_file::settings(cx)), parent_name);
+        let switch = Switch::new("switch")
+            .checked(checked)
+            .disabled(!state.enabled)
+            .on_click(move |checked: &bool, _, cx| binding.save(*checked, cx));
+        div()
+            .flex()
+            .flex_col()
+            .items_end()
+            .gap_0p5()
+            .child(switch)
+            .children(state.caption.map(|caption| {
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(caption)
+            }))
+            .into_any_element()
+    })
 }
 
 /// The `default_shell` setting: "Automatic" (empty) or one of the installed shells, shown by

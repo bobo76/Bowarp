@@ -21,6 +21,8 @@ the separate Ubuntu Clippy job, must pass before tagging. Native Windows/Linux U
 packaged-app smoke tests and About version/commit checks remain pending. Publishing is
 not verification.
 
+**Since 0.2.19:** `cargo test` runs 416 tests (Linux).
+
 **PR verification:** Ubuntu build/tests, strict Clippy and Windows build/tests/package
 passed for `fbfa8df`. CodeQL blocked publication because the plugin cleanup warning logged
 a session-specific path. The warning now retains the filesystem error without that path;
@@ -46,6 +48,9 @@ automated checks must pass again for the corrected commit before merge or taggin
   allowed. Edits made on disk while running apply when the settings page opens, when the
   file is saved in the file viewer, or at the next change from the app; edits made in another
   editor while the page shows apply only then (no file watch).
+- Activity animations: the switch currently gates only the Running badge's pulse (no Working
+  animation exists yet; the Copilot one will consult `settings_file::activity_animations`).
+  Under software rendering the pulse is already off.
 - Terminal font: a family that isn't installed (exact name; any case on Windows) silently uses
   the built-in one (DejaVu Sans Mono, Cascadia Mono on Windows); the page doesn't say so. So do
   GPUI's `.`-names (`.SystemUIFont`) and a localized or secondary family name (Linux lists only
@@ -75,7 +80,25 @@ automated checks must pass again for the corrected commit before merge or taggin
 
 **Next steps**
 
-None; the work to pick up next is at the top of the [Backlog](#backlog).
+Run in this order (each stands alone and is tested):
+
+1. Feature options, Terminal history: "Command history", "History popup" and "Inline
+   suggestions" with their parent-child rules, live disable/re-enable, key pass-through, and
+   the Clear history / Clear saved session commands actions.
+2. Feature options, Workspace: "Restore previous tabs" and "Remember last shell command".
+3. Feature options, "File explorer and viewer" (hide both panes, no scans or watchers while
+   off, unsaved-edit resolution first).
+4. Feature options, "In-app notifications" (toasts only; status and badges stay).
+5. Backlog: Notifications and close warnings (split further at its Step 0 size check; adds the
+   "Notification sounds" switch with the sound).
+6. Backlog: Configurable keyboard shortcuts.
+7. Backlog: Window opacity and background blur.
+8. Backlog: Copilot working animation (uses the "Activity animations" switch).
+
+Switches for features not built yet (prompt at the bottom, command separators, agents typed
+at the prompt, long-command completion status) are added with those features, as the
+[Feature options](#feature-options) table says; the Backlog item "Major feature options"
+stays until then.
 
 ### Feature options
 
@@ -87,8 +110,8 @@ dependency is stated.
 | Settings page | Option | Default | When off |
 |---|---|---|---|
 | Appearance | Tab hover cards (implemented) | On | No cards over sidebar tabs; retain sidebar status. Keep the existing detailed field switches. |
-| Appearance | Group hover cards | On | No basic or extended group cards; retain collapsed-group status. Independent of tab cards. |
-| Appearance | Activity animations | On | Static Working indicators for both Claude and Copilot; no animation timers. Status still updates. |
+| Appearance | Group hover cards (implemented) | On | No basic or extended group cards; retain collapsed-group status. Independent of tab cards. |
+| Appearance | Activity animations (implemented) | On | Static Working indicators for both Claude and Copilot; no animation timers. Status still updates. |
 | Terminal | Command history | On | Stop collecting commands into Bowarp history, in memory and on disk; no history popup, inline suggestions or last-command capture/restoration. Does not change the shell's own history. |
 | Terminal | History popup | On | No Bowarp HISTORY panel or popup key interception; Up goes to the shell. With command history on, recording continues, stated beside this switch. |
 | Terminal | Inline suggestions | On | No Bowarp ghost text or suggestion-acceptance key interception, including last-session suggestions; shell plugins are unchanged. |
