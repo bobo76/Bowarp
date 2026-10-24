@@ -54,7 +54,7 @@ fn settings_toggle_focuses_then_closes_and_restores_the_terminal(cx: &mut TestAp
                 Rc::from([]),
                 None,
                 messages,
-                super::super::TabOwnership::Guest,
+                Rc::new(crate::tabs_file::TabsWriter::new(false)),
                 window,
                 cx,
             )

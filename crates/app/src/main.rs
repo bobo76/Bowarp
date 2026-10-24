@@ -113,6 +113,7 @@ struct WorkspaceStartup {
     hooks: Option<Rc<ClaudeHooks>>,
     hook_messages: HookMessages,
     ownership: TabOwnership,
+    tabs_writer: Rc<tabs_file::TabsWriter>,
     requested: Option<LaunchSpec>,
 }
 
@@ -130,6 +131,7 @@ fn main() {
     } else {
         TabOwnership::Guest
     };
+    let tabs_writer = Rc::new(tabs_file::TabsWriter::new(ownership == TabOwnership::Owner));
 
     gpui_kit::application()
         .with_assets(assets::Assets)
@@ -141,8 +143,10 @@ fn main() {
             workspace_view::init(cx);
             history::init(cx);
             let quit_hooks = hooks.clone();
+            let closing_writer = tabs_writer.clone();
             cx.on_window_closed(move |cx, _| {
                 if cx.windows().is_empty() {
+                    closing_writer.finish();
                     if let Some(hooks) = &quit_hooks {
                         hooks.remove_settings();
                     }
@@ -160,6 +164,7 @@ fn main() {
                     hooks,
                     hook_messages,
                     ownership,
+                    tabs_writer,
                     requested,
                 },
                 cx,
@@ -200,7 +205,7 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
                 startup.launchers,
                 startup.hooks,
                 startup.hook_messages,
-                startup.ownership,
+                startup.tabs_writer,
                 window,
                 cx,
             )
@@ -211,7 +216,7 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
         let closing = workspace.downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             if let Some(workspace) = closing.upgrade() {
-                workspace.read(cx).save_tabs(cx);
+                workspace.read(cx).save_tabs_and_flush(cx);
             }
             window_bounds::save(window.window_bounds());
             true

@@ -492,3 +492,38 @@ mod windows_tests {
 
 #[cfg(all(test, unix))]
 mod tests;
+
+#[cfg(test)]
+mod argument_tests {
+    use super::*;
+
+    #[test]
+    fn quoted_or_escaped_windows_paths_survive_agent_argument_parsing() {
+        for arguments in [
+            r"--settings 'C:\Users\my name\settings.json'",
+            r#"--settings C:\\Users\\my\ name\\settings.json"#,
+        ] {
+            let settings = Settings {
+                claude_args: arguments.into(),
+                copilot_args: arguments.into(),
+                ..Settings::default()
+            };
+            for kind in [SessionKind::ClaudeCode, SessionKind::CopilotCli] {
+                let launcher = Launcher {
+                    id: "agent".into(),
+                    label: "Agent".into(),
+                    kind,
+                    program: Some("agent".into()),
+                    args: Vec::new(),
+                    icon: LauncherIcon::Copilot,
+                };
+                let spec = launcher.configured_spec(None, &settings).unwrap().unwrap();
+                assert_eq!(
+                    spec.args,
+                    ["--settings", r"C:\Users\my name\settings.json"],
+                    "{kind:?}: {arguments}"
+                );
+            }
+        }
+    }
+}

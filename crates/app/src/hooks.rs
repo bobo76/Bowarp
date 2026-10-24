@@ -34,8 +34,12 @@ impl ClaudeHooks {
             ));
         }
         let server = HookServer::start(default_pipe_name(), on_message)?;
+        let settings_dir = settings_dir();
+        if let Err(error) = sweep_stale_plugins(&settings_dir, process_is_running) {
+            log::warn!("could not sweep stale Copilot plugins: {error}");
+        }
         // A file rather than inline JSON: the Windows command line would need JSON quoting.
-        let settings_path = settings_dir().join(format!(
+        let settings_path = settings_dir.join(format!(
             "agentws-{}-claude-settings.json",
             std::process::id()
         ));
@@ -44,7 +48,7 @@ impl ClaudeHooks {
             server,
             settings_path,
             hook_program,
-            copilot_plugins_dir: settings_dir().join(format!(
+            copilot_plugins_dir: settings_dir.join(format!(
                 "agentws-{}-{}-copilot",
                 std::process::id(),
                 agent_status::now_micros()
@@ -75,6 +79,7 @@ impl ClaudeHooks {
                     );
                 }
                 Err(error) => {
+                    self.remove_session(session);
                     eprintln!("Copilot permission hooks unavailable; using progress: {error}");
                 }
             }
@@ -100,10 +105,87 @@ impl ClaudeHooks {
         Ok(plugin)
     }
 
+    /// Remove a session's plugin after its process exits or its tab closes.
+    pub fn remove_session(&self, session: u64) {
+        remove_plugins(&self.copilot_plugins_dir.join(session.to_string()));
+    }
+
     /// Delete the app-owned settings and plugins when all sessions are shutting down.
     pub fn remove_settings(&self) {
         let _ = fs::remove_file(&self.settings_path);
-        let _ = fs::remove_dir_all(&self.copilot_plugins_dir);
+        remove_plugins(&self.copilot_plugins_dir);
+    }
+}
+
+fn remove_plugins(path: &Path) {
+    if let Err(error) = fs::remove_dir_all(path)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        log::warn!(
+            "could not remove Copilot plugin {}: {error}",
+            path.display()
+        );
+    }
+}
+
+fn plugin_owner(name: &str) -> Option<u32> {
+    let name = name.strip_prefix("agentws-")?.strip_suffix("-copilot")?;
+    let (pid, timestamp) = name.split_once('-')?;
+    timestamp.parse::<u64>().ok()?;
+    pid.parse::<u32>().ok().filter(|pid| *pid != 0)
+}
+
+fn sweep_stale_plugins(dir: &Path, is_running: impl Fn(u32) -> bool) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let Some(pid) = entry.file_name().to_str().and_then(plugin_owner) else {
+            continue;
+        };
+        if !entry.file_type()?.is_dir() || is_running(pid) {
+            continue;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            // The fallback runtime directory can be shared with other users.
+            if entry.metadata()?.uid() != unsafe { libc::geteuid() } {
+                continue;
+            }
+        }
+        remove_plugins(&entry.path());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn process_is_running(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return true;
+    };
+    // Signal zero checks existence without sending a signal. Permission errors are not death.
+    let result = unsafe { libc::kill(pid, 0) };
+    result == 0 || io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+#[cfg(windows)]
+fn process_is_running(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, STILL_ACTIVE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    // Access denied is inconclusive; only a nonexistent pid is safe to sweep.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return GetLastError() != ERROR_INVALID_PARAMETER;
+        }
+        let mut code = 0;
+        let running = GetExitCodeProcess(handle, &mut code) == 0 || code == STILL_ACTIVE as u32;
+        CloseHandle(handle);
+        running
     }
 }
 
@@ -147,9 +229,8 @@ mod tests {
             |_| {},
         )
         .unwrap();
-        let copilot_plugins_dir = std::env::current_dir()
-            .unwrap()
-            .join(format!("agentws-hooks-test-{}", agent_status::now_micros()));
+        let copilot_plugins_dir =
+            std::env::temp_dir().join(format!("agentws-hooks-test-{}", agent_status::now_micros()));
         let hooks = ClaudeHooks {
             server,
             settings_path: copilot_plugins_dir.join("claude-settings.json"),
@@ -205,8 +286,88 @@ mod tests {
         );
         assert_eq!(claude.env[SESSION_ENV], "14");
         assert!(!claude.env.contains_key(HOOK_ENV));
+        hooks.remove_session(12);
+        assert!(!plugin.exists(), "closing a tab removes its plugin");
+        assert!(
+            hooks
+                .copilot_plugins_dir
+                .join("15")
+                .join("hooks.json")
+                .is_file()
+        );
+        hooks.remove_session(12);
+        let partial = hooks.copilot_plugins_dir.join("16");
+        create_private_dir(&partial).unwrap();
+        fs::create_dir(partial.join("hooks.json")).unwrap();
+        let mut failed = LaunchSpec::copilot_cli(None);
+        assert!(!hooks.attach(16, &mut failed));
+        assert!(failed.args.is_empty());
+        assert!(
+            !partial.exists(),
+            "failed creation removes the partial plugin"
+        );
+        assert!(hooks.copilot_plugins_dir.join("15").exists());
         hooks.remove_settings();
-        assert!(!plugin.exists());
+        assert!(!hooks.copilot_plugins_dir.exists());
+    }
+
+    #[test]
+    fn sweeps_only_plugin_directories_owned_by_dead_processes() {
+        let root = std::env::temp_dir().join(format!(
+            "agentws-sweep-test-{}-{}",
+            std::process::id(),
+            agent_status::now_micros()
+        ));
+        fs::create_dir(&root).unwrap();
+        for name in [
+            "agentws-7-100-copilot",
+            "agentws-8-200-copilot",
+            "agentws-8-invalid-copilot",
+            "agentws-0-200-copilot",
+            "agentws-8-200-copilot-other",
+            "unrelated",
+        ] {
+            fs::create_dir(root.join(name)).unwrap();
+            fs::write(root.join(name).join("hooks.json"), "{}").unwrap();
+        }
+        let file = root.join("agentws-8-300-copilot");
+        fs::write(&file, "not a directory").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("unrelated"), root.join("agentws-8-400-copilot"))
+            .unwrap();
+
+        sweep_stale_plugins(&root, |pid| pid == 7).unwrap();
+        assert!(!root.join("agentws-8-200-copilot").exists());
+        for name in [
+            "agentws-7-100-copilot",
+            "agentws-8-invalid-copilot",
+            "agentws-0-200-copilot",
+            "agentws-8-200-copilot-other",
+            "unrelated",
+        ] {
+            assert!(root.join(name).join("hooks.json").is_file(), "{name}");
+        }
+        assert!(file.is_file());
+        #[cfg(unix)]
+        assert!(root.join("agentws-8-400-copilot").is_symlink());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn process_check_preserves_live_owners_and_detects_exited_owners() {
+        assert!(process_is_running(std::process::id()));
+        #[cfg(unix)]
+        let mut command = std::process::Command::new("sh");
+        #[cfg(windows)]
+        let mut command = std::process::Command::new("cmd");
+        #[cfg(unix)]
+        command.args(["-c", "exit 0"]);
+        #[cfg(windows)]
+        command.args(["/C", "exit 0"]);
+        let mut child = command.spawn().unwrap();
+        let pid = child.id();
+        assert!(child.wait().unwrap().success());
+        assert!(!process_is_running(pid));
     }
 
     #[test]

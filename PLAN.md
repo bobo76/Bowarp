@@ -2,24 +2,24 @@
 
 Feature spec: [FEATURES.md](FEATURES.md)
 
-## Status (0.2.18, 2026-10-23)
+## Status (0.2.19, 2026-10-24)
 
 [FEATURES.md](FEATURES.md) is the target; what is not built yet is in the next steps and the
 backlog below. Details of finished work are in the git history and [CHANGELOG.md](CHANGELOG.md).
 
-Version 0.2.18 labels unread background agent completions "Ready for review". Keep this,
-the four features from 0.2.17 and the six UX improvements from 0.2.16 under "Fixed, not
-tested yet" until their native UI checks have passed; publishing a version does not mark
-those checks complete.
-
 **Keeping this file current:** when something is completely done (built, tested and checked
 where it has to be), remove it from this file; the git history keeps the record. Until then
-it stays, under "Fixed, not tested yet" if only the manual check is missing.
+it stays, under "Fixed, not tested yet" if only the manual check is missing. Remove items
+when the user confirms they passed; retain skipped or partially passed items.
 
-**0.2.18 verification, 2026-10-23:** formatting, strict workspace Clippy, workspace tests
-and the release workspace build passed in Linux Docker. Native Windows Clippy, tests and
-build are blocked locally by the missing MSVC linker (`link.exe`). Windows/Linux UI checks
-and packaged-app smoke tests remain pending.
+**0.2.19 verification, 2026-10-24:** formatting, strict workspace all-target Clippy,
+all 408 workspace tests and the release workspace build passed in WSL Ubuntu with
+`--locked` (where supported). Tests used Linux-native temporary storage for Unix
+permission checks. Native Windows checks are blocked locally by missing MSVC build tools
+(`link.exe`); Docker Desktop's engine is unavailable. Windows and Ubuntu CI, including
+the separate Ubuntu Clippy job, must pass before tagging. Native Windows/Linux UI checks,
+packaged-app smoke tests and About version/commit checks remain pending. Publishing is
+not verification.
 
 **Known limitations**
 
@@ -76,8 +76,7 @@ and packaged-app smoke tests remain pending.
      silently. Applies to closing a tab, closing a group and quitting the window (one dialog
      listing every busy tab).
    - Sound for agent events (Waiting, Ready for review): one bundled sound for both events, with an on/off
-     switch and a volume setting. Basic silent in-app toasts are implemented, awaiting the
-     manual checks below.
+     switch and a volume setting. Basic silent in-app toasts are already implemented.
    - Clipboard notice: a banner above the terminal when a program writes the clipboard
      (OSC 52). The write is held until Allow (applied then) or Deny (dropped); a newer write
      replaces the pending one. "Always for this tab" allows later writes until the tab closes
@@ -133,7 +132,7 @@ dependency is stated.
 
 | Settings page | Option | Default | When off |
 |---|---|---|---|
-| Appearance | Tab hover cards (implemented; manual checks pending) | On | No cards over sidebar tabs; retain sidebar status. Keep the detailed field switches described under Fixed, not tested yet. |
+| Appearance | Tab hover cards (implemented) | On | No cards over sidebar tabs; retain sidebar status. Keep the existing detailed field switches. |
 | Appearance | Group hover cards | On | No basic or extended group cards; retain collapsed-group status. Independent of tab cards. |
 | Appearance | Activity animations | On | Static Working indicators for both Claude and Copilot; no animation timers. Status still updates. |
 | Terminal | Command history | On | Stop collecting commands into Bowarp history, in memory and on disk; no history popup, inline suggestions or last-command capture/restoration. Does not change the shell's own history. |
@@ -174,36 +173,42 @@ dependency is stated.
 
 ## Fixed, not tested yet
 
-Six UX improvements are implemented in 0.2.16. All 360 workspace tests, the build and Clippy
-pass in Linux Docker. Native Windows builds and visual checks remain pending: the MSVC
-linker is not available locally. See README's "Six UX improvements" manual checklist.
+Only skipped or partially passed checks remain below following the user's Windows
+verification on 2026-10-23 (installed executable reports 0.2.18; commit unconfirmed).
 
-**Windows check, 2026-10-23 (build reported as 0.2.16): nothing passed.** The overflow menu,
-the theme switch and the group card are all missing, though their code is in the `v0.2.16`
-tag. So the build that was run probably doesn't contain these changes (an older build, or one
-from an earlier commit). Before debugging, confirm which commit the Windows build came from,
-then rebuild from `v0.2.16` and run all six checks again.
-
-- Settings gear: focus an unfocused Settings page; close a focused page and remove its row.
-  **Failed** (what goes wrong not recorded yet).
-- File viewer overflow menu: existing Save and Raw/Rendered actions; toolbar controls stay.
-  **Not shown:** no menu in the viewer.
+- Workspace shortcut capture (0.2.19): Ctrl+Shift+D duplicates without sending Ctrl+D/EOF
+  to the original terminal; other workspace shortcuts are consumed while plain terminal
+  shortcuts still pass through. Automated event-dispatch coverage is implemented.
+  Manual Windows/Linux check: duplicate a live shell while it is idle and while a command
+  runs; verify the original stays open, tab navigation and sidebar/explorer shortcuts work,
+  and plain Ctrl+D still reaches the shell.
+- Background last-command persistence (0.2.19): an ordered writer saves snapshots without
+  blocking UI storage work, and close drains the final state before releasing ownership.
+  A crash can lose queued/in-flight updates, including HISTORY deletion. Automated ordering,
+  deletion, flush, guest-instance and error-reporting coverage is implemented.
+  Manual Windows/Linux check: run distinct useful commands in several integrated shell tabs,
+  delete a saved command from HISTORY, close and reopen, and verify the latest tab layout and
+  suggestions, no deleted suggestion and no saves from a second guest instance. Check UI
+  responsiveness during frequent commands and shutdown with pending writes.
+- Copilot plugin lifecycle and Windows argument guidance (0.2.19): cleanup covers session
+  exit/close/replacement, failed launch and stale dead-owner directories; settings explain
+  single-quoted Windows paths and doubled backslashes. Automated coverage is implemented.
+  Manual Windows/Linux check: use two Copilot tabs, close/exit/relaunch one and verify only
+  its plugin is removed; after an app crash, verify startup removes stale plugins but keeps
+  a live instance's plugins and unrelated files. Launch agents with a quoted Windows path.
 - Initial shell fallback: a persistent warning retains the requested shell's failure reason.
-  Not tested yet.
-- Group hover card: whole-group tab count and Working/Waiting/Ready for review totals, including empty
-  groups; no timer, per-tab rows or card during dragging. **Not shown:** no card when
-  hovering a group. (Dragging a group header doesn't work either, but that was never built:
-  see the Backlog.)
-- Background agent toasts: status-transition based, silent, in-app only; click to select,
-  dismiss or auto-hide, replacing an earlier notice for the same tab. **Failed** (what goes
-  wrong not recorded yet).
+  Not tested yet; user skipped the Windows check on 2026-10-23.
 - Persisted Light theme switch: live UI changes, dark by default, terminal palette unchanged.
-  **Not shown:** no theme setting on the settings page.
+  **Windows partially passed, 2026-10-23 (0.2.18):** user tested the theme successfully.
+  Sidebar, Settings, menus, viewer and hover cards are readable, but the Light theme is
+  too white and hard on the eyes; soften the light palette and recheck comfort.
+  Editing `ui_theme` through the file viewer was not tested; restart persistence and an
+  unchanged terminal palette are not confirmed. Linux check remains pending.
 
-### Four requested features (0.2.17, 2026-10-23)
+### Remaining requested feature checks (0.2.17, 2026-10-23)
 
-Implemented with automated coverage; native Windows UI and live Copilot permission-dialog
-checks remain pending. README documents the settings and behavior.
+Implemented with automated coverage; the following manual checks remain pending.
+README documents the settings and behavior.
 
 - Restore a shell tab's last command: integrated bash/zsh tabs (including Git Bash and bash
   in WSL; not PowerShell, cmd or agents) save the last non-trivial, recordable command at
@@ -214,20 +219,7 @@ checks remain pending. README documents the settings and behavior.
   Manual check: run a useful command then `cd`/`ls`, restart and verify the useful command
   is suggested; check Right/End, Tab/Enter pass-through, dismissal, narrow-window hint,
   crash recovery and forgetting across tabs.
-- Tab hover card settings: Appearance has a persisted master switch and Status, Location,
-  Changes, Program title and Session kind switches, all on by default. Missing/wrong-typed
-  fields default independently. Name/shortcut always remain; all pieces off suppresses the
-  card without changing the master. Disabled piece controls retain their values. No card
-  clocks when status is off and no new diffs when changes is off; group cards are unchanged.
-  Manual check: toggle every field live, disable/re-enable the card, restart and confirm
-  retained values; verify all-fields-off suppression and unchanged group cards.
-- Copilot CLI NeedsAttention: tested against CLI 1.0.103's supported per-tab `--plugin-dir`.
-  App-owned private plugins register only `PermissionRequest`, routed through `agentws-hook`
-  to Waiting. Working/Idle still come from progress reports, which clear Waiting. User
-  Copilot configuration is never changed; unavailable hooks keep progress-only fallback.
-  Automatic approvals can briefly report Waiting because Copilot emits the hook first.
-  Manual check: README checks 6-9 on Windows and Ubuntu (Wayland/X11), including two tabs,
-  approval/denial, progress recovery, disabled hooks and unchanged user configuration.
+  **Windows not tested, 2026-10-23:** user skipped this check.
 - Agent launch arguments: Terminal shows Claude/Copilot paths and free-text argument fields
   (`claude_args`, `copilot_args`). Shell-style quoting groups words without shell expansion;
   malformed quoting blocks launch with an error. Arguments follow app hook arguments;
@@ -237,18 +229,7 @@ checks remain pending. README documents the settings and behavior.
   Manual check: launch with quoted arguments, empty fields, malformed quotes, Claude
   `--permission-mode plan`/`--model opus` and Copilot `--mode plan`/`--yolo`; change settings
   and confirm duplication/restoration keep the old arguments.
-
-### Ready for review (0.2.18, 2026-10-23)
-
-Implemented with automated coverage; native Windows/Linux UI checks remain pending (README's
-manual check 4).
-
-- An agent's background Working-to-Idle transition shows **Ready for review** in the
-  sidebar, tab hover card and group summaries, reusing the existing completion toast.
-  Selecting the tab acknowledges it and restores Idle; foreground completions stay Idle.
-  New Working or Waiting events replace it. This marks unread work, not verified correctness.
-- Manually check both Claude and Copilot, collapsed-group totals, toast dismissal versus
-  click-to-select, completions while Settings is shown and no duplicate completion notices.
+  **Windows not tested, 2026-10-23:** user skipped this check.
 
 ## Decisions
 
@@ -290,7 +271,7 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 | Element | Look | Where |
 |---|---|---|
 | Context menu | Save as new config (= save as a named workspace) | Backlog: named workspaces |
-| Clipboard notice | banner above the terminal when a program writes the clipboard (OSC 52), with allow/deny | Next step 1 |
+| Clipboard notice | See Notifications and close warnings | Next step 1 |
 
 "Share session" from the screenshot is not planned.
 
@@ -329,8 +310,8 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
     stdout isn't a terminal (`echo x | claude -p`), and `command claude` / `\claude`, which skip
     the function. Agent not found on `PATH` (no launcher program): run in place, so the shell
     prints its own "command not found".
-  - Setting "Open agents typed at the prompt in a new tab" on the settings page's Terminal page
-    (default on); off, the functions aren't defined (the app passes a flag with the token).
+  - Use the corresponding switch in [Feature options](#feature-options); when off, the
+    functions aren't defined (the app passes a flag with the token).
   - A `claude` run in place (`-p` in a script, a nested shell, cmd tabs, which get no functions)
     gets no hooks and shows "Running for" until it quits. Accepted.
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
@@ -405,15 +386,14 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
      folder and duration (`C` to `D`). Draw a thin separator above each prompt line and the
      folder and duration ("~/.config/stock-watcher (0.02s)") right-aligned on it, dimmed; a
      failed exit code tints the separator. A resize that reflows lines drops the blocks.
-  4. Setting "Prompt at the bottom" on the settings page's Terminal page (default on); off
-     keeps today's top-anchored layout.
+  Settings for prompt placement and command blocks are defined in
+  [Feature options](#feature-options).
   Not planned from the screenshot: the separate input box with the folder chip (the prompt is
   the shell's own, in the grid) and the panel's "Configure" button.
 - Zoom with Ctrl+scroll, like Windows Terminal: Ctrl+wheel up / down over the terminal makes
   the font bigger / smaller one point per notch (clamped, e.g. 6-48 pt), also Ctrl+= / Ctrl+-
-  and Ctrl+0 to reset. Today the size is the hard-coded `FONT_SIZE` (14 pt,
-  `app/src/terminal_element.rs`); builds on Next steps 1 (font size from the settings file,
-  applied live by re-measuring the cells and resizing the pty). The zoom is per tab: it changes
+  and Ctrl+0 to reset. Build on the existing terminal font-size setting, re-measuring cells
+  and resizing the pty when zoom changes. The zoom is per tab: it changes
   only the tab under the mouse (or the focused one, for the keys), and a new tab starts at the
   settings size, which acts as the default zoom. Zooming never changes the setting and isn't
   saved (Ctrl+0 and a restart go back to the settings size). Ctrl+wheel is never sent to the

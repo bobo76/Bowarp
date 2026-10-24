@@ -5,6 +5,16 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.19
+
+- Keep workspace shortcuts from also reaching the terminal, including preventing
+  Ctrl+Shift+D from sending EOF to the tab being duplicated.
+- Save last-command snapshots in the background without a debounce delay; normal close
+  waits for the latest state. A crash can still lose queued or in-flight updates.
+- Clean up Copilot permission plugins when sessions close, exit, are replaced or fail
+  to launch, and remove stale plugins from exited instances at startup.
+- Explain Windows path quoting in agent argument settings.
+
 ## 0.2.18
 
 - Label unread background agent completions "Ready for review" in the sidebar, tab hover

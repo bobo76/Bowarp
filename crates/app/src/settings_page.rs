@@ -167,13 +167,20 @@ fn agent_arguments_group(launchers: &[Launcher]) -> SettingGroup {
             .find(|launcher| launcher.id == id)
             .and_then(|launcher| launcher.program.as_deref())
             .map_or_else(|| "Not installed".into(), |path| path.display().to_string());
-        group = group.item(text_row(
-            label,
-            format!("{path}\nExtra arguments for new tabs, after the app's own arguments. \
-                Quotes group words; no shell expansion. Restored tabs keep their original arguments."),
-            placeholder,
-            field,
-        ).keywords(["launcher", "permissions", "mode", "command line", "path"]));
+        group = group.item(
+            text_row(
+                label,
+                format!(
+                    "{path}\nExtra arguments for new tabs, after the app's own arguments. \
+                Quotes group words; no shell expansion. Put Windows paths in single quotes \
+                (for example 'C:\\Users\\me\\settings.json') or double each backslash. \
+                Restored tabs keep their original arguments."
+                ),
+                placeholder,
+                field,
+            )
+            .keywords(["launcher", "permissions", "mode", "command line", "path"]),
+        );
     }
     group
 }

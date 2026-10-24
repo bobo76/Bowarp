@@ -391,7 +391,7 @@ mod tests {
                     Rc::from([]),
                     None,
                     messages,
-                    super::super::TabOwnership::Guest,
+                    Rc::new(crate::tabs_file::TabsWriter::new(false)),
                     window,
                     cx,
                 )

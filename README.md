@@ -3,12 +3,13 @@
 A terminal workspace for running Claude Code, Copilot CLI and shell sessions side by side, with
 per-tab agent status. Feature spec: [FEATURES.md](FEATURES.md). Plan and status: [PLAN.md](PLAN.md).
 
-## What's new in 0.2.18
+## What's new in 0.2.19
 
-Unread background agent completions now say **Ready for review** in the sidebar, tab hover
-cards, group summaries and completion toast. Selecting the tab restores Idle; new Working or
-Needs attention reports replace the unread status. This does not certify the work's correctness.
-See the [changelog](CHANGELOG.md#0218) for release notes.
+Workspace shortcuts no longer leak control keys into the terminal: duplicating a tab with
+Ctrl+Shift+D does not send EOF to the original session. Last-command snapshots save in the
+background, and normal close waits for the latest state. Copilot permission plugins are
+cleaned up on session shutdown and after exited instances; agent argument settings explain
+Windows path quoting. See the [changelog](CHANGELOG.md#0219) for release notes.
 
 Native Windows/Linux UI checks remain pending; see the [manual check](#manual-check) and
 [six UX improvements checklist](#six-ux-improvements-manual-checks-pending).
@@ -154,8 +155,11 @@ never runs the suggestion. Any other line action, including opening HISTORY, dis
 for that session. PowerShell, cmd, agent tabs and shells without integration do not offer it.
 Commands beginning with `exit`, `logout`, `clear`, `cls`, `reset`, `ls`, `ll`, `dir`, `pwd`,
 `cd` or `history` do not replace the saved command. Private/unrecordable commands are never
-saved. The command is saved in `tabs.json` as soon as it starts, so a crash keeps it;
-deleting it from HISTORY also forgets it in every tab. On Unix, every write makes
+saved. Saving to `tabs.json` is queued immediately when a command starts, without a debounce
+delay; one background writer saves snapshots in order. A crash can lose an in-flight or queued
+update, including a deletion. Deleting a command from HISTORY also forgets it in every tab.
+Normal window close waits for pending saves and a final snapshot before releasing ownership
+of the saved tabs; guest instances never write them. On Unix, every write makes
 `tabs.json` owner-only (`0600`); on Windows it inherits the profile folder's permissions.
 
 These tabs start with a small script that loads your own `~/.bashrc` / zsh startup files /
@@ -208,8 +212,10 @@ permission request. Copilot emits permission hooks before its approval rules, so
 automatically approved request can briefly report Waiting too.
 
 Bowarp never installs or writes hook configuration into the user's `~/.copilot` or repository.
-The per-tab plugin files live in the app's private runtime directory and are removed on
-shutdown. User settings, authentication, hooks and plugins are retained. A missing helper,
+The per-tab plugin files live in the app's private runtime directory and are removed when
+the session exits or its tab closes. Startup removes plugin directories left by processes
+that are no longer running; live instances and unrelated files are retained. User settings,
+authentication, hooks and plugins are retained. A missing helper,
 an unwritable runtime directory, disabled hooks or sandbox-blocked hook
 keeps the existing progress-only fallback (Working/Idle, no reliable Waiting).
 

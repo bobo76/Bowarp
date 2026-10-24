@@ -236,8 +236,7 @@ pub struct WorkspaceView {
     drop_hint: Option<DropTarget>,
     /// For shortening folders to `~` in the sidebar.
     home: Option<PathBuf>,
-    /// Whether this instance reopens and saves the tabs (it holds the instance lock).
-    ownership: TabOwnership,
+    tabs_writer: Rc<tabs_file::TabsWriter>,
     next_session_id: u64,
     launchers: Rc<[Launcher]>,
     hooks: Option<Rc<ClaudeHooks>>,
@@ -264,7 +263,7 @@ impl WorkspaceView {
         launchers: Rc<[Launcher]>,
         hooks: Option<Rc<ClaudeHooks>>,
         mut hook_messages: UnboundedReceiver<HookMessage>,
-        ownership: TabOwnership,
+        tabs_writer: Rc<tabs_file::TabsWriter>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -301,7 +300,7 @@ impl WorkspaceView {
             cards: TabCards::default(),
             drop_hint: None,
             home: std::env::home_dir(),
-            ownership,
+            tabs_writer,
             next_session_id: 1,
             launchers,
             hooks,
@@ -383,7 +382,11 @@ impl WorkspaceView {
             StatusReporting::OutputActivity
         };
         shell_integration::attach(&mut launch);
-        let view = TerminalView::spawn(session_id, &launch, reporting, cx)?;
+        let view = TerminalView::spawn(session_id, &launch, reporting, cx).inspect_err(|_| {
+            if let Some(hooks) = &self.hooks {
+                hooks.remove_session(session_id);
+            }
+        })?;
         self.next_session_id += 1;
         let changed = cx.subscribe(&view, |workspace, _, _: &TabChanged, cx| {
             workspace.sync_explorer(cx);
@@ -460,6 +463,9 @@ impl WorkspaceView {
         let Some(index) = self.tab_index(tab_id) else {
             return;
         };
+        if let Some(hooks) = &self.hooks {
+            hooks.remove_session(self.tabs[index].view.read(cx).id());
+        }
         let Some(shell) =
             launcher::default_shell(&self.launchers, settings_file::settings(cx).default_shell())
                 .cloned()
@@ -495,6 +501,9 @@ impl WorkspaceView {
             .focus_handle
             .is_focused(window);
         let tab = &mut self.tabs[index];
+        if let Some(hooks) = &self.hooks {
+            hooks.remove_session(tab.view.read(cx).id());
+        }
         tab.view = view.clone();
         tab.spec = spec;
         tab._view_events = view_events;
@@ -604,7 +613,7 @@ impl WorkspaceView {
     /// The tabs as they are now, for reopening them at the next start. Nothing is saved when
     /// another instance owns the tabs (`instance_lock`).
     pub fn save_tabs(&self, cx: &App) {
-        if self.ownership == TabOwnership::Guest {
+        if !self.tabs_writer.is_active() {
             return;
         }
         let active = self.active_tab().map(|tab| tab.id);
@@ -615,13 +624,19 @@ impl WorkspaceView {
             saved.last_command = tab.view.read(cx).last_command().map(str::to_owned);
             Some(saved)
         });
-        tabs_file::save(&TabsState { layout, selected });
+        self.tabs_writer.save(TabsState { layout, selected });
+    }
+
+    /// Queue the final UI snapshot behind earlier saves, then wait for the worker to stop.
+    pub fn save_tabs_and_flush(&self, cx: &App) {
+        self.save_tabs(cx);
+        self.tabs_writer.finish();
     }
 
     /// Close the window from inside the app (closing the last tab, or the title bar button on
     /// Linux), saving the tabs and the window bounds first.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.save_tabs(cx);
+        self.save_tabs_and_flush(cx);
         window_bounds::close(window);
     }
 
@@ -791,6 +806,9 @@ impl WorkspaceView {
 
     fn remove_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let tab = self.tabs.remove(index);
+        if let Some(hooks) = &self.hooks {
+            hooks.remove_session(tab.view.read(cx).id());
+        }
         // GPUI keeps a decoded image and its textures until told to drop them.
         if let Some(viewer) = &tab.viewer {
             viewer
@@ -1487,61 +1505,79 @@ impl Render for WorkspaceView {
             .flex()
             .flex_col()
             .key_context(KEY_CONTEXT)
+            // Capture handlers propagate by default; consume workspace shortcuts before
+            // the terminal can translate them into control bytes.
             .capture_action(cx.listener(|workspace, _: &NextTab, window, cx| {
-                workspace.cycle(Direction::Down, window, cx)
+                workspace.cycle(Direction::Down, window, cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &PreviousTab, window, cx| {
-                workspace.cycle(Direction::Up, window, cx)
+                workspace.cycle(Direction::Up, window, cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &NewTab, window, cx| {
-                workspace.open_default_shell(window, cx)
+                workspace.open_default_shell(window, cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &DuplicateTab, window, cx| {
-                workspace.duplicate_tab(workspace.active, window, cx)
+                workspace.duplicate_tab(workspace.active, window, cx);
+                cx.stop_propagation();
             }))
-            .capture_action(
-                cx.listener(|workspace, _: &CloseTab, window, cx| {
-                    workspace.close_active(window, cx)
-                }),
-            )
-            .capture_action(
-                cx.listener(|workspace, _: &ToggleSidebar, _, cx| workspace.toggle_sidebar(cx)),
-            )
-            .capture_action(
-                cx.listener(|workspace, _: &ToggleExplorer, _, cx| workspace.toggle_explorer(cx)),
-            )
+            .capture_action(cx.listener(|workspace, _: &CloseTab, window, cx| {
+                workspace.close_active(window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &ToggleSidebar, _, cx| {
+                workspace.toggle_sidebar(cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &ToggleExplorer, _, cx| {
+                workspace.toggle_explorer(cx);
+                cx.stop_propagation();
+            }))
             .capture_action(cx.listener(|workspace, _: &SearchTabs, window, cx| {
-                workspace.focus_search(window, cx)
+                workspace.focus_search(window, cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &NextAttention, window, cx| {
-                workspace.jump_to_attention(window, cx)
+                workspace.jump_to_attention(window, cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &SelectTab1, window, cx| {
-                workspace.activate(0, window, cx)
+                workspace.activate(0, window, cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &SelectTab2, window, cx| {
-                workspace.activate(1, window, cx)
+                workspace.activate(1, window, cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &SelectTab3, window, cx| {
-                workspace.activate(2, window, cx)
+                workspace.activate(2, window, cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &SelectTab4, window, cx| {
-                workspace.activate(3, window, cx)
+                workspace.activate(3, window, cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &SelectTab5, window, cx| {
-                workspace.activate(4, window, cx)
+                workspace.activate(4, window, cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &SelectTab6, window, cx| {
-                workspace.activate(5, window, cx)
+                workspace.activate(5, window, cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &SelectTab7, window, cx| {
-                workspace.activate(6, window, cx)
+                workspace.activate(6, window, cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &SelectTab8, window, cx| {
-                workspace.activate(7, window, cx)
+                workspace.activate(7, window, cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &SelectTab9, window, cx| {
-                workspace.activate(8, window, cx)
+                workspace.activate(8, window, cx);
+                cx.stop_propagation();
             }))
             // Both halves of "any release": over this view, and outside it (an overlay, or
             // past the window's edge).
@@ -1627,6 +1663,227 @@ mod tests {
         assert_eq!(default_bindings().len(), 18);
     }
 
+    #[cfg(unix)]
+    #[gpui::test]
+    fn last_command_events_and_history_deletion_are_flushed_with_the_final_snapshot(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use gpui_kit::VisualTestContext;
+        use gpui_kit::component::Root;
+        use std::cell::RefCell;
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+        use term_core::{ExecutedCommand, SessionEvent};
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            settings_file::init(cx);
+            crate::terminal_element::init(cx);
+            crate::terminal_view::init(cx);
+            crate::history::init_in_memory(cx);
+            init(cx);
+        });
+        let (saved, snapshots) = mpsc::channel();
+        let writer = Rc::new(tabs_file::TabsWriter::for_test(move |state| {
+            saved.send(state).unwrap();
+        }));
+        let closing_writer = writer.clone();
+        let captured = Rc::new(RefCell::new(None));
+        let capture = captured.clone();
+        let window = cx.add_window(move |window, cx| {
+            let (_, messages) = futures::channel::mpsc::unbounded();
+            let workspace =
+                cx.new(|cx| WorkspaceView::new(Rc::from([]), None, messages, writer, window, cx));
+            workspace.update(cx, |workspace, cx| {
+                let mut spec = LaunchSpec::new(
+                    SessionKind::Shell,
+                    Some("/bin/sh".into()),
+                    vec!["-c".into(), "exit 0".into()],
+                    None,
+                );
+                spec.mark_token = Some("test".into());
+                for _ in 0..2 {
+                    workspace.open_tab(spec.clone(), window, cx).unwrap();
+                    let session = &workspace.tabs.last().unwrap().view.read(cx).session;
+                    let deadline = Instant::now() + Duration::from_secs(30);
+                    while !session.has_exited() {
+                        assert!(Instant::now() < deadline, "test child did not exit");
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            });
+            *capture.borrow_mut() = Some(workspace.clone());
+            Root::new(workspace, window, cx)
+        });
+        let workspace = captured.borrow().clone().unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            workspace.update(cx, |workspace, cx| {
+                for tab in &workspace.tabs {
+                    tab.view.update(cx, |view, cx| {
+                        view.dispatch_test_event(
+                            SessionEvent::CommandExecuted(ExecutedCommand {
+                                command: "cargo test".into(),
+                                folder: None,
+                            }),
+                            cx,
+                        );
+                    });
+                }
+            });
+        });
+        cx.run_until_parked();
+        for _ in 0..2 {
+            let state = snapshots.recv_timeout(Duration::from_secs(10)).unwrap();
+            assert_eq!(state.layout.tabs().len(), 2);
+            assert!(
+                state
+                    .layout
+                    .tabs()
+                    .iter()
+                    .all(|tab| { tab.last_command.as_deref() == Some("cargo test") })
+            );
+        }
+
+        cx.update(|_, cx| crate::history::forget("cargo test", cx));
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.tabs[0].meta.custom_name = Some("final name".into());
+                workspace.save_tabs_and_flush(cx);
+            });
+        });
+        assert!(!closing_writer.is_active());
+        let states: Vec<_> = snapshots.try_iter().collect();
+        assert!(states.len() >= 2, "deletion must queue saves before close");
+        let final_state = states.last().unwrap();
+        assert!(
+            final_state
+                .layout
+                .tabs()
+                .iter()
+                .all(|tab| tab.last_command.is_none())
+        );
+        assert_eq!(
+            final_state.layout.tabs()[0].meta.custom_name.as_deref(),
+            Some("final name")
+        );
+        // A retained workspace must not keep writing after the lock can change owners.
+        workspace.read_with(&cx, |workspace, cx| workspace.save_tabs(cx));
+        assert!(snapshots.try_recv().is_err());
+    }
+
+    #[gpui::test]
+    fn duplicate_shortcut_does_not_send_eof_to_the_original_terminal(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use gpui_kit::VisualTestContext;
+        use gpui_kit::component::Root;
+        use std::cell::RefCell;
+        use std::time::{Duration, Instant};
+
+        fn wait_for_exit(session: &term_core::Session) {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !session.has_exited() {
+                assert!(Instant::now() < deadline, "test child did not exit");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            settings_file::init(cx);
+            crate::terminal_element::init(cx);
+            crate::terminal_view::init(cx);
+            init(cx);
+        });
+        #[cfg(windows)]
+        let (program, args) = ("cmd", vec!["/C", "exit 0"]);
+        #[cfg(not(windows))]
+        let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+        let spec = LaunchSpec::new(
+            SessionKind::Shell,
+            Some(program.into()),
+            args.into_iter().map(String::from).collect(),
+            None,
+        );
+        let captured = Rc::new(RefCell::new(None));
+        let capture = captured.clone();
+        let window = cx.add_window(move |window, cx| {
+            let (_, messages) = futures::channel::mpsc::unbounded();
+            let workspace = cx.new(|cx| {
+                WorkspaceView::new(
+                    Rc::from([]),
+                    None,
+                    messages,
+                    Rc::new(tabs_file::TabsWriter::new(false)),
+                    window,
+                    cx,
+                )
+            });
+            workspace.update(cx, |workspace, cx| {
+                workspace.open_tab(spec, window, cx).unwrap();
+                // Drain startup output so any later input remains observable through
+                // awaiting_echo, independently of the child process's response.
+                wait_for_exit(&workspace.tabs[0].view.read(cx).session);
+            });
+            *capture.borrow_mut() = Some(workspace.clone());
+            Root::new(workspace, window, cx)
+        });
+        let workspace = captured.borrow().clone().unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let original = workspace.read_with(&cx, |workspace, _| workspace.tabs[0].view.clone());
+        // Dispatch synchronously so the new child's output drains before GPUI's
+        // deterministic executor starts polling its event receiver.
+        cx.update(|window, cx| {
+            window.dispatch_keystroke(gpui_kit::Keystroke::parse("ctrl-shift-d").unwrap(), cx);
+        });
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(workspace.tabs.len(), 2);
+            assert_eq!(workspace.active, 1);
+            assert_eq!(workspace.tabs[0].view, original);
+            assert_eq!(
+                workspace.tabs[1].spec.program,
+                workspace.tabs[0].spec.program
+            );
+            assert_eq!(workspace.tabs[1].spec.args, workspace.tabs[0].spec.args);
+            assert!(
+                !original.read(cx).session.awaiting_echo(),
+                "the duplicate shortcut must not send Ctrl+D to the original terminal"
+            );
+            wait_for_exit(&workspace.tabs[1].view.read(cx).session);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_keystrokes("ctrl-1");
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        for shortcut in [
+            "ctrl-shift-b",
+            "ctrl-shift-b",
+            "ctrl-|",
+            "ctrl-|",
+            "ctrl-shift-a",
+        ] {
+            cx.simulate_keystrokes(shortcut);
+            assert!(
+                !original.read_with(&cx, |view, _| view.session.awaiting_echo()),
+                "{shortcut} must not reach the terminal"
+            );
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+        assert_eq!(workspace.read_with(&cx, |workspace, _| workspace.active), 0);
+        cx.simulate_keystrokes("ctrl-d");
+        assert!(
+            original.read_with(&cx, |view, _| view.session.awaiting_echo()),
+            "plain Ctrl+D must still reach the terminal"
+        );
+    }
+
     #[gpui::test]
     fn tab_actions_capture_shortcuts_while_search_has_focus(cx: &mut gpui_kit::TestAppContext) {
         use gpui_kit::VisualTestContext;
@@ -1647,7 +1904,7 @@ mod tests {
                     Rc::from([]),
                     None,
                     messages,
-                    TabOwnership::Guest,
+                    Rc::new(tabs_file::TabsWriter::new(false)),
                     window,
                     cx,
                 )
@@ -1685,7 +1942,7 @@ mod tests {
                     Rc::from([]),
                     None,
                     messages,
-                    TabOwnership::Guest,
+                    Rc::new(tabs_file::TabsWriter::new(false)),
                     window,
                     cx,
                 )
