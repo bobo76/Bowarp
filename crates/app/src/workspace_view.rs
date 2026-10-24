@@ -2088,6 +2088,17 @@ mod tests {
                 });
                 workspace.update(cx, |workspace, cx| {
                     workspace.open_tab(spec, window, cx).unwrap();
+                    // Let the PTY reader finish before GPUI's deterministic executor polls
+                    // the event receiver; a later wake from that thread fails the test.
+                    let session = &workspace.tabs[0].view.read(cx).session;
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                    while !session.has_exited() {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "test child did not exit"
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
                 });
                 *capture.borrow_mut() = Some(workspace.clone());
                 Root::new(workspace, window, cx)
