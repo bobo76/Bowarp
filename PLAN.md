@@ -21,6 +21,11 @@ the separate Ubuntu Clippy job, must pass before tagging. Native Windows/Linux U
 packaged-app smoke tests and About version/commit checks remain pending. Publishing is
 not verification.
 
+**PR verification:** Ubuntu build/tests, strict Clippy and Windows build/tests/package
+passed for `fbfa8df`. CodeQL blocked publication because the plugin cleanup warning logged
+a session-specific path. The warning now retains the filesystem error without that path;
+automated checks must pass again for the corrected commit before merge or tagging.
+
 **Known limitations**
 
 - Not supported in the file viewer: AVIF images (GPUI's decoder lacks it: "The image could

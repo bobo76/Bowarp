@@ -121,10 +121,7 @@ fn remove_plugins(path: &Path) {
     if let Err(error) = fs::remove_dir_all(path)
         && error.kind() != io::ErrorKind::NotFound
     {
-        log::warn!(
-            "could not remove Copilot plugin {}: {error}",
-            path.display()
-        );
+        log::warn!("could not remove Copilot plugin: {error}");
     }
 }
 
@@ -190,7 +187,9 @@ fn process_is_running(pid: u32) -> bool {
 }
 
 fn create_private_dir(path: &Path) -> io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
+    let builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    let mut builder = builder;
     #[cfg(unix)]
     builder.mode(0o700);
     match builder.create(path) {
