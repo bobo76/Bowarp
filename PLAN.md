@@ -21,7 +21,7 @@ the separate Ubuntu Clippy job, must pass before tagging. Native Windows/Linux U
 packaged-app smoke tests and About version/commit checks remain pending. Publishing is
 not verification.
 
-**Since 0.2.19:** `cargo test` runs 427 tests (Linux).
+**Since 0.2.19:** `cargo test` runs 439 tests (Linux).
 
 **PR verification:** Ubuntu build/tests, strict Clippy and Windows build/tests/package
 passed for `fbfa8df`. CodeQL blocked publication because the plugin cleanup warning logged
@@ -46,6 +46,16 @@ automated checks must pass again for the corrected commit before merge or taggin
   `history.jsonl` on the UI thread (like deleting one command), and a second instance only
   sees either clear after its next restart (history is loaded at start). Clearing saved
   session commands reaches only tabs open in this instance.
+- Restore previous tabs off: `tabs.json` is kept unread and unwritten (the one exception:
+  "Clear saved session commands" and forgetting a command remove just the matching
+  `last_command` values from it, on the tabs writer thread), so the next
+  save after turning it back on replaces the old snapshot; loading is decided once at start
+  (turning it on mid-session restores nothing until the next start). Window bounds are not
+  part of the snapshot and are still saved. A second instance's restore decision uses its own
+  settings read at its start. "Remember last shell command" off still writes retained
+  `last_command` values back unchanged while restoration is on: a command run meanwhile is
+  not recorded, and the older value returns when it is switched on again (as with Command
+  history off).
 - Settings file: a field with a value of the wrong type gets its default silently and the
   value is dropped at the next change. A file that isn't a JSON object is ignored (reason
   printed and kept for the settings page) and moved to `settings.json.bak` at the first
@@ -87,15 +97,14 @@ automated checks must pass again for the corrected commit before merge or taggin
 
 Run in this order (each stands alone and is tested):
 
-1. Feature options, Workspace: "Restore previous tabs" and "Remember last shell command".
-2. Feature options, "File explorer and viewer" (hide both panes, no scans or watchers while
+1. Feature options, "File explorer and viewer" (hide both panes, no scans or watchers while
    off, unsaved-edit resolution first).
-3. Feature options, "In-app notifications" (toasts only; status and badges stay).
-4. Backlog: Notifications and close warnings (split further at its Step 0 size check; adds the
+2. Feature options, "In-app notifications" (toasts only; status and badges stay).
+3. Backlog: Notifications and close warnings (split further at its Step 0 size check; adds the
    "Notification sounds" switch with the sound).
-5. Backlog: Configurable keyboard shortcuts.
-6. Backlog: Window opacity and background blur.
-7. Backlog: Copilot working animation (uses the "Activity animations" switch).
+4. Backlog: Configurable keyboard shortcuts.
+5. Backlog: Window opacity and background blur.
+6. Backlog: Copilot working animation (uses the "Activity animations" switch).
 
 Switches for features not built yet (prompt at the bottom, command separators, agents typed
 at the prompt, long-command completion status) are added with those features, as the
@@ -120,8 +129,8 @@ dependency is stated.
 | Terminal | Prompt at the bottom | On when built | Keep today's top-anchored terminal layout. Independent of history; with the history popup off, no docked panel is built. |
 | Terminal | Command separators and details | On when built | No command-block separators, folder or duration labels; prompt placement is unchanged. |
 | Terminal | Open agents typed at the prompt in a new tab | On when built | Run typed `claude` / `copilot` normally in the shell. Applies to newly started shells, as the integration functions are installed at startup. |
-| Workspace | Restore previous tabs | On | Start with a fresh default tab; do not load or update the automatic tab snapshot. Keep ordinary preferences and explicitly saved named workspaces. |
-| Workspace | Remember last shell command | On when built | Do not capture or save new `last_command` values or offer saved ones. Requires command history and automatic tab restoration; showing the suggestion also requires inline suggestions. |
+| Workspace | Restore previous tabs (implemented) | On | Start with a fresh default tab; do not load or update the automatic tab snapshot. Keep ordinary preferences and explicitly saved named workspaces. |
+| Workspace | Remember last shell command (implemented) | On | Do not capture or save new `last_command` values or offer saved ones. Requires command history and automatic tab restoration; showing the suggestion also requires inline suggestions. |
 | Workspace | File explorer and viewer | On | Hide both panes and disable their app entry points after resolving unsaved edits. File links offer Open externally; preserve pane widths and saved file associations without loading files. |
 | Notifications | In-app notifications | On | No agent or long-command toasts; status and attention badges remain. Sound is independently controlled. |
 | Notifications | Notification sounds | Off | No agent, long-command or bell sound; retain the volume slider for when enabled. Does not suppress visual status. |

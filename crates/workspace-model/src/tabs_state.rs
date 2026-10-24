@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::TabMeta;
-use crate::layout::SavedLayout;
+use crate::layout::{SavedItem, SavedLayout};
 use crate::window_state::write_private_atomic;
 
 /// What a saved tab runs, as the new-tab menu tells them apart.
@@ -78,6 +78,50 @@ impl TabsState {
     /// Write atomically, creating the folder and using owner-only permissions on Unix.
     pub fn save(&self, path: &Path) -> io::Result<()> {
         write_private_atomic(path, &self.to_json())
+    }
+
+    /// Remove the saved last command of every tab (`only: None`) or of the tabs whose last
+    /// command is exactly `only`. Everything else stays as it is. True when something changed.
+    pub fn scrub_last_commands(&mut self, only: Option<&str>) -> bool {
+        let mut changed = false;
+        let mut scrub = |tab: &mut SavedTab| {
+            let matches = tab.last_command.is_some()
+                && only.is_none_or(|command| tab.last_command.as_deref() == Some(command));
+            if matches {
+                tab.last_command = None;
+                changed = true;
+            }
+        };
+        let layout = &mut self.layout;
+        layout.pinned.iter_mut().for_each(&mut scrub);
+        for item in &mut layout.items {
+            match item {
+                SavedItem::Tab(tab) => scrub(tab),
+                SavedItem::Group(group) => group.tabs.iter_mut().for_each(&mut scrub),
+            }
+        }
+        changed
+    }
+
+    /// Scrub the last commands (see `scrub_last_commands`) from the file at `path` and write it
+    /// back only when one was removed. A missing file is nothing to do; a file that exists but
+    /// can't be read or parsed is an error and is left untouched.
+    pub fn scrub_file(path: &Path, only: Option<&str>) -> io::Result<()> {
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(err),
+        };
+        let Some(mut state) = Self::from_json(&text) else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "not a valid tabs file",
+            ));
+        };
+        if !state.scrub_last_commands(only) {
+            return Ok(());
+        }
+        state.save(path)
     }
 
     pub fn to_json(&self) -> String {

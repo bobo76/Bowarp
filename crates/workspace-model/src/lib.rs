@@ -36,6 +36,7 @@ mod tabs_state;
 mod time;
 mod wheel;
 mod window_state;
+mod workspace_features;
 
 pub use about::version_line;
 pub use attention::{Attention, next_attention, waiting_count};
@@ -69,3 +70,4 @@ pub use tab::{TabColor, TabMeta};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};
 pub use wheel::{WheelScroll, notch_lines};
 pub use window_state::{Rect, WindowMode, WindowState};
+pub use workspace_features::WorkspaceFeatures;

@@ -107,6 +107,9 @@ directly to model APIs.
   applied live; a setting that depends on another is shown disabled with the reason.
 - Let the user switch command history, the history popup and inline suggestions on or off,
   and clear the stored history and the saved session commands, with a confirmation.
+- Let the user turn off restoring the previous tabs at start and remembering the last shell
+  command; the stored tab snapshot is kept untouched while restoring is off, except that
+  clearing saved commands still removes them from it.
 
 ## Performance and Usability
 

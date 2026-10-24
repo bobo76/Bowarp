@@ -5,12 +5,12 @@
 
 use std::cell::RefCell;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 
 use term_core::{LaunchSpec, SessionKind};
-use workspace_model::{SavedKind, SavedTab, TabMeta, TabsState};
+use workspace_model::{SavedKind, SavedTab, TabMeta, TabsState, WorkspaceFeatures};
 
 use crate::window_bounds::config_file;
 
@@ -18,9 +18,17 @@ fn state_path() -> Option<PathBuf> {
     config_file("tabs.json")
 }
 
-/// The tabs saved at the last close; `None` when nothing usable was saved.
-pub fn load() -> Option<TabsState> {
-    TabsState::load(&state_path()?)
+/// The tabs saved at the last close; `None` when nothing usable was saved, or when
+/// "Restore previous tabs" is off (the file is then left unread and unchanged).
+pub fn load(features: WorkspaceFeatures) -> Option<TabsState> {
+    load_from(&state_path()?, features)
+}
+
+fn load_from(path: &Path, features: WorkspaceFeatures) -> Option<TabsState> {
+    if !features.loads_tabs() {
+        return None;
+    }
+    TabsState::load(path)
 }
 
 /// One FIFO writer for the owning instance. Snapshots contain no GPUI entities; serialization
@@ -29,8 +37,16 @@ pub struct TabsWriter {
     worker: RefCell<Option<Worker>>,
 }
 
+/// What the worker does, in queue order.
+enum Job {
+    Save(TabsState),
+    /// Remove saved last commands from the retained `tabs.json` ("Restore previous tabs" off:
+    /// the file is otherwise left alone). `None` removes all, `Some` the tabs holding it.
+    Scrub(Option<String>),
+}
+
 struct Worker {
-    sender: Sender<TabsState>,
+    sender: Sender<Job>,
     thread: JoinHandle<()>,
 }
 
@@ -48,23 +64,33 @@ impl TabsWriter {
     }
 
     fn start(path: PathBuf, report: impl Fn(String) + Send + 'static) -> io::Result<Self> {
-        Self::spawn(move |state| {
-            if let Err(err) = state.save(&path) {
-                report(format!(
-                    "agent-workspace: failed to save tabs to {}: {err}",
-                    path.display()
-                ));
+        let failure = move |action: &str, path: &Path, err: io::Error| {
+            report(format!(
+                "agent-workspace: failed to {action} {}: {err}",
+                path.display()
+            ));
+        };
+        Self::spawn(move |job| match job {
+            Job::Save(state) => {
+                if let Err(err) = state.save(&path) {
+                    failure("save tabs to", &path, err);
+                }
+            }
+            Job::Scrub(only) => {
+                if let Err(err) = TabsState::scrub_file(&path, only.as_deref()) {
+                    failure("remove saved commands from", &path, err);
+                }
             }
         })
     }
 
-    fn spawn(save: impl Fn(TabsState) + Send + 'static) -> io::Result<Self> {
+    fn spawn(work: impl Fn(Job) + Send + 'static) -> io::Result<Self> {
         let (sender, receiver) = mpsc::channel();
         let thread = thread::Builder::new()
             .name("tabs-writer".into())
             .spawn(move || {
-                for state in receiver {
-                    save(state);
+                for job in receiver {
+                    work(job);
                 }
             })?;
         Ok(Self {
@@ -74,7 +100,19 @@ impl TabsWriter {
 
     #[cfg(test)]
     pub(crate) fn for_test(save: impl Fn(TabsState) + Send + 'static) -> Self {
-        Self::spawn(save).unwrap()
+        Self::for_test_scrubbing(save, |_| {})
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_scrubbing(
+        save: impl Fn(TabsState) + Send + 'static,
+        scrub: impl Fn(Option<String>) + Send + 'static,
+    ) -> Self {
+        Self::spawn(move |job| match job {
+            Job::Save(state) => save(state),
+            Job::Scrub(only) => scrub(only),
+        })
+        .unwrap()
     }
 
     pub fn is_active(&self) -> bool {
@@ -83,8 +121,17 @@ impl TabsWriter {
 
     /// Queue immediately, without doing storage work or waiting for earlier snapshots.
     pub fn save(&self, state: TabsState) {
+        self.queue(Job::Save(state));
+    }
+
+    /// Queue the removal of saved last commands from the retained file, behind earlier saves.
+    pub fn scrub_last_commands(&self, only: Option<String>) {
+        self.queue(Job::Scrub(only));
+    }
+
+    fn queue(&self, job: Job) {
         if let Some(worker) = self.worker.borrow().as_ref()
-            && worker.sender.send(state).is_err()
+            && worker.sender.send(job).is_err()
         {
             eprintln!("agent-workspace: failed to queue tabs: writer stopped");
         }
@@ -192,6 +239,60 @@ mod tests {
             },
             selected: Some(0),
         }
+    }
+
+    #[test]
+    fn scrub_runs_on_the_worker_after_earlier_saves() {
+        let ui_thread = thread::current().id();
+        let (done, order) = mpsc::channel();
+        let saved = done.clone();
+        let writer = TabsWriter::for_test_scrubbing(
+            move |state| saved.send(format!("save {:?}", state.selected)).unwrap(),
+            move |only| {
+                assert_ne!(thread::current().id(), ui_thread);
+                done.send(format!("scrub {only:?}")).unwrap();
+            },
+        );
+        writer.save(state(Some("cargo build")));
+        writer.scrub_last_commands(Some("cargo build".into()));
+        writer.scrub_last_commands(None);
+        writer.finish();
+        let seen: Vec<_> = order.try_iter().collect();
+        assert_eq!(
+            seen,
+            ["save Some(0)", "scrub Some(\"cargo build\")", "scrub None"]
+        );
+    }
+
+    #[test]
+    fn started_writer_scrubs_the_file_and_reports_unreadable_files() {
+        let dir = temp_dir("scrub-writer");
+        let path = dir.join("tabs.json");
+        state(Some("cargo build")).save(&path).unwrap();
+        let (reported, reports) = mpsc::channel();
+        let writer = TabsWriter::start(path.clone(), move |message| {
+            reported.send(message).unwrap();
+        })
+        .unwrap();
+        writer.scrub_last_commands(None);
+        writer.finish();
+        assert_eq!(TabsState::load(&path), Some(state(None)));
+        assert!(reports.try_recv().is_err());
+        std::fs::write(&path, "garbage").unwrap();
+        let (reported, reports) = mpsc::channel();
+        let writer = TabsWriter::start(path.clone(), move |message| {
+            reported.send(message).unwrap();
+        })
+        .unwrap();
+        writer.scrub_last_commands(None);
+        writer.finish();
+        assert!(
+            reports
+                .try_recv()
+                .unwrap()
+                .contains("remove saved commands")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -369,6 +470,45 @@ mod tests {
                 .args,
             ["--model", "sonnet"]
         );
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("agentws-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn restore_off_neither_reads_nor_changes_the_tabs_file() {
+        use workspace_model::{FeatureSwitch, SavedLayout, Settings};
+
+        let dir = temp_dir("restore-off");
+        let path = dir.join("tabs.json");
+        let state = TabsState {
+            layout: SavedLayout {
+                pinned: vec![saved_tab(
+                    &LaunchSpec::shell(None),
+                    None,
+                    TabMeta::default(),
+                )],
+                items: Vec::new(),
+            },
+            selected: Some(0),
+        };
+        state.save(&path).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let with = |restore: bool| {
+            WorkspaceFeatures::from_settings(&Settings {
+                restore_tabs: FeatureSwitch::new(restore),
+                ..Settings::default()
+            })
+        };
+        assert_eq!(load_from(&path, with(false)), None);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        // Turned on again: the retained snapshot is restored.
+        assert_eq!(load_from(&path, with(true)), Some(state));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[cfg(unix)]

@@ -38,6 +38,7 @@ use crate::about;
 use crate::assets::FILES_ICON;
 use crate::file_explorer::{CdAvailability, ExplorerEvent, FileExplorer};
 use crate::file_viewer::{FilePlace, FileViewer, ViewerEvent};
+use crate::history;
 use crate::hooks::ClaudeHooks;
 use crate::launcher::{self, Launcher, launch_name};
 use crate::settings_file;
@@ -243,6 +244,16 @@ pub struct WorkspaceView {
     settings: SettingsPane,
     _hook_messages: Task<()>,
     _explorer_events: Subscription,
+    /// `History::saved_cleared` / `forgets` as last handled by `scrub_retained_commands`.
+    history_seen: (u32, u32),
+    _history_observer: Subscription,
+}
+
+fn history_counts(cx: &App) -> (u32, u32) {
+    cx.try_global::<history::History>()
+        .map_or((0, 0), |history| {
+            (history.saved_cleared(), history.forgets())
+        })
 }
 
 impl WorkspaceView {
@@ -285,6 +296,8 @@ impl WorkspaceView {
         let explorer = cx.new(|cx| FileExplorer::new(agents, window, cx));
         let explorer_events = cx.subscribe_in(&explorer, window, Self::on_explorer_event);
         window.set_window_title(about::APP_NAME);
+        let history_seen = history_counts(cx);
+        let history_observer = cx.observe_global::<history::History>(Self::scrub_retained_commands);
         Self {
             tabs: Vec::new(),
             layout: Layout::default(),
@@ -307,6 +320,29 @@ impl WorkspaceView {
             settings: SettingsPane::new(cx),
             _hook_messages: hook_task,
             _explorer_events: explorer_events,
+            history_seen,
+            _history_observer: history_observer,
+        }
+    }
+
+    /// "Restore previous tabs" off keeps `tabs.json` as it is, so a cleared or forgotten
+    /// command would stay in it and return once restoring is turned on. Remove just the last
+    /// commands from that file, through the ordered writer (never on this thread, never from a
+    /// guest instance).
+    fn scrub_retained_commands(&mut self, cx: &mut Context<Self>) {
+        let seen = history_counts(cx);
+        let (cleared_seen, forgets_seen) = std::mem::replace(&mut self.history_seen, seen);
+        if !self.tabs_writer.is_active() || settings_file::workspace_features(cx).saves_tabs() {
+            return;
+        }
+        if seen.0 != cleared_seen {
+            self.tabs_writer.scrub_last_commands(None);
+        }
+        if seen.1 != forgets_seen
+            && let Some(command) = cx.global::<history::History>().forgotten()
+        {
+            self.tabs_writer
+                .scrub_last_commands(Some(command.to_owned()));
         }
     }
 
@@ -611,9 +647,11 @@ impl WorkspaceView {
     }
 
     /// The tabs as they are now, for reopening them at the next start. Nothing is saved when
-    /// another instance owns the tabs (`instance_lock`).
+    /// another instance owns the tabs (`instance_lock`) or "Restore previous tabs" is off.
     pub fn save_tabs(&self, cx: &App) {
-        if !self.tabs_writer.is_active() {
+        // "Restore previous tabs" off: tabs.json stays as it is (checked at every save, so
+        // the switch applies at once and turning it on saves again from the next change).
+        if !self.tabs_writer.is_active() || !settings_file::workspace_features(cx).saves_tabs() {
             return;
         }
         let active = self.active_tab().map(|tab| tab.id);
@@ -1745,6 +1783,25 @@ mod tests {
                     .all(|tab| { tab.last_command.as_deref() == Some("cargo test") })
             );
         }
+
+        // "Restore previous tabs" off: no snapshot is queued; on again: saving resumes.
+        let set_restore = |cx: &mut VisualTestContext, on: bool| {
+            cx.update(|_, cx| {
+                settings_file::preview(cx, |settings| {
+                    settings.restore_tabs = workspace_model::FeatureSwitch::new(on);
+                });
+            });
+        };
+        let save = |cx: &mut VisualTestContext| {
+            cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.save_tabs(cx)));
+            cx.run_until_parked();
+        };
+        set_restore(&mut cx, false);
+        save(&mut cx);
+        assert!(snapshots.recv_timeout(Duration::from_millis(300)).is_err());
+        set_restore(&mut cx, true);
+        save(&mut cx);
+        assert!(snapshots.recv_timeout(Duration::from_secs(10)).is_ok());
 
         cx.update(|_, cx| crate::history::forget("cargo test", cx));
         cx.run_until_parked();

@@ -237,6 +237,62 @@ fn history_switches_apply_live_pass_keys_through_and_keep_data(cx: &mut gpui_kit
         assert!(view.handle_history_key(&up(), cx));
     });
 
+    // Remember last shell command off (or no tab restoration): history still records, but the
+    // saved last command is neither captured nor offered; it is kept and comes back.
+    set(cx, true, true, true);
+    let remember = |cx: &mut gpui_kit::TestAppContext, restore: bool, remember: bool| {
+        cx.update(|cx| {
+            crate::settings_file::preview(cx, |settings| {
+                settings.restore_tabs = FeatureSwitch::new(restore);
+                settings.remember_last_command = FeatureSwitch::new(remember);
+            });
+        });
+    };
+    let changes = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counted = changes.clone();
+    cx.update(|cx| {
+        cx.subscribe(
+            &view,
+            move |_, _: &crate::terminal_view::LastCommandChanged, _| {
+                counted.set(counted.get() + 1);
+            },
+        )
+        .detach();
+    });
+    for (restore, remember_on) in [(true, false), (false, true), (false, false)] {
+        view.update(cx, |view, cx| {
+            view.restore_last_command(Some("git push".into()), cx);
+        });
+        remember(cx, restore, remember_on);
+        cx.run_until_parked();
+        let before = history_len(cx);
+        view.update(cx, |view, cx| {
+            assert_eq!(
+                view.restored_suggestion(cx),
+                None,
+                "{restore} {remember_on}"
+            );
+            view.dispatch_test_event(executed("brand new command"), cx);
+            assert_eq!(view.last_command(), Some("git push"));
+        });
+        assert_eq!(history_len(cx), before + 1);
+        assert_eq!(
+            changes.get(),
+            0,
+            "{restore} {remember_on}: no LastCommandChanged"
+        );
+        cx.update(|cx| crate::history::forget("brand new command", cx));
+        cx.run_until_parked();
+    }
+    remember(cx, true, true);
+    view.update(cx, |view, cx| {
+        view.dispatch_test_event(executed("brand new command"), cx);
+        assert_eq!(view.last_command(), Some("brand new command"));
+    });
+    cx.update(|cx| crate::history::forget("brand new command", cx));
+    cx.run_until_parked();
+    set(cx, true, true, false);
+
     // The clear actions.
     set(cx, false, true, true);
     view.update(cx, |view, cx| {

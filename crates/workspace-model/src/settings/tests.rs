@@ -824,3 +824,50 @@ fn history_switches_default_on_round_trip_and_fall_back_when_mistyped() {
     assert!(child.command_history.is_on() && !child.history_popup.is_on());
     assert!(child.inline_suggestions.is_on());
 }
+
+#[test]
+fn a_switch_with_two_parents_names_the_first_one_that_is_off() {
+    let ok =
+        DependentState::requiring(&[("Command history", true), ("Restore previous tabs", true)]);
+    assert!(ok.enabled && ok.caption.is_none());
+    let second =
+        DependentState::requiring(&[("Command history", true), ("Restore previous tabs", false)]);
+    assert!(!second.enabled);
+    assert!(
+        second
+            .caption
+            .unwrap()
+            .contains("\"Restore previous tabs\"")
+    );
+    let both =
+        DependentState::requiring(&[("Command history", false), ("Restore previous tabs", false)]);
+    assert!(both.caption.unwrap().contains("\"Command history\""));
+    assert_eq!(
+        DependentState::new(false, "A"),
+        DependentState::requiring(&[("A", false)])
+    );
+}
+
+#[test]
+fn workspace_switches_default_on_round_trip_and_fall_back_when_mistyped() {
+    let defaults = Settings::default();
+    assert!(defaults.restore_tabs.is_on() && defaults.remember_last_command.is_on());
+
+    let off = Settings {
+        restore_tabs: FeatureSwitch::new(false),
+        remember_last_command: FeatureSwitch::new(false),
+        ..Settings::default()
+    };
+    let json = off.to_json().unwrap();
+    let value: Value = serde_json::from_str(&json).unwrap();
+    for key in ["restore_tabs", "remember_last_command"] {
+        assert_eq!(value[key], Value::Bool(false), "{key}");
+    }
+    assert_eq!(Settings::from_json(&json).unwrap(), off);
+
+    let mistyped =
+        Settings::from_json(r#"{"restore_tabs": "no", "remember_last_command": 0}"#).unwrap();
+    assert_eq!(mistyped, Settings::default());
+    let child = Settings::from_json(r#"{"restore_tabs": false}"#).unwrap();
+    assert!(!child.restore_tabs.is_on() && child.remember_last_command.is_on());
+}

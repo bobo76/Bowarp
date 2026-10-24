@@ -266,7 +266,7 @@ impl TerminalView {
     }
 
     pub(crate) fn restored_suggestion(&self, cx: &App) -> Option<&str> {
-        if !settings_file::history_features(cx).suggestions() {
+        if !settings_file::workspace_features(cx).offers_last_command() {
             return None;
         }
         let input = self.prompt_input()?;

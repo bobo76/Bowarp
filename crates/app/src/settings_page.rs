@@ -58,6 +58,7 @@ pub fn render(
                 .child(SettingsView::new("settings-page").pages([
                     page("Appearance", appearance_groups()),
                     page("Terminal", terminal_groups(launchers)),
+                    page("Workspace", workspace_groups()),
                     page("About", about_groups(cx)),
                 ])),
         )
@@ -164,6 +165,47 @@ fn terminal_groups(launchers: Rc<[Launcher]>) -> Vec<SettingGroup> {
             .item(default_shell_row(launchers.clone())),
         command_history_group(),
         agent_arguments_group(&launchers),
+    ]
+}
+
+/// The Workspace page: the automatic tab snapshot and what it keeps per tab.
+fn workspace_groups() -> Vec<SettingGroup> {
+    vec![
+        SettingGroup::new().title("Tabs").items([
+            switch_row(
+                "Restore previous tabs",
+                "Reopen the tabs from the last close at start. Off: a fresh default tab, and the \
+             saved tabs are neither read nor updated (tabs.json is kept, so turning this on \
+             again restores it at a later start). Takes effect at the next start; saving \
+             stops at once. Window size and position are separate and still saved.",
+                SettingsField::new(
+                    |settings| settings.restore_tabs.is_on(),
+                    |settings, value| settings.restore_tabs = FeatureSwitch::new(value),
+                ),
+            )
+            .keywords(["tabs", "session", "reopen", "startup", "snapshot"]),
+            bound_row(
+                "Remember last shell command",
+                "Save each shell tab's last command with the tabs and offer it as dimmed text \
+             after a restart (needs Inline suggestions too). Off: no new command is captured \
+             or saved and none is offered; commands already saved are kept, not erased.",
+                SettingsField::new(
+                    |settings| settings.remember_last_command.is_on(),
+                    |settings, value| settings.remember_last_command = FeatureSwitch::new(value),
+                ),
+                dependent_switch_control_all(vec![
+                    (
+                        "Command history",
+                        Rc::new(|settings: &Settings| settings.command_history.is_on()),
+                    ),
+                    (
+                        "Restore previous tabs",
+                        Rc::new(|settings: &Settings| settings.restore_tabs.is_on()),
+                    ),
+                ]),
+            )
+            .keywords(["last command", "suggestion", "session", "history"]),
+        ]),
     ]
 }
 
@@ -382,16 +424,27 @@ fn tab_card_group() -> SettingGroup {
     group
 }
 
+/// Reads whether a parent option is on.
+type ParentFn = dyn Fn(&Settings) -> bool;
+
 /// The control of a switch row that needs another option: while `parent` reads false the
 /// switch is disabled, keeps its value, and a caption names `parent_name` (see
 /// [`DependentState`]). The next steps' history switches use it too.
-pub fn dependent_switch_control(
-    parent_name: &'static str,
-    parent: Rc<dyn Fn(&Settings) -> bool>,
-) -> Control<bool> {
+pub fn dependent_switch_control(parent_name: &'static str, parent: Rc<ParentFn>) -> Control<bool> {
+    dependent_switch_control_all(vec![(parent_name, parent)])
+}
+
+/// Like [`dependent_switch_control`] for a switch that needs several options: the caption
+/// names the first of `parents` (in order) that is off.
+pub fn dependent_switch_control_all(parents: Vec<(&'static str, Rc<ParentFn>)>) -> Control<bool> {
     Rc::new(move |checked, binding, _, cx| {
         let binding = binding.clone();
-        let state = DependentState::new(parent(settings_file::settings(cx)), parent_name);
+        let settings = settings_file::settings(cx);
+        let states: Vec<_> = parents
+            .iter()
+            .map(|(name, parent)| (*name, parent(settings)))
+            .collect();
+        let state = DependentState::requiring(&states);
         let switch = Switch::new("switch")
             .checked(checked)
             .disabled(!state.enabled)

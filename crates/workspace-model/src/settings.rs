@@ -66,6 +66,14 @@ pub struct Settings {
     /// Ghost-text suggestions and their acceptance keys; needs `command_history`.
     #[serde(deserialize_with = "lenient")]
     pub inline_suggestions: FeatureSwitch<true>,
+    /// Reopen the tabs saved at the last close. Off: start with a fresh tab and neither read
+    /// nor write `tabs.json` (it is kept as it is). Read at start; saving stops at once.
+    #[serde(deserialize_with = "lenient")]
+    pub restore_tabs: FeatureSwitch<true>,
+    /// Capture each tab's last shell command, save it with the tabs and offer it after a
+    /// restart; needs `command_history` and `restore_tabs`. See [`crate::WorkspaceFeatures`].
+    #[serde(deserialize_with = "lenient")]
+    pub remember_last_command: FeatureSwitch<true>,
     /// The file viewer's share of the window width, set by dragging its divider (not on the
     /// settings page).
     #[serde(deserialize_with = "lenient")]
@@ -213,9 +221,16 @@ pub struct DependentState {
 
 impl DependentState {
     pub fn new(parent_on: bool, parent_name: &str) -> Self {
+        Self::requiring(&[(parent_name, parent_on)])
+    }
+
+    /// A switch that needs every parent: disabled while any is off, the caption names the
+    /// first one that is.
+    pub fn requiring(parents: &[(&str, bool)]) -> Self {
+        let unmet = parents.iter().find(|(_, on)| !on);
         Self {
-            enabled: parent_on,
-            caption: (!parent_on).then(|| format!("Needs \"{parent_name}\" to be on.")),
+            enabled: unmet.is_none(),
+            caption: unmet.map(|(name, _)| format!("Needs \"{name}\" to be on.")),
         }
     }
 }

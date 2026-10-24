@@ -31,7 +31,7 @@ use term_core::{
 };
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
-    COMMAND_LABEL_CHARS, HistoryFeatures, Location, ProgressState, RUNNING_AFTER, RunningBadge,
+    COMMAND_LABEL_CHARS, Location, ProgressState, RUNNING_AFTER, RunningBadge, WorkspaceFeatures,
     command_label, running_badge,
 };
 
@@ -205,7 +205,7 @@ pub struct TerminalView {
     /// How many "Clear saved session commands" requests this tab has handled.
     saved_cleared_seen: u32,
     /// The history switches last acted on; settings changes that leave them alone are ignored.
-    history_features: HistoryFeatures,
+    workspace_features: WorkspaceFeatures,
     pub(crate) search: TerminalSearch,
     search_bar: Option<search::SearchBar>,
     title: Option<String>,
@@ -273,13 +273,14 @@ impl TerminalView {
             cx.notify();
         })
         .detach();
-        // Turning a history switch off closes the popup and drops suggestions at once.
+        // Turning a history or last-command switch off closes the popup and drops suggestions
+        // at once.
         cx.observe_global::<AppSettings>(|view, cx| {
-            let features = settings_file::history_features(cx);
-            if features == view.history_features {
+            let features = settings_file::workspace_features(cx);
+            if features == view.workspace_features {
                 return;
             }
-            view.history_features = features;
+            view.workspace_features = features;
             view.refresh_history(cx);
             cx.notify();
         })
@@ -289,7 +290,7 @@ impl TerminalView {
             .map_or(0, history::History::saved_cleared);
         Self {
             saved_cleared_seen,
-            history_features: settings_file::history_features(cx),
+            workspace_features: settings_file::workspace_features(cx),
             session,
             name: launcher::default_name(spec),
             launch_folder: spec.cwd.clone(),
@@ -662,13 +663,18 @@ impl TerminalView {
         true
     }
 
-    /// Command history off: nothing is collected or captured.
+    /// Command history off: nothing is collected or captured. "Remember last shell command" off
+    /// (or "Restore previous tabs" off) only stops the capture.
     fn record_executed(&mut self, command: ExecutedCommand, cx: &mut Context<Self>) {
-        if !settings_file::history_features(cx).records() {
+        let features = settings_file::workspace_features(cx);
+        if !features.history().records() {
             self.last_command.dismiss();
             return;
         }
-        if self.supports_last_command() && self.last_command.record(&command.command) {
+        if self.supports_last_command()
+            && features.captures_last_command()
+            && self.last_command.record(&command.command)
+        {
             cx.emit(LastCommandChanged);
         }
         history::record(command, cx);

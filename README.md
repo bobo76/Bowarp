@@ -470,6 +470,22 @@ Hover-card settings are saved as independent booleans, for example:
 
 Missing or wrong-typed booleans each default to true. Changes apply live.
 
+### Workspace switches
+
+Settings → Workspace has two switches, both on by default (`restore_tabs`,
+`remember_last_command`; missing or non-boolean means on).
+
+- **Restore previous tabs** off: the next start opens one fresh default tab, and `tabs.json`
+  is neither read nor written (it is kept as it is, so turning the switch on again restores
+  those tabs at a later start, until the next save replaces them). Loading takes effect at the
+  next start; saving stops at once, and starts again when the switch is turned back on.
+  Window size and position, settings and history are separate files and are not affected.
+- **Remember last shell command** off: no new last command is captured or saved, and a saved one
+  is not offered; saved values already in `tabs.json` are kept, not erased. It needs Command
+  history and Restore previous tabs (shown disabled with a caption naming the first one that is
+  off, value kept), and showing the suggestion also needs Inline suggestions. Applies live.
+  Folder tracking, agent status and busy-close warnings are unaffected.
+
 ## About
 
 The `i` button in the title bar (after the explorer button) shows the version, with the git

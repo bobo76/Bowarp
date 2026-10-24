@@ -40,6 +40,73 @@ fn sample() -> TabsState {
     }
 }
 
+fn with_commands() -> TabsState {
+    let mut state = sample();
+    state.layout.pinned[0].last_command = Some("cargo test".into());
+    state.layout.items[0] = SavedItem::Tab({
+        let mut plain = tab(SavedKind::Shell, "/tmp");
+        plain.last_command = Some("make".into());
+        plain
+    });
+    if let SavedItem::Group(group) = &mut state.layout.items[1] {
+        group.tabs[0].last_command = Some("cargo test".into());
+        group.tabs[1].last_command = Some("ls -la".into());
+    }
+    state
+}
+
+fn commands(state: &TabsState) -> Vec<Option<&str>> {
+    state
+        .layout
+        .tabs()
+        .into_iter()
+        .map(|tab| tab.last_command.as_deref())
+        .collect()
+}
+
+#[test]
+fn scrub_all_removes_only_last_commands() {
+    let mut state = with_commands();
+    assert!(state.scrub_last_commands(None));
+    assert_eq!(commands(&state), [None; 4]);
+    assert_eq!(state, sample());
+    assert!(!state.scrub_last_commands(None));
+}
+
+#[test]
+fn scrub_one_removes_every_tab_holding_exactly_that_command() {
+    let mut state = with_commands();
+    assert!(state.scrub_last_commands(Some("cargo test")));
+    assert_eq!(commands(&state), [None, Some("make"), None, Some("ls -la")]);
+    assert!(!state.scrub_last_commands(Some("cargo")));
+}
+
+#[test]
+fn scrub_file_rewrites_only_when_a_command_goes() {
+    let dir = TempDir::new();
+    let path = dir.0.join("tabs.json");
+    with_commands().save(&path).unwrap();
+    TabsState::scrub_file(&path, Some("nothing")).unwrap();
+    assert_eq!(TabsState::load(&path), Some(with_commands()));
+    TabsState::scrub_file(&path, None).unwrap();
+    assert_eq!(TabsState::load(&path), Some(sample()));
+}
+
+#[test]
+fn scrub_file_missing_is_a_no_op_and_unreadable_is_an_error() {
+    let dir = TempDir::new();
+    let missing = dir.0.join("tabs.json");
+    TabsState::scrub_file(&missing, None).unwrap();
+    assert!(!missing.exists());
+    std::fs::write(&missing, "{ not json").unwrap();
+    assert!(TabsState::scrub_file(&missing, None).is_err());
+    assert_eq!(std::fs::read_to_string(&missing).unwrap(), "{ not json");
+    // A directory where the file should be cannot be read.
+    let unreadable = dir.0.join("dir");
+    std::fs::create_dir(&unreadable).unwrap();
+    assert!(TabsState::scrub_file(&unreadable, None).is_err());
+}
+
 #[test]
 fn json_round_trip() {
     let state = sample();

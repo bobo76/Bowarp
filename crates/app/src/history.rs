@@ -21,6 +21,8 @@ pub struct History {
     /// Counts "Clear saved session commands" requests; each tab compares it with the count it
     /// has seen (see `TerminalView::new`).
     saved_cleared: u32,
+    /// Counts `forget` calls, so an observer can tell a new one from `forgotten` left over.
+    forgets: u32,
 }
 
 impl Global for History {}
@@ -37,6 +39,10 @@ impl History {
     pub fn saved_cleared(&self) -> u32 {
         self.saved_cleared
     }
+
+    pub fn forgets(&self) -> u32 {
+        self.forgets
+    }
 }
 
 pub fn init(cx: &mut App) {
@@ -51,6 +57,7 @@ pub fn init(cx: &mut App) {
         path,
         forgotten: None,
         saved_cleared: 0,
+        forgets: 0,
     });
 }
 
@@ -61,6 +68,7 @@ pub fn init_in_memory(cx: &mut App) {
         path: None,
         forgotten: None,
         saved_cleared: 0,
+        forgets: 0,
     });
 }
 
@@ -92,6 +100,7 @@ pub fn record(command: ExecutedCommand, cx: &mut App) {
 pub fn forget(command: &str, cx: &mut App) {
     let history = cx.global_mut::<History>();
     history.forgotten = Some(command.to_owned());
+    history.forgets += 1;
     history.commands.remove(command);
     let Some(path) = &history.path else {
         return;
@@ -150,6 +159,7 @@ mod tests {
                 path: Some(path),
                 forgotten: None,
                 saved_cleared: 0,
+                forgets: 0,
             });
         });
     }
@@ -178,6 +188,7 @@ mod tests {
                 path: Some(blocker.join("history.jsonl")),
                 forgotten: None,
                 saved_cleared: 0,
+                forgets: 0,
             });
         });
         let error = cx.update(clear).unwrap_err();

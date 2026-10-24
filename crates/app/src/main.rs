@@ -239,7 +239,8 @@ fn restore_or_open_first_tab(
     cx: &mut Context<WorkspaceView>,
 ) {
     let restored = initial.ownership == TabOwnership::Owner
-        && tabs_file::load().is_some_and(|state| workspace.restore(state, window, cx));
+        && tabs_file::load(settings_file::workspace_features(cx))
+            .is_some_and(|state| workspace.restore(state, window, cx));
     if restored {
         if let Some(spec) = initial.requested {
             workspace.open_requested_tab(spec, window, cx);
