@@ -4,7 +4,7 @@ Feature spec: [FEATURES.md](FEATURES.md)
 
 ## Status (0.2.19, 2026-10-24)
 
-[FEATURES.md](FEATURES.md) is the target; what is not built yet is in the next steps and the
+[FEATURES.md](FEATURES.md) is the target; what is not built yet is at the top of the
 backlog below. Details of finished work are in the git history and [CHANGELOG.md](CHANGELOG.md).
 
 **Keeping this file current:** when something is completely done (built, tested and checked
@@ -75,58 +75,7 @@ automated checks must pass again for the corrected commit before merge or taggin
 
 **Next steps**
 
-1. Notifications and close warnings:
-   - Close-with-running-process warnings: a tab is busy when a shell command runs (OSC 133
-     `C` without `D`) or an agent is Working or Waiting; idle prompts and idle agents close
-     silently. Applies to closing a tab, closing a group and quitting the window (one dialog
-     listing every busy tab).
-   - Sound for agent events (Waiting, Ready for review): one bundled sound for both events, with an on/off
-     switch and a volume setting. Basic silent in-app toasts are already implemented.
-   - Clipboard notice: a banner above the terminal when a program writes the clipboard
-     (OSC 52). The write is held until Allow (applied then) or Deny (dropped); a newer write
-     replaces the pending one. "Always for this tab" allows later writes until the tab closes
-     (not saved).
-2. Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
-   `cx.build_action`) from the settings file in place of `default_bindings`. First so the user
-   can unbind Ctrl+V (paste) and get `^V` back for bash's quoted-insert and vim's visual block.
-   - Overlay: `"keybindings": {"ctrl-v": null, "ctrl-shift-v": "Paste"}` adds to or overrides
-     the defaults key by key; `null` removes a default, and the key then goes to the terminal.
-   - Full editor on a "Keyboard" settings page: one row per action showing its keys, click to
-     record a keystroke, a reset to the default, and a way to unbind it.
-   - An invalid entry (unknown action, keystroke that can't be parsed) is skipped and the rest
-     still apply; the reasons are listed on the settings page, like a broken settings file.
-3. Configurable terminal path: the executable path for each launcher entry (Terminal, Git
-   Bash, `claude`, `copilot`) saved in the settings file and shown on the settings page, for
-   programs that aren't on `PATH` or where the wrong copy is found first; an empty value keeps
-   the current lookup.
-   - Every detected `+` menu entry gets one (PowerShell, cmd, Git Bash, zsh, `claude`,
-     `copilot`, ...), except WSL distros, which are always started through `wsl.exe -d`.
-   - A path that doesn't exist or can't be run: the settings row shows "(not found)", the entry
-     uses the normal `PATH` lookup, and the tab shows a persistent warning, like the initial
-     shell fallback.
-   - Input: a text field with a Browse button (native file picker); the placeholder shows the
-     path the `PATH` lookup finds now.
-4. Terminal color schemes: a few bundled schemes plus user schemes from base16/iTerm files,
-   picked on the Appearance page. "System" follows the OS light/dark setting. The persisted
-   light/dark UI choice is implemented, awaiting manual checks below.
-   - Two pickers: one scheme for the Light theme, one for Dark; the active UI theme (or the OS,
-     for "System") decides which applies. The terminal scheme never colors the UI itself.
-   - Bundled, written in code (no asset files): the current default (dark), a matching default
-     light, Solarized Dark / Light, One Dark / Light, Dracula.
-   - User schemes: base16 (YAML) and iTerm (`.itermcolors`) files placed in a `schemes/`
-     folder next to `settings.json`, read when the Appearance page opens. The settings file
-     stores only the chosen scheme names.
-5. Window opacity and background blur, set in the settings file (opacity applies to the
-   terminal background only, text stays opaque); blur where the platform allows it (Windows
-   acrylic/mica, KDE on X11).
-   - Also on the Appearance page: an opacity slider (30-100 %) and a blur dropdown, applied
-     live and saved in the settings file.
-   - Windows blur: None / Acrylic / Mica, where Mica falls back to Acrylic on Windows 10.
-   - Without blur support (Wayland, GNOME on X11) the opacity still applies; the blur control
-     is disabled and says "Not available on this system".
-6. Major feature options: add the switches in [Feature options](#feature-options) to the
-   settings page and settings file, alongside the existing appearance and terminal controls.
-   These are planned options, not features already implemented.
+None; the work to pick up next is at the top of the [Backlog](#backlog).
 
 ### Feature options
 
@@ -169,7 +118,7 @@ dependency is stated.
 - Keep clipboard Allow/Deny, unsaved-edit confirmation, busy-close warnings and persistent
   failure warnings as safeguards, not optional notification switches. Theme, color schemes,
   opacity, blur, shell and icon choices remain pickers/sliders, not extra on/off switches.
-- Integrate these controls with the existing notification next step and the Backlog items
+- Integrate these controls with the notifications backlog item and the Backlog items
   for hover cards, history per shell, prompt layout, last-command restoration, animations
   and named workspaces; do not implement a second set of settings for the same behavior.
 - When implementing, cover settings defaults/round trips, parent-child combinations,
@@ -275,13 +224,44 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 
 | Element | Look | Where |
 |---|---|---|
-| Context menu | Save as new config (= save as a named workspace) | Backlog: named workspaces |
-| Clipboard notice | See Notifications and close warnings | Next step 1 |
+| Context menu | Save as new config (= save as a named workspace) | Parked: named workspaces |
+| Clipboard notice | See Notifications and close warnings | Backlog: first item |
 
 "Share session" from the screenshot is not planned.
 
 ## Backlog
 
+- Notifications and close warnings:
+  - Close-with-running-process warnings: a tab is busy when a shell command runs (OSC 133
+    `C` without `D`) or an agent is Working or Waiting; idle prompts and idle agents close
+    silently. Applies to closing a tab, closing a group and quitting the window (one dialog
+    listing every busy tab).
+  - Sound for agent events (Waiting, Ready for review): one bundled sound for both events, with an on/off
+    switch and a volume setting. Basic silent in-app toasts are already implemented.
+  - Clipboard notice: a banner above the terminal when a program writes the clipboard
+    (OSC 52). The write is held until Allow (applied then) or Deny (dropped); a newer write
+    replaces the pending one. "Always for this tab" allows later writes until the tab closes
+    (not saved).
+- Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
+  `cx.build_action`) from the settings file in place of `default_bindings`. First so the user
+  can unbind Ctrl+V (paste) and get `^V` back for bash's quoted-insert and vim's visual block.
+  - Overlay: `"keybindings": {"ctrl-v": null, "ctrl-shift-v": "Paste"}` adds to or overrides
+    the defaults key by key; `null` removes a default, and the key then goes to the terminal.
+  - Full editor on a "Keyboard" settings page: one row per action showing its keys, click to
+    record a keystroke, a reset to the default, and a way to unbind it.
+  - An invalid entry (unknown action, keystroke that can't be parsed) is skipped and the rest
+    still apply; the reasons are listed on the settings page, like a broken settings file.
+- Window opacity and background blur, set in the settings file (opacity applies to the
+  terminal background only, text stays opaque); blur where the platform allows it (Windows
+  acrylic/mica, KDE on X11).
+  - Also on the Appearance page: an opacity slider (30-100 %) and a blur dropdown, applied
+    live and saved in the settings file.
+  - Windows blur: None / Acrylic / Mica, where Mica falls back to Acrylic on Windows 10.
+  - Without blur support (Wayland, GNOME on X11) the opacity still applies; the blur control
+    is disabled and says "Not available on this system".
+- Major feature options: add the switches in [Feature options](#feature-options) to the
+  settings page and settings file, alongside the existing appearance and terminal controls.
+  These are planned options, not features already implemented.
 - Copilot working animation: show a blue circular spinner rotating beside the Copilot tab's
   title in the sidebar while its status is Working, matching the reference screenshot.
   Stop the animation when the status leaves Working; no animation timer while idle.
@@ -290,16 +270,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
     the half-circle glyph shows on a working Claude tab.
   - It animates only while the row can be seen: no frames while its group is collapsed or the
     window is minimized.
-- Named workspaces (the single window's tabs are already restored): save and open named
-  workspaces, offer to relaunch their tabs; restored tabs clearly marked "not running".
-  - Opening one replaces every current tab, after a confirmation. No confirmation when the
-    window has a single tab and it isn't busy (no command running, agent not Working or
-    Waiting): that tab is replaced right away.
-  - Each restored tab shows a "Not running" panel with a Start button (the open dialog also
-    has "Start all"). Agent tabs start a new session (no `--continue`); shells start as new.
-  - Saved: what `tabs.json` holds (kind, folder, names, groups, order, launch arguments),
-    plus each tab's file open in the viewer and the viewer and explorer widths. Not the
-    scrollback.
 - `claude` / `copilot` typed at a shell prompt open an agent tab: instead of running in the
   shell tab, the command opens a new tab exactly like the `+` menu's "Claude Code" / "Copilot
   CLI" entry (`open_launcher` in `app/src/workspace_view.rs`, so hooks and status work), in the
@@ -321,8 +291,12 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
     gets no hooks and shows "Running for" until it quits. Accepted.
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
-- Bell sound: with the M5 notification sound; rate-limited so a stream of bells doesn't
-  repeat it (the bell already marks a hidden tab Needs attention).
+- Long durations on the sidebar and hover card ("Running for", lap times such as "Working · 2m 14s"):
+  - Under a day: as today (seconds kept).
+  - A day or more: drop the seconds, add days ("1d 3h 12m").
+  - A month or more (30 days): add months, drop the hours and minutes ("2mo 5d").
+  One shared formatter in `workspace-model`, unit-tested at the boundaries (59 s, 1 d, 29 d 23 h,
+  30 d), used by the row, the hover card and the group hover card.
 - Long command finished in a shell tab: when a command that ran longer than a threshold
   (default 10 s, in the settings file) ends while its tab isn't selected, the tab is marked
   done, or failed when the OSC 133 `D` exit code isn't 0, until it is viewed. Needs shell
@@ -460,8 +434,20 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   Depends on the workflow analysis above and requires a clean working tree; define safeguards
   for active agents and refresh branch/status information for all affected tabs after a switch.
 
-**Ideas to evaluate, not committed to yet:** not in [FEATURES.md](FEATURES.md) until picked.
+## Parked ideas
 
+Not committed to; not in [FEATURES.md](FEATURES.md) until picked.
+
+- Named workspaces (the single window's tabs are already restored): save and open named
+  workspaces, offer to relaunch their tabs; restored tabs clearly marked "not running".
+  - Opening one replaces every current tab, after a confirmation. No confirmation when the
+    window has a single tab and it isn't busy (no command running, agent not Working or
+    Waiting): that tab is replaced right away.
+  - Each restored tab shows a "Not running" panel with a Start button (the open dialog also
+    has "Start all"). Agent tabs start a new session (no `--continue`); shells start as new.
+  - Saved: what `tabs.json` holds (kind, folder, names, groups, order, launch arguments),
+    plus each tab's file open in the viewer and the viewer and explorer widths. Not the
+    scrollback.
 - Diff panel: the selected tab's working-tree changes (`git diff` against `HEAD`, untracked
   files included) in the file viewer pane, one collapsible section per file with added and
   removed lines colored, opened from the hover card's `+N` or a title bar button, and
@@ -471,11 +457,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
   a linked worktree (`.git` is a file), with the main repository in the hover card; the open
   PR's number and state for the branch, from `gh pr view --json` run off the UI thread and
   cached per branch, skipped when `gh` is missing or not logged in.
-
-## Maybe
-
-Ideas not committed to yet; not in [FEATURES.md](FEATURES.md) until picked.
-
 - Sticky command header: while scrolling back through a shell tab's output, the command that
   produced the top visible line stays pinned above the terminal (from the OSC 133 marks);
   clicking it scrolls to that command's prompt. Needs shell integration; not for agent tabs.
