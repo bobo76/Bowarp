@@ -74,6 +74,11 @@ pub struct Settings {
     /// restart; needs `command_history` and `restore_tabs`. See [`crate::WorkspaceFeatures`].
     #[serde(deserialize_with = "lenient")]
     pub remember_last_command: FeatureSwitch<true>,
+    /// The file explorer and file viewer panes and everything that scans, watches or loads
+    /// files for them. Off hides both, closes the open files and sends file links to the
+    /// system's handler; the pane widths below are kept. See [`crate::FilePaneFeatures`].
+    #[serde(deserialize_with = "lenient")]
+    pub file_panes: FeatureSwitch<true>,
     /// The file viewer's share of the window width, set by dragging its divider (not on the
     /// settings page).
     #[serde(deserialize_with = "lenient")]

@@ -12,6 +12,7 @@
 
 mod about;
 mod attention;
+mod file_pane_features;
 pub mod file_tree;
 pub mod file_view;
 mod git;
@@ -40,6 +41,9 @@ mod workspace_features;
 
 pub use about::version_line;
 pub use attention::{Attention, next_attention, waiting_count};
+pub use file_pane_features::{
+    FileLinkAction, FilePaneFeatures, PaneChange, PaneEntry, pane_change,
+};
 pub use git::{GitHead, lines_added};
 pub use history::{
     CommandHistory, HistoryEntry, HistorySelection, append_entry, clear_history_file, entry_line,

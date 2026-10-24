@@ -99,6 +99,11 @@ impl WorkspaceView {
             }
             return;
         };
+        // With the panes off the file goes to the system's handler, as a button press asks.
+        if !settings_file::file_panes(cx).panes_enabled() {
+            cx.open_with_system(&path);
+            return;
+        }
         if let Some(id) = self.active_tab().map(|tab| tab.id) {
             self.open_file_in(id, path, FilePlace::default(), window, cx);
         }

@@ -190,6 +190,13 @@ impl FileViewer {
         });
     }
 
+    #[cfg(test)]
+    pub(crate) fn mark_dirty_for_test(&mut self, dirty: bool) {
+        if let Some(file) = self.open_file_mut() {
+            file.dirty = dirty;
+        }
+    }
+
     /// Whether the file shown has edits not saved.
     pub(crate) fn is_dirty(&self) -> bool {
         self.open_file().is_some_and(|file| file.dirty)
@@ -202,6 +209,17 @@ impl FileViewer {
         cx: &mut Context<Self>,
         then: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) {
+        self.discard_then_or(window, cx, then, |_| {});
+    }
+
+    /// [`Self::discard_then`], also telling the caller when the user cancels the prompt.
+    pub(crate) fn discard_then_or(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        then: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        on_cancel: impl Fn(&mut App) + 'static,
+    ) {
         if !self.is_dirty() {
             then(self, window, cx);
             return;
@@ -209,9 +227,11 @@ impl FileViewer {
         let name = self.file_name();
         let viewer = cx.entity().downgrade();
         let then = Rc::new(then);
+        let on_cancel = Rc::new(on_cancel);
         window.open_alert_dialog(cx, move |alert, _, _| {
             let viewer = viewer.clone();
             let then = then.clone();
+            let on_cancel = on_cancel.clone();
             alert
                 .title(format!("Discard changes to \"{name}\"?"))
                 .description("The edits not saved with Ctrl+S are lost.")
@@ -220,6 +240,10 @@ impl FileViewer {
                 .show_cancel(true)
                 .on_ok(move |_, window, cx| {
                     let _ = viewer.update(cx, |viewer, cx| then(viewer, window, cx));
+                    true
+                })
+                .on_cancel(move |_, _, cx| {
+                    on_cancel(cx);
                     true
                 })
         });

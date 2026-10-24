@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use gpui_kit::component::{ActiveTheme, Theme, ThemeMode};
 use gpui_kit::{App, Global};
-use workspace_model::{HistoryFeatures, Settings, SettingsFile, UiTheme, WorkspaceFeatures};
+use workspace_model::{
+    FilePaneFeatures, HistoryFeatures, Settings, SettingsFile, UiTheme, WorkspaceFeatures,
+};
 
 use crate::window_bounds::config_file;
 
@@ -74,6 +76,14 @@ pub fn workspace_features(cx: &App) -> WorkspaceFeatures {
     cx.try_global::<AppSettings>()
         .map_or_else(WorkspaceFeatures::default, |settings| {
             WorkspaceFeatures::from_settings(settings.0.settings())
+        })
+}
+
+/// What the "File explorer and viewer" switch allows. On while settings aren't loaded (unit tests).
+pub fn file_panes(cx: &App) -> FilePaneFeatures {
+    cx.try_global::<AppSettings>()
+        .map_or_else(FilePaneFeatures::default, |settings| {
+            FilePaneFeatures::from_settings(settings.0.settings())
         })
 }
 

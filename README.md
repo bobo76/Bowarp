@@ -472,8 +472,8 @@ Missing or wrong-typed booleans each default to true. Changes apply live.
 
 ### Workspace switches
 
-Settings → Workspace has two switches, both on by default (`restore_tabs`,
-`remember_last_command`; missing or non-boolean means on).
+Settings → Workspace has three switches, all on by default (`restore_tabs`,
+`remember_last_command`, `file_panes`; missing or non-boolean means on).
 
 - **Restore previous tabs** off: the next start opens one fresh default tab, and `tabs.json`
   is neither read nor written (it is kept as it is, so turning the switch on again restores
@@ -485,6 +485,13 @@ Settings → Workspace has two switches, both on by default (`restore_tabs`,
   history and Restore previous tabs (shown disabled with a caption naming the first one that is
   off, value kept), and showing the suggestion also needs Inline suggestions. Applies live.
   Folder tracking, agent status and busy-close warnings are unaffected.
+- **File explorer and viewer** off (applies live): both panes are hidden, the title bar button
+  goes and Ctrl+Shift+| does nothing, no folder is scanned or watched and no file loaded, and
+  every open file is closed. When a file has unsaved edits, the viewer's Discard/Cancel
+  question comes first (one per file); Cancel keeps the switch on. A Ctrl+clicked file link
+  asks "Open externally?" and opens the file with the system's application; "Open settings
+  file" does the same. The pane widths (`file_viewer_fraction`, `file_explorer_width`) are kept.
+  Turned on again, the panes work as before; files closed meanwhile stay closed.
 
 ## About
 

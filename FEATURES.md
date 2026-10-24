@@ -110,6 +110,9 @@ directly to model APIs.
 - Let the user turn off restoring the previous tabs at start and remembering the last shell
   command; the stored tab snapshot is kept untouched while restoring is off, except that
   clearing saved commands still removes them from it.
+- Let the user turn off the file explorer and viewer: both panes and their entry points
+  disappear after unsaved edits are resolved, nothing is watched or scanned for them, and
+  file links in the terminal are offered to the system's own application instead.
 
 ## Performance and Usability
 

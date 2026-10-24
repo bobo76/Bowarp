@@ -21,7 +21,7 @@ the separate Ubuntu Clippy job, must pass before tagging. Native Windows/Linux U
 packaged-app smoke tests and About version/commit checks remain pending. Publishing is
 not verification.
 
-**Since 0.2.19:** `cargo test` runs 439 tests (Linux).
+**Since 0.2.19:** `cargo test` runs 448 tests (Linux).
 
 **PR verification:** Ubuntu build/tests, strict Clippy and Windows build/tests/package
 passed for `fbfa8df`. CodeQL blocked publication because the plugin cleanup warning logged
@@ -93,18 +93,28 @@ automated checks must pass again for the corrected commit before merge or taggin
   (`file_explorer_width`) with the same rules as the viewer width: once when the drag ends,
   not on the settings page, not while the file is broken, other instances after a reload.
 
+- File explorer and viewer switch (`file_panes`): turning it off closes every open file, so a
+  tab's viewer starts empty after turning it on again (the explorer stays hidden until its
+  button or Ctrl+Shift+| is used). `tabs.json` never held a tab's open file, and no file
+  associations are saved anywhere, so nothing of either is kept. The unsaved-edit prompt is
+  the viewer's Discard/Cancel one (there is no Save choice), asked once per file; a pending
+  chain blocks a second one, and Cancel (or Esc) ends it.
+  Known limitation: the switch is written off and then back on while the prompt is open, so
+  settings.json briefly reads off (a second running instance or a reload may read it), a hand
+  edit to off is undone without a message, and if the write-back fails the switch may stay off
+  until the next change. With the panes off a Ctrl+clicked file link asks "Open externally?"
+  (system handler) and "Open settings file" opens the file externally.
+
 **Next steps**
 
 Run in this order (each stands alone and is tested):
 
-1. Feature options, "File explorer and viewer" (hide both panes, no scans or watchers while
-   off, unsaved-edit resolution first).
-2. Feature options, "In-app notifications" (toasts only; status and badges stay).
-3. Backlog: Notifications and close warnings (split further at its Step 0 size check; adds the
+1. Feature options, "In-app notifications" (toasts only; status and badges stay).
+2. Backlog: Notifications and close warnings (split further at its Step 0 size check; adds the
    "Notification sounds" switch with the sound).
-4. Backlog: Configurable keyboard shortcuts.
-5. Backlog: Window opacity and background blur.
-6. Backlog: Copilot working animation (uses the "Activity animations" switch).
+3. Backlog: Configurable keyboard shortcuts.
+4. Backlog: Window opacity and background blur.
+5. Backlog: Copilot working animation (uses the "Activity animations" switch).
 
 Switches for features not built yet (prompt at the bottom, command separators, agents typed
 at the prompt, long-command completion status) are added with those features, as the
@@ -131,7 +141,7 @@ dependency is stated.
 | Terminal | Open agents typed at the prompt in a new tab | On when built | Run typed `claude` / `copilot` normally in the shell. Applies to newly started shells, as the integration functions are installed at startup. |
 | Workspace | Restore previous tabs (implemented) | On | Start with a fresh default tab; do not load or update the automatic tab snapshot. Keep ordinary preferences and explicitly saved named workspaces. |
 | Workspace | Remember last shell command (implemented) | On | Do not capture or save new `last_command` values or offer saved ones. Requires command history and automatic tab restoration; showing the suggestion also requires inline suggestions. |
-| Workspace | File explorer and viewer | On | Hide both panes and disable their app entry points after resolving unsaved edits. File links offer Open externally; preserve pane widths and saved file associations without loading files. |
+| Workspace | File explorer and viewer (implemented) | On | Hide both panes and disable their app entry points after resolving unsaved edits. File links offer Open externally; pane widths stay saved and no file is loaded. |
 | Notifications | In-app notifications | On | No agent or long-command toasts; status and attention badges remain. Sound is independently controlled. |
 | Notifications | Notification sounds | Off | No agent, long-command or bell sound; retain the volume slider for when enabled. Does not suppress visual status. |
 | Notifications | Long-command completion status | On when built | Do not mark background shell tabs Done/failed or send completion notifications. Keep command tracking for busy-close protection; retain the duration threshold setting. |
@@ -160,6 +170,10 @@ dependency is stated.
   work in tests; manually check the settings UI and unsaved-edit flow.
 
 ## Fixed, not tested yet
+
+- File panes off, last Discard (fo-files review): `drop_file_panes` calls `focus_active` while
+  the Discard dialog is closing; the dialog may restore focus to the dropped viewer.
+  Manual check: edit a file, turn the switch off, Discard; the terminal must take keys.
 
 Only skipped or partially passed checks remain below following the user's Windows
 verification on 2026-10-23 (installed executable reports 0.2.18; commit unconfirmed).

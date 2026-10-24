@@ -871,3 +871,27 @@ fn workspace_switches_default_on_round_trip_and_fall_back_when_mistyped() {
     let child = Settings::from_json(r#"{"restore_tabs": false}"#).unwrap();
     assert!(!child.restore_tabs.is_on() && child.remember_last_command.is_on());
 }
+
+#[test]
+fn file_panes_switch_defaults_on_round_trips_and_falls_back_when_mistyped() {
+    assert!(Settings::default().file_panes.is_on());
+    let off = Settings {
+        file_panes: FeatureSwitch::new(false),
+        file_viewer_fraction: ViewerFraction::new(0.4),
+        file_explorer_width: ExplorerWidth::new(321.),
+        ..Settings::default()
+    };
+    let json = off.to_json().unwrap();
+    let value: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["file_panes"], Value::Bool(false));
+    // The widths are written back untouched while the panes are off.
+    let back = Settings::from_json(&json).unwrap();
+    assert_eq!(back, off);
+    assert_eq!(back.file_viewer_fraction, off.file_viewer_fraction);
+    assert_eq!(back.file_explorer_width, off.file_explorer_width);
+    for wrong in ["\"no\"", "0", "null", "[]"] {
+        let settings = Settings::from_json(&format!(r#"{{"file_panes": {wrong}}}"#)).unwrap();
+        assert!(settings.file_panes.is_on(), "{wrong}");
+    }
+    assert!(Settings::from_json("{}").unwrap().file_panes.is_on());
+}

@@ -26,8 +26,8 @@ use term_core::{LaunchSpec, SessionKind};
 use workspace_model::layout::Direction;
 use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION, ExplorerWidth, ViewerFraction};
 use workspace_model::{
-    Attention, DropTarget, GroupId, Layout, TabColor, TabId, TabMeta, TabsState, next_attention,
-    waiting_count,
+    Attention, DropTarget, FeatureSwitch, FileLinkAction, GroupId, Layout, PaneChange, PaneEntry,
+    TabColor, TabId, TabMeta, TabsState, next_attention, pane_change, waiting_count,
 };
 
 use self::divider_drag::DividerDrag;
@@ -225,6 +225,12 @@ pub struct WorkspaceView {
     pulse_running: bool,
     explorer: Entity<FileExplorer>,
     explorer_visible: bool,
+    /// Whether the file explorer and viewer panes work: the "File explorer and viewer" switch
+    /// as last applied (it stays on while unsaved edits wait for an answer).
+    file_panes_on: bool,
+    /// Set while the discard questions for turning the panes off wait for answers, so a second
+    /// "off" cannot start a second set. Cleared by Cancel and by the end of the chain.
+    file_panes_off_pending: bool,
     /// The file viewer's share of the window width while its divider is dragged; otherwise
     /// the share saved in the settings (`viewer_fraction`), the same in every tab.
     viewer_drag: DividerDrag<f32>,
@@ -244,6 +250,7 @@ pub struct WorkspaceView {
     settings: SettingsPane,
     _hook_messages: Task<()>,
     _explorer_events: Subscription,
+    _file_panes_observer: Subscription,
     /// `History::saved_cleared` / `forgets` as last handled by `scrub_retained_commands`.
     history_seen: (u32, u32),
     _history_observer: Subscription,
@@ -296,6 +303,10 @@ impl WorkspaceView {
         let explorer = cx.new(|cx| FileExplorer::new(agents, window, cx));
         let explorer_events = cx.subscribe_in(&explorer, window, Self::on_explorer_event);
         window.set_window_title(about::APP_NAME);
+        let file_panes_observer = cx.observe_global_in::<settings_file::AppSettings>(
+            window,
+            Self::apply_file_panes_setting,
+        );
         let history_seen = history_counts(cx);
         let history_observer = cx.observe_global::<history::History>(Self::scrub_retained_commands);
         Self {
@@ -306,6 +317,8 @@ impl WorkspaceView {
             pulse_running: sidebar::pulse_allowed(window),
             explorer,
             explorer_visible: false,
+            file_panes_on: settings_file::file_panes(cx).panes_enabled(),
+            file_panes_off_pending: false,
             viewer_drag: DividerDrag::new(Self::save_viewer_fraction),
             explorer_drag: DividerDrag::new(Self::save_explorer_width),
             renaming: None,
@@ -320,6 +333,7 @@ impl WorkspaceView {
             settings: SettingsPane::new(cx),
             _hook_messages: hook_task,
             _explorer_events: explorer_events,
+            _file_panes_observer: file_panes_observer,
             history_seen,
             _history_observer: history_observer,
         }
@@ -571,6 +585,11 @@ impl WorkspaceView {
         let Some(index) = self.tab_index(tab_id) else {
             return;
         };
+        if let FileLinkAction::OpenExternally(path) = settings_file::file_panes(cx).file_link(&path)
+        {
+            Self::offer_external_open(path, window, cx);
+            return;
+        }
         let viewer = match &self.tabs[index].viewer {
             Some(viewer) => viewer.view.clone(),
             None => {
@@ -1207,6 +1226,9 @@ impl WorkspaceView {
     }
 
     fn toggle_explorer(&mut self, cx: &mut Context<Self>) {
+        if !settings_file::file_panes(cx).allows(PaneEntry::ToggleExplorer) {
+            return;
+        }
         self.explorer_visible = !self.explorer_visible;
         if self.explorer_visible {
             self.sync_explorer(cx);
@@ -1244,6 +1266,178 @@ impl WorkspaceView {
         };
         self.explorer
             .update(cx, |explorer, cx| explorer.set_root(root, cd, cx));
+    }
+
+    /// With the panes off, a file link asks whether to open the file with the system's
+    /// handler (a program or script there may run, so it is not done unasked).
+    fn offer_external_open(path: PathBuf, window: &mut Window, cx: &mut App) {
+        let name = format!("{path:?}");
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let path = path.clone();
+            alert
+                .title("Open externally?")
+                .description(format!(
+                    "The file explorer and viewer are off. Open {name} with the system's \
+                     default application?"
+                ))
+                .ok_text("Open externally")
+                .show_cancel(true)
+                .on_ok(move |_, _, cx| {
+                    cx.open_with_system(&path);
+                    true
+                })
+        });
+    }
+
+    /// The ids of tabs whose viewer shows a file with unsaved edits.
+    fn unsaved_viewer_tabs(&self, cx: &App) -> Vec<u64> {
+        self.tabs
+            .iter()
+            .filter(|tab| {
+                tab.viewer
+                    .as_ref()
+                    .is_some_and(|viewer| viewer.view.read(cx).is_dirty())
+            })
+            .map(|tab| tab.id)
+            .collect()
+    }
+
+    /// Settings changed: show or drop the file panes to match the switch. Turning it off with
+    /// unsaved edits puts the switch back on and asks (see `refuse_file_panes_off`).
+    fn apply_file_panes_setting(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let wanted = settings_file::file_panes(cx).panes_enabled();
+        let shown = self.file_panes_on;
+        let unsaved = if shown && !wanted {
+            self.unsaved_viewer_tabs(cx)
+        } else {
+            Vec::new()
+        };
+        match pane_change(shown, wanted, unsaved.len()) {
+            PaneChange::Unchanged => {}
+            PaneChange::Show => {
+                self.file_panes_on = true;
+                cx.notify();
+            }
+            PaneChange::Hide => self.drop_file_panes(window, cx),
+            PaneChange::ResolveEdits => self.refuse_file_panes_off(unsaved, window, cx),
+        }
+    }
+
+    /// The page's switch (or a hand edit) already wrote "off": write "on" back (settings.json
+    /// is off for a moment, see PLAN.md) and start the discard questions, unless a chain of
+    /// them is already waiting for answers.
+    fn refuse_file_panes_off(
+        &mut self,
+        unsaved: Vec<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        settings_file::update(cx, |settings| {
+            settings.file_panes = FeatureSwitch::new(true);
+        });
+        if self.file_panes_off_pending {
+            return;
+        }
+        self.file_panes_off_pending = true;
+        Self::confirm_next(cx.entity().downgrade(), unsaved, window, cx);
+    }
+
+    fn confirm_next(
+        workspace: WeakEntity<Self>,
+        unsaved: Vec<u64>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.defer(cx, move |window, cx| {
+            Self::confirm_file_panes_off(workspace, unsaved, window, cx);
+        });
+    }
+
+    /// Ask, with the viewer's own discard prompt, about each unsaved file in turn. Cancel
+    /// anywhere leaves everything as it was; after the last answer the switch goes off.
+    fn confirm_file_panes_off(
+        workspace: WeakEntity<Self>,
+        mut unsaved: Vec<u64>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(tab_id) = unsaved.pop() else {
+            Self::finish_file_panes_off(&workspace, window, cx);
+            return;
+        };
+        let _ = workspace.update(cx, |workspace, cx| {
+            workspace.ask_to_discard(tab_id, unsaved, window, cx);
+        });
+    }
+
+    /// Every edit may go: drop the panes and write the switch off. The chain is over.
+    fn finish_file_panes_off(workspace: &WeakEntity<Self>, window: &mut Window, cx: &mut App) {
+        let alive = workspace.update(cx, |workspace, cx| {
+            workspace.file_panes_off_pending = false;
+            workspace.drop_file_panes(window, cx);
+        });
+        if alive.is_err() {
+            return;
+        }
+        settings_file::update(cx, |settings| {
+            settings.file_panes = FeatureSwitch::new(false);
+        });
+    }
+
+    /// One step of the chain: the tab's discard prompt, then the next file. A tab closed
+    /// meanwhile is skipped.
+    fn ask_to_discard(
+        &mut self,
+        tab_id: u64,
+        rest: Vec<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let weak = cx.entity().downgrade();
+        let viewer = self
+            .tab_index(tab_id)
+            .and_then(|index| self.tabs[index].viewer.as_ref())
+            .map(|viewer| viewer.view.clone());
+        let Some(viewer) = viewer else {
+            Self::confirm_next(weak, rest, window, cx);
+            return;
+        };
+        let cancelled = weak.clone();
+        viewer.update(cx, |viewer, cx| {
+            viewer.discard_then_or(
+                window,
+                cx,
+                move |_, window, cx| {
+                    Self::confirm_next(weak.clone(), rest.clone(), window, cx);
+                },
+                move |cx| {
+                    let _ = cancelled.update(cx, |workspace, _| {
+                        workspace.file_panes_off_pending = false;
+                    });
+                },
+            );
+        });
+    }
+
+    /// Hide both panes and stop their work: the explorer loses its folder (and watches), the
+    /// viewers go with their files and watches. Widths stay in the settings.
+    fn drop_file_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.file_panes_on = false;
+        self.explorer_visible = false;
+        self.explorer.update(cx, |explorer, cx| {
+            explorer.set_root(None, CdAvailability::Unavailable, cx)
+        });
+        for tab in &mut self.tabs {
+            if let Some(viewer) = tab.viewer.take() {
+                viewer
+                    .view
+                    .update(cx, |viewer, cx| viewer.forget_image(window, cx));
+            }
+        }
+        if !self.settings.shows_page() {
+            self.focus_active(window, cx);
+        }
+        cx.notify();
     }
 
     fn on_explorer_event(
@@ -1532,6 +1726,7 @@ impl Render for WorkspaceView {
             .active_tab()
             .filter(|_| !self.settings.shows_page())
             .map(|tab| tab.view.clone());
+        let file_panes = settings_file::file_panes(cx);
         let viewer = self.active_viewer(cx);
         let viewer_width = pane_width::viewer_width(
             self.viewer_fraction(cx),
@@ -1640,7 +1835,9 @@ impl Render for WorkspaceView {
                             .gap_1()
                             .occlude()
                             .child(self.sidebar_toggle(cx))
-                            .child(self.explorer_toggle(cx))
+                            .when(file_panes.panes_enabled(), |buttons| {
+                                buttons.child(self.explorer_toggle(cx))
+                            })
                             .child(about::about_button())
                             .child(self.settings_button(cx)),
                     ),
@@ -1829,6 +2026,246 @@ mod tests {
         // A retained workspace must not keep writing after the lock can change owners.
         workspace.read_with(&cx, |workspace, cx| workspace.save_tabs(cx));
         assert!(snapshots.try_recv().is_err());
+    }
+
+    /// A window with one tab, an in-memory settings file and a text file to open.
+    struct PanesHarness {
+        cx: gpui_kit::VisualTestContext,
+        workspace: Entity<WorkspaceView>,
+        folder: PathBuf,
+        file: PathBuf,
+    }
+
+    impl PanesHarness {
+        fn new(name: &str, cx: &mut gpui_kit::TestAppContext) -> Self {
+            use gpui_kit::VisualTestContext;
+            use gpui_kit::component::Root;
+            use std::cell::RefCell;
+
+            cx.update(|cx| {
+                gpui_kit::init(cx);
+                settings_file::init_in_memory(cx);
+                crate::terminal_element::init(cx);
+                crate::terminal_view::init(cx);
+                init(cx);
+            });
+            let folder =
+                std::env::temp_dir().join(format!("agentws-{name}-{}", std::process::id()));
+            std::fs::create_dir_all(&folder).unwrap();
+            let file = folder.join("note.txt");
+            std::fs::write(&file, "hello").unwrap();
+            #[cfg(windows)]
+            let (program, args) = ("cmd", vec!["/C", "exit 0"]);
+            #[cfg(not(windows))]
+            let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+            let spec = LaunchSpec::new(
+                SessionKind::Shell,
+                Some(program.into()),
+                args.into_iter().map(String::from).collect(),
+                None,
+            );
+            let captured = Rc::new(RefCell::new(None));
+            let capture = captured.clone();
+            let window = cx.add_window(move |window, cx| {
+                let (_, messages) = futures::channel::mpsc::unbounded();
+                let workspace = cx.new(|cx| {
+                    WorkspaceView::new(
+                        Rc::from([]),
+                        None,
+                        messages,
+                        Rc::new(tabs_file::TabsWriter::new(false)),
+                        window,
+                        cx,
+                    )
+                });
+                workspace.update(cx, |workspace, cx| {
+                    workspace.open_tab(spec, window, cx).unwrap();
+                });
+                *capture.borrow_mut() = Some(workspace.clone());
+                Root::new(workspace, window, cx)
+            });
+            let workspace = captured.borrow().clone().unwrap();
+            let cx = VisualTestContext::from_window(window.into(), cx);
+            cx.run_until_parked();
+            Self {
+                cx,
+                workspace,
+                folder,
+                file,
+            }
+        }
+
+        fn widths(&mut self) -> (ViewerFraction, ExplorerWidth) {
+            self.cx.update(|_, cx| {
+                let settings = settings_file::settings(cx);
+                (settings.file_viewer_fraction, settings.file_explorer_width)
+            })
+        }
+
+        /// Saves widths other than the defaults and returns them.
+        fn save_widths(&mut self) -> (ViewerFraction, ExplorerWidth) {
+            self.cx.update(|_, cx| {
+                settings_file::preview(cx, |settings| {
+                    settings.file_viewer_fraction = ViewerFraction::new(0.4);
+                    settings.file_explorer_width = ExplorerWidth::new(321.);
+                });
+            });
+            self.widths()
+        }
+
+        fn set_panes(&mut self, on: bool) {
+            self.cx.update(|_, cx| {
+                settings_file::update(cx, |settings| {
+                    settings.file_panes = FeatureSwitch::new(on);
+                });
+            });
+            self.cx.run_until_parked();
+        }
+
+        fn open_file(&mut self) {
+            let file = self.file.clone();
+            let workspace = self.workspace.clone();
+            self.cx.update(|window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    let id = workspace.tabs[0].id;
+                    workspace.open_file_in(id, file, FilePlace::default(), window, cx);
+                });
+            });
+            self.cx.run_until_parked();
+        }
+
+        fn toggle_explorer(&mut self) {
+            let workspace = self.workspace.clone();
+            self.cx.update(|_, cx| {
+                workspace.update(cx, |workspace, cx| workspace.toggle_explorer(cx))
+            });
+        }
+
+        /// (panes on, explorer shown, the first tab's viewer).
+        fn state(&mut self) -> (bool, bool, Option<WeakEntity<FileViewer>>) {
+            self.workspace.read_with(&self.cx, |workspace, _| {
+                (
+                    workspace.file_panes_on,
+                    workspace.explorer_visible,
+                    workspace.tabs[0]
+                        .viewer
+                        .as_ref()
+                        .map(|v| v.view.downgrade()),
+                )
+            })
+        }
+
+        fn mark_dirty(&mut self, viewer: &WeakEntity<FileViewer>, dirty: bool) {
+            self.cx.update(|_, cx| {
+                viewer
+                    .upgrade()
+                    .unwrap()
+                    .update(cx, |viewer, _| viewer.mark_dirty_for_test(dirty));
+            });
+        }
+
+        fn switch_on(&mut self) -> bool {
+            self.cx
+                .update(|_, cx| settings_file::file_panes(cx).panes_enabled())
+        }
+
+        fn pending(&mut self) -> bool {
+            self.workspace
+                .read_with(&self.cx, |workspace, _| workspace.file_panes_off_pending)
+        }
+
+        /// Opens the file and the explorer, then makes the file's edits unsaved.
+        fn open_dirty_viewer(&mut self) -> WeakEntity<FileViewer> {
+            self.toggle_explorer();
+            self.open_file();
+            let (on, explorer, viewer) = self.state();
+            assert!(on && explorer);
+            let viewer = viewer.expect("the viewer opens while the panes are on");
+            self.mark_dirty(&viewer, true);
+            viewer
+        }
+    }
+
+    impl Drop for PanesHarness {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.folder);
+        }
+    }
+
+    #[gpui::test]
+    fn file_panes_switch_refuses_off_with_unsaved_edits(cx: &mut gpui_kit::TestAppContext) {
+        let mut h = PanesHarness::new("panes-refuse", cx);
+        let viewer = h.open_dirty_viewer();
+
+        h.set_panes(false);
+        let (on, explorer, kept) = h.state();
+        assert!(on && explorer && kept.is_some());
+        assert!(h.switch_on());
+        assert!(h.pending(), "the discard question waits for an answer");
+        // A second "off" while the question is open starts no second chain.
+        h.set_panes(false);
+        assert!(h.switch_on() && h.pending());
+
+        // Cancel ends the chain: nothing closes, and a later "off" asks again.
+        h.cx.simulate_keystrokes("escape");
+        h.cx.run_until_parked();
+        assert!(!h.pending());
+        assert!(h.state().0 && h.switch_on() && viewer.upgrade().is_some());
+        h.set_panes(false);
+        assert!(h.pending());
+    }
+
+    #[gpui::test]
+    fn file_panes_switch_off_after_discarding_every_edit(cx: &mut gpui_kit::TestAppContext) {
+        let mut h = PanesHarness::new("panes-discard", cx);
+        let viewer = h.open_dirty_viewer();
+
+        h.set_panes(false);
+        assert!(h.pending());
+        // Discard is the dialog's confirm button.
+        h.cx.simulate_keystrokes("enter");
+        h.cx.run_until_parked();
+        let (on, explorer, none) = h.state();
+        assert!(!on && !explorer && none.is_none());
+        assert!(!h.switch_on() && !h.pending());
+        assert!(viewer.upgrade().is_none(), "the viewer must be dropped");
+    }
+
+    #[gpui::test]
+    fn file_panes_switch_hides_both_panes_and_keeps_widths(cx: &mut gpui_kit::TestAppContext) {
+        let mut h = PanesHarness::new("panes-widths", cx);
+        let saved_widths = h.save_widths();
+
+        // On: the explorer toggles and a file opens in the viewer.
+        h.toggle_explorer();
+        h.open_file();
+        let (on, explorer, viewer) = h.state();
+        assert!(on && explorer);
+        let viewer = viewer.expect("the viewer opens while the panes are on");
+
+        // Edits resolved: both panes go, the viewer entity (and its watcher) is dropped.
+        h.mark_dirty(&viewer, false);
+        h.set_panes(false);
+        let (on, explorer, none) = h.state();
+        assert!(!on && !explorer && none.is_none());
+        assert!(viewer.upgrade().is_none(), "the viewer must be dropped");
+        assert_eq!(h.widths(), saved_widths);
+
+        // Off: the toggle does nothing, a file link opens no viewer.
+        h.toggle_explorer();
+        h.open_file();
+        let (_, explorer, none) = h.state();
+        assert!(!explorer && none.is_none());
+        assert_eq!(h.widths(), saved_widths);
+
+        // On again: the toggle works, the widths are what they were.
+        h.set_panes(true);
+        h.toggle_explorer();
+        let (on, explorer, none) = h.state();
+        assert!(on && explorer && none.is_none());
+        assert_eq!(h.widths(), saved_widths);
+        h.open_file();
+        assert!(h.state().2.is_some());
     }
 
     #[gpui::test]

@@ -75,7 +75,7 @@ pub fn render(
                         .outline()
                         .small()
                         .w(px(234.))
-                        .tooltip("Show settings.json in the file viewer")
+                        .tooltip("Show settings.json in the file viewer (or the system's app)")
                         .on_click(on_open_file),
                 ),
         )
@@ -206,6 +206,22 @@ fn workspace_groups() -> Vec<SettingGroup> {
             )
             .keywords(["last command", "suggestion", "session", "history"]),
         ]),
+        SettingGroup::new().title("Files").item(
+            switch_row(
+                "File explorer and viewer",
+                "Show the file explorer and the file viewer (Ctrl+Shift+|, the title bar \
+                 button, Ctrl+clicked file links). Off: both panes are hidden and their \
+                 buttons and shortcut do nothing, no folders are scanned or watched and no \
+                 files loaded, open files are closed (you are asked first when one has unsaved \
+                 edits; Cancel keeps this on), and file links offer to open the file with \
+                 the system's application. Pane widths are kept.",
+                SettingsField::new(
+                    |settings| settings.file_panes.is_on(),
+                    |settings, value| settings.file_panes = FeatureSwitch::new(value),
+                ),
+            )
+            .keywords(["files", "explorer", "viewer", "editor", "panes", "folder"]),
+        ),
     ]
 }
 
