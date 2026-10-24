@@ -399,10 +399,15 @@ impl FileExplorer {
         if target == path {
             return Ok(None);
         }
-        if fs::symlink_metadata(&target).is_ok() && !same_entry(path, &target) {
-            return Err(format!("\"{name}\" already exists"));
-        }
-        fs::rename(path, &target).map_err(|err| format!("Couldn't rename: {err}"))?;
+        let renamed = if same_entry(path, &target) {
+            fs::rename(path, &target)
+        } else {
+            rename_no_replace(path, &target)
+        };
+        renamed.map_err(|err| match err.kind() {
+            io::ErrorKind::AlreadyExists => format!("\"{name}\" already exists"),
+            _ => format!("Couldn't rename: {err}"),
+        })?;
         self.expanded.rename(path, &target);
         Ok(Some(target))
     }
@@ -793,6 +798,44 @@ fn create_file(folder: &Path, name: &str) -> Result<Option<PathBuf>, String> {
     Ok(Some(path))
 }
 
+/// Rename `from` to `to`, failing with `AlreadyExists` instead of replacing an entry at `to`.
+/// On Linux the kernel checks and renames in one step, so an entry created meanwhile is never
+/// replaced; elsewhere (and on file systems without that rename) a check comes first.
+fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let c_path = |path: &Path| {
+            CString::new(path.as_os_str().as_bytes())
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
+        };
+        let (c_from, c_to) = (c_path(from)?, c_path(to)?);
+        // SAFETY: both pointers are NUL-terminated strings that outlive the call.
+        let result = unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                c_from.as_ptr(),
+                libc::AT_FDCWD,
+                c_to.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        if result == 0 {
+            return Ok(());
+        }
+        let err = io::Error::last_os_error();
+        if !matches!(err.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS)) {
+            return Err(err);
+        }
+    }
+    if fs::symlink_metadata(to).is_ok() {
+        return Err(io::ErrorKind::AlreadyExists.into());
+    }
+    fs::rename(from, to)
+}
+
 /// Remove `path`: a folder with its contents, a symlink itself (not its target).
 fn remove_entry(path: &Path) -> io::Result<()> {
     match fs::symlink_metadata(path) {
@@ -840,4 +883,33 @@ fn entry_chevron(row: &TreeRow, cx: &App) -> AnyElement {
             .into_any_element();
     }
     div().w(px(INDENT)).flex_none().into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rename_never_replaces_an_existing_entry() {
+        let folder = std::env::temp_dir().join(format!(
+            "agentws-rename-{}-{}",
+            std::process::id(),
+            agent_status::now_micros()
+        ));
+        fs::create_dir_all(&folder).unwrap();
+        let (from, to) = (folder.join("from.txt"), folder.join("to.txt"));
+        fs::write(&from, "moved").unwrap();
+        fs::write(&to, "kept").unwrap();
+
+        let err = rename_no_replace(&from, &to).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&to).unwrap(), "kept");
+        assert_eq!(fs::read_to_string(&from).unwrap(), "moved");
+
+        let free = folder.join("free.txt");
+        rename_no_replace(&from, &free).unwrap();
+        assert_eq!(fs::read_to_string(&free).unwrap(), "moved");
+        assert!(!from.exists());
+        fs::remove_dir_all(&folder).unwrap();
+    }
 }

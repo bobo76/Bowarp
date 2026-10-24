@@ -10,6 +10,9 @@
 //! labeled and badged, how far the mouse wheel scrolls, the About dialog's version line and the
 //! user's settings file. No UI dependency.
 
+// Long test scenarios are exempt from the function length limit (docs/code-quality.md).
+#![cfg_attr(test, allow(clippy::too_many_lines))]
+
 mod about;
 mod attention;
 mod file_pane_features;

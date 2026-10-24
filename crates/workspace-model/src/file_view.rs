@@ -182,6 +182,13 @@ pub fn decode_text(bytes: Vec<u8>) -> Result<String, Unviewable> {
     String::from_utf8(bytes).map_err(|_| Unviewable::NotUtf8)
 }
 
+/// Whether saving over the file would drop changes made outside the viewer: the file read now
+/// (`on_disk`) differs from `saved`, the text last read or saved. A file that can't be read
+/// (deleted, say) has nothing to lose.
+pub fn changed_on_disk(saved: &str, on_disk: std::io::Result<Vec<u8>>) -> bool {
+    on_disk.is_ok_and(|bytes| bytes != saved.as_bytes())
+}
+
 /// Where and why JSON could not be read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonError {

@@ -5,6 +5,9 @@
 //! events. The hook forwards each event over a local socket to the app's [`HookServer`], and
 //! [`AgentState`] turns the events into an [`AgentStatus`].
 
+// Long test scenarios are exempt from the function length limit (docs/code-quality.md).
+#![cfg_attr(test, allow(clippy::too_many_lines))]
+
 mod ipc;
 mod mode;
 mod settings;

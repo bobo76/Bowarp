@@ -463,10 +463,14 @@ impl Drop for Session {
 
 #[cfg(unix)]
 fn kill_child(pid: Option<u32>) {
-    let Some(pid) = pid else {
+    // A pid that doesn't fit would wrap into another process group (or -1: every process).
+    let Some(group) = pid
+        .and_then(|pid| libc::pid_t::try_from(pid).ok())
+        .filter(|&pid| pid > 0)
+    else {
         return;
     };
-    log::warn!("child {pid} ignored SIGHUP, killing its process group");
+    log::warn!("child {group} ignored SIGHUP, killing its process group");
     // SAFETY: `kill` has no memory-safety preconditions. The child is a session leader
     // (alacritty `setsid`s it), so its pid is also its process group id; signalling the group
     // also ends the tools it started there. The reaper thread may reap the child between the
@@ -474,7 +478,7 @@ fn kill_child(pid: Option<u32>) {
     // only once the whole group is gone could a new process group take that id, a narrow
     // residual race (a pidfd taken at spawn would close it).
     unsafe {
-        libc::kill(-(pid as i32), libc::SIGKILL);
+        libc::kill(-group, libc::SIGKILL);
     }
 }
 

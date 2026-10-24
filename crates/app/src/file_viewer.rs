@@ -197,6 +197,27 @@ impl FileViewer {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn edit_for_test(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(file) = self.open_file_mut() {
+            let editor = file.editor.clone();
+            file.dirty = true;
+            editor.update(cx, |editor, cx| {
+                editor.set_value(text.to_owned(), window, cx)
+            });
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn save_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save(window, cx);
+    }
+
     /// Whether the file shown has edits not saved.
     pub(crate) fn is_dirty(&self) -> bool {
         self.open_file().is_some_and(|file| file.dirty)
@@ -327,7 +348,39 @@ impl FileViewer {
         cx.notify();
     }
 
+    /// Save the edits, asking first when the file changed on disk since it was read (an agent
+    /// may have written it while the edits waited).
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+        let Some(file) = self.open_file() else {
+            return;
+        };
+        if !file_view::changed_on_disk(&file.saved, fs::read(&path)) {
+            self.write(window, cx);
+            return;
+        }
+        let name = self.file_name();
+        let viewer = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let viewer = viewer.clone();
+            alert
+                .title(format!("\"{name}\" changed on disk"))
+                .description("Saving replaces the changes made outside the viewer.")
+                .ok_text("Overwrite")
+                .ok_variant(ButtonVariant::Danger)
+                .show_cancel(true)
+                .on_ok(move |_, window, cx| {
+                    let _ = viewer.update(cx, |viewer, cx| viewer.write(window, cx));
+                    true
+                })
+        });
+    }
+
+    /// Write the editor's text to the file. In place, not through a renamed temporary file:
+    /// that would replace a symlink with a file and drop the file's permissions and owner.
+    fn write(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(path) = self.path.clone() else {
             return;
         };

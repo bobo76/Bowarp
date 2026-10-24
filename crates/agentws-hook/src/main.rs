@@ -1,6 +1,9 @@
 //! Forwards hook JSON to the Agent Workspace session that started the agent. Claude Code hooks
 //! always exit 0 and print nothing; the Copilot extension requests errors with `--report-errors`.
 
+// Long test scenarios are exempt from the function length limit (docs/code-quality.md).
+#![cfg_attr(test, allow(clippy::too_many_lines))]
+
 use std::ffi::OsStr;
 use std::io::{self, Read};
 

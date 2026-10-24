@@ -233,9 +233,10 @@ fn notification_groups() -> Vec<SettingGroup> {
             switch_row(
                 "In-app notifications",
                 "Show a toast when a background tab's agent needs attention, is ready for review \
-             or exits. Off: no such toasts; status dots, attention badges and the sidebar \
-             status stay. Toasts for your own actions (such as save errors) and persistent \
-             warnings always show. Sound is a separate setting.",
+             or exits. Off: no such toasts, except when an agent fails or crashes; status \
+             dots, attention badges and the sidebar status stay. Toasts for your own actions \
+             (such as save errors) and persistent warnings always show. Sound is a separate \
+             setting.",
                 SettingsField::new(
                     |settings| settings.in_app_notifications.is_on(),
                     |settings, value| settings.in_app_notifications = FeatureSwitch::new(value),

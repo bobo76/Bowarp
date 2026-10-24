@@ -5,6 +5,42 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Refuse an unknown session kind on the command line (such as a typo, or a folder given
+  without `shell`/`claude`/`copilot`) with a usage message instead of opening a shell.
+
+## 0.2.24
+
+- Add an **In-app notifications** switch (Settings → Notifications). Off hides agent
+  status toasts (Needs attention, Ready for review, clean exits); status and attention
+  badges stay, and a crashed agent, user-action feedback and persistent warnings still show.
+
+## 0.2.23
+
+- Add a **File explorer and viewer** switch (Settings → Workspace). Off resolves unsaved
+  edits first (Discard or Cancel), then hides both panes and their shortcuts and stops
+  watching folders; terminal file links ask to open externally. Pane widths stay saved.
+
+## 0.2.22
+
+- Add a Workspace settings page with **Restore previous tabs** and **Remember last shell
+  command** switches. Turning restoring off takes effect at the next start and leaves the
+  saved tab snapshot untouched; clearing saved session commands also removes them from that
+  retained snapshot. Remembering the last command needs both Command history and restoring
+  on, and is shown disabled otherwise.
+
+## 0.2.21
+
+- Add **Command history**, **History popup** and **Inline suggestions** switches
+  (Settings → Terminal); the last two are disabled while command history is off. Existing
+  history is kept, not erased, while a feature is off.
+- Add **Clear history** and **Clear saved session commands** buttons that act after a confirmation;
+  a failed clear shows an error.
+
+## 0.2.20
+
+- Add **Group hover cards** and **Activity animations** switches (Settings → Appearance).
+  Controls that depend on another switch now show as disabled with the reason.
+
 ## 0.2.19
 
 - Keep workspace shortcuts from also reaching the terminal, including preventing

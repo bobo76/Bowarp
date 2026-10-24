@@ -2,7 +2,7 @@
 
 Feature spec: [FEATURES.md](FEATURES.md)
 
-## Status (0.2.19, 2026-10-24)
+## Status (0.2.24, 2026-10-24)
 
 [FEATURES.md](FEATURES.md) is the target; what is not built yet is at the top of the
 backlog below. Details of finished work are in the git history and [CHANGELOG.md](CHANGELOG.md).
@@ -12,16 +12,14 @@ where it has to be), remove it from this file; the git history keeps the record.
 it stays, under "Fixed, not tested yet" if only the manual check is missing. Remove items
 when the user confirms they passed; retain skipped or partially passed items.
 
-**0.2.19 verification, 2026-10-24:** formatting, strict workspace all-target Clippy,
-all 408 workspace tests and the release workspace build passed in WSL Ubuntu with
-`--locked` (where supported). Tests used Linux-native temporary storage for Unix
-permission checks. Native Windows checks are blocked locally by missing MSVC build tools
-(`link.exe`); Docker Desktop's engine is unavailable. Windows and Ubuntu CI, including
-the separate Ubuntu Clippy job, must pass before tagging. Native Windows/Linux UI checks,
-packaged-app smoke tests and About version/commit checks remain pending. Publishing is
-not verification.
-
-**Since 0.2.19:** `cargo test` runs 454 tests (Linux).
+**0.2.24 verification (Linux, 2026-10-24):** after each of 0.2.20-0.2.24, formatting,
+strict workspace all-target Clippy, build and all tests passed locally; `cargo test` runs
+454 tests. The earlier 0.2.19 run (408 tests) also passed the release workspace build in WSL
+Ubuntu with `--locked`. Native Windows checks are blocked locally by missing MSVC build tools
+(`link.exe`). Windows and Ubuntu CI, including the separate Ubuntu Clippy job, have not been
+checked for 0.2.19-0.2.24 (`v0.2.19` was never tagged; `v0.2.20`-`v0.2.24` were pushed before
+CI was checked, contrary to RELEASE.md). Native Windows/Linux UI checks, packaged-app smoke
+tests and About version/commit checks remain pending. Publishing is not verification.
 
 **PR verification:** Ubuntu build/tests, strict Clippy and Windows build/tests/package
 passed for `fbfa8df`. CodeQL blocked publication because the plugin cleanup warning logged
@@ -97,7 +95,6 @@ automated checks must pass again for the corrected commit before merge or taggin
   leave the terminal and viewer below their usual minimums), and saved in pixels
   (`file_explorer_width`) with the same rules as the viewer width: once when the drag ends,
   not on the settings page, not while the file is broken, other instances after a reload.
-
 - File explorer and viewer switch (`file_panes`): turning it off closes every open file, so a
   tab's viewer starts empty after turning it on again (the explorer stays hidden until its
   button or Ctrl+Shift+| is used). `tabs.json` never held a tab's open file, and no file
@@ -174,6 +171,22 @@ dependency is stated.
   work in tests; manually check the settings UI and unsaved-edit flow.
 
 ## Fixed, not tested yet
+
+Feature switches 0.2.20-0.2.24 (Linux automated tests pass; Xvfb-driven except as noted).
+Manual Linux/Windows checks pending:
+
+- Running badge pulse with Activity animations on/off: not drivable under Xvfb (software
+  rendering disables the pulse); only the pure decision is unit-tested.
+- Terminal history switches: confirming the Clear history / Clear saved session commands
+  dialogs, the last-session suggestion across a real restart, zsh and PowerShell, and two
+  instances running together.
+- Workspace switches: toggling Restore previous tabs / Remember last shell command
+  mid-session and accepting the last-command suggestion with Right; not driven.
+- File explorer and viewer switch: the "Open externally?" dialog and system launch, "Open
+  settings file" while off, a hand edit of `settings.json` to off with an unsaved file, the
+  prompt chain with two or more unsaved files, and Windows.
+- In-app notifications switch: the "Needs attention" and "Exited" toasts (only Ready for
+  review was driven; the rest are covered by a gpui test).
 
 - File panes off, last Discard (fo-files review): `drop_file_panes` calls `focus_active` while
   the Discard dialog is closing; the dialog may restore focus to the dropped viewer.

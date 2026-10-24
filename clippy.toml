@@ -1,0 +1,8 @@
+# Clippy configuration; see docs/code-quality.md ("Size limits").
+# The MSRV comes from `rust-version` in Cargo.toml, so it is not repeated here.
+
+# `clippy::too_many_lines`, enabled in Cargo.toml's `[workspace.lints.clippy]`.
+too-many-lines-threshold = 100
+
+# `clippy::too_many_arguments` (on by default); past this, pass a struct.
+too-many-arguments-threshold = 7

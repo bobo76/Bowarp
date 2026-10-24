@@ -3,17 +3,6 @@
 A terminal workspace for running Claude Code, Copilot CLI and shell sessions side by side, with
 per-tab agent status. Feature spec: [FEATURES.md](FEATURES.md). Plan and status: [PLAN.md](PLAN.md).
 
-## What's new in 0.2.19
-
-Workspace shortcuts no longer leak control keys into the terminal: duplicating a tab with
-Ctrl+Shift+D does not send EOF to the original session. Last-command snapshots save in the
-background, and normal close waits for the latest state. Copilot permission plugins are
-cleaned up on session shutdown and after exited instances; agent argument settings explain
-Windows path quoting. See the [changelog](CHANGELOG.md#0219) for release notes.
-
-Native Windows/Linux UI checks remain pending; see the [manual check](#manual-check) and
-[six UX improvements checklist](#six-ux-improvements-manual-checks-pending).
-
 ## Install on Windows
 
 Run `agent-workspace-windows-x64-setup.exe` from the latest GitHub release. It installs per user
@@ -59,7 +48,7 @@ The first tab runs a shell by default. To start with an agent or in another fold
 cargo run -p agent-workspace -- [shell|claude|copilot] [project-dir]
 ```
 
-Linting with Clippy, locally and in CI: [docs/code-quality.md](docs/code-quality.md). Running
+Clippy, rustfmt and cargo-deny checks, locally and in CI: [docs/code-quality.md](docs/code-quality.md). Running
 the Linux build and tests on a Windows machine (Docker or WSL):
 [docs/linux-build-on-windows.md](docs/linux-build-on-windows.md).
 

@@ -218,6 +218,7 @@ impl Element for TerminalElement {
         (window.request_layout(style, [], cx), ())
     }
 
+    #[expect(clippy::too_many_lines, reason = "split when next changed")]
     fn prepaint(
         &mut self,
         _: Option<&GlobalElementId>,

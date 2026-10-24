@@ -171,3 +171,15 @@ fn invalid_json_says_where() {
     assert_eq!(err.message, "expected value");
     assert_eq!(err.to_string(), "Line 3, column 1: expected value");
 }
+
+#[test]
+fn only_a_readable_file_with_other_text_has_changed_on_disk() {
+    use std::io;
+    assert!(!changed_on_disk("same", Ok(b"same".to_vec())));
+    assert!(changed_on_disk("mine", Ok(b"agent".to_vec())));
+    assert!(changed_on_disk("mine", Ok(Vec::new())));
+    assert!(!changed_on_disk(
+        "mine",
+        Err(io::ErrorKind::NotFound.into())
+    ));
+}

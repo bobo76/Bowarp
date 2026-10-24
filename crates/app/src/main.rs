@@ -1,5 +1,7 @@
 // No console window behind the app on Windows release builds.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+// Long test scenarios are exempt from the function length limit (docs/code-quality.md).
+#![cfg_attr(test, allow(clippy::too_many_lines))]
 
 mod about;
 mod assets;
@@ -13,6 +15,7 @@ mod instance_lock;
 mod keys;
 mod launcher;
 mod mouse;
+mod processes;
 mod scrollbar;
 mod settings_file;
 mod settings_page;
@@ -41,19 +44,37 @@ use crate::hooks::ClaudeHooks;
 use crate::instance_lock::InstanceLock;
 use crate::workspace_view::{TabOwnership, WorkspaceView};
 
+const USAGE: &str = "usage: agent-workspace [shell|claude|copilot] [project-dir]";
+
 /// Usage: `agent-workspace [shell|claude|copilot] [project-dir]`. `None` without arguments.
 fn launch_spec_from_args() -> Option<LaunchSpec> {
-    let mut args = std::env::args().skip(1);
-    let kind = args.next()?;
-    let folder = args
-        .next()
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok());
-    Some(match kind.as_str() {
-        "claude" => LaunchSpec::claude_code(folder),
-        "copilot" => LaunchSpec::copilot_cli(folder),
-        _ => LaunchSpec::shell(folder),
-    })
+    match parse_launch_args(std::env::args().skip(1), || std::env::current_dir().ok()) {
+        Ok(spec) => spec,
+        Err(message) => {
+            eprintln!("agent-workspace: {message}\n{USAGE}");
+            process::exit(2);
+        }
+    }
+}
+
+/// The launch the arguments (without the program name) ask for; `current_dir` is the folder
+/// when none is given.
+fn parse_launch_args(
+    args: impl IntoIterator<Item = String>,
+    current_dir: impl FnOnce() -> Option<PathBuf>,
+) -> Result<Option<LaunchSpec>, String> {
+    let mut args = args.into_iter();
+    let Some(kind) = args.next() else {
+        return Ok(None);
+    };
+    let launch = match kind.as_str() {
+        "claude" => LaunchSpec::claude_code,
+        "copilot" => LaunchSpec::copilot_cli,
+        "shell" => LaunchSpec::shell,
+        _ => return Err(format!("unknown session kind {kind:?}")),
+    };
+    let folder = args.next().map(PathBuf::from).or_else(current_dir);
+    Ok(Some(launch(folder)))
 }
 
 /// Markers a running Claude Code sets on its children. When this app is started from inside a
@@ -147,6 +168,7 @@ fn main() {
             cx.on_window_closed(move |cx, _| {
                 if cx.windows().is_empty() {
                     closing_writer.finish();
+                    history::finish(cx);
                     if let Some(hooks) = &quit_hooks {
                         hooks.remove_settings();
                     }
@@ -277,6 +299,39 @@ fn open_first_tab(
     }
     if let Err(err) = started {
         eprintln!("agent-workspace: failed to start {program}: {err}");
+        instance_lock::release_own();
         process::exit(1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Option<LaunchSpec>, String> {
+        parse_launch_args(args.iter().map(|arg| arg.to_string()), || {
+            Some(PathBuf::from("/cwd"))
+        })
+    }
+
+    #[test]
+    fn launch_args_name_a_kind_then_a_folder() {
+        assert!(parse(&[]).unwrap().is_none());
+        let claude = parse(&["claude", "/project"]).unwrap().unwrap();
+        assert_eq!(claude.kind, SessionKind::ClaudeCode);
+        assert_eq!(claude.cwd, Some(PathBuf::from("/project")));
+        let copilot = parse(&["copilot"]).unwrap().unwrap();
+        assert_eq!(copilot.kind, SessionKind::CopilotCli);
+        assert_eq!(copilot.cwd, Some(PathBuf::from("/cwd")));
+        assert_eq!(parse(&["shell"]).unwrap().unwrap().kind, SessionKind::Shell);
+    }
+
+    #[test]
+    fn unknown_launch_kind_is_refused() {
+        // A typo, or a folder given without a kind, must not open a shell somewhere else.
+        for kind in ["cluade", "/some/project", ""] {
+            let error = parse(&[kind]).unwrap_err();
+            assert!(error.contains(&format!("{kind:?}")), "{error}");
+        }
     }
 }

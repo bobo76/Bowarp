@@ -4,6 +4,9 @@
 //! notified through a [`SessionEvent`] callback; wakeups are coalesced so a burst of output
 //! produces a single [`SessionEvent::Wakeup`] until the renderer calls [`Session::ack_wakeup`].
 
+// Long test scenarios are exempt from the function length limit (docs/code-quality.md).
+#![cfg_attr(test, allow(clippy::too_many_lines))]
+
 mod launch;
 mod palette;
 mod prompt;

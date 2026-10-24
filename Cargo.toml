@@ -28,3 +28,7 @@ serde_json = "1"
 agent-status = { path = "crates/agent-status" }
 term-core = { path = "crates/term-core" }
 workspace-model = { path = "crates/workspace-model" }
+
+# Thresholds live in clippy.toml. Test code is exempt: see each crate root.
+[workspace.lints.clippy]
+too_many_lines = "warn"
