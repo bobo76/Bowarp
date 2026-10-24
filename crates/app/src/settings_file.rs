@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use gpui_kit::component::{ActiveTheme, Theme, ThemeMode};
 use gpui_kit::{App, Global};
 use workspace_model::{
-    FilePaneFeatures, HistoryFeatures, Settings, SettingsFile, UiTheme, WorkspaceFeatures,
+    FilePaneFeatures, HistoryFeatures, NotificationFeatures, Settings, SettingsFile, UiTheme,
+    WorkspaceFeatures,
 };
 
 use crate::window_bounds::config_file;
@@ -84,6 +85,14 @@ pub fn file_panes(cx: &App) -> FilePaneFeatures {
     cx.try_global::<AppSettings>()
         .map_or_else(FilePaneFeatures::default, |settings| {
             FilePaneFeatures::from_settings(settings.0.settings())
+        })
+}
+
+/// What the "In-app notifications" switch allows. On while settings aren't loaded (unit tests).
+pub fn notifications(cx: &App) -> NotificationFeatures {
+    cx.try_global::<AppSettings>()
+        .map_or_else(NotificationFeatures::default, |settings| {
+            NotificationFeatures::from_settings(settings.0.settings())
         })
 }
 

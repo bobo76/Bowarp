@@ -25,6 +25,7 @@ mod launcher_icon;
 pub mod layout;
 pub mod links;
 mod location;
+mod notification_features;
 mod osc133;
 pub mod pane_width;
 mod platform;
@@ -58,6 +59,7 @@ pub use layout::{
     DropTarget, Group, GroupId, Item, Layout, SavedGroup, SavedItem, SavedLayout, TabId,
 };
 pub use location::{Location, display_path};
+pub use notification_features::{NotificationFeatures, ToastKind, exit_toast_kind};
 pub use osc133::{CommandLine, Osc133Scanner, PromptMark, new_mark_token};
 pub use platform::Platform;
 pub use progress::{ProgressScanner, ProgressState};

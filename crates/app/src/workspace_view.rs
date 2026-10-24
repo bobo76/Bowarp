@@ -27,7 +27,8 @@ use workspace_model::layout::Direction;
 use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION, ExplorerWidth, ViewerFraction};
 use workspace_model::{
     Attention, DropTarget, FeatureSwitch, FileLinkAction, GroupId, Layout, PaneChange, PaneEntry,
-    TabColor, TabId, TabMeta, TabsState, next_attention, pane_change, waiting_count,
+    TabColor, TabId, TabMeta, TabsState, ToastKind, exit_toast_kind, next_attention, pane_change,
+    waiting_count,
 };
 
 use self::divider_drag::DividerDrag;
@@ -476,6 +477,13 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let kind = match notice {
+            AgentNotice::Exited(code) => exit_toast_kind(code),
+            AgentNotice::NeedsAttention | AgentNotice::Finished => ToastKind::AgentStatus,
+        };
+        if !settings_file::notifications(cx).shows(kind) {
+            return;
+        }
         let Some(index) = self.tab_index(tab_id) else {
             return;
         };
@@ -2190,6 +2198,66 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.folder);
         }
+    }
+
+    #[gpui::test]
+    fn in_app_notifications_switch_gates_agent_toasts_live(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::component::WindowExt;
+
+        let mut h = PanesHarness::new("toasts-live", cx);
+        let count = |h: &mut PanesHarness| h.cx.update(|window, cx| window.notifications(cx).len());
+        let notify = |h: &mut PanesHarness, notice: AgentNotice| {
+            let workspace = h.workspace.clone();
+            h.cx.update(|window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    let id = workspace.tabs[0].id;
+                    workspace.notify_agent(id, notice, window, cx);
+                })
+            });
+            h.cx.run_until_parked();
+        };
+        let switch_to = |h: &mut PanesHarness, on: bool| {
+            h.cx.update(|_, cx| {
+                settings_file::update(cx, |settings| {
+                    settings.in_app_notifications = FeatureSwitch::new(on);
+                });
+            });
+            h.cx.run_until_parked();
+        };
+        let turn_off = |h: &mut PanesHarness| switch_to(h, false);
+        let turn_on = |h: &mut PanesHarness| switch_to(h, true);
+
+        notify(&mut h, AgentNotice::NeedsAttention);
+        assert_eq!(count(&mut h), 1, "on by default");
+        turn_off(&mut h);
+        assert_eq!(count(&mut h), 1, "turning off keeps what is shown");
+        notify(&mut h, AgentNotice::Finished);
+        notify(&mut h, AgentNotice::Exited(Some(0)));
+        assert_eq!(count(&mut h), 1, "off: no agent status toasts");
+        // Toasts are keyed by tab, so clear them to tell a new one from a replaced one.
+        h.cx.update(|window, cx| window.clear_notifications(cx));
+        h.cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        h.cx.run_until_parked();
+        assert_eq!(count(&mut h), 0);
+        notify(&mut h, AgentNotice::Exited(Some(0)));
+        assert_eq!(count(&mut h), 0, "off: a clean exit does not toast");
+        notify(&mut h, AgentNotice::Exited(Some(1)));
+        assert_eq!(count(&mut h), 1, "off: a failed exit still toasts");
+        // A user-action toast is not an agent toast.
+        h.cx.update(|window, cx| {
+            window.push_notification(Notification::info("feedback"), cx);
+        });
+        assert_eq!(count(&mut h), 2);
+        // Toasts are keyed by tab, so clear them to tell a new one from a replaced one.
+        h.cx.update(|window, cx| window.clear_notifications(cx));
+        h.cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        h.cx.run_until_parked();
+        assert_eq!(count(&mut h), 0);
+        turn_on(&mut h);
+        notify(&mut h, AgentNotice::Exited(Some(0)));
+        assert_eq!(count(&mut h), 1, "on again: toasts return");
     }
 
     #[gpui::test]

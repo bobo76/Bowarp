@@ -59,6 +59,7 @@ pub fn render(
                     page("Appearance", appearance_groups()),
                     page("Terminal", terminal_groups(launchers)),
                     page("Workspace", workspace_groups()),
+                    page("Notifications", notification_groups()),
                     page("About", about_groups(cx)),
                 ])),
         )
@@ -221,6 +222,26 @@ fn workspace_groups() -> Vec<SettingGroup> {
                 ),
             )
             .keywords(["files", "explorer", "viewer", "editor", "panes", "folder"]),
+        ),
+    ]
+}
+
+/// The Notifications page. Sound and long-command switches join it in later steps.
+fn notification_groups() -> Vec<SettingGroup> {
+    vec![
+        SettingGroup::new().title("Toasts").item(
+            switch_row(
+                "In-app notifications",
+                "Show a toast when a background tab's agent needs attention, is ready for review \
+             or exits. Off: no such toasts; status dots, attention badges and the sidebar \
+             status stay. Toasts for your own actions (such as save errors) and persistent \
+             warnings always show. Sound is a separate setting.",
+                SettingsField::new(
+                    |settings| settings.in_app_notifications.is_on(),
+                    |settings, value| settings.in_app_notifications = FeatureSwitch::new(value),
+                ),
+            )
+            .keywords(["toast", "notification", "agent", "alert", "popup"]),
         ),
     ]
 }

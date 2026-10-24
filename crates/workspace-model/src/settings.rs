@@ -79,6 +79,10 @@ pub struct Settings {
     /// system's handler; the pane widths below are kept. See [`crate::FilePaneFeatures`].
     #[serde(deserialize_with = "lenient")]
     pub file_panes: FeatureSwitch<true>,
+    /// Toasts about agents (needs attention, ready for review, exited); status dots and
+    /// badges stay either way. See [`crate::NotificationFeatures`].
+    #[serde(deserialize_with = "lenient")]
+    pub in_app_notifications: FeatureSwitch<true>,
     /// The file viewer's share of the window width, set by dragging its divider (not on the
     /// settings page).
     #[serde(deserialize_with = "lenient")]

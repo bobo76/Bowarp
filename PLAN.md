@@ -21,7 +21,7 @@ the separate Ubuntu Clippy job, must pass before tagging. Native Windows/Linux U
 packaged-app smoke tests and About version/commit checks remain pending. Publishing is
 not verification.
 
-**Since 0.2.19:** `cargo test` runs 448 tests (Linux).
+**Since 0.2.19:** `cargo test` runs 454 tests (Linux).
 
 **PR verification:** Ubuntu build/tests, strict Clippy and Windows build/tests/package
 passed for `fbfa8df`. CodeQL blocked publication because the plugin cleanup warning logged
@@ -30,6 +30,11 @@ automated checks must pass again for the corrected commit before merge or taggin
 
 **Known limitations**
 
+- In-app notifications off drops only the agent status toasts (Needs attention, Ready for
+  review, Agent finished on a clean exit); a toast already shown stays until it hides. A
+  background agent that exits with a nonzero or unknown code still toasts, as do user-action
+  feedback (save, delete, clear history, start failures) and the persistent fallback-shell
+  warning. Agent toasts are keyed per tab, so a new one replaces the tab's earlier one.
 - Not supported in the file viewer: AVIF images (GPUI's decoder lacks it: "The image could
   not be read."), a `#heading` in a document link (the file opens at the top).
 - File viewer images: still WebP files share animated GIF/WebP's 2 MB limit (other images
@@ -109,12 +114,11 @@ automated checks must pass again for the corrected commit before merge or taggin
 
 Run in this order (each stands alone and is tested):
 
-1. Feature options, "In-app notifications" (toasts only; status and badges stay).
-2. Backlog: Notifications and close warnings (split further at its Step 0 size check; adds the
+1. Backlog: Notifications and close warnings (split further at its Step 0 size check; adds the
    "Notification sounds" switch with the sound).
-3. Backlog: Configurable keyboard shortcuts.
-4. Backlog: Window opacity and background blur.
-5. Backlog: Copilot working animation (uses the "Activity animations" switch).
+2. Backlog: Configurable keyboard shortcuts.
+3. Backlog: Window opacity and background blur.
+4. Backlog: Copilot working animation (uses the "Activity animations" switch).
 
 Switches for features not built yet (prompt at the bottom, command separators, agents typed
 at the prompt, long-command completion status) are added with those features, as the
@@ -142,7 +146,7 @@ dependency is stated.
 | Workspace | Restore previous tabs (implemented) | On | Start with a fresh default tab; do not load or update the automatic tab snapshot. Keep ordinary preferences and explicitly saved named workspaces. |
 | Workspace | Remember last shell command (implemented) | On | Do not capture or save new `last_command` values or offer saved ones. Requires command history and automatic tab restoration; showing the suggestion also requires inline suggestions. |
 | Workspace | File explorer and viewer (implemented) | On | Hide both panes and disable their app entry points after resolving unsaved edits. File links offer Open externally; pane widths stay saved and no file is loaded. |
-| Notifications | In-app notifications | On | No agent or long-command toasts; status and attention badges remain. Sound is independently controlled. |
+| Notifications | In-app notifications (implemented) | On | No agent status or long-command toasts (a crashed agent still toasts); status and attention badges remain. Sound is independently controlled. |
 | Notifications | Notification sounds | Off | No agent, long-command or bell sound; retain the volume slider for when enabled. Does not suppress visual status. |
 | Notifications | Long-command completion status | On when built | Do not mark background shell tabs Done/failed or send completion notifications. Keep command tracking for busy-close protection; retain the duration threshold setting. |
 

@@ -493,6 +493,16 @@ Settings → Workspace has three switches, all on by default (`restore_tabs`,
   file" does the same. The pane widths (`file_viewer_fraction`, `file_explorer_width`) are kept.
   Turned on again, the panes work as before; files closed meanwhile stay closed.
 
+### Notifications
+
+Settings → Notifications has one switch, **In-app notifications** (`in_app_notifications`, on
+by default; missing or non-boolean means on). Off (applies live): no toast appears when a
+background tab's agent needs attention, is ready for review or exits cleanly; the sidebar
+status, status dots and attention badges are unchanged, and a toast already on screen stays
+until it hides. An agent that exits with a nonzero or unknown exit code still shows its toast.
+Toasts that answer something you did (save or delete errors, history cleared, failed starts)
+and the persistent fallback-shell warning always show.
+
 ## About
 
 The `i` button in the title bar (after the explorer button) shows the version, with the git
