@@ -1,3 +1,4 @@
+mod busy_close;
 mod divider_drag;
 mod settings_pane;
 mod sidebar_rows;
@@ -225,6 +226,8 @@ pub struct WorkspaceView {
     /// GPU capability is fixed for the lifetime of this window.
     pulse_running: bool,
     explorer: Entity<FileExplorer>,
+    /// The "close busy tabs?" question is open (it is never asked twice at once).
+    close_question_open: bool,
     explorer_visible: bool,
     /// Whether the file explorer and viewer panes work: the "File explorer and viewer" switch
     /// as last applied (it stays on while unsaved edits wait for an answer).
@@ -317,6 +320,7 @@ impl WorkspaceView {
             sidebar_visible: true,
             pulse_running: sidebar::pulse_allowed(window),
             explorer,
+            close_question_open: false,
             explorer_visible: false,
             file_panes_on: settings_file::file_panes(cx).panes_enabled(),
             file_panes_off_pending: false,
@@ -831,8 +835,14 @@ impl WorkspaceView {
     }
 
     /// Close a tab, ending its process, once the user agrees to drop the unsaved edits of its
-    /// file viewer, if any. Closing the last tab closes the window.
-    fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// file viewer, if any. Closing the last tab closes the window. Busy tabs were asked about
+    /// already (`close_tab`).
+    fn close_tab_checking_edits(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(tab) = self.tabs.get(index) else {
             return;
         };
@@ -898,14 +908,6 @@ impl WorkspaceView {
             return;
         }
         self.activate(self.active, window, cx);
-    }
-
-    fn close_tabs(&mut self, ids: Vec<u64>, window: &mut Window, cx: &mut Context<Self>) {
-        for id in ids {
-            if let Some(index) = self.tab_index(id) {
-                self.close_tab(index, window, cx);
-            }
-        }
     }
 
     fn active_tab(&self) -> Option<&Tab> {
@@ -1832,9 +1834,9 @@ impl Render for WorkspaceView {
             )
             .child(
                 TitleBar::new()
-                    .on_close_window(
-                        cx.listener(|workspace, _, window, cx| workspace.close_window(window, cx)),
-                    )
+                    .on_close_window(cx.listener(|workspace, _, window, cx| {
+                        workspace.request_close_window(window, cx);
+                    }))
                     .child(
                         // Occluding keeps the title bar's drag area from taking the
                         // buttons' clicks (Windows answers HTCAPTION over them).

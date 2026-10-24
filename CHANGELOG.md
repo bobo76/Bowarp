@@ -5,6 +5,11 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.25
+
+- Ask before closing a tab whose command is still running or whose agent is working or
+  waiting for an answer. Closing several tabs (a group, other tabs, tabs below) or the window
+  asks once and lists every busy tab; idle prompts and idle agents close without asking.
 - Refuse an unknown session kind on the command line (such as a typo, or a folder given
   without `shell`/`claude`/`copilot`) with a usage message instead of opening a shell.
 

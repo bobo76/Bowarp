@@ -238,6 +238,10 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
         let closing = workspace.downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             if let Some(workspace) = closing.upgrade() {
+                // Busy tabs: the question's Close button closes the window instead.
+                if !workspace.update(cx, |workspace, cx| workspace.allow_close_or_ask(window, cx)) {
+                    return false;
+                }
                 workspace.read(cx).save_tabs_and_flush(cx);
             }
             window_bounds::save(window.window_bounds());

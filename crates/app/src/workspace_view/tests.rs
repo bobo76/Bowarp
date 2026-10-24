@@ -670,3 +670,144 @@ fn startup_fallback_warning_is_deferred_until_the_root_exists(cx: &mut gpui_kit:
     cx.update(|window, cx| assert_eq!(window.notifications(cx).len(), 1));
     assert!(cx.shown_system_notifications().is_empty());
 }
+
+#[gpui::test]
+fn busy_tabs_are_asked_about_before_closing(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::WindowExt;
+    use term_core::SessionEvent;
+
+    let mut h = PanesHarness::new("busy-close", cx);
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            for _ in 0..3 {
+                let spec = workspace.tabs[0].spec.clone();
+                workspace.open_tab(spec, window, cx).unwrap();
+                let session = &workspace.tabs.last().unwrap().view.read(cx).session;
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                while !session.has_exited() {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "test child did not exit"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+        })
+    });
+    h.cx.run_until_parked();
+    let ids: Vec<u64> = workspace.read_with(&h.cx, |workspace, _| {
+        workspace.tabs.iter().map(|tab| tab.id).collect()
+    });
+    assert_eq!(ids.len(), 4);
+    // The middle tab runs a command (`C` mark without `D`).
+    h.cx.update(|_, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.tabs[1].view.update(cx, |view, cx| {
+                view.revive_for_test();
+                view.dispatch_test_event(SessionEvent::CommandStarted(Some("sleep 9".into())), cx);
+            });
+        })
+    });
+    h.cx.run_until_parked();
+
+    let dialog = |h: &mut PanesHarness| h.cx.update(|window, cx| window.has_active_dialog(cx));
+    let tab_count = |h: &mut PanesHarness| {
+        h.workspace
+            .read_with(&h.cx, |workspace, _| workspace.tabs.len())
+    };
+    // Closes the open dialogs with Esc, top first, and returns how many there were.
+    let dismiss_all = |h: &mut PanesHarness| {
+        let mut count = 0;
+        while h.cx.update(|window, cx| window.has_active_dialog(cx)) {
+            assert!(count < 5, "dialogs did not close");
+            h.cx.simulate_keystrokes("escape");
+            h.cx.run_until_parked();
+            count += 1;
+        }
+        count
+    };
+    let close_tab = |h: &mut PanesHarness, id: u64| {
+        let workspace = h.workspace.clone();
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                let index = workspace.tab_index(id).unwrap();
+                workspace.close_tab(index, window, cx);
+            })
+        });
+        h.cx.run_until_parked();
+    };
+    let allow_close_or_ask = |h: &mut PanesHarness| {
+        let workspace = h.workspace.clone();
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| workspace.allow_close_or_ask(window, cx))
+        })
+    };
+
+    // A busy tab asks; Cancel (Esc) keeps it.
+    close_tab(&mut h, ids[1]);
+    assert!(dialog(&mut h));
+    assert_eq!(tab_count(&mut h), 4);
+    h.cx.simulate_keystrokes("escape");
+    h.cx.run_until_parked();
+    assert!(!dialog(&mut h));
+    assert_eq!(tab_count(&mut h), 4);
+
+    // The window manager's close asks once, however often it is repeated; Cancel clears that.
+    assert!(!allow_close_or_ask(&mut h));
+    assert!(!allow_close_or_ask(&mut h));
+    assert_eq!(dismiss_all(&mut h), 1);
+    assert!(!allow_close_or_ask(&mut h));
+    assert_eq!(dismiss_all(&mut h), 1);
+
+    // Another dialog is open: the window manager's close still asks, on top of it, once.
+    let open_other_dialog = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            window.open_alert_dialog(cx, |alert, _, _| alert.title("Other").show_cancel(true))
+        });
+        h.cx.run_until_parked();
+    };
+    open_other_dialog(&mut h);
+    assert!(!allow_close_or_ask(&mut h));
+    assert!(!allow_close_or_ask(&mut h));
+    assert_eq!(dismiss_all(&mut h), 2);
+    // Cancelling the question leaves the other dialog, and a new close asks again.
+    open_other_dialog(&mut h);
+    assert!(!allow_close_or_ask(&mut h));
+    h.cx.simulate_keystrokes("escape");
+    h.cx.run_until_parked();
+    assert!(dialog(&mut h));
+    assert!(!allow_close_or_ask(&mut h));
+    assert_eq!(dismiss_all(&mut h), 2);
+
+    // An idle tab closes silently.
+    close_tab(&mut h, ids[3]);
+    assert!(!dialog(&mut h));
+    assert_eq!(tab_count(&mut h), 3);
+
+    // Several tabs, one busy and one idle: one question; Cancel closes nothing.
+    let close_busy_and_idle = |h: &mut PanesHarness| {
+        let workspace = h.workspace.clone();
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.close_tabs(vec![ids[1], ids[2]], window, cx)
+            })
+        });
+        h.cx.run_until_parked();
+    };
+    close_busy_and_idle(&mut h);
+    assert_eq!(dismiss_all(&mut h), 1);
+    assert_eq!(tab_count(&mut h), 3);
+
+    // Its Close button (Enter) closes both.
+    close_busy_and_idle(&mut h);
+    assert!(dialog(&mut h));
+    h.cx.simulate_keystrokes("enter");
+    h.cx.run_until_parked();
+    assert!(!dialog(&mut h));
+    assert_eq!(tab_count(&mut h), 1);
+
+    // Nothing busy: the window may close without a question.
+    assert!(allow_close_or_ask(&mut h));
+    assert!(!dialog(&mut h));
+}

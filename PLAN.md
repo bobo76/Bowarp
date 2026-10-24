@@ -14,7 +14,7 @@ when the user confirms they passed; retain skipped or partially passed items.
 
 **0.2.24 verification (Linux, 2026-10-24):** after each of 0.2.20-0.2.24, formatting,
 strict workspace all-target Clippy, build and all tests passed locally; `cargo test` runs
-454 tests. The earlier 0.2.19 run (408 tests) also passed the release workspace build in WSL
+473 tests. The earlier 0.2.19 run (408 tests) also passed the release workspace build in WSL
 Ubuntu with `--locked`. Native Windows checks are blocked locally by missing MSVC build tools
 (`link.exe`). Windows and Ubuntu CI, including the separate Ubuntu Clippy job, have not been
 checked for 0.2.19-0.2.24 (`v0.2.19` was never tagged; `v0.2.20`-`v0.2.24` were pushed before
@@ -28,6 +28,14 @@ automated checks must pass again for the corrected commit before merge or taggin
 
 **Known limitations**
 
+- Busy-close warnings know only what the shell integration marks and agent status report:
+  a tab counts as busy while a command started at its prompt runs (OSC 133 `C` without `D`)
+  or its agent is Working or Waiting. Never busy: cmd tabs (no `C` mark), shells without the
+  integration's marks (a shell started inside a tab, ssh), jobs left running in the
+  background (`&`), Copilot before its first progress report and agents without status
+  hooks. Closing the window still drops unsaved file viewer edits without asking (as
+  before). Not checked by hand: the Linux title bar's close button (not drivable under Xvfb)
+  and Windows/macOS window close.
 - In-app notifications off drops only the agent status toasts (Needs attention, Ready for
   review, Agent finished on a clean exit); a toast already shown stays until it hides. A
   background agent that exits with a nonzero or unknown code still toasts, as do user-action
@@ -111,11 +119,13 @@ automated checks must pass again for the corrected commit before merge or taggin
 
 Run in this order (each stands alone and is tested):
 
-1. Backlog: Notifications and close warnings (split further at its Step 0 size check; adds the
-   "Notification sounds" switch with the sound).
-2. Backlog: Configurable keyboard shortcuts.
-3. Backlog: Window opacity and background blur.
-4. Backlog: Copilot working animation (uses the "Activity animations" switch).
+1. Backlog: Notifications and close warnings, part 2: clipboard notice (OSC 52 Allow / Deny /
+   Always for this tab banner).
+2. Backlog: Notifications and close warnings, part 3: sound for agent events, with the
+   "Notification sounds" switch and the volume setting.
+3. Backlog: Configurable keyboard shortcuts.
+4. Backlog: Window opacity and background blur.
+5. Backlog: Copilot working animation (uses the "Activity animations" switch).
 
 Switches for features not built yet (prompt at the bottom, command separators, agents typed
 at the prompt, long-command completion status) are added with those features, as the
@@ -297,10 +307,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 ## Backlog
 
 - Notifications and close warnings:
-  - Close-with-running-process warnings: a tab is busy when a shell command runs (OSC 133
-    `C` without `D`) or an agent is Working or Waiting; idle prompts and idle agents close
-    silently. Applies to closing a tab, closing a group and quitting the window (one dialog
-    listing every busy tab).
   - Sound for agent events (Waiting, Ready for review): one bundled sound for both events, with an on/off
     switch and a volume setting. Basic silent in-app toasts are already implemented.
   - Clipboard notice: a banner above the terminal when a program writes the clipboard

@@ -31,8 +31,8 @@ use term_core::{
 };
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
-    COMMAND_LABEL_CHARS, Location, ProgressState, RUNNING_AFTER, RunningBadge, WorkspaceFeatures,
-    command_label, running_badge,
+    AgentActivity, BusyReason, COMMAND_LABEL_CHARS, Location, ProgressState, RUNNING_AFTER,
+    RunningBadge, TabActivity, WorkspaceFeatures, command_label, running_badge,
 };
 
 use self::agent_tracker::AgentTracker;
@@ -350,6 +350,12 @@ impl TerminalView {
         self.on_session_event(event, cx);
     }
 
+    /// Count the (exited) test child as running again, so marks and hooks apply to it.
+    #[cfg(test)]
+    pub(crate) fn revive_for_test(&mut self) {
+        self.process = ProcessState::Running;
+    }
+
     pub fn id(&self) -> u64 {
         self.session.id()
     }
@@ -362,6 +368,26 @@ impl TerminalView {
     /// (always, without them) and the process is alive.
     pub fn at_prompt(&self) -> bool {
         self.running_command.is_none() && self.process == ProcessState::Running
+    }
+
+    /// Why closing the tab would stop work (a running command, a working or waiting agent),
+    /// or `None` when it can close without asking.
+    pub fn busy_reason(&self) -> Option<BusyReason> {
+        let agent = self.agent.as_ref().map(|agent| match agent.status() {
+            AgentStatus::Working => AgentActivity::Working,
+            AgentStatus::NeedsAttention => AgentActivity::Waiting,
+            AgentStatus::Idle | AgentStatus::Exited => AgentActivity::Idle,
+        });
+        TabActivity {
+            exited: self.process != ProcessState::Running,
+            agent,
+            command_running: self.running_command.is_some(),
+            command: self
+                .running_command
+                .as_ref()
+                .and_then(|running| running.label.clone()),
+        }
+        .busy_reason()
     }
 
     /// Make the shell change to `folder`: through its hidden key binding when it has one and

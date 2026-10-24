@@ -5,7 +5,7 @@ members = ["crates/*"]
 [workspace.package]
 edition = "2024"
 rust-version = "1.95"
-version = "0.2.24"
+version = "0.2.25"
 repository = "https://github.com/bobo76/Bowarp"
 publish = false
 

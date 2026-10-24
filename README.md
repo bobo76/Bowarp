@@ -298,6 +298,13 @@ directory, rename (Enter keeps, Escape cancels, an empty name goes back to the p
 title), move up / down, close, and a color marker. "New group with tab" and "Move to group"
 put tabs in groups.
 
+Closing a busy tab asks first: one where a shell command or a program started at the prompt
+(such as vim) still runs, or whose agent is Working or waiting for an answer. Closing several
+tabs (a group's, other tabs, tabs below) or the window asks once, listing every busy tab.
+Close (Enter) goes ahead, Cancel (Escape) keeps everything open. Idle prompts, idle agents and
+exited programs close without a question. The question is a safeguard, not a notification:
+no setting turns it off.
+
 ## Search and attention
 
 The "Search tabs..." field above the list (Ctrl+Shift+S) keeps the tabs whose name, title,
