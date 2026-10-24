@@ -132,6 +132,11 @@ impl CommandHistory {
         self.entries.len() != before
     }
 
+    /// Forget every command.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
     /// Oldest first.
     pub fn entries(&self) -> &[HistoryEntry] {
         &self.entries
@@ -316,6 +321,16 @@ fn compact_locked(path: &Path, text: &[u8]) -> io::Result<()> {
         .write_all(text)?;
     fs::rename(&temp, path)?;
     Ok(())
+}
+
+/// Empty the history file at `path` (the "Clear history" action). A missing file is fine.
+pub fn clear_history_file(path: &Path) -> io::Result<()> {
+    let _lock = lock_history(path)?;
+    match fs::metadata(path) {
+        Ok(_) => compact_locked(path, b""),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
 }
 
 /// Drop every line of the history file at `path` that holds `command`, keeping the other lines

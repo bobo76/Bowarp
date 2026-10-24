@@ -311,3 +311,21 @@ fn concurrent_append_delete_and_compaction_preserve_other_commands() {
             .any(|entry| entry.command == "remove me")
     );
 }
+
+#[test]
+fn clearing_empties_memory_and_the_file_and_tolerates_a_missing_file() {
+    let root = TempDir::new();
+    let path = root.0.join("history.jsonl");
+    clear_history_file(&path).unwrap();
+    assert!(!path.exists());
+    append_entry(&path, &entry("make", 1)).unwrap();
+    append_entry(&path, &entry("cargo test", 2)).unwrap();
+    let mut history = CommandHistory::load(&path, 10);
+    assert_eq!(history.len(), 2);
+    history.clear();
+    assert!(history.is_empty());
+    clear_history_file(&path).unwrap();
+    assert!(CommandHistory::load(&path, 10).is_empty());
+    append_entry(&path, &entry("after", 3)).unwrap();
+    assert_eq!(commands(&CommandHistory::load(&path, 10)), ["after"]);
+}

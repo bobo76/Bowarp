@@ -271,7 +271,7 @@ impl Element for TerminalElement {
             (!text.is_empty()).then(|| (cursor_origin, shaper.shape(text, style)))
         });
         let ghost_hint = snapshot.cursor.as_ref().and_then(|cursor| {
-            let suggestion = view.restored_suggestion()?;
+            let suggestion = view.restored_suggestion(cx)?;
             let hint = " \u{21a9} last session";
             let cells = |text: &str| {
                 text.chars()

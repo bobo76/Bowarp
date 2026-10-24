@@ -12,16 +12,17 @@ use std::rc::Rc;
 use std::sync::LazyLock;
 
 use gpui_kit::component::alert::Alert;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::link::Link;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::setting::{
     SettingField, SettingGroup, SettingItem, SettingPage, Settings as SettingsView,
 };
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Side, Sizable};
+use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Side, Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     Anchor, AnyElement, App, AppContext, Axis, ClickEvent, ClipboardItem, Entity, Focusable,
@@ -31,6 +32,7 @@ use workspace_model::{DependentState, FeatureSwitch, FontSize, Settings, UiTheme
 
 use crate::about;
 use crate::assets::CODE_ICON;
+use crate::history;
 use crate::launcher::{self, Launcher};
 use crate::settings_file;
 use crate::sidebar;
@@ -160,8 +162,114 @@ fn terminal_groups(launchers: Rc<[Launcher]>) -> Vec<SettingGroup> {
         SettingGroup::new()
             .title("Shell")
             .item(default_shell_row(launchers.clone())),
+        command_history_group(),
         agent_arguments_group(&launchers),
     ]
+}
+
+/// Command history, its two dependent switches, and the actions that delete what it kept.
+fn command_history_group() -> SettingGroup {
+    let master: Rc<dyn Fn(&Settings) -> bool> =
+        Rc::new(|settings| settings.command_history.is_on());
+    SettingGroup::new().title("Command history").items([
+        switch_row(
+            "Command history",
+            "Collect the commands you run into Bowarp's history. Off: nothing is recorded in \
+                 memory or on disk, and there is no history popup, inline suggestion or saved \
+                 last command. Your shell's own history is unchanged, and working-directory \
+                 tracking, agent status and busy-close warnings keep working. Stored history is \
+                 kept, not erased.",
+            SettingsField::new(
+                |settings| settings.command_history.is_on(),
+                |settings, value| settings.command_history = FeatureSwitch::new(value),
+            ),
+        )
+        .keywords(["history", "commands", "record", "suggestions"]),
+        bound_row(
+            "History popup",
+            "Open the HISTORY list with Up at a shell prompt. Off: no panel and Up goes to \
+                 the shell. Commands are still recorded while Command history is on.",
+            SettingsField::new(
+                |settings| settings.history_popup.is_on(),
+                |settings, value| settings.history_popup = FeatureSwitch::new(value),
+            ),
+            dependent_switch_control("Command history", master.clone()),
+        )
+        .keywords(["history", "up", "panel", "list"]),
+        bound_row(
+            "Inline suggestions",
+            "Show the rest of the newest matching command as dimmed text after the cursor, \
+                 accepted with Right, End or Tab, including the last session's command. Off: \
+                 no ghost text and those keys go to the shell; shell plugins are unchanged.",
+            SettingsField::new(
+                |settings| settings.inline_suggestions.is_on(),
+                |settings, value| settings.inline_suggestions = FeatureSwitch::new(value),
+            ),
+            dependent_switch_control("Command history", master),
+        )
+        .keywords(["ghost", "autosuggest", "completion", "history"]),
+        clear_action_row(
+            "Clear history",
+            "Delete every command in Bowarp's history, in memory and in history.jsonl. \
+                 Tabs' saved last commands are separate.",
+            "Clear history",
+            "Clear the command history?",
+            "Every stored command is deleted. This can't be undone.",
+            "Command history cleared",
+            history::clear,
+        ),
+        clear_action_row(
+            "Clear saved session commands",
+            "Forget the last command saved for each tab, so none is offered after a \
+                 restart. Saved commands are never run automatically.",
+            "Clear saved commands",
+            "Clear saved session commands?",
+            "The last command saved in each tab is deleted. This can't be undone.",
+            "Saved session commands cleared",
+            history::clear_saved_session_commands,
+        ),
+    ])
+}
+
+/// A row with one button that, after a confirmation, runs `action` and says it was done.
+fn clear_action_row(
+    title: &'static str,
+    description: &'static str,
+    label: &'static str,
+    question: &'static str,
+    warning: &'static str,
+    done: &'static str,
+    action: fn(&mut App) -> Result<(), String>,
+) -> SettingItem {
+    SettingItem::new(
+        title,
+        SettingField::render(move |_, _, _| {
+            Button::new(title)
+                .label(label)
+                .outline()
+                .small()
+                .on_click(move |_, window, cx| {
+                    window.open_alert_dialog(cx, move |alert, _, _| {
+                        alert
+                            .title(question)
+                            .description(warning)
+                            .ok_text("Clear")
+                            .ok_variant(ButtonVariant::Danger)
+                            .show_cancel(true)
+                            .on_ok(move |_, window, cx| {
+                                let notification = match action(cx) {
+                                    Ok(()) => Notification::success(done),
+                                    Err(message) => Notification::error(message),
+                                };
+                                window.push_notification(notification, cx);
+                                true
+                            })
+                    });
+                })
+        }),
+    )
+    .description(description)
+    .keywords(["delete", "erase", "forget", "history"])
 }
 
 fn agent_arguments_group(launchers: &[Launcher]) -> SettingGroup {

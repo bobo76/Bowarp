@@ -792,3 +792,35 @@ fn a_dependent_value_is_kept_while_its_parent_is_off() {
     assert!(DependentState::new(settings.tab_card.enabled, "Tab hover card").enabled);
     assert!(!settings.tab_card.status);
 }
+
+#[test]
+fn history_switches_default_on_round_trip_and_fall_back_when_mistyped() {
+    let defaults = Settings::default();
+    assert!(defaults.command_history.is_on());
+    assert!(defaults.history_popup.is_on());
+    assert!(defaults.inline_suggestions.is_on());
+
+    let off = Settings {
+        command_history: FeatureSwitch::new(false),
+        history_popup: FeatureSwitch::new(false),
+        inline_suggestions: FeatureSwitch::new(false),
+        ..Settings::default()
+    };
+    let json = off.to_json().unwrap();
+    let value: Value = serde_json::from_str(&json).unwrap();
+    for key in ["command_history", "history_popup", "inline_suggestions"] {
+        assert_eq!(value[key], Value::Bool(false), "{key}");
+    }
+    assert_eq!(Settings::from_json(&json).unwrap(), off);
+
+    let mistyped = Settings::from_json(
+        r#"{"command_history": "no", "history_popup": 0, "inline_suggestions": null}"#,
+    )
+    .unwrap();
+    assert_eq!(mistyped, Settings::default());
+    // A retained child stays off while the master is on again.
+    let child =
+        Settings::from_json(r#"{"command_history": true, "history_popup": false}"#).unwrap();
+    assert!(child.command_history.is_on() && !child.history_popup.is_on());
+    assert!(child.inline_suggestions.is_on());
+}

@@ -26,13 +26,13 @@ use gpui_kit::{
 use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::term::{ClipboardType, TermMode};
 use term_core::{
-    EventCallback, LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions,
-    TerminalSearch,
+    EventCallback, ExecutedCommand, LaunchSpec, Palette, Session, SessionEvent, SessionKind,
+    TermDimensions, TerminalSearch,
 };
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
-    COMMAND_LABEL_CHARS, Location, ProgressState, RUNNING_AFTER, RunningBadge, command_label,
-    running_badge,
+    COMMAND_LABEL_CHARS, HistoryFeatures, Location, ProgressState, RUNNING_AFTER, RunningBadge,
+    command_label, running_badge,
 };
 
 use self::agent_tracker::AgentTracker;
@@ -44,6 +44,7 @@ use crate::history_popup::HistoryPopup;
 use crate::keys;
 use crate::launcher;
 use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
+use crate::settings_file::{self, AppSettings};
 use crate::shell_integration;
 use crate::shortcuts::{self, CLOSE_TAB_KEY};
 use crate::sidebar::TabStatus;
@@ -201,6 +202,10 @@ pub struct TerminalView {
     pub(crate) history_popup: Option<HistoryPopup>,
     pub(crate) last_command: workspace_model::LastCommand,
     last_command_supported: bool,
+    /// How many "Clear saved session commands" requests this tab has handled.
+    saved_cleared_seen: u32,
+    /// The history switches last acted on; settings changes that leave them alone are ignored.
+    history_features: HistoryFeatures,
     pub(crate) search: TerminalSearch,
     search_bar: Option<search::SearchBar>,
     title: Option<String>,
@@ -261,16 +266,30 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe_global::<history::History>(|view, cx| {
-            if let Some(command) = cx.global::<history::History>().forgotten()
-                && view.last_command.forget(command)
-            {
+            if view.sync_last_command_with_history(cx) {
                 cx.emit(LastCommandChanged);
             }
             view.refresh_history(cx);
             cx.notify();
         })
         .detach();
+        // Turning a history switch off closes the popup and drops suggestions at once.
+        cx.observe_global::<AppSettings>(|view, cx| {
+            let features = settings_file::history_features(cx);
+            if features == view.history_features {
+                return;
+            }
+            view.history_features = features;
+            view.refresh_history(cx);
+            cx.notify();
+        })
+        .detach();
+        let saved_cleared_seen = cx
+            .try_global::<history::History>()
+            .map_or(0, history::History::saved_cleared);
         Self {
+            saved_cleared_seen,
+            history_features: settings_file::history_features(cx),
             session,
             name: launcher::default_name(spec),
             launch_folder: spec.cwd.clone(),
@@ -598,10 +617,7 @@ impl TerminalView {
             SessionEvent::CommandStarted(command) => self.on_command_started(command, cx),
             SessionEvent::CommandExecuted(command) => {
                 self.history_popup = None;
-                if self.supports_last_command() && self.last_command.record(&command.command) {
-                    cx.emit(LastCommandChanged);
-                }
-                history::record(command, cx);
+                self.record_executed(command, cx);
             }
             SessionEvent::CommandFinished => {
                 self.running_command = None;
@@ -644,6 +660,31 @@ impl TerminalView {
         }
         cx.emit(TabChanged);
         true
+    }
+
+    /// Command history off: nothing is collected or captured.
+    fn record_executed(&mut self, command: ExecutedCommand, cx: &mut Context<Self>) {
+        if !settings_file::history_features(cx).records() {
+            self.last_command.dismiss();
+            return;
+        }
+        if self.supports_last_command() && self.last_command.record(&command.command) {
+            cx.emit(LastCommandChanged);
+        }
+        history::record(command, cx);
+    }
+
+    /// Apply a forgotten command and a "clear saved session commands" request to this tab's
+    /// saved last command. Returns whether it changed.
+    fn sync_last_command_with_history(&mut self, cx: &Context<Self>) -> bool {
+        let history = cx.global::<history::History>();
+        let forgotten = history
+            .forgotten()
+            .is_some_and(|command| self.last_command.forget(command));
+        let cleared = history.saved_cleared() != self.saved_cleared_seen;
+        self.saved_cleared_seen = history.saved_cleared();
+        let cleared = cleared && self.last_command.clear();
+        forgotten || cleared
     }
 
     fn on_command_started(&mut self, command: Option<String>, cx: &mut Context<Self>) {

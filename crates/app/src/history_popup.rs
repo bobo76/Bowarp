@@ -10,9 +10,10 @@ use gpui_kit::{
     MouseDownEvent, ParentElement, Pixels, Styled, anchored, deferred, div, point, px,
 };
 use term_core::{PromptInput, SessionKind};
-use workspace_model::{HistoryEntry, HistorySelection, display_path};
+use workspace_model::{HistoryEntry, HistoryKey, HistorySelection, display_path};
 
 use crate::history::{self, History};
+use crate::settings_file;
 use crate::terminal_element;
 use crate::terminal_view::TerminalView;
 
@@ -127,28 +128,35 @@ impl TerminalView {
         keystroke: &Keystroke,
         cx: &mut Context<Self>,
     ) -> bool {
+        let features = settings_file::history_features(cx);
         if is_plain(keystroke)
             && matches!(keystroke.key.as_str(), "right" | "end")
-            && self.restored_suggestion().is_some()
+            && self.restored_suggestion(cx).is_some()
             && self.accept_suggestion(cx)
         {
             return true;
         }
         self.last_command.dismiss();
         if self.history_popup.is_some() {
+            if !features.popup() {
+                self.close_history_popup(cx);
+                return false;
+            }
             return self.handle_popup_key(keystroke, cx);
         }
         if !is_plain(keystroke) {
             return false;
         }
         match keystroke.key.as_str() {
-            "up" if self.prompt_input().is_some() => {
+            "up" if features.intercepts(HistoryKey::Up) && self.prompt_input().is_some() => {
                 self.history_popup = Some(HistoryPopup::default());
                 self.refresh_history(cx);
                 cx.notify();
                 true
             }
-            "right" | "end" | "tab" => self.accept_suggestion(cx),
+            "right" | "end" | "tab" if features.intercepts(HistoryKey::Accept) => {
+                self.accept_suggestion(cx)
+            }
             _ => false,
         }
     }
@@ -239,8 +247,11 @@ impl TerminalView {
     /// The rest of the newest command starting with what is typed, while the cursor is at the
     /// end of the command line.
     fn suggestion(&self, cx: &App) -> Option<String> {
+        if !settings_file::history_features(cx).suggestions() {
+            return None;
+        }
         let input = self.prompt_input().filter(|input| input.at_end)?;
-        if let Some(command) = self.restored_suggestion() {
+        if let Some(command) = self.restored_suggestion(cx) {
             return Some(command.to_owned());
         }
         let history = cx.global::<History>().commands();
@@ -254,7 +265,10 @@ impl TerminalView {
         self.suggestion(cx)
     }
 
-    pub(crate) fn restored_suggestion(&self) -> Option<&str> {
+    pub(crate) fn restored_suggestion(&self, cx: &App) -> Option<&str> {
+        if !settings_file::history_features(cx).suggestions() {
+            return None;
+        }
         let input = self.prompt_input()?;
         if !input.before_cursor.is_empty() {
             return None;
@@ -264,6 +278,13 @@ impl TerminalView {
 
     /// Reconcile history state after a prompt, history or popup event, never during rendering.
     pub(crate) fn refresh_history(&mut self, cx: &mut Context<Self>) {
+        let features = settings_file::history_features(cx);
+        if !features.popup() {
+            self.history_popup = None;
+        }
+        if !features.suggestions() && !features.popup() {
+            return;
+        }
         let input = self.prompt_input();
         if input
             .as_ref()

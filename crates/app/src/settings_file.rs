@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use gpui_kit::component::{ActiveTheme, Theme, ThemeMode};
 use gpui_kit::{App, Global};
-use workspace_model::{Settings, SettingsFile, UiTheme};
+use workspace_model::{HistoryFeatures, Settings, SettingsFile, UiTheme};
 
 use crate::window_bounds::config_file;
 
@@ -51,6 +51,21 @@ pub fn settings(cx: &App) -> &Settings {
 /// asks this at draw time and starts no timer or animation while it is false.
 pub fn activity_animations(cx: &App) -> bool {
     settings(cx).activity_animations.is_on()
+}
+
+/// Default settings that touch no file, for tests that change switches with `preview`.
+#[cfg(test)]
+pub fn init_in_memory(cx: &mut App) {
+    cx.set_global(AppSettings(SettingsFile::default()));
+}
+
+/// Which history features are active (the "Command history", "History popup" and "Inline
+/// suggestions" switches). All on while settings aren't loaded (unit tests).
+pub fn history_features(cx: &App) -> HistoryFeatures {
+    cx.try_global::<AppSettings>()
+        .map_or_else(HistoryFeatures::default, |settings| {
+            HistoryFeatures::from_settings(settings.0.settings())
+        })
 }
 
 /// The settings file, for its `load_error` and `save_error` (shown on the settings page).

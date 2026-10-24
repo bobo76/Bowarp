@@ -105,6 +105,8 @@ directly to model APIs.
   button to open the settings file itself.
 - Let the user switch optional behavior on or off (hover cards, activity animations),
   applied live; a setting that depends on another is shown disabled with the reason.
+- Let the user switch command history, the history popup and inline suggestions on or off,
+  and clear the stored history and the saved session commands, with a confirmation.
 
 ## Performance and Usability
 

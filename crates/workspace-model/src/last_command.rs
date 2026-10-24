@@ -41,6 +41,12 @@ impl LastCommand {
         true
     }
 
+    /// Drop the saved command ("Clear saved session commands"); true when there was one.
+    pub fn clear(&mut self) -> bool {
+        self.dismiss();
+        self.saved.take().is_some()
+    }
+
     pub fn forget(&mut self, command: &str) -> bool {
         if self.saved.as_deref() != Some(command) {
             return false;
@@ -77,6 +83,16 @@ mod tests {
         }
         assert!(last.record("lsof -i"));
         assert!(!last.record("lsof -i"));
+    }
+
+    #[test]
+    fn clearing_drops_the_saved_command_and_its_suggestion() {
+        let mut last = LastCommand::default();
+        last.restore(Some("git push".into()));
+        assert!(last.clear());
+        assert_eq!(last.saved(), None);
+        assert_eq!(last.suggestion("", true), None);
+        assert!(!last.clear());
     }
 
     #[test]

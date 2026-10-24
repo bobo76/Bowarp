@@ -55,6 +55,17 @@ pub struct Settings {
     /// working animation); off gives static indicators and no animation timers.
     #[serde(deserialize_with = "lenient")]
     pub activity_animations: FeatureSwitch<true>,
+    /// Master switch for Bowarp's command history: off stops collecting commands (memory and
+    /// disk) and turns off the popup, inline suggestions and last-command capture and
+    /// restoration. Stored data is kept. See [`crate::HistoryFeatures`].
+    #[serde(deserialize_with = "lenient")]
+    pub command_history: FeatureSwitch<true>,
+    /// The HISTORY popup and its Up-key interception; needs `command_history`.
+    #[serde(deserialize_with = "lenient")]
+    pub history_popup: FeatureSwitch<true>,
+    /// Ghost-text suggestions and their acceptance keys; needs `command_history`.
+    #[serde(deserialize_with = "lenient")]
+    pub inline_suggestions: FeatureSwitch<true>,
     /// The file viewer's share of the window width, set by dragging its divider (not on the
     /// settings page).
     #[serde(deserialize_with = "lenient")]

@@ -21,7 +21,7 @@ the separate Ubuntu Clippy job, must pass before tagging. Native Windows/Linux U
 packaged-app smoke tests and About version/commit checks remain pending. Publishing is
 not verification.
 
-**Since 0.2.19:** `cargo test` runs 416 tests (Linux).
+**Since 0.2.19:** `cargo test` runs 427 tests (Linux).
 
 **PR verification:** Ubuntu build/tests, strict Clippy and Windows build/tests/package
 passed for `fbfa8df`. CodeQL blocked publication because the plugin cleanup warning logged
@@ -41,6 +41,11 @@ automated checks must pass again for the corrected commit before merge or taggin
   window manager's own).
 - No command history in cmd tabs: cmd's prompt prints only the `D` mark, not the `A` / `B`
   marks that locate the prompt.
+- Command history off keeps stored history and each tab's saved `last_command` (still
+  written to `tabs.json` unchanged) but uses neither; "Clear history" truncates
+  `history.jsonl` on the UI thread (like deleting one command), and a second instance only
+  sees either clear after its next restart (history is loaded at start). Clearing saved
+  session commands reaches only tabs open in this instance.
 - Settings file: a field with a value of the wrong type gets its default silently and the
   value is dropped at the next change. A file that isn't a JSON object is ignored (reason
   printed and kept for the settings page) and moved to `settings.json.bak` at the first
@@ -82,18 +87,15 @@ automated checks must pass again for the corrected commit before merge or taggin
 
 Run in this order (each stands alone and is tested):
 
-1. Feature options, Terminal history: "Command history", "History popup" and "Inline
-   suggestions" with their parent-child rules, live disable/re-enable, key pass-through, and
-   the Clear history / Clear saved session commands actions.
-2. Feature options, Workspace: "Restore previous tabs" and "Remember last shell command".
-3. Feature options, "File explorer and viewer" (hide both panes, no scans or watchers while
+1. Feature options, Workspace: "Restore previous tabs" and "Remember last shell command".
+2. Feature options, "File explorer and viewer" (hide both panes, no scans or watchers while
    off, unsaved-edit resolution first).
-4. Feature options, "In-app notifications" (toasts only; status and badges stay).
-5. Backlog: Notifications and close warnings (split further at its Step 0 size check; adds the
+3. Feature options, "In-app notifications" (toasts only; status and badges stay).
+4. Backlog: Notifications and close warnings (split further at its Step 0 size check; adds the
    "Notification sounds" switch with the sound).
-6. Backlog: Configurable keyboard shortcuts.
-7. Backlog: Window opacity and background blur.
-8. Backlog: Copilot working animation (uses the "Activity animations" switch).
+5. Backlog: Configurable keyboard shortcuts.
+6. Backlog: Window opacity and background blur.
+7. Backlog: Copilot working animation (uses the "Activity animations" switch).
 
 Switches for features not built yet (prompt at the bottom, command separators, agents typed
 at the prompt, long-command completion status) are added with those features, as the
@@ -112,9 +114,9 @@ dependency is stated.
 | Appearance | Tab hover cards (implemented) | On | No cards over sidebar tabs; retain sidebar status. Keep the existing detailed field switches. |
 | Appearance | Group hover cards (implemented) | On | No basic or extended group cards; retain collapsed-group status. Independent of tab cards. |
 | Appearance | Activity animations (implemented) | On | Static Working indicators for both Claude and Copilot; no animation timers. Status still updates. |
-| Terminal | Command history | On | Stop collecting commands into Bowarp history, in memory and on disk; no history popup, inline suggestions or last-command capture/restoration. Does not change the shell's own history. |
-| Terminal | History popup | On | No Bowarp HISTORY panel or popup key interception; Up goes to the shell. With command history on, recording continues, stated beside this switch. |
-| Terminal | Inline suggestions | On | No Bowarp ghost text or suggestion-acceptance key interception, including last-session suggestions; shell plugins are unchanged. |
+| Terminal | Command history (implemented) | On | Stop collecting commands into Bowarp history, in memory and on disk; no history popup, inline suggestions or last-command capture/restoration. Does not change the shell's own history. |
+| Terminal | History popup (implemented) | On | No Bowarp HISTORY panel or popup key interception; Up goes to the shell. With command history on, recording continues, stated beside this switch. |
+| Terminal | Inline suggestions (implemented) | On | No Bowarp ghost text or suggestion-acceptance key interception, including last-session suggestions; shell plugins are unchanged. |
 | Terminal | Prompt at the bottom | On when built | Keep today's top-anchored terminal layout. Independent of history; with the history popup off, no docked panel is built. |
 | Terminal | Command separators and details | On when built | No command-block separators, folder or duration labels; prompt placement is unchanged. |
 | Terminal | Open agents typed at the prompt in a new tab | On when built | Run typed `claude` / `copilot` normally in the shell. Applies to newly started shells, as the integration functions are installed at startup. |

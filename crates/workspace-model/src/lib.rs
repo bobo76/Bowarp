@@ -16,6 +16,7 @@ pub mod file_tree;
 pub mod file_view;
 mod git;
 mod history;
+mod history_features;
 mod instance_lock;
 mod lap;
 mod last_command;
@@ -40,9 +41,10 @@ pub use about::version_line;
 pub use attention::{Attention, next_attention, waiting_count};
 pub use git::{GitHead, lines_added};
 pub use history::{
-    CommandHistory, HistoryEntry, HistorySelection, append_entry, entry_line, is_recordable,
-    remove_command,
+    CommandHistory, HistoryEntry, HistorySelection, append_entry, clear_history_file, entry_line,
+    is_recordable, remove_command,
 };
+pub use history_features::{HistoryFeatures, HistoryKey};
 pub use instance_lock::{held_by_other, lock_pid, lock_text};
 pub use lap::{Lap, format_lap, until_next_second};
 pub use last_command::LastCommand;

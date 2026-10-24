@@ -36,7 +36,7 @@ fn restored_command_is_one_shot_and_never_accepted_by_tab_or_enter(
     view.update(cx, |view, cx| {
         view.restore_last_command(Some("cargo test".into()), cx);
         assert!(!view.handle_history_key(&Keystroke::parse("escape").unwrap(), cx));
-        assert!(view.restored_suggestion().is_none());
+        assert!(view.restored_suggestion(cx).is_none());
     });
     let deadline = Instant::now() + Duration::from_secs(5);
     while !view.read_with(cx, |view, _| view.prompt_input().is_some()) {
@@ -75,7 +75,7 @@ fn restored_command_is_one_shot_and_never_accepted_by_tab_or_enter(
             assert_eq!(view.history_suggestion(cx), Some("git push".into()));
             let consumed = view.handle_history_key(&Keystroke::parse(key).unwrap(), cx);
             assert_eq!(consumed, key == "up", "{key}");
-            assert!(view.restored_suggestion().is_none(), "{key}");
+            assert!(view.restored_suggestion(cx).is_none(), "{key}");
             assert!(!view.session.awaiting_echo(), "{key} sent the command");
             assert_eq!(view.last_command(), Some("git push"));
         });
@@ -90,7 +90,7 @@ fn restored_command_is_one_shot_and_never_accepted_by_tab_or_enter(
     view.update(cx, |view, cx| {
         view.restore_last_command(Some("git push".into()), cx);
         assert!(view.handle_history_key(&Keystroke::parse("right").unwrap(), cx));
-        assert!(view.restored_suggestion().is_none());
+        assert!(view.restored_suggestion(cx).is_none());
         assert!(view.session.awaiting_echo());
     });
     for program in ["pwsh", "powershell", "cmd"] {
@@ -110,6 +110,144 @@ fn restored_command_is_one_shot_and_never_accepted_by_tab_or_enter(
             assert_eq!(view.last_command(), None, "{program}");
         });
     }
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn history_switches_apply_live_pass_keys_through_and_keep_data(cx: &mut gpui_kit::TestAppContext) {
+    use std::sync::{Arc, mpsc};
+    use std::time::{Duration, Instant};
+
+    use gpui_kit::AppContext;
+    use term_core::{ExecutedCommand, LaunchSpec, Palette, Session, SessionEvent, TermDimensions};
+    use workspace_model::FeatureSwitch;
+
+    fn executed(command: &str) -> SessionEvent {
+        SessionEvent::CommandExecuted(ExecutedCommand {
+            command: command.into(),
+            folder: None,
+        })
+    }
+    let up = || Keystroke::parse("up").unwrap();
+    let tab = || Keystroke::parse("tab").unwrap();
+
+    cx.update(|cx| {
+        crate::settings_file::init_in_memory(cx);
+        history::init_in_memory(cx);
+        history::record(
+            ExecutedCommand {
+                command: "cargo test".into(),
+                folder: None,
+            },
+            cx,
+        );
+    });
+    let mut spec = LaunchSpec::new(
+        SessionKind::Shell,
+        Some("sh".into()),
+        vec![
+            "-c".into(),
+            r"printf '\033]133;A;aw=tok\007$ \033]133;B;aw=tok\007'; read line".into(),
+        ],
+        None,
+    );
+    spec.mark_token = Some("tok".into());
+    let (sender, events) = mpsc::channel();
+    let session = Session::spawn(
+        1,
+        &spec,
+        TermDimensions::new(80, 24),
+        Palette::default(),
+        Arc::new(move |event| {
+            let _ = sender.send(event);
+        }),
+    )
+    .unwrap();
+    let view = cx.new(|cx| TerminalView::from_test_session(session, &spec, cx));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !view.read_with(cx, |view, _| view.prompt_input().is_some()) {
+        view.update(cx, |view, cx| {
+            for event in events.try_iter() {
+                view.dispatch_test_event(event, cx);
+            }
+        });
+        assert!(Instant::now() < deadline, "first prompt did not arrive");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let set = |cx: &mut gpui_kit::TestAppContext, master: bool, popup: bool, ghost: bool| {
+        cx.update(|cx| {
+            crate::settings_file::preview(cx, |settings| {
+                settings.command_history = FeatureSwitch::new(master);
+                settings.history_popup = FeatureSwitch::new(popup);
+                settings.inline_suggestions = FeatureSwitch::new(ghost);
+            });
+        });
+    };
+    let history_len = |cx: &mut gpui_kit::TestAppContext| {
+        cx.update(|cx| cx.global::<history::History>().commands().len())
+    };
+
+    // Popup off: Up goes to the shell, recording and suggestions go on.
+    set(cx, true, false, true);
+    view.update(cx, |view, cx| {
+        assert!(!view.handle_history_key(&up(), cx));
+        assert!(view.history_popup.is_none());
+        view.restore_last_command(Some("git push".into()), cx);
+        assert_eq!(view.history_suggestion(cx), Some("git push".into()));
+        view.dispatch_test_event(executed("make"), cx);
+    });
+    assert_eq!(history_len(cx), 2);
+
+    // Master off while the popup is open: it closes at once, nothing is used or collected,
+    // stored data stays.
+    set(cx, true, true, true);
+    view.update(cx, |view, cx| {
+        assert!(view.handle_history_key(&up(), cx));
+        assert!(view.history_popup.is_some());
+    });
+    set(cx, false, true, true);
+    cx.run_until_parked();
+    view.update(cx, |view, cx| {
+        assert!(view.history_popup.is_none());
+        view.restore_last_command(Some("git push".into()), cx);
+        assert_eq!(view.history_suggestion(cx), None);
+        assert_eq!(view.restored_suggestion(cx), None);
+        assert!(!view.handle_history_key(&up(), cx));
+        assert!(!view.handle_history_key(&tab(), cx));
+        view.dispatch_test_event(executed("cargo build"), cx);
+        assert_eq!(view.last_command(), Some("git push"));
+    });
+    assert_eq!(history_len(cx), 2);
+
+    // Master on again: the children come back as they were.
+    set(cx, true, true, true);
+    view.update(cx, |view, cx| {
+        view.restore_last_command(Some("git push".into()), cx);
+        assert_eq!(view.history_suggestion(cx), Some("git push".into()));
+        assert!(view.handle_history_key(&up(), cx));
+        view.close_history_popup(cx);
+    });
+
+    // Suggestions off: ghost text gone and Tab goes to the shell; the popup still works.
+    set(cx, true, true, false);
+    view.update(cx, |view, cx| {
+        view.restore_last_command(Some("git push".into()), cx);
+        assert_eq!(view.history_suggestion(cx), None);
+        assert!(!view.handle_history_key(&tab(), cx));
+        assert!(view.handle_history_key(&up(), cx));
+    });
+
+    // The clear actions.
+    set(cx, false, true, true);
+    view.update(cx, |view, cx| {
+        view.restore_last_command(Some("git push".into()), cx)
+    });
+    assert_eq!(cx.update(history::clear_saved_session_commands), Ok(()));
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| assert_eq!(view.last_command(), None));
+    assert_eq!(history_len(cx), 2);
+    assert_eq!(cx.update(history::clear), Ok(()));
+    assert_eq!(history_len(cx), 0);
 }
 
 fn key(source: &str) -> PopupKey {

@@ -127,6 +127,16 @@ output is not kept.
 
 ## Command history (bash, zsh, PowerShell tabs)
 
+Settings → Terminal → Command history has three switches, all on by default and applied live
+(`command_history`, `history_popup`, `inline_suggestions`; missing or non-boolean means on).
+Command history off stops recording commands (memory and `history.jsonl`) and turns off the
+popup, suggestions and last-command saving and offering; the shell's own history, folder
+tracking, agent status and busy-close warnings are unaffected, and stored data is kept. History
+popup off: no panel and Up goes to the shell (recording continues). Inline suggestions off: no
+dimmed text, and Right, End and Tab go to the shell. Both need Command history and show disabled
+without it, keeping their value. "Clear history" and "Clear saved session commands" (with a
+confirmation) delete the stored history and each tab's saved last command; nothing is rerun.
+
 | Keys | Action |
 |---|---|
 | Right / End | At the end of the command line: accept the dimmed suggestion |
