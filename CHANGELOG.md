@@ -5,6 +5,7 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Fix the Linux release build not starting on Ubuntu 24.04 (it needed glibc 2.43).
 ## 0.2.30
 
 - Show a blue ring turning in quarter steps left of a working Copilot tab's title in the
