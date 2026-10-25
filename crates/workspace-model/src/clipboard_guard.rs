@@ -36,6 +36,34 @@ impl ClipboardWrites {
         }
     }
 
+    /// The notice for these writes. The program chooses the text, so the preview has no
+    /// control characters. Only the start of a long text is looked at for the preview.
+    fn notice(&self) -> ClipboardNotice {
+        let (clipboard, selection) = (self.clipboard.as_deref(), self.selection.as_deref());
+        match (clipboard, selection) {
+            (Some(clip), Some(sel)) if clip != sel => ClipboardNotice {
+                message: format!(
+                    "A program wants to copy {} to the clipboard and {} to the primary selection",
+                    size_label(clip),
+                    size_label(sel)
+                ),
+                preview: split_preview(clip, sel),
+            },
+            _ => {
+                let target = match (clipboard, selection) {
+                    (Some(_), Some(_)) => "the clipboard and the primary selection",
+                    (None, Some(_)) => "the primary selection",
+                    _ => "the clipboard",
+                };
+                let text = clipboard.or(selection).unwrap_or_default();
+                ClipboardNotice {
+                    message: format!("A program wants to copy {} to {target}", size_label(text)),
+                    preview: preview(text, CLIPBOARD_PREVIEW_CHARS),
+                }
+            }
+        }
+    }
+
     /// The writes to apply, clipboard first.
     pub fn into_writes(self) -> impl Iterator<Item = (ClipboardTarget, String)> {
         let clipboard = self
@@ -46,6 +74,24 @@ impl ClipboardWrites {
             .map(|text| (ClipboardTarget::Selection, text));
         clipboard.into_iter().chain(selection)
     }
+}
+
+/// What the user answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClipboardAnswer {
+    Allow,
+    Always,
+    Deny,
+}
+
+/// What the notice says about the held writes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClipboardNotice {
+    /// For example "A program wants to copy 12 characters (2 lines) to the clipboard".
+    pub message: String,
+    /// The text on one line, shortened to [`CLIPBOARD_PREVIEW_CHARS`]; `None` when it is blank.
+    /// When the two targets get different texts it shows both, clipboard first, split by `|`.
+    pub preview: Option<String>,
 }
 
 /// What to do with a write a program just sent.
@@ -62,16 +108,18 @@ pub enum ClipboardOffer {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ClipboardGuard {
     pending: ClipboardWrites,
+    /// The notice for `pending`, made once per held write (not on every frame).
+    notice: Option<ClipboardNotice>,
     always: bool,
 }
 
 impl ClipboardGuard {
-    /// A guard that starts allowed when the tab already was (its agent's tab going on as a
-    /// shell is still the same tab).
-    pub fn new(always: bool) -> Self {
+    /// A fresh guard for the same tab's next session: it keeps "Always for this tab" (an
+    /// agent's tab going on as a shell is still the same tab) and drops any held write.
+    pub fn carry_over(&self) -> Self {
         Self {
-            pending: ClipboardWrites::default(),
-            always,
+            always: self.always,
+            ..Self::default()
         }
     }
 
@@ -83,6 +131,7 @@ impl ClipboardGuard {
         }
         let first = self.pending.is_empty();
         *self.pending.slot(target) = Some(text);
+        self.notice = Some(self.pending.notice());
         ClipboardOffer::Held { first }
     }
 
@@ -91,20 +140,32 @@ impl ClipboardGuard {
         (!self.pending.is_empty()).then_some(&self.pending)
     }
 
-    /// Allow: the held writes to apply now (empty when none were held).
-    pub fn allow(&mut self) -> ClipboardWrites {
-        std::mem::take(&mut self.pending)
+    /// What the notice says about the held writes; `None` when none are held.
+    pub fn notice(&self) -> Option<&ClipboardNotice> {
+        self.notice.as_ref()
     }
 
-    /// "Always for this tab": allow the held writes and every later one.
-    pub fn allow_always(&mut self) -> ClipboardWrites {
-        self.always = true;
-        self.allow()
+    /// Apply the user's answer. `None` when nothing was held (nothing to do); otherwise the
+    /// writes to apply now (empty after Deny).
+    pub fn answer(&mut self, answer: ClipboardAnswer) -> Option<ClipboardWrites> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        self.notice = None;
+        let held = std::mem::take(&mut self.pending);
+        match answer {
+            ClipboardAnswer::Allow => Some(held),
+            ClipboardAnswer::Always => {
+                self.always = true;
+                Some(held)
+            }
+            ClipboardAnswer::Deny => Some(ClipboardWrites::default()),
+        }
     }
 
-    /// Deny (also when the program exits): drop the held writes. Returns whether any were held.
+    /// Drop the held writes (the program exited). Returns whether any were held.
     pub fn deny(&mut self) -> bool {
-        !std::mem::take(&mut self.pending).is_empty()
+        self.answer(ClipboardAnswer::Deny).is_some()
     }
 
     /// Whether the user chose "Always for this tab".
@@ -113,43 +174,27 @@ impl ClipboardGuard {
     }
 }
 
-/// What the notice says about the held writes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ClipboardNotice {
-    /// For example "A program wants to copy 12 characters (2 lines) to the clipboard".
-    pub message: String,
-    /// The text on one line, shortened to [`CLIPBOARD_PREVIEW_CHARS`]; `None` when it is blank.
-    pub preview: Option<String>,
+/// `text` on one line of at most `max_chars` characters. Only a bounded start of `text` is
+/// read: a program can send megabytes, and the preview shows a few dozen characters.
+fn preview(text: &str, max_chars: usize) -> Option<String> {
+    let end = text.floor_char_boundary(max_chars * 8);
+    command_label(&text[..end], max_chars)
 }
 
-impl ClipboardWrites {
-    /// The notice for these writes. The clipboard's text is described when both targets are
-    /// written; the program chooses the text, so the preview has no control characters.
-    pub fn notice(&self) -> ClipboardNotice {
-        let target = match (&self.clipboard, &self.selection) {
-            (Some(_), Some(_)) => "the clipboard and the primary selection",
-            (None, Some(_)) => "the primary selection",
-            _ => "the clipboard",
-        };
-        let text = self
-            .clipboard
-            .as_deref()
-            .or(self.selection.as_deref())
-            .unwrap_or_default();
-        ClipboardNotice {
-            message: format!("A program wants to copy {} to {target}", size_label(text)),
-            preview: command_label(text, CLIPBOARD_PREVIEW_CHARS),
-        }
-    }
+/// Both texts, each with half the preview, split by `|`.
+fn split_preview(clipboard: &str, selection: &str) -> Option<String> {
+    let half = CLIPBOARD_PREVIEW_CHARS / 2;
+    let clipboard = preview(clipboard, half).unwrap_or_default();
+    let selection = preview(selection, half).unwrap_or_default();
+    Some(format!("{clipboard} | {selection}"))
 }
 
 /// "1 character", "12 characters (2 lines)".
 fn size_label(text: &str) -> String {
     let chars = text.chars().count();
-    let mut label = if chars == 1 {
-        "1 character".to_string()
-    } else {
-        format!("{chars} characters")
+    let mut label = match chars {
+        1 => "1 character".to_string(),
+        _ => format!("{chars} characters"),
     };
     let lines = text.trim_end_matches(['\n', '\r']).lines().count();
     if lines > 1 {
@@ -160,6 +205,7 @@ fn size_label(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::ClipboardAnswer::{Allow, Always, Deny};
     use super::*;
 
     fn held(guard: &ClipboardGuard) -> ClipboardWrites {
@@ -180,9 +226,14 @@ mod tests {
             "a newer write replaces the held one"
         );
         assert_eq!(held(&guard).clipboard.as_deref(), Some("two"));
-        let writes: Vec<_> = guard.allow().into_writes().collect();
+        assert_eq!(
+            guard.notice().map(|notice| notice.message.as_str()),
+            Some("A program wants to copy 3 characters to the clipboard")
+        );
+        let writes: Vec<_> = guard.answer(Allow).unwrap().into_writes().collect();
         assert_eq!(writes, [(ClipboardTarget::Clipboard, "two".to_string())]);
         assert_eq!(guard.pending(), None);
+        assert_eq!(guard.notice(), None);
         assert!(!guard.always());
         assert_eq!(
             guard.offer(ClipboardTarget::Clipboard, "three".into()),
@@ -199,7 +250,19 @@ mod tests {
         guard.offer(ClipboardTarget::Selection, "b".into());
         assert!(guard.deny());
         assert_eq!(guard.pending(), None);
-        assert_eq!(guard.allow().into_writes().count(), 0);
+        assert_eq!(guard.answer(Allow), None);
+        assert_eq!(guard.notice(), None);
+    }
+
+    #[test]
+    fn an_answer_with_nothing_held_does_nothing() {
+        let mut guard = ClipboardGuard::default();
+        for answer in [Allow, Always, Deny] {
+            assert_eq!(guard.answer(answer), None);
+        }
+        assert!(!guard.always());
+        guard.offer(ClipboardTarget::Clipboard, "a".into());
+        assert_eq!(guard.answer(Deny), Some(ClipboardWrites::default()));
     }
 
     #[test]
@@ -210,7 +273,7 @@ mod tests {
             guard.offer(ClipboardTarget::Clipboard, "clip".into()),
             ClipboardOffer::Held { first: false }
         );
-        let writes: Vec<_> = guard.allow().into_writes().collect();
+        let writes: Vec<_> = guard.answer(Allow).unwrap().into_writes().collect();
         assert_eq!(
             writes,
             [
@@ -224,7 +287,7 @@ mod tests {
     fn always_applies_the_held_write_and_later_ones() {
         let mut guard = ClipboardGuard::default();
         guard.offer(ClipboardTarget::Clipboard, "held".into());
-        let writes: Vec<_> = guard.allow_always().into_writes().collect();
+        let writes: Vec<_> = guard.answer(Always).unwrap().into_writes().collect();
         assert_eq!(writes, [(ClipboardTarget::Clipboard, "held".to_string())]);
         assert!(guard.always());
         assert_eq!(
@@ -232,9 +295,13 @@ mod tests {
             ClipboardOffer::Apply(ClipboardTarget::Selection, "later".into())
         );
         assert_eq!(guard.pending(), None);
-        let inherited = ClipboardGuard::new(guard.always());
-        assert!(inherited.always());
-        assert!(!ClipboardGuard::new(false).always());
+        guard.always = false;
+        guard.offer(ClipboardTarget::Clipboard, "held".into());
+        assert!(!guard.carry_over().always());
+        guard.always = true;
+        let carried = guard.carry_over();
+        assert!(carried.always());
+        assert_eq!(carried.pending(), None);
     }
 
     #[test]
@@ -257,10 +324,19 @@ mod tests {
             notice(None, Some("x")).message,
             "A program wants to copy 1 character to the primary selection"
         );
+        let same = notice(Some("ab"), Some("ab"));
         assert_eq!(
-            notice(Some("ab"), Some("other")).message,
+            same.message,
             "A program wants to copy 2 characters to the clipboard and the primary selection"
         );
+        assert_eq!(same.preview.as_deref(), Some("ab"));
+        let different = notice(Some("ab"), Some("rm -rf ~"));
+        assert_eq!(
+            different.message,
+            "A program wants to copy 2 characters to the clipboard and 8 characters to the \
+             primary selection"
+        );
+        assert_eq!(different.preview.as_deref(), Some("ab | rm -rf ~"));
         let multi = notice(Some("rm -rf ~\n\u{1b}[2Jecho hi\n"), None);
         assert_eq!(
             multi.message,
@@ -276,6 +352,15 @@ mod tests {
         let long = notice(Some(&"y".repeat(500)), None);
         assert_eq!(
             long.preview.map(|preview| preview.chars().count()),
+            Some(CLIPBOARD_PREVIEW_CHARS)
+        );
+        let huge = notice(Some(&"é".repeat(100_000)), None);
+        assert_eq!(
+            huge.message,
+            "A program wants to copy 100000 characters to the clipboard"
+        );
+        assert_eq!(
+            huge.preview.map(|preview| preview.chars().count()),
             Some(CLIPBOARD_PREVIEW_CHARS)
         );
         let bidi = notice(Some("abc\u{202E}fed"), None);

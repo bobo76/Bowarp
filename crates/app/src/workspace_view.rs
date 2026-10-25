@@ -563,10 +563,8 @@ impl WorkspaceView {
             .focus_handle
             .is_focused(window);
         // "Always for this tab" lasts until the tab closes, across its sessions.
-        let clipboard_always = self.tabs[index].view.read(cx).clipboard_always();
-        view.update(cx, |view, _| {
-            view.inherit_clipboard_always(clipboard_always)
-        });
+        let clipboard = self.tabs[index].view.read(cx).clipboard_carry_over();
+        view.update(cx, |view, _| view.set_clipboard_guard(clipboard));
         let tab = &mut self.tabs[index];
         if let Some(hooks) = &self.hooks {
             hooks.remove_session(tab.view.read(cx).id());

@@ -49,8 +49,8 @@ mod workspace_features;
 pub use about::version_line;
 pub use attention::{Attention, next_attention, waiting_count};
 pub use clipboard_guard::{
-    CLIPBOARD_PREVIEW_CHARS, ClipboardGuard, ClipboardNotice, ClipboardOffer, ClipboardTarget,
-    ClipboardWrites,
+    CLIPBOARD_PREVIEW_CHARS, ClipboardAnswer, ClipboardGuard, ClipboardNotice, ClipboardOffer,
+    ClipboardTarget, ClipboardWrites,
 };
 pub use close_warning::{
     AgentActivity, BusyReason, BusyTab, CloseTarget, CloseWarning, TabActivity, close_warning,

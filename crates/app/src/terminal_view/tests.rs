@@ -300,7 +300,7 @@ fn copilot_permission_hooks_add_waiting_but_only_progress_controls_working_and_i
 fn clipboard_writes_wait_for_an_answer(cx: &mut gpui_kit::TestAppContext) {
     use term_core::alacritty_terminal::term::ClipboardType;
 
-    use self::clipboard_notice::ClipboardAnswer;
+    use workspace_model::{ClipboardAnswer, ClipboardGuard};
 
     #[cfg(windows)]
     let (program, args) = ("cmd", vec!["/C", "exit 0"]);
@@ -355,8 +355,30 @@ fn clipboard_writes_wait_for_an_answer(cx: &mut gpui_kit::TestAppContext) {
     });
     assert_eq!(clipboard_text(cx).as_deref(), Some("later"));
 
+    let carried = view.read_with(cx, |view, _| view.clipboard_carry_over());
     view.update(cx, |view, cx| {
-        view.inherit_clipboard_always(false);
+        view.set_clipboard_guard(carried);
+        view.dispatch_test_event(store("carried"), cx);
+        assert!(!view.clipboard_pending());
+        assert!(view.clipboard_always());
+    });
+    assert_eq!(clipboard_text(cx).as_deref(), Some("carried"));
+
+    #[cfg(target_os = "linux")]
+    view.update(cx, |view, cx| {
+        view.set_clipboard_guard(ClipboardGuard::default());
+        let selection = ClipboardType::Selection;
+        view.dispatch_test_event(SessionEvent::ClipboardStore(selection, "sel".into()), cx);
+        assert!(
+            view.clipboard_pending(),
+            "a primary selection write is held too"
+        );
+        view.answer_clipboard(ClipboardAnswer::Deny, cx);
+        assert!(!view.clipboard_pending());
+    });
+
+    view.update(cx, |view, cx| {
+        view.set_clipboard_guard(ClipboardGuard::default());
         view.dispatch_test_event(store("at exit"), cx);
         view.dispatch_test_event(SessionEvent::Exited(Some(0)), cx);
         assert!(
@@ -366,5 +388,5 @@ fn clipboard_writes_wait_for_an_answer(cx: &mut gpui_kit::TestAppContext) {
         view.dispatch_test_event(store("after exit"), cx);
         assert!(!view.clipboard_pending());
     });
-    assert_eq!(clipboard_text(cx).as_deref(), Some("later"));
+    assert_eq!(clipboard_text(cx).as_deref(), Some("carried"));
 }

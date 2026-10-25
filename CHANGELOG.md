@@ -5,6 +5,16 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.26
+
+- Ask before a program writes the clipboard or the primary selection (OSC 52, e.g. Copilot
+  CLI's copy on Windows, tmux, vim): a notice above the terminal shows the text's size and a
+  preview, and **Allow** (Ctrl+Shift+Y), **Deny** (Ctrl+Shift+N) or **Always for this tab**
+  answers it. A newer write replaces the waiting one, and a background tab with a waiting write
+  shows Needs attention.
+- Show both texts in the notice when a program writes different text to the clipboard and
+  the primary selection.
+
 ## 0.2.25
 
 - Ask before closing a tab whose command is still running or whose agent is working or
