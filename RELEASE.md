@@ -19,7 +19,7 @@ prompt. Failed tests or automated checks block release progression until resolve
       The script refuses uncommitted changes to `Cargo.toml`; resolve those deliberately
       before running it. Finish the version bump and lockfile refresh before starting
       validation; do not run them in parallel with Cargo checks.
-- [ ] Update [PLAN.md](PLAN.md): remove fully implemented and verified work and keep
+- [ ] Update [BACKLOG.md](BACKLOG.md): remove fully implemented and verified work and keep
       outstanding work. Move implemented items awaiting native UI checks from planned
       work into "Fixed, not tested yet", retaining their manual checks. Publishing does
       not count as verification. New limitations of built features go to
@@ -52,7 +52,7 @@ cargo build --release --workspace --locked
       checks, native Windows checks, UI checks and packaged-app checks. Keep blocked or
       unrun checks explicitly pending.
 - [ ] Complete the relevant Windows and Linux UI checks. Record unverified behavior under
-      "Fixed, not tested yet" in `PLAN.md` rather than marking it done.
+      "Fixed, not tested yet" in `BACKLOG.md` rather than marking it done.
 - [ ] Review the final diff, including version consistency and documentation accuracy.
 - [ ] Stop before committing or pushing if tests or automated checks failed. A missing
       local prerequisite is a verification blocker, not a passing check; use a supported

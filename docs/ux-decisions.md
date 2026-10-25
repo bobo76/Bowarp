@@ -179,14 +179,14 @@
   everyone. Cons: out of our control and timing; posting is the user's call.
 - Decision: B, because a live setting should apply live (Windows ranks above Linux) and the
   cost is a few lines in a pattern the app already has, while A and A+ leave the user with a
-  choice that silently doesn't apply or needs a restart. The PLAN.md manual Windows 11 check
+  choice that silently doesn't apply or needs a restart. The BACKLOG.md manual Windows 11 check
   includes switching None/Acrylic/Mica live at 80 %, both ways and through 100 %. If that
   check shows `DWMSBT_NONE` doesn't clear Mica, fall back to A+ with the caption above and a
   known-limitations line. C stays worth posting later (needs the user). Decided by: UX/UI agent
 
 ## Copilot Working spinner: what it looks like (no reference screenshot)?
 - Date: 2026-10-25, step: copilot-anim, raised by: Step 0
-- Context: PLAN.md asks for "a blue circular spinner ... matching the reference screenshot",
+- Context: BACKLOG.md asks for "a blue circular spinner ... matching the reference screenshot",
   but `docs/ui-reference/` has no such screenshot, so this entry stands in for it. The row's
   first line is `text_sm` (14 px); the attention triangle in the same slot is 13 px
   (`ATTENTION_ICON_SIZE`). Status colors are fixed hex, the same in both themes; Working is

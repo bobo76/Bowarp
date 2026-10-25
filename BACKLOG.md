@@ -1,4 +1,4 @@
-# Agent Workspace - Plan
+# Agent Workspace - Backlog
 
 Backlog and next steps. The target is [FEATURES.md](FEATURES.md); how built features behave at
 their edges is in [docs/known-limitations.md](docs/known-limitations.md); finished work is in
@@ -260,6 +260,11 @@ behavior"); items below name their switch where they need one.
   palette plus "Default") that tints the tab's sidebar row and its terminal background; saved
   with the tab in `tabs.json` and restored. The terminal's foreground colors stay unchanged,
   so the palette must keep text readable in light and dark themes.
+- Group hover card leaves out running shell commands: its "Working" line counts only agent
+  tabs (Claude Code / Copilot `TabStatus::Working`), so a group whose shells run a long command
+  shows "Working: 0". `GroupSummary::running` is already counted (the collapsed header shows
+  its chip) but `sidebar::group_card` never prints it. Add a "Running: N" line (or rename the
+  lines so agent vs. shell is clear) and unit-test the summary for a mixed group.
 - Extended group hover card (basic counts are implemented): one line per tab with kind icon,
     name, status and lap time ("Working · 2m 14s", "Running for 40s") and branch, in sidebar
     order; tabs that need attention (Waiting, Ready for review or failed) first.

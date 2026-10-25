@@ -1,7 +1,7 @@
 # Known limitations
 
 How built features behave at their edges, decided on purpose or accepted for now. Work still
-to do is in [PLAN.md](../PLAN.md); the target spec is [FEATURES.md](../FEATURES.md). Remove an
+to do is in [BACKLOG.md](../BACKLOG.md); the target spec is [FEATURES.md](../FEATURES.md). Remove an
 entry when the limitation is lifted.
 
 - Busy-close warnings know only what the shell integration marks and agent status report:

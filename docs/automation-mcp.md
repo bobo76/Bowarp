@@ -2,7 +2,7 @@
 
 Not implemented. The goal is to let Claude Code (or another MCP client) drive a running app and
 check what it shows, so features can be tested without a person at the keyboard: notably the
-"Fixed, not tested yet" items in [PLAN.md](../PLAN.md) that wait for a manual run on Windows. The
+"Fixed, not tested yet" items in [BACKLOG.md](../BACKLOG.md) that wait for a manual run on Windows. The
 app has no UI tests today.
 
 ## What a test door needs

@@ -1360,7 +1360,7 @@ impl WorkspaceView {
     }
 
     /// The page's switch (or a hand edit) already wrote "off": write "on" back (settings.json
-    /// is off for a moment, see PLAN.md) and start the discard questions, unless a chain of
+    /// is off for a moment, see BACKLOG.md) and start the discard questions, unless a chain of
     /// them is already waiting for answers.
     fn refuse_file_panes_off(
         &mut self,

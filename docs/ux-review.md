@@ -2,7 +2,7 @@
 
 Date: 2026-10-25
 
-Scope and method: a review of the whole app against README.md, FEATURES.md, PLAN.md,
+Scope and method: a review of the whole app against README.md, FEATURES.md, BACKLOG.md,
 docs/known-limitations.md, docs/ux-decisions.md (not reopened unless stated), the Warp reference
 screenshots in `docs/ui-reference/`, and targeted reads of `crates/app/src/` and
 `crates/workspace-model/src/`. Live screenshots were taken of the debug build (0.2.30, 9bc7699)
@@ -13,7 +13,7 @@ Terminal, Keyboard), About, exited tab, terminal search. They are cited below as
 and were not added to the repo. Not seen live (no window manager / compositor under Xvfb):
 title bar window controls, maximize, opacity on a real desktop, the light theme, Windows.
 
-Items already planned in PLAN.md (command palette, light theme softening, renamed Claude
+Items already planned in BACKLOG.md (command palette, light theme softening, renamed Claude
 spinner, viewer close shortcut and search, new-tab folder picker, async explorer reads,
 TerminalView caching, extended group card, group drag) are not repeated.
 
