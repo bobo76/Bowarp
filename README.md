@@ -197,7 +197,9 @@ launch folder for now).
 The badge on the icon shows the status. Hover a row for a moment to see its card: the status,
 the full folder, the branch, the program's title, the session kind and, in a repository, the
 lines added in the working tree (`+N`: changes to tracked files from `git diff HEAD` plus new
-files not yet added and not ignored, refreshed at most every 5 s).
+files not yet added and not ignored, refreshed at most every 5 s). No card opens while a tab
+is dragged, a name is edited, or a menu or dialog is open; a card hidden that way comes back
+after the pointer leaves the row and hovers it again.
 
 Appearance → Tab hover card controls the card and its Status, Location, Changes, Program
 title and Session kind pieces (all on initially). The tab name and Ctrl+number shortcut

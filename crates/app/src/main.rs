@@ -16,6 +16,7 @@ mod keymap;
 mod keys;
 mod launcher;
 mod mouse;
+mod open_menu;
 mod processes;
 mod scrollbar;
 mod settings_file;

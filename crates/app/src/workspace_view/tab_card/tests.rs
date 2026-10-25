@@ -201,3 +201,107 @@ fn cards_show_lines_added_only_for_the_folder_they_were_counted_in() {
     cards.forget(1);
     assert_eq!(cards.lines_added(1, repo), None);
 }
+
+#[gpui::test]
+fn cards_are_held_while_a_name_editor_a_menu_or_a_dialog_is_open(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use super::super::RenameTarget;
+    use super::super::tests::PanesHarness;
+    use gpui_kit::component::menu::PopupMenu;
+    use gpui_kit::{DismissEvent, Entity};
+
+    let mut h = PanesHarness::new("held-cards", cx);
+    // No `git diff` run in a test.
+    h.cx.update(|_, cx| settings_file::preview(cx, |settings| settings.tab_card.changes = false));
+    let workspace = h.workspace.clone();
+    let id = workspace.read_with(&h.cx, |workspace, _| workspace.tabs[0].id);
+    // The tab's card shows, as its hover card reports when it opens.
+    h.cx.update(|_, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.cards.shown = Some(id);
+            workspace.start_card_clock(id, cx);
+        })
+    });
+    // Draws a frame, then tells whether cards are held and whether the card's clock runs.
+    let held = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| window.draw(cx).clear(cx));
+        workspace.read_with(&h.cx, |workspace, _| {
+            let cards = &workspace.cards;
+            assert_eq!(cards.shown, Some(id), "the hovered card stays open, hidden");
+            (cards.held, cards.clock.is_some())
+        })
+    };
+    // The pointer leaves the row, then enters it again.
+    let rehover = |h: &mut PanesHarness| {
+        h.cx.update(|_, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.card_closed(id, cx);
+                workspace.card_opened(id, cx);
+            })
+        });
+    };
+    let suppressed = |h: &mut PanesHarness| {
+        workspace.read_with(&h.cx, |workspace, _| workspace.cards.suppressed)
+    };
+    assert_eq!(held(&mut h), (false, true), "nothing open: the card shows");
+
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.start_rename(RenameTarget::Tab(id), window, cx)
+        })
+    });
+    assert_eq!(held(&mut h), (true, false), "a name editor hides the card");
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| workspace.cancel_rename(window, cx))
+    });
+    assert_eq!(
+        held(&mut h),
+        (false, false),
+        "the still hovered card stays hidden, with no clock"
+    );
+    assert_eq!(suppressed(&mut h), Some(id));
+    rehover(&mut h);
+    assert_eq!(
+        held(&mut h),
+        (false, true),
+        "leave and enter: it shows again"
+    );
+    assert_eq!(suppressed(&mut h), None);
+
+    let builder = WorkspaceView::tab_menu_builder(workspace.downgrade(), id);
+    let open_menu = |h: &mut PanesHarness| -> Entity<PopupMenu> {
+        let builder = builder.clone();
+        h.cx.update(|window, cx| {
+            PopupMenu::build(window, cx, move |menu, window, cx| {
+                builder(menu, window, cx)
+            })
+        })
+    };
+    let menu = open_menu(&mut h);
+    assert_eq!(held(&mut h), (true, false), "the tab menu hides the card");
+    h.cx.update(|_, cx| menu.update(cx, |_, cx| cx.emit(DismissEvent)));
+    assert_eq!(
+        held(&mut h),
+        (false, false),
+        "dismissed, though still alive"
+    );
+    rehover(&mut h);
+    let menu = open_menu(&mut h);
+    assert!(held(&mut h).0);
+    drop(menu);
+    assert!(!held(&mut h).0, "a dropped menu (its row went) is closed");
+    rehover(&mut h);
+
+    h.cx.update(|window, cx| window.open_alert_dialog(cx, |alert, _, _| alert.title("Close?")));
+    assert_eq!(held(&mut h), (true, false), "a dialog hides the card");
+    h.cx.update(|window, cx| window.close_dialog(cx));
+    assert_eq!(held(&mut h), (false, false));
+    assert_eq!(suppressed(&mut h), Some(id));
+    // A hold starting again keeps the card suppressed.
+    h.cx.update(|window, cx| window.open_alert_dialog(cx, |alert, _, _| alert.title("Again?")));
+    assert_eq!(held(&mut h), (true, false));
+    h.cx.update(|window, cx| window.close_dialog(cx));
+    assert_eq!(held(&mut h), (false, false));
+    assert_eq!(suppressed(&mut h), Some(id));
+}

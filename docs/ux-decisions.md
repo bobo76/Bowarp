@@ -335,3 +335,36 @@
   be decided once for all open paths (terminal links, explorer, settings button), not here.
   Possible backlog item, needs the user (product direction): focus the viewer on file open,
   and/or open settings.json in Raw. Decided by: UX/UI agent
+
+## Hover card still under the cursor when a hold ends: show it at once or wait for a new hover?
+- Date: 2026-10-25, step: hover-card-guard, raised by: REVIEW.md #1
+- Context: since 821290e the HoverCard wrapper stays during a hold (rename, menu, dialog,
+  drag) and renders invisible; when the hold ends, the card open under the cursor appears at
+  once, with no hover delay, and runs `git diff` (`tab_card.rs:156-159`). During a drag the
+  rows passed over open invisible cards, so the card under the drop point pops up; before
+  821290e a card after a drop needed a fresh hover delay.
+- Option A — Keep: show the hovered card as soon as the hold ends. Pros: no code; the card
+  is "earned" by the hover that happened during the hold. Cons: a card pops up on Escape,
+  Cancel, Enter or a drop with no pointer move, right where ux-review #9 wanted it gone (the
+  user just finished a gesture on that row); regresses the old after-drop behaviour; spawns
+  `git diff` with no user intent.
+- Option B — Suppress until the row is left: when the hold ends, the card that is `shown`
+  becomes `TabCards::suppressed` and stays invisible (empty content, no clock, no diff) until
+  its `on_open_change(false)`; leaving and re-entering the row gives the normal delay. Group
+  cards the same through their slot. Pros: matches the Windows/VS Code tooltip rule (a
+  tooltip dismissed by a click or menu stays away until the pointer leaves the control);
+  restores the pre-821290e drop behaviour; no surprise popup after a keyboard action; no
+  `git diff` on a hold end; only public HoverCard API (`appearance`, `on_open_change`), one
+  `Option<u64>`, no timer or redraw loop. Cons: a user who keeps the pointer still and wants
+  the card must nudge it out of the row and back (one move; the card is never needed to
+  finish the gesture).
+- Option C — Re-key the HoverCard id per hold. Pros: a real reset, fresh delay without
+  leaving. Cons: also resets the row's ContextMenu state keyed under that id path; fragile.
+- Decision: B, because a card should answer a hover, not the end of a menu, dialog, rename
+  or drag; it matches familiar tooltip behaviour and the old after-drop rule at near-zero
+  cost. Edge cases: `suppressed` is cleared only by the matching id's close (ids are unique,
+  so a removed tab's stale id never matches and needs no cleanup); a row that was not under
+  the cursor when the hold ended is unaffected; with the card setting off nothing changes; a
+  hold that starts again while suppressed keeps it suppressed. docs/known-limitations.md
+  lines 128-129 ("shows once it ends while its row is still hovered") no longer apply once
+  built. Decided by: UX/UI agent

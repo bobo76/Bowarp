@@ -123,3 +123,7 @@ entry when the limitation is lifted.
   settings page and README name the default keys. Recording ends on a click outside the
   recording chip, Esc or the keystroke; if the chip is hidden another way (no click), the next
   keystroke ends it and goes on as usual.
+- Hover cards are held back only for the menus the sidebar and the file explorer build (tab,
+  group, `+`, explorer entry menus) and for any dialog: a dropdown on the settings page or in
+  the file viewer doesn't hold them. A card open when a hold ends stays hidden until the
+  pointer leaves its row; keeping the pointer still, the card needs a move out and back.

@@ -44,6 +44,7 @@ use crate::history;
 use crate::hooks::ClaudeHooks;
 use crate::keymap;
 use crate::launcher::{self, Launcher, launch_name};
+use crate::open_menu::OpenMenu;
 use crate::settings_file;
 use crate::settings_page;
 use crate::shell_integration;
@@ -256,6 +257,8 @@ pub struct WorkspaceView {
     /// The same for the explorer's width, in pixels (`explorer_width`).
     explorer_drag: DividerDrag<ExplorerWidth>,
     renaming: Option<Rename>,
+    /// The sidebar menu (tab, group, `+`) that is open, if any.
+    menu: OpenMenu,
     search: TabSearch,
     cards: TabCards,
     /// Where the tab being dragged would land, from the last drag move over the sidebar.
@@ -349,6 +352,7 @@ impl WorkspaceView {
             viewer_drag: DividerDrag::new(Self::save_viewer_fraction),
             explorer_drag: DividerDrag::new(Self::save_explorer_width),
             renaming: None,
+            menu: OpenMenu::default(),
             search: TabSearch::new(window, cx),
             cards: TabCards::default(),
             drop_hint: None,
@@ -1768,6 +1772,7 @@ impl Focusable for WorkspaceView {
 impl Render for WorkspaceView {
     #[expect(clippy::too_many_lines, reason = "split when next changed")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.hold_hover_cards(window, cx);
         let active = self
             .active_tab()
             .filter(|_| !self.settings.shows_page())

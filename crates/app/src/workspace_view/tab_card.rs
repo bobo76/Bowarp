@@ -5,8 +5,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use gpui_kit::component::WindowExt;
 use gpui_kit::component::hover_card::HoverCard;
-use gpui_kit::{Anchor, AnyElement, App, AppContext, Context, IntoElement, Styled, Task, div};
+use gpui_kit::{
+    Anchor, AnyElement, App, AppContext, Context, IntoElement, Styled, Task, Window, div,
+};
 use workspace_model::{TabCardField, display_path, lines_added, until_next_second};
 
 use super::WorkspaceView;
@@ -87,6 +90,15 @@ pub(super) struct TabCards {
     shown: Option<u64>,
     /// The tab whose hover card shows, and the task repainting its lap time each second.
     clock: Option<(u64, Task<()>)>,
+    /// No card shows, and the clock stops, while a tab is dragged or something the user works
+    /// in (a name editor, a menu, a dialog) is open. Set at each render.
+    pub(super) held: bool,
+    /// The tab whose card was open when a hold ended: it stays hidden until the pointer
+    /// leaves its row, so a card answers a hover, not the end of a menu, dialog or drag.
+    suppressed: Option<u64>,
+    /// The same two for the group cards, by sidebar slot.
+    pub(super) group_shown: Option<usize>,
+    pub(super) group_suppressed: Option<usize>,
 }
 
 impl TabCards {
@@ -133,28 +145,98 @@ impl TabCards {
 }
 
 impl WorkspaceView {
+    /// Hold the hover cards back (see [`TabCards::held`]), checked at each render. A held card
+    /// is not shown and its clock stops; one open when the hold ends stays hidden until its
+    /// row is left.
+    pub(super) fn hold_hover_cards(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let held = self.holds_hover_cards(window, cx);
+        if held == self.cards.held {
+            return;
+        }
+        self.cards.held = held;
+        if held {
+            self.cards.clock = None;
+            return;
+        }
+        if self.cards.shown.is_some() {
+            self.cards.suppressed = self.cards.shown;
+        }
+        if self.cards.group_shown.is_some() {
+            self.cards.group_suppressed = self.cards.group_shown;
+        }
+    }
+
+    fn holds_hover_cards(&self, window: &mut Window, cx: &mut App) -> bool {
+        cx.has_active_drag()
+            || self.renaming.is_some()
+            || self.menu.is_open()
+            || self.explorer.read(cx).holds_popups()
+            || window.has_active_dialog(cx)
+    }
+
+    /// Tab `id`'s hover card opened (its row was hovered for a moment).
+    fn card_opened(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.cards.shown = Some(id);
+        if self.cards.held || self.cards.suppressed == Some(id) {
+            return;
+        }
+        self.refresh_diff_stat(id, cx);
+        self.start_card_clock(id, cx);
+    }
+
+    /// Tab `id`'s hover card closed: the pointer left its row.
+    fn card_closed(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.stop_card_clock(id);
+        if self.cards.shown == Some(id) {
+            self.cards.shown = None;
+        }
+        if self.cards.suppressed == Some(id) {
+            self.cards.suppressed = None;
+            // The card's `appearance` was fixed at the last render.
+            cx.notify();
+        }
+    }
+
+    /// Group slot `slot`'s hover card opened or closed.
+    pub(super) fn group_card_changed(&mut self, slot: usize, open: bool, cx: &mut Context<Self>) {
+        if open {
+            self.cards.group_shown = Some(slot);
+            return;
+        }
+        if self.cards.group_shown == Some(slot) {
+            self.cards.group_shown = None;
+        }
+        if self.cards.group_suppressed == Some(slot) {
+            self.cards.group_suppressed = None;
+            cx.notify();
+        }
+    }
+
     /// The tab's details in a card next to the row, after hovering it for a moment. Opening it
     /// runs `git diff` for the `+N` (cached for a few seconds) and, while it shows, ticks the
-    /// lap time of a working agent. No card while a tab is dragged. The card is built only
-    /// while it shows.
+    /// lap time of a working agent. The card is built only while it shows, and not while held
+    /// back: it stays wrapped then, since unwrapping the row would reset the row's open menu.
     pub(super) fn with_hover_card(
         &self,
         row: AnyElement,
         id: u64,
         cx: &Context<Self>,
     ) -> AnyElement {
-        if cx.has_active_drag() || !settings_file::settings(cx).tab_card.active() {
+        if !settings_file::settings(cx).tab_card.active() {
             return row;
         }
+        let held = self.cards.held || self.cards.suppressed == Some(id);
         let workspace = cx.entity().downgrade();
         let source = workspace.clone();
         HoverCard::new(("tab-card", id as usize))
             .anchor(Anchor::LeftCenter)
             .ml_2()
+            .appearance(!held)
             .trigger(row)
             .content(move |_, _, cx| {
                 let card = source
                     .upgrade()
+                    .filter(|_| !held)
                     .and_then(|workspace| workspace.read(cx).tab_card(id, cx));
                 match card {
                     Some(card) => sidebar::tab_card(card, cx).into_any_element(),
@@ -162,17 +244,9 @@ impl WorkspaceView {
                 }
             })
             .on_open_change(move |open, _, cx| {
-                let _ = workspace.update(cx, |workspace, cx| {
-                    if *open {
-                        workspace.cards.shown = Some(id);
-                        workspace.refresh_diff_stat(id, cx);
-                        workspace.start_card_clock(id, cx);
-                    } else {
-                        workspace.stop_card_clock(id);
-                        if workspace.cards.shown == Some(id) {
-                            workspace.cards.shown = None;
-                        }
-                    }
+                let _ = workspace.update(cx, |workspace, cx| match *open {
+                    true => workspace.card_opened(id, cx),
+                    false => workspace.card_closed(id, cx),
                 });
             })
             .into_any_element()

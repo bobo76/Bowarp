@@ -142,15 +142,15 @@ fn last_command_events_and_history_deletion_are_flushed_with_the_final_snapshot(
 }
 
 /// A window with one tab, an in-memory settings file and a text file to open.
-struct PanesHarness {
-    cx: gpui_kit::VisualTestContext,
-    workspace: Entity<WorkspaceView>,
+pub(super) struct PanesHarness {
+    pub(super) cx: gpui_kit::VisualTestContext,
+    pub(super) workspace: Entity<WorkspaceView>,
     folder: PathBuf,
     file: PathBuf,
 }
 
 impl PanesHarness {
-    fn new(name: &str, cx: &mut gpui_kit::TestAppContext) -> Self {
+    pub(super) fn new(name: &str, cx: &mut gpui_kit::TestAppContext) -> Self {
         use gpui_kit::VisualTestContext;
         use gpui_kit::component::Root;
         use std::cell::RefCell;

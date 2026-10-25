@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.33
+
+- Don't show tab and group hover cards while a name is being edited, or a menu or dialog is
+  open; a card hidden that way shows again once the pointer leaves the row and comes back.
+- After dropping a dragged tab, the card under the pointer no longer pops up at once.
+
 ## 0.2.32
 
 - Hide the file viewer while the settings page shows, so the page gets the full width; the
