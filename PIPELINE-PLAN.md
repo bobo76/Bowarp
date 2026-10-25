@@ -52,16 +52,17 @@ In this order:
 - First command: append `begin` with the agent's task to `pipeline/log.txt`. Last command, after the commit and the retro: append `end` with the outcome.
 - Stage files by path; never `git add -A` or `git add .`. Leave uncommitted files that the agent didn't change alone (they may be the user's notes).
 - Never stage `pipeline/`, `REVIEW.md`, and don't edit or stage `PIPELINE-PLAN.md` (it is tracked, but only I change and commit it; see "After verification"). Don't edit `CHANGELOG.md`; I write it when the version is bumped.
-- "Before anything else, read these memory files:" followed by the absolute paths of the entries marked for every agent (toolchain facts) and of those relevant to the step (library behaviour, test harness usage and limits). Paths only, never the text of the entries. Tell the agent not to edit them.
+- "Before anything else, read these memory files:" followed by the absolute paths of the entries marked for every agent (toolchain facts) and of those relevant to the step (library behaviour, test harness usage and limits). Paths only, never the text of the entries. Tell the agent not to edit them. Pick per agent: the Xvfb entry only for agents that drive the app, the GPUI entry only when the diff touches rendering, windows, actions or dialogs (agent 2 on model-only code gets toolchain facts alone).
 - Ask for a final report that lists the library/platform facts the code relies on, each with the source `file:line` that confirms it, so the next agent checks those lines instead of searching again. For agent 1 this also includes the `file:line` of each state change the feature relies on (where a field is set, cleared and read, which event triggers a redraw), so the reviewer can follow the state flow without a grep round.
 - For agent 2: the path of agent 1's retro and agent 1's final report (what was verified and how, what was not driven, the choices made). Read those before the code instead of working them out again.
 - For agent 3: agent 2's final report and any user decisions; point to `REVIEW.md` for the findings instead of pasting them, and use REVIEW.md's finding numbers. No retros needed.
-- Tell agents to tee `cargo test` output to a scratch file and count from it, not run the tests twice, and to take the app's real shortcuts from project memory rather than guessing them.
+- Tell agents to run `cargo test --no-fail-fast`, tee its output to a scratch file and count from it, not run the tests twice, and to take the app's real shortcuts from project memory rather than guessing them.
 
 ## Agent 1 — implement the step (general-purpose, `model: "opus"`, I wait for it)
 Launch this agent with the Agent tool's `model` set to `opus`.
 Prompt contents:
 - The step text from `PLAN.md`, verbatim.
+- Where to start: the key state fields and entry points (`file:line`) I found with a quick grep in Step 0, so the agent skips the search.
 - Read `PLAN.md` (the step, plus any reference screenshot it links to) and `FEATURES.md` (including "Optional Behavior" when the step adds a switch), then the code the step touches.
 - Where the step is ambiguous (key bindings, edge cases, exact behaviour), pick a sensible option consistent with the existing code and list the choice in its final report.
 - In the final report, list behaviour that changed for existing paths (e.g. tab close no longer keeps viewer edits) separately from new-feature choices: that is where regressions hide.
