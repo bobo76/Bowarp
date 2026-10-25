@@ -58,7 +58,7 @@ In this order:
 - Ask for a final report that lists the library/platform facts the code relies on, each with the source `file:line` that confirms it, so the next agent checks those lines instead of searching again. For agent 1 this also includes the `file:line` of each state change the feature relies on (where a field is set, cleared and read, which event triggers a redraw), so the reviewer can follow the state flow without a grep round.
 - For agent 2: the path of agent 1's retro and agent 1's final report (what was verified and how, what was not driven, the choices made). Read those before the code instead of working them out again.
 - For agent 3: agent 2's final report and any user decisions; point to `REVIEW.md` for the findings instead of pasting them, and use REVIEW.md's finding numbers. No retros needed.
-- Tell agents to run `cargo test --no-fail-fast`, tee its output to a scratch file and count from it, not run the tests twice, and to take the app's real shortcuts from project memory rather than guessing them.
+- Tell agents to run `cargo test --no-fail-fast`, tee its output to a scratch file named with the slug (the scratchpad is shared) and count from it, not run the tests twice, and to take the app's real shortcuts from project memory rather than guessing them.
 
 ## Agent 1 — implement the step (general-purpose, `model: "opus"`, I wait for it)
 Launch this agent with the Agent tool's `model` set to `opus`.
@@ -67,7 +67,7 @@ Prompt contents:
 - Where to start: the key state fields and entry points (`file:line`) I found with a quick grep in Step 0, so the agent skips the search.
 - Read `BACKLOG.md` (the step, plus any reference screenshot it links to) and `FEATURES.md` (including "Optional Behavior" when the step adds a switch), then the code the step touches.
 - Where the step is ambiguous (key bindings, edge cases, exact behaviour), pick a sensible option consistent with the existing code and list the choice in its final report. Follow `docs/ux-decisions.md` and the UX/UI decisions given in the prompt. A new UX/UI question that neither settles: pick provisionally and list it under "Open UX questions" in the final report (question, the choice made, `file:line`), so it goes to the UX/UI agent before agent 2.
-- In the final report, list behaviour that changed for existing paths (e.g. tab close no longer keeps viewer edits) separately from new-feature choices: that is where regressions hide. Also name the kinds of program input the feature can capture (keys, mouse, clipboard...) and whether it refuses, warns or allows each.
+- In the final report, list behaviour that changed for existing paths (e.g. tab close no longer keeps viewer edits) separately from new-feature choices: that is where regressions hide. Also name the kinds of program input the feature can capture (keys, mouse, clipboard...) and whether it refuses, warns or allows each. When a changed path moves keyboard focus, say where the keyboard goes after each one (with the `file:line` that sets it).
 - If the step can't be done or checked on this machine, stop before committing, revert your own changes and give the reason (see "Step not doable" under the loop section).
 - Rules:
   - Follow the existing code style.
