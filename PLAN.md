@@ -121,9 +121,14 @@ version and commit.
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Decide whether renamed Claude tabs should also get the working spinner: a custom name hides
+- Renamed Claude tabs should also get the working spinner: a custom name hides
   Claude Code's animated title glyph, so a renamed Claude tab shows no working animation
   today (the spinner is Copilot only).
+- Tab menu "Reset name": shown only when the tab has a manual name (`TabMeta::custom_name`);
+  clears it so the tab goes back to the program's title (the agent's AI-generated name for
+  Claude Code / Copilot tabs, the shell's title otherwise), saved in `tabs.json` like a rename.
+  Renaming to blank already does this today but nobody finds it. Unit-test that the name
+  follows the program's title again after the reset.
 - Light theme: soften the palette; the user found it too white and hard on the eyes
   (Windows, 2026-10-23). Recheck comfort after.
 - `claude` / `copilot` typed at a shell prompt open an agent tab: instead of running in the
