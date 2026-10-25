@@ -1,7 +1,8 @@
 # Agent Workspace
 
 A terminal workspace for running Claude Code, Copilot CLI and shell sessions side by side, with
-per-tab agent status. Feature spec: [FEATURES.md](FEATURES.md). Plan and status: [PLAN.md](PLAN.md).
+per-tab agent status. Feature spec: [FEATURES.md](FEATURES.md). Backlog: [PLAN.md](PLAN.md).
+Known limitations: [docs/known-limitations.md](docs/known-limitations.md).
 
 ## Install on Windows
 

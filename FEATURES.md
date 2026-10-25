@@ -116,6 +116,27 @@ directly to model APIs.
 - Let the user turn off in-app notifications for agent events; status and attention badges
   stay, and a crashed agent, failures and warnings are still shown.
 
+## Optional Behavior
+
+- Make each major optional behavior switchable, rather than adding a switch for every
+  action. Defaults keep today's behavior (a new feature's switch starts on, notification
+  sound starts off). Theme, color schemes, opacity, blur, shell and icon choices are pickers
+  or sliders, not extra switches.
+- Switches are saved in the settings file (a missing or mistyped value uses its default) and
+  apply live unless stated. A setting that needs another is shown disabled, keeping its value,
+  with a caption naming the setting it needs.
+- Command history is the master switch for the app's history features. Turning it off closes
+  the popup and removes suggestions at once, but keeps the shell integration that folder
+  tracking, agent status and close warnings need.
+- Turning a feature off is not deleting its data: stored history and saved session commands
+  are kept and unused while it is off, and removed only by explicit Clear actions. Saved
+  commands are never rerun automatically.
+- A feature that is off does no work for itself: no card clocks or diffs, suggestion searches,
+  command-block metadata, toast queues, audio, animations or file scans and watchers. Work
+  another enabled feature still needs continues.
+- Safeguards are not switches: clipboard Allow/Deny, the unsaved-edit confirmation, warnings
+  before closing busy tabs and persistent failure warnings always apply.
+
 ## Performance and Usability
 
 - Prioritize Windows support.

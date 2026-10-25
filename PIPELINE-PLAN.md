@@ -15,7 +15,7 @@ Everything the pipeline produces about itself lives in `pipeline/` at the repo r
 
 Get the time with `date -Iseconds`. Append to the log with `>>` and never edit earlier lines.
 
-Event types: `begin`, `end`, `usage`, `docs` (see "After verification"), `split` (the step was split; see Step 0), and `restart` (an agent run again after an interruption; see Step 0).
+Event types: `begin`, `end`, `usage`, `docs` (see "After verification"), `split` (the step was split; see Step 0), `restart` (an agent run again after an interruption; see Step 0), `rebase` and `ci` (see "Squash and push").
 
 ## Models
 - **Main session (me):** the latest Opus (currently Opus 5.5, `claude-opus-5-5`). If the session runs on another model, I stop and ask the user to switch (`/model opus`) before Step 0.
@@ -62,7 +62,7 @@ In this order:
 Launch this agent with the Agent tool's `model` set to `opus`.
 Prompt contents:
 - The step text from `PLAN.md`, verbatim.
-- Read `PLAN.md` (the step, plus any Target UI / design notes it refers to) and `FEATURES.md`, then the code the step touches.
+- Read `PLAN.md` (the step, plus any reference screenshot it links to) and `FEATURES.md` (including "Optional Behavior" when the step adds a switch), then the code the step touches.
 - Where the step is ambiguous (key bindings, edge cases, exact behaviour), pick a sensible option consistent with the existing code and list the choice in its final report.
 - In the final report, list behaviour that changed for existing paths (e.g. tab close no longer keeps viewer edits) separately from new-feature choices: that is where regressions hide.
 - If the step can't be done or checked on this machine, stop before committing, revert your own changes and give the reason (see "Step not doable" under the loop section).
@@ -70,8 +70,8 @@ Prompt contents:
   - Follow the existing code style.
   - Put pure logic in a non-UI crate with unit tests.
 - Verify with `cargo fmt`, `cargo clippy --all-targets`, `cargo build` and `cargo test`. If the step has UI, drive the app with the scripts in `pipeline/tools/` (see "UI test tools"); don't set up the display by hand. Say up front which parts the harness can't drive.
-- Update `PLAN.md`: the new test count in Status, remove the step from "Next steps", and add any new known limitation (the rest of the cleanup happens after Verification).
-- Commit the code and `PLAN.md` with an imperative summary of the step as the message.
+- Update `PLAN.md`: remove the step from "Next steps" and add the checks the harness couldn't drive under "Fixed, not tested yet" (the rest of the cleanup happens after Verification). Add any new known limitation to `docs/known-limitations.md`. No test counts or verification records in `PLAN.md`; the test count goes in the `end` log line.
+- Commit the code, `PLAN.md` and `docs/known-limitations.md` (if changed) with an imperative summary of the step as the message.
 - Write `pipeline/retros/<slug>/1-implement.md` (see Retro focus).
 
 ## Agent 2 — Rust + FM IPL review (general-purpose, `model: "opus"`, after agent 1 finishes)
@@ -105,23 +105,25 @@ If any check fails, including agent 1 being unable to run a needed UI check, I s
 ## After all agents
 - **Docs:** bring the docs in line with what shipped, from the agents' final reports, so they go out in the same squashed commit:
   - **`FEATURES.md`:** if the step added or changed user-visible behaviour that no line describes (or describes differently), add or reword the line in the matching section. It stays a spec of the product, not a changelog: no step names, versions or file paths. Nothing to change for internal work (refactors, fixes of behaviour already described).
-  - **Clean `PLAN.md` of what's done:** finished work lives in git history, not here. Remove what this run completed: Status entries describing finished steps, Target UI rows and backlog or milestone items the step covered (trim an item to its unfinished part when only part of it is done), and known limitations or "Fixed, not tested yet" entries the step resolved. Keep the test count in Status current. Don't touch items the run didn't cover.
-  - If either file changed, commit them alone: "Update FEATURES.md and PLAN.md after <slug>".
+  - **Clean `PLAN.md` of what's done:** finished work lives in git history, not here. Remove what this run completed: backlog items the step covered (trim an item to its unfinished part when only part of it is done) and "Fixed, not tested yet" entries the step resolved. Also remove entries in `docs/known-limitations.md` the step lifted. Don't touch items the run didn't cover.
+  - If any of these files changed, commit them alone: "Update docs after <slug>".
 - **Squash and push:** the run's commits are `<base>..HEAD` (usually 2-4: a `PLAN.md` decision commit if any, the step, the review fixes, the docs update).
   - Check first that every commit in `git log <base>..HEAD` belongs to this run. If another one landed mid-run (e.g. the user's own commit), I stop and ask instead of squashing it in.
-  - **Sync with the remote before the bump:** `git fetch origin`. If the remote moved (the user commits mid-run), `git rebase origin/<branch>` the run's commits, resolve conflicts keeping both sides (the user's PLAN.md edits win, minus the step just done), set `<base>` to `origin/<branch>` (log `<time> | <slug> | pipeline | rebase | new base <sha>`), re-run the check and fix the test count in PLAN.md in an extra commit (it gets squashed). Doing this before the bump means a version bump or CHANGELOG edit by the user is picked up instead of conflicting with ours.
+  - **Sync with the remote before the bump:** `git fetch origin`. If the remote moved (the user commits mid-run), `git rebase origin/<branch>` the run's commits, resolve conflicts keeping both sides (the user's PLAN.md edits win, minus the step just done), set `<base>` to `origin/<branch>` (log `<time> | <slug> | pipeline | rebase | new base <sha>`) and re-run the check. Doing this before the bump means a version bump or CHANGELOG edit by the user is picked up instead of conflicting with ours.
   - Bump the version while the tree is still clean: `scripts/bump-version.sh` (patch), or `scripts/bump-version.sh minor` when the step finishes a milestone (M2 done -> `0.2.0`). It prints the new version; it refuses a dirty `Cargo.toml`, which is why it runs before the reset.
   - **`CHANGELOG.md`:** right after the bump, add a `## <version>` section just below `## Unreleased`, moving any items listed under Unreleased into it. Write the step's user-visible changes from the agents' final reports, in the file's style: short bullets starting with a verb (Add, Show, Keep...), wrapped near 90 columns, naming settings and shortcuts as the user sees them, no file paths, step names or internal details. Mention behaviour changes to existing paths too. Leave `## Unreleased` empty. If the step changed nothing a user would notice (refactor, tests, internal fix), add no section; the version simply has no entry.
   - `git reset --soft <base>`, `git add Cargo.toml Cargo.lock CHANGELOG.md`, then `git commit` with the step's commit message (agent 1's), plus a short body listing the review fixes. Re-run the check on the squashed commit.
-  - `git tag -a v<version> -m v<version>` on the squashed commit.
-  - `git push origin <branch> v<version>` (add `-u` if the branch has no upstream). Never force-push: the run's commits were never pushed, so the squash only rewrites local history. If the push is rejected (the remote moved in the meantime), I stop and report instead of rebasing or forcing; the tag stays local until then.
+  - `git tag -a v<version> -m v<version>` on the squashed commit (local only for now).
+  - `git push origin <branch>` (add `-u` if the branch has no upstream). Never force-push: the run's commits were never pushed, so the squash only rewrites local history. If the push is rejected (the remote moved in the meantime), I stop and report instead of rebasing or forcing.
+  - **CI before the tag** (RELEASE.md: a pushed `v*` tag publishes a GitHub release, so it must only go on a green commit). The workflows don't run on branch pushes, so start them: `gh workflow run ubuntu.yml --ref <branch>` and `gh workflow run windows.yml --ref <branch>`, find each run with `gh run list --workflow <file> --branch <branch> --limit 1 --json databaseId,headSha` (its `headSha` must be the squashed commit), and wait with `gh run watch <id> --exit-status` (run in the background; I'm notified when it exits). Log `<time> | <slug> | pipeline | ci | ubuntu <conclusion>, windows <conclusion>`.
+  - Both green (Ubuntu's separate Clippy job included): `git push origin v<version>`. Any red: stop the loop, keep the tag local, append `<time> | <slug> | pipeline | end | stopped: CI <workflow> failed (<run url>)`, and report the failing job.
 - Append `<time> | <slug> | pipeline | end | <squashed sha> pushed, <test count>` to `pipeline/log.txt`.
 - Report the build status, the squashed and pushed commit, the test counts, a summary of `REVIEW.md` (confirmed, fixed and skipped counts), each agent's tokens and duration, the top speed/token suggestions from the 3 retros, and links to the retros.
 
 ## Verification
 - Every gate passed (logged), and the check is green on the squashed commit.
 - `git log <base>..HEAD` (with `<base>` moved if the run was rebased) shows exactly one commit (the squashed step), and `git status -sb` shows the branch is not ahead of its upstream (pushed).
-- The squashed commit raises the workspace `version` in `Cargo.toml`, is tagged `v<version>`, and `git ls-remote --tags origin v<version>` finds the tag.
+- Both CI workflows passed on the squashed commit (logged `ci` line), it raises the workspace `version` in `Cargo.toml`, is tagged `v<version>`, and `git ls-remote --tags origin v<version>` finds the tag.
 - `CHANGELOG.md` has a `## <version>` section for the new version (unless the step had no user-visible change), and `## Unreleased` is empty.
 - `REVIEW.md` has a verdict and a status on every finding.
 - `pipeline/log.txt` has begin, end and usage lines for each agent, and begin/end for the pipeline.
