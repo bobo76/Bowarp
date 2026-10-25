@@ -29,6 +29,7 @@ mod terminal_element;
 mod terminal_links;
 mod terminal_view;
 mod ui_dimensions;
+mod window_background;
 mod window_bounds;
 mod workspace_view;
 
@@ -203,6 +204,7 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
         window_bounds: Some(window_bounds::initial(cx)),
         window_decorations: Some(WindowDecorations::Client),
         app_id: Some("agent-workspace".into()),
+        window_background: window_background::initial(cx),
         ..TitleBar::window_options()
     };
     let shell_setting = settings_file::settings(cx)
@@ -223,7 +225,7 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
             std::env::current_dir().ok(),
         ),
     };
-    gpui_kit::open_window(options, cx, move |window, cx| {
+    let (window, _) = gpui_kit::open_window(options, cx, move |window, cx| {
         let workspace = cx.new(|cx| {
             WorkspaceView::new(
                 startup.launchers,
@@ -252,6 +254,7 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
         workspace
     })
     .expect("failed to open window");
+    window_background::follow_settings(window, cx);
 }
 
 struct InitialTabs {

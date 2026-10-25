@@ -235,6 +235,11 @@ fn update_unless_broken_leaves_a_broken_file_alone() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "{ broken");
     assert!(!settings_backup_path(&path).exists());
 
+    // Not an unsaved preview: an update that changes nothing still leaves the file alone.
+    assert!(!file.update(|_| {}).unwrap());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "{ broken");
+    assert!(!settings_backup_path(&path).exists());
+
     // Once the file is fixed, it saves like `update`.
     fs::write(&path, "{}").unwrap();
     assert!(
@@ -300,6 +305,28 @@ fn set_unsaved_changes_memory_only_until_the_update_saves() {
     expected.extra.insert("b".into(), Value::from(2));
     assert_eq!(file.settings(), &expected);
     assert_eq!(SettingsLoad::read(&path), SettingsLoad::Loaded(expected));
+}
+
+#[test]
+fn previewed_value_is_saved_when_there_is_no_file_yet() {
+    // A slider previews each step, then saves the final value it already shows.
+    let root = TempDir::new();
+    let path = root.0.join("settings.json");
+    let mut file = SettingsFile::load(path.clone());
+    file.set_unsaved(|settings| settings.font_size = FontSize::new(20.));
+    assert!(
+        file.update(|settings| settings.font_size = FontSize::new(20.))
+            .unwrap()
+    );
+    let saved = SettingsLoad::read(&path);
+    let SettingsLoad::Loaded(settings) = saved else {
+        panic!("not saved: {saved:?}");
+    };
+    assert_eq!(settings.font_size, FontSize::new(20.));
+    // Saved: a later update that changes nothing writes nothing.
+    fs::remove_file(&path).unwrap();
+    assert!(!file.update(|_| {}).unwrap());
+    assert!(!path.exists());
 }
 
 #[test]

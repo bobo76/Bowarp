@@ -5,6 +5,17 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.29
+
+- Add **Opacity** (30-100 %) and **Background blur** to Settings → Appearance → Window, also
+  `window_opacity` and `window_blur` in the settings file. Opacity applies live to the
+  terminal's default background only; text, colored cells and the rest of the window stay
+  opaque.
+- Blur offers None / Acrylic / Mica on Windows (Mica uses Acrylic before Windows 11 22H2) and
+  None / Blur on KDE Plasma (Wayland). Elsewhere, or at 100 % opacity, the choice is disabled
+  and says why.
+- Save a slider value (such as the font size) when no settings file exists yet; it was lost.
+
 ## 0.2.28
 
 - Add a **Keyboard** settings page to edit shortcuts: click a key to record a new one, **+** to

@@ -431,6 +431,19 @@ empty, or a font that isn't installed, uses DejaVu Sans Mono, Cascadia Mono on W
 size (the slider applies while dragged and saves when released; the file accepts 6 to 72
 points). Each tab re-measures its cells and resizes its terminal when it is next shown.
 
+Appearance → Window sets the terminal background's opacity and blur, applied live:
+
+- Opacity (`"window_opacity"`, a percent, default 100; the file accepts 30 to 100, the
+  slider steps by 5 and saves when released): below 100 % the desktop shows through the
+  terminal's background and padding. Text, cells a program colored, the selection, the cursor
+  and the rest of the window (title bar, sidebar, settings, file panes, menus) stay opaque.
+- Background blur (`"window_blur"`: `"none"` (default), `"blur"` or `"mica"`): what shows
+  through. On Windows: None, Acrylic (`"blur"`) or Mica, which needs Windows 11 22H2 or
+  later (Acrylic is used before). On Linux: None or Blur, on KDE Plasma (Wayland) only;
+  elsewhere (GNOME, X11) the opacity still applies and the dropdown is disabled ("Not
+  available on this system"). A saved `"mica"` means Blur on Linux. It needs an opacity
+  below 100 %.
+
 The Terminal page sets the default shell: the one the `+` menu lists first and Ctrl+Shift+T,
 "Open in new tab" and an agent tab that quits open, and the first tab when no tabs are saved.
 "Automatic" (the default) is `$SHELL` (Git Bash on Windows, when installed; when `$SHELL` isn't

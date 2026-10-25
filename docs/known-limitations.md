@@ -26,6 +26,16 @@ entry when the limitation is lifted.
 - An OSC 8 link spanning several lines: only its row is underlined.
 - An agent tab going on as a shell starts in the agent's last known folder: on Linux its
   `/proc` folder as of its last title change or hook event, elsewhere the folder it started in.
+- Window opacity: on X11 without a compositor the window can't be see-through, and the
+  terminal's background probably looks darker instead (seen under Xvfb, not checked on real
+  hardware). With the Linux title bar's window shadow, the shadow
+  darkens the see-through background by about a third, most visible at low opacity (at 30 %
+  the window looks about 53 % opaque); not on a maximized window (from GPUI's shadow shader;
+  not checked on real hardware). On Windows before 10 1809 (build
+  17763) GPUI applies neither transparency nor acrylic. Linux blur is offered only on KDE Plasma's
+  Wayland session (`XDG_CURRENT_DESKTOP` naming KDE): another compositor with KDE's blur
+  protocol is shown as unavailable. A program that paints its whole screen with its own
+  background color (some vim themes) stays opaque.
 - F11 has no menu entry: the app has no window menu (a right-click on the title bar opens the
   window manager's own).
 - No command history in cmd tabs: cmd's prompt prints only the `D` mark, not the `A` / `B`

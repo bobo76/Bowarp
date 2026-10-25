@@ -16,6 +16,7 @@ use serde_json::{Map, Value};
 
 use crate::keymap::KeybindingOverlay;
 use crate::pane_width::{ExplorerWidth, ViewerFraction};
+use crate::window_background::{WindowBlur, WindowOpacity};
 use crate::window_state::write_atomic;
 
 /// The settings. A new field gets a default (through `Default`, as `#[serde(default)]` asks
@@ -35,6 +36,13 @@ pub struct Settings {
     /// The terminal's font size.
     #[serde(deserialize_with = "lenient")]
     pub font_size: FontSize,
+    /// The terminal background's opacity in percent (30-100); text stays opaque. See
+    /// [`crate::Backdrop`].
+    #[serde(deserialize_with = "lenient")]
+    pub window_opacity: WindowOpacity,
+    /// What shows through the translucent terminal background: as is, blurred or Mica.
+    #[serde(deserialize_with = "lenient")]
+    pub window_blur: WindowBlur,
     /// The shell the new-tab menu lists first and Ctrl+Shift+T opens, by its launcher id (`zsh`,
     /// `pwsh`, `powershell`, `git-bash`, `wsl:Ubuntu`; see the app's `Launcher::id`) or menu
     /// name (`Zsh`); empty (the default) for the automatic choice (`$SHELL`, Git Bash on
@@ -336,6 +344,8 @@ pub struct SettingsFile {
     load_error: Option<String>,
     /// Why the last save failed, until one succeeds.
     save_error: Option<String>,
+    /// Whether `set_unsaved` changed the settings since they were last read or saved.
+    unsaved: bool,
 }
 
 impl SettingsFile {
@@ -381,13 +391,15 @@ impl SettingsFile {
             SettingsLoad::Loaded(settings) => {
                 self.settings = settings;
                 self.load_error = None;
+                self.unsaved = false;
             }
             SettingsLoad::Broken(error) => self.load_error = Some(error),
         }
     }
 
     /// Re-read the file (keeping changes made on disk since), apply `change` and save when it
-    /// changed anything; `Ok(true)` when it did. The re-read alone may change the settings
+    /// changed anything or a `set_unsaved` preview is still unsaved; `Ok(true)` when it saved.
+    /// The re-read alone may change the settings
     /// too, so `Ok(false)` doesn't mean they are as before. On a failed save the change is
     /// kept in memory and the error in `save_error`.
     ///
@@ -398,15 +410,16 @@ impl SettingsFile {
         self.change_and_save(change)
     }
 
-    /// Like `update`, but while the file is broken the change applies in memory only (as with
-    /// `set_unsaved`, `Ok(false)`) and the file is left as it is. For layout changes (a pane
+    /// Like `update`, but while the file is broken the change applies in memory only
+    /// (`Ok(false)`, not marked unsaved: a later `update` that changes nothing still leaves the
+    /// broken file alone) and the file is left as it is. For layout changes (a pane
     /// resized): the user isn't looking at the settings then, so the broken file they may be
     /// fixing in an editor mustn't be moved to `settings_backup_path` under them. The change
     /// lasts until the file is read again; the next save of a still broken file keeps it.
     pub fn update_unless_broken(&mut self, change: impl FnOnce(&mut Settings)) -> io::Result<bool> {
         self.reload();
         if self.load_error.is_some() {
-            self.set_unsaved(change);
+            change(&mut self.settings);
             return Ok(false);
         }
         self.change_and_save(change)
@@ -415,7 +428,9 @@ impl SettingsFile {
     fn change_and_save(&mut self, change: impl FnOnce(&mut Settings)) -> io::Result<bool> {
         let before = self.settings.clone();
         change(&mut self.settings);
-        if self.settings == before {
+        // Without a good file to re-read (missing or broken), a previewed value is already in
+        // memory: still save it.
+        if self.settings == before && !self.unsaved {
             return Ok(false);
         }
         self.save()?;
@@ -424,10 +439,11 @@ impl SettingsFile {
 
     /// Change the settings in memory only, without reading or writing the file: a value
     /// previewed while a gesture lasts (a slider being dragged). The `update` that ends the
-    /// gesture re-reads the file and saves the final value; a `reload` or another `update`
-    /// first drops the unsaved change.
+    /// gesture re-reads the file and saves the final value, even when it equals the preview; a
+    /// `reload` of a good file drops the unsaved change, a missing or broken file keeps it.
     pub fn set_unsaved(&mut self, change: impl FnOnce(&mut Settings)) {
         change(&mut self.settings);
+        self.unsaved = true;
     }
 
     /// Save the settings when there is no file yet, so that it can be opened (in the file
@@ -449,6 +465,9 @@ impl SettingsFile {
     pub fn save(&mut self) -> io::Result<()> {
         let result = self.write();
         self.save_error = result.as_ref().err().map(ToString::to_string);
+        if result.is_ok() {
+            self.unsaved = false;
+        }
         result
     }
 

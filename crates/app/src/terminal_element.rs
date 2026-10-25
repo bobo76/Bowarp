@@ -25,6 +25,7 @@ use workspace_model::{Platform, installed_font_family};
 use crate::scrollbar::{ScrollMetrics, ScrollbarLayout, ScrollbarState};
 use crate::settings_file::{self, AppSettings};
 use crate::terminal_view::{GridGeometry, TerminalView};
+use crate::window_background;
 
 /// The terminal font when the settings name none, or one that isn't installed.
 #[cfg(target_os = "windows")]
@@ -320,7 +321,9 @@ impl Element for TerminalElement {
             .collect();
 
         PrepaintState {
-            background: to_hsla(snapshot.background),
+            // The only translucent paint: the default background and the padding, below cells
+            // with their own background, the selection and the cursor (all opaque).
+            background: to_hsla(snapshot.background).opacity(window_background::terminal_alpha(cx)),
             backgrounds,
             lines: shape_lines(snapshot.batches, grid, &shaper),
             cursor,

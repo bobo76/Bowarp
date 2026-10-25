@@ -111,7 +111,7 @@ dependencies = [
 
 [[package]]
 name = "agent-status"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "interprocess",
  "libc",
@@ -122,7 +122,7 @@ dependencies = [
 
 [[package]]
 name = "agent-workspace"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "agent-status",
  "directories",
@@ -133,6 +133,7 @@ dependencies = [
  "libc",
  "log",
  "notify",
+ "raw-window-handle",
  "serde_json",
  "shell-words",
  "term-core",
@@ -145,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "agentws-hook"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "agent-status",
 ]
@@ -6533,7 +6534,7 @@ dependencies = [
 
 [[package]]
 name = "term-core"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "alacritty_terminal",
  "libc",
@@ -8390,7 +8391,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "workspace-model"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "serde",
  "serde_json",

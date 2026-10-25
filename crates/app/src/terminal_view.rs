@@ -17,6 +17,7 @@ use agent_status::{AgentEvent, AgentMode, AgentModeState, AgentState, AgentStatu
 use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui_kit::component::ActiveTheme;
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     Action, AnyElement, App, AppContext, Bounds, ClipboardItem, Context, CursorStyle, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
@@ -1058,10 +1059,13 @@ impl Drop for TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let background = self.session.palette().background;
+        // Below 100 % opacity the grid alone paints the translucent background: painted here
+        // too, it would be twice as opaque.
+        let opaque = settings_file::window_opacity(cx).is_opaque();
         let view = div()
             .size_full()
             .min_h_0()
-            .bg(to_hsla(background))
+            .when(opaque, |view| view.bg(to_hsla(background)))
             .track_focus(&self.focus_handle)
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::on_copy))

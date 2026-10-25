@@ -11,7 +11,7 @@ use gpui_kit::component::{ActiveTheme, Theme, ThemeMode};
 use gpui_kit::{App, Global};
 use workspace_model::{
     FilePaneFeatures, HistoryFeatures, KeybindingOverlay, NotificationFeatures, Settings,
-    SettingsFile, UiTheme, WorkspaceFeatures,
+    SettingsFile, UiTheme, WindowOpacity, WorkspaceFeatures,
 };
 
 use crate::window_bounds::config_file;
@@ -93,6 +93,14 @@ pub fn notifications(cx: &App) -> NotificationFeatures {
     cx.try_global::<AppSettings>()
         .map_or_else(NotificationFeatures::default, |settings| {
             NotificationFeatures::from_settings(settings.0.settings())
+        })
+}
+
+/// The terminal background's opacity; 100 % while settings aren't loaded (unit tests).
+pub fn window_opacity(cx: &App) -> WindowOpacity {
+    cx.try_global::<AppSettings>()
+        .map_or_else(WindowOpacity::default, |settings| {
+            settings.0.settings().window_opacity
         })
 }
 

@@ -1889,19 +1889,26 @@ impl Render for WorkspaceView {
                     .when(self.explorer_visible, |content| {
                         content.child(self.explorer_panel(cx))
                     })
-                    .child(div().flex_1().min_w_0().h_full().children(active).when(
-                        self.settings.shows_page(),
-                        |area| {
-                            area.track_focus(self.settings.focus())
-                                .child(settings_page::render(
-                                    self.launchers.clone(),
-                                    cx.listener(|workspace, _, window, cx| {
-                                        workspace.open_settings_file(window, cx)
-                                    }),
-                                    cx,
-                                ))
-                        },
-                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            // Only a terminal is see-through (window opacity below 100 %).
+                            .when(active.is_none(), |area| area.bg(cx.theme().background))
+                            .children(active)
+                            .when(self.settings.shows_page(), |area| {
+                                area.track_focus(self.settings.focus()).child(
+                                    settings_page::render(
+                                        self.launchers.clone(),
+                                        cx.listener(|workspace, _, window, cx| {
+                                            workspace.open_settings_file(window, cx)
+                                        }),
+                                        cx,
+                                    ),
+                                )
+                            }),
+                    )
                     .when_some(viewer, |content, viewer| {
                         content.child(self.viewer_divider(cx)).child(
                             div()

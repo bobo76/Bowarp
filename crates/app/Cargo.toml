@@ -54,7 +54,12 @@ serde_json.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-registry = "0.6"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_System_Threading",
+] }
+raw-window-handle = "0.6"
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

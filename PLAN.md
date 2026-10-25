@@ -9,8 +9,7 @@ an item only missing its manual check moves to "Fixed, not tested yet".
 
 Run in this order (each stands alone and is tested):
 
-1. Window opacity and background blur.
-2. Copilot working animation.
+1. Copilot working animation.
 
 ## Fixed, not tested yet
 
@@ -45,6 +44,18 @@ Feature switches 0.2.20-0.2.24 (Xvfb-driven except as noted):
   dialog or toast has the keyboard, closing the Settings row with its × while recording, AltGr
   and non-US layouts (`setxkbmap de`), the Ctrl+number hint in the tab hover card, the
   clipboard notice tooltips, and Windows/macOS (Super/Win and Cmd keys).
+- Window opacity and blur (Xvfb-driven: the slider saves `window_opacity` and applies live,
+  a hand-written value applies at start, the disabled blur dropdown and its captions, only
+  the terminal background and padding turn translucent, the file viewer, explorer, menus and
+  hover cards stay opaque). Not seen anywhere (Xvfb has no compositor): the desktop actually
+  showing through and the blur. Manual checks: GNOME Wayland (see-through, dropdown "Not
+  available on this system", the title bar shadow over the background), KDE Plasma Wayland
+  (Blur on and off live), X11 with a compositor (see-through) and without one (darker
+  background), Windows 10 (Acrylic; Mica shows the fallback caption and looks like Acrylic)
+  and Windows 11 22H2+ (Acrylic, Mica), maximized and full screen, and the light theme.
+  Windows 11: switch None/Acrylic/Mica live at 80 %, in both directions and through 100 %; if
+  Mica stays after leaving it, add the caption "Mica stays until the app restarts" (see
+  docs/ux-decisions.md).
 
 Skipped or partially passed in the user's Windows check on 2026-10-23 (0.2.18):
 
@@ -100,14 +111,6 @@ version and commit.
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Window opacity and background blur, set in the settings file (opacity applies to the
-  terminal background only, text stays opaque); blur where the platform allows it (Windows
-  acrylic/mica, KDE on X11).
-  - Also on the Appearance page: an opacity slider (30-100 %) and a blur dropdown, applied
-    live and saved in the settings file.
-  - Windows blur: None / Acrylic / Mica, where Mica falls back to Acrylic on Windows 10.
-  - Without blur support (Wayland, GNOME on X11) the opacity still applies; the blur control
-    is disabled and says "Not available on this system".
 - Copilot working animation: show a blue circular spinner rotating beside the Copilot tab's
   title in the sidebar while its status is Working, matching the reference screenshot.
   Stop the animation when the status leaves Working; no animation timer while idle.

@@ -156,7 +156,14 @@ impl TerminalView {
                 .ghost()
                 .tooltip("Allow this and later clipboard writes until the tab closes"),
             );
-        Some(banner.into_any_element())
+        // Its tint is translucent: on the theme background, not on a see-through terminal.
+        Some(
+            div()
+                .flex_none()
+                .bg(theme.background)
+                .child(banner)
+                .into_any_element(),
+        )
     }
 }
 
