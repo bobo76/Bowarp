@@ -9,6 +9,11 @@ an item only missing its manual check moves to "Fixed, not tested yet".
 
 Run in this order (each stands alone and is tested):
 
+1. Fix window opacity leaking outside the terminal: below 100 % the file explorer, file
+   viewer tabs and other panes turn see-through too (reported by the user, 2026-10-25), but
+   only the terminal's default background should (docs/ux-decisions.md, "Opacity: what turns
+   translucent below 100 %?"). Find every pane that paints no opaque background of its own.
+
 ## Fixed, not tested yet
 
 Implemented with automated coverage (Linux); the manual checks below are pending.
@@ -116,6 +121,9 @@ version and commit.
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
+- Decide whether renamed Claude tabs should also get the working spinner: a custom name hides
+  Claude Code's animated title glyph, so a renamed Claude tab shows no working animation
+  today (the spinner is Copilot only).
 - Light theme: soften the palette; the user found it too white and hard on the eyes
   (Windows, 2026-10-23). Recheck comfort after.
 - `claude` / `copilot` typed at a shell prompt open an agent tab: instead of running in the
