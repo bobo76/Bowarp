@@ -531,8 +531,16 @@ is neither a name nor `null`, `null` for a key with no default) is skipped and n
 banner on the settings page; the others apply. A change applies when the file is read again:
 when the settings page opens, when the file is saved in the file viewer, or at the next
 change on the page. Ctrl+C, Tab and Shift+Tab bound to a workspace action still go to the
-program while the terminal has the keyboard. Tooltips and menus still show the default
-shortcuts.
+program while the terminal has the keyboard. Tooltips and menus show the shortcuts in use.
+
+The settings page's Keyboard page edits the same object: one row per action with its keys.
+Click a key and press the new shortcut to replace it, `+` to add one, `×` to remove one, and
+"Reset to default" (or "Reset all" at the end) to go back to the defaults. Recording takes a
+single keystroke (plain Esc cancels). Keys that terminal programs use are refused with a toast:
+typing keys (letters, Space, Enter, arrows) and Ctrl or Alt plus a letter (Ctrl+D, Alt+B); use
+Ctrl+Shift, Super or a key like F5.
+A shortcut already in use moves to the new action, and a toast names the action that had it.
+Entries the app can't read are left in the file.
 
 ## About
 

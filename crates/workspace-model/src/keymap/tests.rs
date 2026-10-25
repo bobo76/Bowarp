@@ -217,3 +217,220 @@ fn short_name_drops_the_namespace() {
     assert_eq!(short_name("terminal::Paste"), "Paste");
     assert_eq!(short_name("Paste"), "Paste");
 }
+
+/// `overlay` after `edit`, and the keymap it gives.
+fn edited(overlay: Value, edit: impl FnOnce(&mut KeybindingOverlay)) -> (Value, Keymap) {
+    let Value::Object(map) = overlay else {
+        panic!("not an object");
+    };
+    let mut overlay = KeybindingOverlay::new(map);
+    edit(&mut overlay);
+    let keymap = Keymap::new(defaults(), &overlay, normalize);
+    (Value::Object(overlay.entries().clone()), keymap)
+}
+
+fn keys_of<'a>(keymap: &'a Keymap, action: &'a str) -> Vec<&'a str> {
+    keymap.keys(action).collect()
+}
+
+#[test]
+fn a_new_key_is_written_once_and_takes_the_key_from_its_action() {
+    let (overlay, keymap) = edited(json!({ "Ctrl-Alt-P": "NewTab", "x": 1 }), |overlay| {
+        overlay.set_key(
+            &defaults(),
+            "alt-ctrl-p",
+            Some("terminal::Paste"),
+            &normalize,
+        );
+        overlay.set_key(
+            &defaults(),
+            "alt-ctrl-v",
+            Some("terminal::PasteOrSend"),
+            &normalize,
+        );
+    });
+    // Every spelling of the key goes, unusable values too; unrelated entries stay.
+    assert_eq!(
+        overlay,
+        json!({ "alt-ctrl-p": "Paste", "alt-ctrl-v": "PasteOrSend", "x": 1 })
+    );
+    assert_eq!(keymap.action_for("alt-ctrl-p"), Some("terminal::Paste"));
+    assert!(
+        keymap
+            .keys("workspace::NewTab")
+            .all(|keys| keys != "alt-ctrl-p")
+    );
+}
+
+#[test]
+fn a_default_key_given_to_another_action_and_back_leaves_no_entry() {
+    let (overlay, keymap) = edited(json!({}), |overlay| {
+        overlay.set_key(&defaults(), "ctrl-v", Some("terminal::Paste"), &normalize);
+    });
+    assert_eq!(overlay, json!({ "ctrl-v": "Paste" }));
+    assert!(keys_of(&keymap, "terminal::PasteOrSend").is_empty());
+    let (overlay, keymap) = edited(overlay, |overlay| {
+        overlay.set_key(
+            &defaults(),
+            "ctrl-v",
+            Some("terminal::PasteOrSend"),
+            &normalize,
+        );
+    });
+    assert_eq!(overlay, json!({}));
+    assert!(!keymap.is_changed("terminal::PasteOrSend"));
+}
+
+#[test]
+fn removing_a_key_writes_null_for_a_default_and_drops_an_added_one() {
+    let (overlay, keymap) = edited(json!({ "ctrl-alt-v": "Paste" }), |overlay| {
+        overlay.set_key(&defaults(), "shift-insert", None, &normalize);
+        overlay.set_key(&defaults(), "alt-ctrl-v", None, &normalize);
+        // Nothing binds it: nothing to write.
+        overlay.set_key(&defaults(), "ctrl-q", None, &normalize);
+    });
+    assert_eq!(overlay, json!({ "shift-insert": null }));
+    assert_eq!(keys_of(&keymap, "terminal::Paste"), ["ctrl-shift-v"]);
+    assert!(keymap.is_changed("terminal::Paste"));
+}
+
+#[test]
+fn replacing_a_key_moves_the_binding() {
+    let (overlay, keymap) = edited(json!({}), |overlay| {
+        overlay.replace_key(
+            &defaults(),
+            "workspace::NewTab",
+            Some("ctrl-shift-t"),
+            "alt-n",
+            &normalize,
+        );
+        // A key the action doesn't have is left alone; `None` adds.
+        overlay.replace_key(
+            &defaults(),
+            "workspace::NewTab",
+            Some("ctrl-v"),
+            "f2",
+            &normalize,
+        );
+    });
+    assert_eq!(
+        overlay,
+        json!({ "ctrl-shift-t": null, "alt-n": "NewTab", "f2": "NewTab" })
+    );
+    assert_eq!(keys_of(&keymap, "workspace::NewTab"), ["alt-n", "f2"]);
+    assert_eq!(keymap.action_for("ctrl-v"), Some("terminal::PasteOrSend"));
+}
+
+#[test]
+fn reset_removes_only_the_actions_entries() {
+    let overlay = json!({
+        "ctrl-shift-v": "NewTab",
+        "shift-insert": null,
+        "ctrl-alt-v": "paste",
+        "ctrl-v": null,
+        "ctrl-": "Paste",
+        "f5": "NoSuchAction",
+    });
+    let (overlay, keymap) = edited(overlay, |overlay| {
+        overlay.reset_action(&defaults(), "terminal::Paste", &normalize);
+    });
+    // Kept: another action's key, an unreadable key, an unknown action.
+    assert_eq!(
+        overlay,
+        json!({ "ctrl-v": null, "ctrl-": "Paste", "f5": "NoSuchAction" })
+    );
+    assert_eq!(
+        keys_of(&keymap, "terminal::Paste"),
+        ["ctrl-shift-v", "shift-insert"]
+    );
+    assert!(!keymap.is_changed("terminal::Paste"));
+    assert!(keys_of(&keymap, "terminal::PasteOrSend").is_empty());
+    let (overlay, keymap) = edited(overlay, |overlay| {
+        overlay.reset_all(&defaults(), &normalize);
+    });
+    assert_eq!(overlay, json!({ "ctrl-": "Paste", "f5": "NoSuchAction" }));
+    assert!(
+        keymap
+            .actions()
+            .all(|(action, _)| !keymap.is_changed(action))
+    );
+}
+
+#[test]
+fn an_action_whose_short_name_is_taken_is_written_in_full() {
+    let defaults = vec![
+        Shortcut::new("ctrl-c", "terminal::Copy", Some("Terminal")),
+        Shortcut::new("ctrl-k", "viewer::Copy", None),
+    ];
+    let mut overlay = KeybindingOverlay::default();
+    overlay.set_key(&defaults, "f1", Some("viewer::Copy"), &normalize);
+    overlay.set_key(&defaults, "f2", Some("terminal::Copy"), &normalize);
+    assert_eq!(
+        Value::Object(overlay.entries().clone()),
+        json!({ "f1": "viewer::Copy", "f2": "Copy" })
+    );
+}
+
+#[test]
+fn plain_keys_are_terminal_input() {
+    let held = |control, alt, shift| HeldModifiers {
+        control,
+        alt,
+        shift,
+        ..HeldModifiers::default()
+    };
+    for key in ["a", "A", "1", "|", "space", "enter", "left", "tab"] {
+        assert!(is_terminal_input(held(false, false, false), key), "{key}");
+        assert!(is_terminal_input(held(false, false, true), key), "{key}");
+    }
+    for key in ["f5", "insert", "escape", "pageup"] {
+        assert!(!is_terminal_input(held(false, false, false), key), "{key}");
+    }
+}
+
+#[test]
+fn ctrl_or_alt_with_a_letter_is_terminal_input() {
+    let held = |control, alt, shift| HeldModifiers {
+        control,
+        alt,
+        shift,
+        ..HeldModifiers::default()
+    };
+    for key in ["d", "c", "z", "b"] {
+        assert!(
+            is_terminal_input(held(true, false, false), key),
+            "ctrl-{key}"
+        );
+        assert!(
+            is_terminal_input(held(false, true, false), key),
+            "alt-{key}"
+        );
+        assert!(
+            !is_terminal_input(held(true, false, true), key),
+            "ctrl-shift-{key}"
+        );
+        assert!(
+            !is_terminal_input(held(true, true, false), key),
+            "ctrl-alt-{key}"
+        );
+    }
+    for key in ["f5", "1", "|", "tab", "left", "insert"] {
+        assert!(
+            !is_terminal_input(held(true, false, false), key),
+            "ctrl-{key}"
+        );
+    }
+    let super_d = HeldModifiers {
+        platform: true,
+        ..HeldModifiers::default()
+    };
+    assert!(!is_terminal_input(super_d, "d"));
+}
+
+#[test]
+fn actions_have_readable_labels() {
+    assert_eq!(action_label("workspace::NewTab"), "New tab");
+    assert_eq!(action_label("terminal::Paste"), "Paste");
+    assert_eq!(action_label("workspace::SelectTab3"), "Select tab 3");
+    assert_eq!(action_label("workspace::SomethingElse"), "Something else");
+}

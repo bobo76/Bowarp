@@ -93,9 +93,21 @@ entry when the limitation is lifted.
   until the next change. With the panes off a Ctrl+clicked file link asks "Open externally?"
   (system handler) and "Open settings file" opens the file externally.
 - `"keybindings"` apply when the settings file is read again (settings page opened, file saved
-  in the file viewer, a change on the page), not on an edit made elsewhere alone. Tooltips and
-  menu hints show the default shortcuts. A key name GPUI doesn't know (`ctrl-foo`) is accepted
+  in the file viewer, a change on the page), not on an edit made elsewhere alone. A key name
+  GPUI doesn't know (`ctrl-foo`) is accepted
   but never matches; a `"keybindings"` value that isn't an object is ignored like any mistyped
   setting and dropped at the next save. Ctrl+C, Tab and Shift+Tab bound to a workspace action
   still go to the program while the terminal has the keyboard. Ctrl+Shift+| (explorer) is
-  bound as `ctrl-|`: GPUI on Linux reports it without Shift, so `ctrl-shift-|` never matches.
+  bound as `ctrl-|`: GPUI on Linux reports it without Shift, so `ctrl-shift-|` never matches;
+  hints and the Keyboard page show it as Ctrl+|.
+- Keyboard settings page: recording takes one keystroke, not a sequence (`ctrl-k ctrl-c` can
+  only be written in the file; a sequence from the file shows and can be removed or reset).
+  Plain Esc cancels recording, so it can't be recorded (Shift+Esc and the like can; Close find
+  gets plain Esc back with Reset). Keys that type or edit text without Ctrl, Alt or Super
+  (letters, Space, Enter, arrows) and Ctrl or Alt plus a letter alone (Ctrl+D, Alt+B) are
+  refused, so Ctrl+V can only come back with Reset. A key already used is taken from its action
+  with a toast naming it; a key only reaches a workspace action from the terminal if the
+  terminal doesn't keep it (Ctrl+C, Tab, Shift+Tab). Row descriptions elsewhere on the
+  settings page and README name the default keys. Recording ends on a click outside the
+  recording chip, Esc or the keystroke; if the chip is hidden another way (no click), the next
+  keystroke ends it and goes on as usual.

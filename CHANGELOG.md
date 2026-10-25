@@ -5,6 +5,16 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.28
+
+- Add a **Keyboard** settings page to edit shortcuts: click a key to record a new one, **+** to
+  add a key, **×** to remove one, **Reset to default** per action and **Reset all**. A key
+  taken from another action moves to the new one, and a notice says so.
+- Refuse keys that belong to the terminal program while recording: typing keys and Ctrl or
+  Alt plus a letter alone (Ctrl+D, Ctrl+C, Alt+B). Esc cancels recording.
+- Show the keys in use in menu and tooltip hints, and no key while an action is unbound. The
+  explorer hint now reads Ctrl+|, the key that is actually bound.
+
 ## 0.2.27
 
 - Rebind, add or remove keyboard shortcuts with a `"keybindings"` section in the settings file,

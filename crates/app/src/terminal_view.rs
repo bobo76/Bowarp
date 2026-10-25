@@ -49,9 +49,10 @@ use crate::launcher;
 use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
 use crate::settings_file::{self, AppSettings};
 use crate::shell_integration;
-use crate::shortcuts::{self, ALLOW_CLIPBOARD_KEY, CLOSE_TAB_KEY, DENY_CLIPBOARD_KEY};
+use crate::shortcuts::{self, ALLOW_CLIPBOARD_KEY, DENY_CLIPBOARD_KEY};
 use crate::sidebar::TabStatus;
 use crate::terminal_element::{TerminalElement, to_hsla};
+use crate::workspace_view::CloseTab;
 
 const KEY_CONTEXT: &str = "Terminal";
 
@@ -1136,7 +1137,7 @@ impl TerminalView {
                 div()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(shortcuts::with_shortcut("Close the tab", CLOSE_TAB_KEY)),
+                    .child(shortcuts::with_shortcut("Close the tab", &CloseTab, cx)),
             );
         Some(banner.into_any_element())
     }

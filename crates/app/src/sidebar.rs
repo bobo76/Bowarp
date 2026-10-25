@@ -19,7 +19,8 @@ use crate::assets::{
     AGENT_SPARK_ICON, BASH_ICON, COPILOT_ICON, DEBIAN_ICON, FISH_ICON, GIT_BRANCH_ICON, GIT_ICON,
     LINUX_ICON, PIN_ICON, POWERSHELL_ICON, PROMPT_ICON, UBUNTU_ICON, ZSH_ICON,
 };
-use crate::shortcuts::{self, CLOSE_TAB_KEY};
+use crate::shortcuts;
+use crate::workspace_view::{CloseTab, select_tab_action};
 
 pub const SIDEBAR_WIDTH: f32 = 240.;
 /// Tab rows are tall enough for the name, the detail line and a large session icon.
@@ -47,9 +48,6 @@ const COLOR_STRIPE_WIDTH: f32 = 3.;
 const COLOR_STRIPE_OFFSET: f32 = 2.;
 const DROP_LINE_HEIGHT: f32 = 2.;
 const SECTION_HEADING_HEIGHT: f32 = 24.;
-/// Tabs selectable with Ctrl+1..9.
-pub const NUMBERED_TABS: usize = 9;
-
 const CLAUDE_ORANGE: u32 = 0xd97757;
 /// Added lines in the hover card, as in a diff.
 const ADDED_GREEN: u32 = 0x3fb950;
@@ -534,7 +532,7 @@ pub fn tab_row(
                         .icon(IconName::Close)
                         .ghost()
                         .xsmall()
-                        .tooltip(shortcuts::with_shortcut("Close", CLOSE_TAB_KEY))
+                        .tooltip(shortcuts::with_shortcut("Close", &CloseTab, cx))
                         .on_click(on_close),
                 ),
         )
@@ -542,8 +540,8 @@ pub fn tab_row(
 }
 
 /// The Ctrl+number shortcut that selects the tab at `index`, if it has one.
-pub fn tab_shortcut(index: usize) -> Option<String> {
-    (index < NUMBERED_TABS).then(|| format!("Ctrl+{}", index + 1))
+pub fn tab_shortcut(index: usize, cx: &App) -> Option<String> {
+    shortcuts::shortcut_text(select_tab_action(index)?, cx)
 }
 
 /// What the hover card next to a tab row shows.
@@ -614,7 +612,7 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
                 .mb_0p5()
                 .gap_2()
                 .child(single_line(card.name))
-                .children(tab_shortcut(card.index).map(|shortcut| {
+                .children(tab_shortcut(card.index, cx).map(|shortcut| {
                     div()
                         .flex_none()
                         .text_xs()
@@ -725,7 +723,7 @@ pub fn settings_row(
                         .icon(IconName::Close)
                         .ghost()
                         .xsmall()
-                        .tooltip(shortcuts::with_shortcut("Close", CLOSE_TAB_KEY))
+                        .tooltip(shortcuts::with_shortcut("Close", &CloseTab, cx))
                         .on_click(on_close),
                 ),
         );

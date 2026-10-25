@@ -10,7 +10,7 @@ use term_core::alacritty_terminal::term::ClipboardType;
 use workspace_model::{ClipboardAnswer, ClipboardGuard, ClipboardOffer, ClipboardTarget};
 
 use super::{AllowClipboard, DenyClipboard, ProcessState, TabChanged, TerminalView};
-use crate::shortcuts::{self, ALLOW_CLIPBOARD_KEY, DENY_CLIPBOARD_KEY};
+use crate::shortcuts;
 use crate::terminal_element::font_family;
 
 impl TerminalView {
@@ -140,12 +140,12 @@ impl TerminalView {
             .child(
                 button("clipboard-allow", "Allow", ClipboardAnswer::Allow)
                     .primary()
-                    .tooltip(shortcuts::with_shortcut("Allow", ALLOW_CLIPBOARD_KEY)),
+                    .tooltip(shortcuts::with_shortcut("Allow", &AllowClipboard, cx)),
             )
             .child(
                 button("clipboard-deny", "Deny", ClipboardAnswer::Deny)
                     .outline()
-                    .tooltip(shortcuts::with_shortcut("Deny", DENY_CLIPBOARD_KEY)),
+                    .tooltip(shortcuts::with_shortcut("Deny", &DenyClipboard, cx)),
             )
             .child(
                 button(

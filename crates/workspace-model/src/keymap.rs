@@ -34,6 +34,127 @@ impl KeybindingOverlay {
     pub fn entries(&self) -> &Map<String, Value> {
         &self.0
     }
+
+    /// Make `keys` (in `normalize`'s spelling) run `action` (a full name from
+    /// [`Keymap::actions`]), or nothing (`None`). Every entry spelling `keys` goes, unusable
+    /// ones too: one entry takes their place, or none when the defaults already do it. The
+    /// other entries stay as written, in their order.
+    pub fn set_key(
+        &mut self,
+        defaults: &[Shortcut],
+        keys: &str,
+        action: Option<&str>,
+        normalize: &dyn Fn(&str) -> Result<String, String>,
+    ) {
+        let keymap = Keymap::new(defaults.to_vec(), self, normalize);
+        self.assign(&keymap, keys, action, normalize);
+    }
+
+    /// Bind `new` to `action` in place of its key `old` (`None`: as one more key). See
+    /// [`KeybindingOverlay::set_key`].
+    pub fn replace_key(
+        &mut self,
+        defaults: &[Shortcut],
+        action: &str,
+        old: Option<&str>,
+        new: &str,
+        normalize: &dyn Fn(&str) -> Result<String, String>,
+    ) {
+        let keymap = Keymap::new(defaults.to_vec(), self, normalize);
+        if let Some(old) = old.filter(|old| *old != new)
+            && keymap.action_for(old) == Some(action)
+        {
+            self.assign(&keymap, old, None, normalize);
+        }
+        self.assign(&keymap, new, Some(action), normalize);
+    }
+
+    /// Give `action` its default keys back and nothing else: the entries naming it go, and
+    /// so do the entries for its default keys (which another action may have taken). Entries
+    /// whose key can't be read are kept.
+    pub fn reset_action(
+        &mut self,
+        defaults: &[Shortcut],
+        action: &str,
+        normalize: &dyn Fn(&str) -> Result<String, String>,
+    ) {
+        let keymap = Keymap::new(defaults.to_vec(), self, normalize);
+        let default_keys: Vec<&str> = keymap.default_keys(action).collect();
+        self.retain(|written, value| {
+            let Ok(keys) = normalize_keys(written, normalize) else {
+                return true;
+            };
+            let names_action = value
+                .as_str()
+                .and_then(|name| find_action(&keymap.defaults, name))
+                .is_some_and(|shortcut| shortcut.action == action);
+            !names_action && !default_keys.contains(&keys.as_str())
+        });
+    }
+
+    /// [`KeybindingOverlay::reset_action`] for every action: entries whose key can't be read,
+    /// and entries on keys no default uses that bind no known action, stay.
+    pub fn reset_all(
+        &mut self,
+        defaults: &[Shortcut],
+        normalize: &dyn Fn(&str) -> Result<String, String>,
+    ) {
+        let keymap = Keymap::new(defaults.to_vec(), self, normalize);
+        for (action, _) in keymap.actions() {
+            self.reset_action(defaults, action, normalize);
+        }
+    }
+
+    fn assign(
+        &mut self,
+        keymap: &Keymap,
+        keys: &str,
+        action: Option<&str>,
+        normalize: &dyn Fn(&str) -> Result<String, String>,
+    ) {
+        self.retain(|written, _| normalize_keys(written, normalize).ok().as_deref() != Some(keys));
+        let by_default: Vec<&str> = keymap
+            .defaults
+            .iter()
+            .filter(|shortcut| shortcut.keys == keys)
+            .map(|shortcut| shortcut.action)
+            .collect();
+        let value = match action {
+            None if by_default.is_empty() => return,
+            None => Value::Null,
+            Some(action) if by_default == [action] => return,
+            Some(action) => {
+                let Some(name) = entry_name(&keymap.defaults, action) else {
+                    return;
+                };
+                Value::String(name.to_owned())
+            }
+        };
+        self.0.insert(keys.to_owned(), value);
+    }
+
+    /// Keep the entries `keep` accepts, in their order (`Map::remove` may reorder them).
+    fn retain(&mut self, mut keep: impl FnMut(&str, &Value) -> bool) {
+        let entries = std::mem::take(&mut *self.0);
+        *self.0 = entries
+            .into_iter()
+            .filter(|(written, value)| keep(written, value))
+            .collect();
+    }
+}
+
+/// The name an overlay entry gives `action`: its short name (`Paste`) when that names it,
+/// else its full name; `None` when no default uses it.
+fn entry_name(defaults: &[Shortcut], action: &str) -> Option<&'static str> {
+    let shortcut = defaults.iter().find(|shortcut| shortcut.action == action)?;
+    let short = short_name(shortcut.action);
+    let short_finds_it =
+        find_action(defaults, short).is_some_and(|found| found.action == shortcut.action);
+    Some(if short_finds_it {
+        short
+    } else {
+        shortcut.action
+    })
 }
 
 /// One binding: keystrokes to an action by its full GPUI name (`terminal::Paste`), matched in a
@@ -179,6 +300,110 @@ impl Keymap {
     pub fn keys<'a>(&'a self, action: &'a str) -> impl Iterator<Item = &'a str> + 'a {
         keys_for(&self.bindings, action)
     }
+
+    /// The action `keys` (in the keymap's spelling) runs, if any.
+    pub fn action_for(&self, keys: &str) -> Option<&'static str> {
+        self.bindings
+            .iter()
+            .find(|shortcut| shortcut.keys == keys)
+            .map(|shortcut| shortcut.action)
+    }
+
+    /// Whether `action`'s keys differ from its defaults (in the same order).
+    pub fn is_changed(&self, action: &str) -> bool {
+        !self.keys(action).eq(self.default_keys(action))
+    }
+}
+
+/// The modifiers held with a keystroke.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HeldModifiers {
+    pub control: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub platform: bool,
+    pub function: bool,
+}
+
+/// Whether a keystroke is input for terminal programs rather than a shortcut, so binding it
+/// would take the key from them: typing (no modifier but Shift), or a letter with only Ctrl or
+/// only Alt (Ctrl+D, Ctrl+C, Alt+B). `key` is GPUI's name: `a`, `space`, `left`.
+pub fn is_terminal_input(held: HeldModifiers, key: &str) -> bool {
+    let command = held.control || held.alt || held.platform || held.function;
+    if !command {
+        return types_text(key);
+    }
+    let only_ctrl_or_alt = held.control != held.alt && !held.shift;
+    only_ctrl_or_alt && !held.platform && !held.function && is_single_letter(key)
+}
+
+fn is_single_letter(key: &str) -> bool {
+    let mut chars = key.chars();
+    matches!((chars.next(), chars.next()), (Some(c), None) if c.is_alphabetic())
+}
+
+/// Whether `key` types or edits text when pressed without Ctrl, Alt, Super or Fn.
+fn types_text(key: &str) -> bool {
+    const EDITING_KEYS: &[&str] = &[
+        "space",
+        "enter",
+        "backspace",
+        "delete",
+        "tab",
+        "left",
+        "right",
+        "up",
+        "down",
+        "home",
+        "end",
+    ];
+    key.chars().count() == 1 || EDITING_KEYS.contains(&key)
+}
+
+/// A readable name for an action of the keymap, for the settings page: `New tab` for
+/// `workspace::NewTab`; an action without one gets its short name in words.
+pub fn action_label(action: &str) -> String {
+    let label = match short_name(action) {
+        "Copy" => "Copy",
+        "CopyOrSend" => "Copy, or send the key without a selection",
+        "Paste" => "Paste",
+        "PasteOrSend" => "Paste, or send the key when there's nothing to paste",
+        "Find" => "Find in terminal",
+        "CloseFind" => "Close find",
+        "AllowClipboard" => "Allow clipboard write",
+        "DenyClipboard" => "Deny clipboard write",
+        "ToggleFullScreen" => "Full screen",
+        "NextTab" => "Next tab",
+        "PreviousTab" => "Previous tab",
+        "NewTab" => "New tab",
+        "DuplicateTab" => "Duplicate tab",
+        "CloseTab" => "Close tab",
+        "ToggleSidebar" => "Show or hide the sidebar",
+        "ToggleExplorer" => "Show or hide the file explorer",
+        "SearchTabs" => "Search tabs",
+        "NextAttention" => "Next tab needing attention",
+        short => {
+            if let Some(number) = short.strip_prefix("SelectTab") {
+                return format!("Select tab {number}");
+            }
+            return camel_case_to_words(short);
+        }
+    };
+    label.to_owned()
+}
+
+/// `NextTab` as `Next tab`.
+fn camel_case_to_words(name: &str) -> String {
+    let mut out = String::new();
+    for (index, c) in name.chars().enumerate() {
+        if index > 0 && c.is_uppercase() {
+            out.push(' ');
+            out.extend(c.to_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn keys_for<'a>(shortcuts: &'a [Shortcut], action: &'a str) -> impl Iterator<Item = &'a str> + 'a {

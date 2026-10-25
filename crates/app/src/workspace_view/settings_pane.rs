@@ -9,6 +9,7 @@ use gpui_kit::{AnyElement, Context, FocusHandle, IntoElement, Subscription, Wind
 use super::WorkspaceView;
 use crate::file_viewer::FilePlace;
 use crate::settings_file::{self, AppSettings};
+use crate::settings_page::KeyRecorder;
 use crate::sidebar;
 
 pub(super) struct SettingsPane {
@@ -19,7 +20,7 @@ pub(super) struct SettingsPane {
     shown: bool,
     /// The keyboard goes here while the page shows, not to the hidden terminal.
     focus: FocusHandle,
-    _changes: Subscription,
+    _changes: [Subscription; 2],
 }
 
 impl SettingsPane {
@@ -31,11 +32,13 @@ impl SettingsPane {
             workspace.update_card_settings(cx);
             cx.notify();
         });
+        // A Keyboard page row starts or stops recording a keystroke.
+        let recorder = cx.observe_global::<KeyRecorder>(|_, cx| cx.notify());
         Self {
             open: false,
             shown: false,
             focus: cx.focus_handle(),
-            _changes: changes,
+            _changes: [changes, recorder],
         }
     }
 

@@ -17,12 +17,13 @@ use workspace_model::{DropTarget, Group, GroupId, Item, Location, display_path};
 use super::{RenameTarget, WorkspaceView};
 use crate::launcher::{self, Launcher};
 use crate::settings_file;
-use crate::shortcuts::{self, ATTENTION_KEY, NEW_TAB_KEY};
+use crate::shortcuts;
 use crate::sidebar::{
     self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabDetail,
     TabRow,
 };
 use crate::tab_menu;
+use crate::workspace_view::{NewTab, NextAttention};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GroupPresentation {
@@ -33,7 +34,7 @@ enum GroupPresentation {
 impl WorkspaceView {
     pub(super) fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = cx.entity().downgrade();
-        let new_tab_button = self.new_tab_button(workspace.clone());
+        let new_tab_button = self.new_tab_button(workspace.clone(), cx);
         let rows = self.sidebar_rows(cx);
         let attention_button = self.attention_button(cx);
         let theme = cx.theme();
@@ -146,7 +147,7 @@ impl WorkspaceView {
             1 => "1 tab needs attention: go to it".to_string(),
             count => format!("{count} tabs need attention: go to the next"),
         };
-        let tooltip = shortcuts::with_shortcut(&label, ATTENTION_KEY);
+        let tooltip = shortcuts::with_shortcut(&label, &NextAttention, cx);
         let button = Button::new("next-attention")
             .icon(IconName::TriangleAlert)
             .label(count.to_string())
@@ -393,13 +394,13 @@ impl WorkspaceView {
 
     /// The `+` menu: the default shell (with its shortcut), the other shells, then the agent
     /// CLIs.
-    fn new_tab_button(&self, workspace: WeakEntity<Self>) -> impl IntoElement {
+    fn new_tab_button(&self, workspace: WeakEntity<Self>, cx: &App) -> impl IntoElement + use<> {
         let launchers = self.launchers.clone();
         Button::new("new-tab")
             .icon(IconName::Plus)
             .ghost()
             .xsmall()
-            .tooltip(shortcuts::with_shortcut("New tab", NEW_TAB_KEY))
+            .tooltip(shortcuts::with_shortcut("New tab", &NewTab, cx))
             .dropdown_menu(move |mut menu, _, cx| {
                 let open = |launcher: &Launcher| {
                     let launcher = launcher.clone();
@@ -417,11 +418,12 @@ impl WorkspaceView {
                 if let Some(default) = default {
                     let label = default.label.clone();
                     menu = menu.item(
-                        PopupMenuItem::element(move |_, _| {
+                        PopupMenuItem::element(move |_, cx| {
                             shortcuts::menu_label_with_hint(
                                 "new-tab-default-shell",
                                 label.clone(),
-                                NEW_TAB_KEY,
+                                &NewTab,
+                                cx,
                             )
                         })
                         .icon(sidebar::launcher_icon(default.icon))

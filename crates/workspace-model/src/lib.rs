@@ -67,7 +67,10 @@ pub use history::{
 };
 pub use history_features::{HistoryFeatures, HistoryKey};
 pub use instance_lock::{held_by_other, lock_pid, lock_text};
-pub use keymap::{KeybindingOverlay, Keymap, KeymapProblem, KeymapReason, Shortcut, short_name};
+pub use keymap::{
+    HeldModifiers, KeybindingOverlay, Keymap, KeymapProblem, KeymapReason, Shortcut, action_label,
+    is_terminal_input, short_name,
+};
 pub use lap::{Lap, format_lap, until_next_second};
 pub use last_command::LastCommand;
 pub use launcher_icon::{LauncherIcon, distro_icon, shell_icon};

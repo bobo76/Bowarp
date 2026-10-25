@@ -54,6 +54,9 @@ directly to model APIs.
 - Provide keyboard shortcuts for opening, closing, and switching tabs and panes.
 - Let users rebind, add or remove shortcuts in the settings file; a removed shortcut's key
   goes to the terminal program, and invalid entries are skipped and listed in settings.
+- Edit shortcuts on a Keyboard settings page: record a key, add or remove keys, reset one
+  action or all; keys that belong to the terminal (typing keys, Ctrl or Alt + a letter) are
+  refused. Menu and tooltip hints show the keys in use.
 
 ## Project Files
 

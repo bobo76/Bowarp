@@ -50,6 +50,38 @@ pub fn problems(cx: &App) -> &[KeymapProblem] {
         .map_or(&[], |state| state.keymap.problems())
 }
 
+/// Reads keys in GPUI's spelling ([`normalize`]), for `KeybindingOverlay`'s edits.
+pub type Normalize = dyn Fn(&str) -> Result<String, String>;
+
+/// The keymap in use (`None` before any view registered its defaults: unit tests).
+pub fn current(cx: &App) -> Option<&Keymap> {
+    cx.try_global::<AppKeymap>().map(|state| &state.keymap)
+}
+
+/// The keystrokes of `action`'s first key in the keymap in use, for a hint in a tooltip or a
+/// menu; `None` while nothing runs it.
+pub fn hint(cx: &App, action: &str) -> Option<Vec<Keystroke>> {
+    let keys = current(cx)?.keys(action).next()?;
+    keys.split_whitespace()
+        .map(|stroke| Keystroke::parse(stroke).ok())
+        .collect()
+}
+
+/// Change the settings file's overlay (re-read first, see `settings_file::update`) with one
+/// of `KeybindingOverlay`'s edits, given the defaults and GPUI's key spelling, and save it:
+/// once per gesture. The bindings follow when the settings change (`rebind_if_changed`).
+pub fn edit(cx: &mut App, change: impl FnOnce(&mut KeybindingOverlay, &[Shortcut], &Normalize)) {
+    let Some(defaults) = cx
+        .try_global::<AppKeymap>()
+        .map(|state| state.defaults.clone())
+    else {
+        return;
+    };
+    settings_file::update(cx, |settings| {
+        change(&mut settings.keybindings, &defaults, &normalize);
+    });
+}
+
 fn rebind_if_changed(cx: &mut App) {
     let Some(overlay) = settings_file::keybindings(cx) else {
         return;
@@ -124,7 +156,7 @@ fn key_binding(shortcut: &Shortcut, cx: &App) -> Result<KeyBinding, String> {
 
 /// `keys` in GPUI's spelling (`shift-ctrl-V` is `ctrl-shift-v`), each keystroke of a
 /// sequence on its own, or GPUI's reason it can't be read.
-fn normalize(keys: &str) -> Result<String, String> {
+pub fn normalize(keys: &str) -> Result<String, String> {
     keys.split_whitespace()
         .map(|stroke| {
             Keystroke::parse(stroke)

@@ -147,6 +147,22 @@ fn default_bindings() -> Vec<Shortcut> {
     bindings
 }
 
+/// The action that selects the tab at `index` (Ctrl+1 to Ctrl+9 by default), if any.
+pub fn select_tab_action(index: usize) -> Option<&'static str> {
+    let actions: [&dyn Action; 9] = [
+        &SelectTab1,
+        &SelectTab2,
+        &SelectTab3,
+        &SelectTab4,
+        &SelectTab5,
+        &SelectTab6,
+        &SelectTab7,
+        &SelectTab8,
+        &SelectTab9,
+    ];
+    actions.get(index).map(|action| action.name())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabOwnership {
     Owner,
@@ -1693,7 +1709,7 @@ impl WorkspaceView {
             .icon(icon)
             .ghost()
             .small()
-            .tooltip(shortcuts::with_shortcut(label, SIDEBAR_KEY))
+            .tooltip(shortcuts::with_shortcut(label, &ToggleSidebar, cx))
             .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_sidebar(cx)))
     }
 
@@ -1708,7 +1724,7 @@ impl WorkspaceView {
             .ghost()
             .small()
             .selected(self.explorer_visible)
-            .tooltip(shortcuts::with_shortcut(label, EXPLORER_KEY))
+            .tooltip(shortcuts::with_shortcut(label, &ToggleExplorer, cx))
             .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_explorer(cx)))
     }
 }

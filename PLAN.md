@@ -9,9 +9,8 @@ an item only missing its manual check moves to "Fixed, not tested yet".
 
 Run in this order (each stands alone and is tested):
 
-1. Configurable keyboard shortcuts, part 2: the "Keyboard" settings page editor (Backlog).
-2. Window opacity and background blur.
-3. Copilot working animation.
+1. Window opacity and background blur.
+2. Copilot working animation.
 
 ## Fixed, not tested yet
 
@@ -41,6 +40,11 @@ Feature switches 0.2.20-0.2.24 (Xvfb-driven except as noted):
   banners, a hand edit applied by opening the settings page). Not driven: vim's visual block
   with Ctrl+V unbound, a keystroke sequence (`ctrl-k ctrl-c`), the reload on saving
   `settings.json` in the file viewer, and Windows (PowerShell, cmd, Git Bash).
+- Keyboard settings page (Xvfb-driven: record with a conflict, +, ×, Reset, Reset all, Esc,
+  page change, hints in the new-tab tooltip and tab menu). Not driven: recording while a
+  dialog or toast has the keyboard, closing the Settings row with its × while recording, AltGr
+  and non-US layouts (`setxkbmap de`), the Ctrl+number hint in the tab hover card, the
+  clipboard notice tooltips, and Windows/macOS (Super/Win and Cmd keys).
 
 Skipped or partially passed in the user's Windows check on 2026-10-23 (0.2.18):
 
@@ -96,11 +100,6 @@ version and commit.
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Configurable keyboard shortcuts, part 2: edit the `"keybindings"` overlay from the settings
-  page (`workspace_model::Keymap` lists each action with its default and effective keys).
-  - Full editor on a "Keyboard" settings page: one row per action showing its keys, click to
-    record a keystroke, a reset to the default, and a way to unbind it.
-  - Tooltip and menu shortcut hints (`shortcuts.rs`) follow the keymap instead of the defaults.
 - Window opacity and background blur, set in the settings file (opacity applies to the
   terminal background only, text stays opaque); blur where the platform allows it (Windows
   acrylic/mica, KDE on X11).

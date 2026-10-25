@@ -6,7 +6,8 @@
 //! A row bound to a field of `Settings` ([`bound_row`], [`switch_row`], [`text_row`],
 //! [`slider_row`], [`dropdown_row`]) applies a change live and saves it once per gesture, and
 //! offers "Reset to default" while the value differs from the default. Rows go into the page
-//! functions below ([`appearance_groups`], [`terminal_groups`]).
+//! functions below ([`appearance_groups`], [`terminal_groups`]); the Keyboard page is in
+//! `keyboard`.
 
 use std::rc::Rc;
 use std::sync::LazyLock;
@@ -39,6 +40,10 @@ use crate::settings_file;
 use crate::sidebar;
 use crate::terminal_element::DEFAULT_FONT_FAMILY;
 
+mod keyboard;
+
+pub use keyboard::{KeyRecorder, init as init_keyboard};
+
 /// The settings page: the error banners, the pages, and the "Open settings file" button.
 pub fn render(
     launchers: Rc<[Launcher]>,
@@ -61,6 +66,7 @@ pub fn render(
                     page("Terminal", terminal_groups(launchers)),
                     page("Workspace", workspace_groups()),
                     page("Notifications", notification_groups()),
+                    page("Keyboard", keyboard::keyboard_groups(cx)),
                     page("About", about_groups(cx)),
                 ])),
         )

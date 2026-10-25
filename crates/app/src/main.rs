@@ -163,6 +163,7 @@ fn main() {
             terminal_element::init(cx);
             terminal_view::init(cx);
             workspace_view::init(cx);
+            settings_page::init_keyboard(cx);
             history::init(cx);
             let quit_hooks = hooks.clone();
             let closing_writer = tabs_writer.clone();
