@@ -7,7 +7,8 @@
 //! wide it is, the links in terminal output and documents, the
 //! shell commands run in the app (history), the shell integration marks (OSC 133) in a shell's
 //! output, the progress reports (OSC 9;4) in a program's output, how a running command is
-//! labeled and badged, which tabs closing would interrupt, how far the mouse wheel scrolls,
+//! labeled and badged, which tabs closing would interrupt, which clipboard writes wait for the
+//! user, how far the mouse wheel scrolls,
 //! the About dialog's version line and the user's settings file. No UI dependency.
 
 // Long test scenarios are exempt from the function length limit (docs/code-quality.md).
@@ -15,6 +16,7 @@
 
 mod about;
 mod attention;
+mod clipboard_guard;
 mod close_warning;
 mod file_pane_features;
 pub mod file_tree;
@@ -46,6 +48,10 @@ mod workspace_features;
 
 pub use about::version_line;
 pub use attention::{Attention, next_attention, waiting_count};
+pub use clipboard_guard::{
+    CLIPBOARD_PREVIEW_CHARS, ClipboardGuard, ClipboardNotice, ClipboardOffer, ClipboardTarget,
+    ClipboardWrites,
+};
 pub use close_warning::{
     AgentActivity, BusyReason, BusyTab, CloseTarget, CloseWarning, TabActivity, close_warning,
 };

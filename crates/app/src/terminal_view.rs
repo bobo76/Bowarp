@@ -1,4 +1,5 @@
 mod agent_tracker;
+mod clipboard_notice;
 mod link_hover;
 mod pointer;
 mod search;
@@ -24,15 +25,15 @@ use gpui_kit::{
     div, size,
 };
 use term_core::alacritty_terminal::grid::Scroll;
-use term_core::alacritty_terminal::term::{ClipboardType, TermMode};
+use term_core::alacritty_terminal::term::TermMode;
 use term_core::{
     EventCallback, ExecutedCommand, LaunchSpec, Palette, Session, SessionEvent, SessionKind,
     TermDimensions, TerminalSearch,
 };
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
-    AgentActivity, BusyReason, COMMAND_LABEL_CHARS, Location, ProgressState, RUNNING_AFTER,
-    RunningBadge, TabActivity, WorkspaceFeatures, command_label, running_badge,
+    AgentActivity, BusyReason, COMMAND_LABEL_CHARS, ClipboardGuard, Location, ProgressState,
+    RUNNING_AFTER, RunningBadge, TabActivity, WorkspaceFeatures, command_label, running_badge,
 };
 
 use self::agent_tracker::AgentTracker;
@@ -46,7 +47,7 @@ use crate::launcher;
 use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
 use crate::settings_file::{self, AppSettings};
 use crate::shell_integration;
-use crate::shortcuts::{self, CLOSE_TAB_KEY};
+use crate::shortcuts::{self, ALLOW_CLIPBOARD_KEY, CLOSE_TAB_KEY, DENY_CLIPBOARD_KEY};
 use crate::sidebar::TabStatus;
 use crate::terminal_element::{TerminalElement, to_hsla};
 
@@ -61,7 +62,16 @@ const PASSTHROUGH_KEYS: &[&str] = &["tab", "shift-tab", "ctrl-c"];
 
 actions!(
     terminal,
-    [Copy, CopyOrSend, Paste, PasteOrSend, Find, CloseFind]
+    [
+        Copy,
+        CopyOrSend,
+        Paste,
+        PasteOrSend,
+        Find,
+        CloseFind,
+        AllowClipboard,
+        DenyClipboard
+    ]
 );
 
 pub fn init(cx: &mut App) {
@@ -75,7 +85,8 @@ pub fn init(cx: &mut App) {
 
 /// Terminal shortcuts. Bindings match before `on_key_down`, so these keys only reach the
 /// program when their action propagates (`CopyOrSend`, `PasteOrSend` with nothing to do).
-/// Kept as data so a user keymap can replace them later.
+/// Kept as data so a user keymap can replace them later. The clipboard keys only act while a
+/// write waits for an answer.
 fn default_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("ctrl-shift-c", Copy, Some(KEY_CONTEXT)),
@@ -85,6 +96,16 @@ fn default_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-v", PasteOrSend, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-shift-f", Find, Some(KEY_CONTEXT)),
         KeyBinding::new("escape", CloseFind, Some(KEY_CONTEXT)),
+        KeyBinding::new(
+            &format!("ctrl-shift-{ALLOW_CLIPBOARD_KEY}"),
+            AllowClipboard,
+            Some(KEY_CONTEXT),
+        ),
+        KeyBinding::new(
+            &format!("ctrl-shift-{DENY_CLIPBOARD_KEY}"),
+            DenyClipboard,
+            Some(KEY_CONTEXT),
+        ),
     ]
 }
 
@@ -191,6 +212,8 @@ pub struct TerminalView {
     finished_unseen: bool,
     /// The program rang the bell (BEL) while the tab was hidden; cleared when it is shown.
     bell_unseen: bool,
+    /// Clipboard writes (OSC 52) waiting for Allow or Deny, and "Always for this tab".
+    clipboard: ClipboardGuard,
     /// Hidden views do not paint, so they acknowledge wakeups themselves.
     visible: bool,
     /// Runs while the session counts as active, to report when it goes quiet.
@@ -300,6 +323,7 @@ impl TerminalView {
             mode: AgentModeState::default(),
             finished_unseen: false,
             bell_unseen: false,
+            clipboard: ClipboardGuard::default(),
             visible: true,
             activity_task: None,
             focus_handle: cx.focus_handle(),
@@ -431,8 +455,10 @@ impl TerminalView {
     }
 
     pub fn tab_status(&self) -> TabStatus {
-        // A bell asks for the user like a waiting prompt, for programs without status hooks.
-        if self.bell_unseen && self.process == ProcessState::Running {
+        // A bell asks for the user like a waiting prompt, for programs without status hooks; so
+        // does a clipboard write waiting for an answer.
+        let asks = self.bell_unseen || self.clipboard.pending().is_some();
+        if asks && self.process == ProcessState::Running {
             return TabStatus::NeedsAttention;
         }
         if let Some(agent) = &self.agent {
@@ -655,7 +681,7 @@ impl TerminalView {
             }
             SessionEvent::ProgressChanged { state, at } => self.apply_progress(state, at, cx),
             SessionEvent::ClipboardStore(clipboard, text) => {
-                store_clipboard(clipboard, text, cx);
+                self.on_clipboard_store(clipboard, text, cx);
                 return;
             }
             SessionEvent::Exited(code) => self.on_exited(code, cx),
@@ -745,6 +771,8 @@ impl TerminalView {
         }
         self.process = ProcessState::Exited(code);
         self.running_command = None;
+        // Nobody is left to ask on behalf of.
+        self.clipboard.deny();
         if let Some(agent) = self.agent.as_mut() {
             agent.exit(Instant::now());
         }
@@ -1002,20 +1030,6 @@ impl TerminalView {
     }
 }
 
-/// Put text a program copied (OSC 52) on the clipboard. Copilot CLI on Windows sends it and
-/// also runs `clip.exe`, which exits with code 1 in this app's tabs, so its Ctrl+C and "Copy
-/// to clipboard" rely on it. The primary selection only exists on Linux; elsewhere such
-/// writes are dropped.
-fn store_clipboard(clipboard: ClipboardType, text: String, cx: &mut App) {
-    match clipboard {
-        ClipboardType::Clipboard => cx.write_to_clipboard(ClipboardItem::new_string(text)),
-        #[cfg(target_os = "linux")]
-        ClipboardType::Selection => cx.write_to_primary(ClipboardItem::new_string(text)),
-        #[cfg(not(target_os = "linux"))]
-        ClipboardType::Selection => {}
-    }
-}
-
 fn is_shift_only(modifiers: &Modifiers) -> bool {
     modifiers.shift && !modifiers.control && !modifiers.alt
 }
@@ -1054,6 +1068,8 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::on_copy_or_send))
             .on_action(cx.listener(Self::on_paste))
             .on_action(cx.listener(Self::on_paste_or_send))
+            .on_action(cx.listener(Self::on_allow_clipboard))
+            .on_action(cx.listener(Self::on_deny_clipboard))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
@@ -1069,6 +1085,7 @@ impl Render for TerminalView {
         let history_popup = self.render_history_popup(cx);
         let exit_banner = self.exit_banner(cx);
         let search_bar = self.render_terminal_search(cx);
+        let clipboard_banner = self.clipboard_banner(cx);
         // The banner sits below the grid, which shrinks by its height, so no output is hidden.
         div()
             .size_full()
@@ -1077,6 +1094,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::on_close_find))
             .flex()
             .flex_col()
+            .children(clipboard_banner)
             .children(search_bar)
             .child(
                 view.relative()

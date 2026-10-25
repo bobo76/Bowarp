@@ -195,7 +195,7 @@ fn repeated_hooks_titles_and_output_do_not_repeat_agent_notices(cx: &mut gpui_ki
 
 #[test]
 fn default_bindings_parse() {
-    assert_eq!(default_bindings().len(), 7);
+    assert_eq!(default_bindings().len(), 9);
 }
 
 #[gpui::test]
@@ -294,4 +294,77 @@ fn copilot_permission_hooks_add_waiting_but_only_progress_controls_working_and_i
         );
         assert_eq!(view.agent.as_ref().unwrap().status(), AgentStatus::Exited);
     });
+}
+
+#[gpui::test]
+fn clipboard_writes_wait_for_an_answer(cx: &mut gpui_kit::TestAppContext) {
+    use term_core::alacritty_terminal::term::ClipboardType;
+
+    use self::clipboard_notice::ClipboardAnswer;
+
+    #[cfg(windows)]
+    let (program, args) = ("cmd", vec!["/C", "exit 0"]);
+    #[cfg(not(windows))]
+    let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+    let spec = LaunchSpec::new(
+        SessionKind::Shell,
+        Some(program.into()),
+        args.into_iter().map(String::from).collect(),
+        None,
+    );
+    let session = Session::spawn(
+        1,
+        &spec,
+        TermDimensions::new(80, 24),
+        Palette::default(),
+        Arc::new(|_| {}),
+    )
+    .unwrap();
+    let view = cx.new(|cx| TerminalView::from_test_session(session, &spec, cx));
+    let clipboard_text =
+        |cx: &mut gpui_kit::TestAppContext| cx.read_from_clipboard().and_then(|item| item.text());
+    let store = |text: &str| SessionEvent::ClipboardStore(ClipboardType::Clipboard, text.into());
+
+    view.update(cx, |view, cx| {
+        view.dispatch_test_event(store("first"), cx);
+        view.dispatch_test_event(store("second"), cx);
+        assert!(view.clipboard_pending());
+        assert_eq!(view.tab_status(), TabStatus::NeedsAttention);
+    });
+    assert_eq!(clipboard_text(cx), None, "held until allowed");
+    view.update(cx, |view, cx| {
+        view.answer_clipboard(ClipboardAnswer::Allow, cx)
+    });
+    assert_eq!(clipboard_text(cx).as_deref(), Some("second"));
+
+    view.update(cx, |view, cx| {
+        assert!(!view.clipboard_pending());
+        assert_ne!(view.tab_status(), TabStatus::NeedsAttention);
+        view.dispatch_test_event(store("denied"), cx);
+        view.answer_clipboard(ClipboardAnswer::Deny, cx);
+        assert!(!view.clipboard_pending());
+    });
+    assert_eq!(clipboard_text(cx).as_deref(), Some("second"));
+
+    view.update(cx, |view, cx| {
+        view.dispatch_test_event(store("always"), cx);
+        view.answer_clipboard(ClipboardAnswer::Always, cx);
+        view.dispatch_test_event(store("later"), cx);
+        assert!(!view.clipboard_pending());
+        assert!(view.clipboard_always());
+    });
+    assert_eq!(clipboard_text(cx).as_deref(), Some("later"));
+
+    view.update(cx, |view, cx| {
+        view.inherit_clipboard_always(false);
+        view.dispatch_test_event(store("at exit"), cx);
+        view.dispatch_test_event(SessionEvent::Exited(Some(0)), cx);
+        assert!(
+            !view.clipboard_pending(),
+            "an exited program's write is dropped"
+        );
+        view.dispatch_test_event(store("after exit"), cx);
+        assert!(!view.clipboard_pending());
+    });
+    assert_eq!(clipboard_text(cx).as_deref(), Some("later"));
 }

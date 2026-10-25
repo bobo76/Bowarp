@@ -78,6 +78,7 @@ Code or Copilot CLI; agents that are not installed are listed but disabled. New 
 | Ctrl+Shift+C, Ctrl+Insert | Copy the selection |
 | Ctrl+Shift+V, Shift+Insert | Paste |
 | Ctrl+Shift+F | Search terminal output and scrollback |
+| Ctrl+Shift+Y / Ctrl+Shift+N | Allow / deny a program's clipboard write (while its notice shows) |
 | Enter / Shift+Enter (in terminal search) | Next / previous match, wrapping around |
 | Esc (while terminal search is open) | Close search and return to the terminal |
 | Shift+PageUp / Shift+PageDown | Scroll the history by a page |
@@ -88,6 +89,12 @@ Code does), clicks and the wheel go to it; hold Shift to select text locally. On
 selection is also copied to the primary selection, and middle-click pastes it. A wheel notch
 scrolls 2 lines on Linux, and X11 touchpad scrolling is slowed the same way (Windows uses the
 system's lines-per-notch setting).
+
+When a program writes the clipboard or the primary selection (OSC 52, e.g. Copilot CLI's
+copy on Windows, tmux, vim), a notice above the terminal shows the text's size and a preview,
+and the write waits: Allow applies it, Deny drops it, and "Always for this tab" applies it and
+every later one until the tab closes. A newer write replaces the waiting one; a background tab
+with a waiting write shows Needs attention.
 
 Terminal search matches literal text, ignoring case, across the current screen and retained
 scrollback, including soft-wrapped lines. All visible matches are highlighted, with the active

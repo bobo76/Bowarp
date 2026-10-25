@@ -14,7 +14,7 @@ when the user confirms they passed; retain skipped or partially passed items.
 
 **0.2.24 verification (Linux, 2026-10-24):** after each of 0.2.20-0.2.24, formatting,
 strict workspace all-target Clippy, build and all tests passed locally; `cargo test` runs
-473 tests. The earlier 0.2.19 run (408 tests) also passed the release workspace build in WSL
+479 tests. The earlier 0.2.19 run (408 tests) also passed the release workspace build in WSL
 Ubuntu with `--locked`. Native Windows checks are blocked locally by missing MSVC build tools
 (`link.exe`). Windows and Ubuntu CI, including the separate Ubuntu Clippy job, have not been
 checked for 0.2.19-0.2.24 (`v0.2.19` was never tagged; `v0.2.20`-`v0.2.24` were pushed before
@@ -41,6 +41,11 @@ automated checks must pass again for the corrected commit before merge or taggin
   background agent that exits with a nonzero or unknown code still toasts, as do user-action
   feedback (save, delete, clear history, start failures) and the persistent fallback-shell
   warning. Agent toasts are keyed per tab, so a new one replaces the tab's earlier one.
+- Clipboard notice: every program clipboard write (OSC 52) now waits for Allow, including
+  Copilot CLI's copy on Windows. One answer covers the held clipboard and primary-selection
+  writes; a write held when the program exits is dropped. "Always for this tab" survives an
+  agent tab going on as a shell. No toast: a background tab only shows Needs attention.
+  Not checked by hand: Copilot CLI on Windows (Allow should then copy as before).
 - Not supported in the file viewer: AVIF images (GPUI's decoder lacks it: "The image could
   not be read."), a `#heading` in a document link (the file opens at the top).
 - File viewer images: still WebP files share animated GIF/WebP's 2 MB limit (other images
@@ -119,13 +124,11 @@ automated checks must pass again for the corrected commit before merge or taggin
 
 Run in this order (each stands alone and is tested):
 
-1. Backlog: Notifications and close warnings, part 2: clipboard notice (OSC 52 Allow / Deny /
-   Always for this tab banner).
-2. Backlog: Notifications and close warnings, part 3: sound for agent events, with the
+1. Backlog: Notifications and close warnings, part 3: sound for agent events, with the
    "Notification sounds" switch and the volume setting.
-3. Backlog: Configurable keyboard shortcuts.
-4. Backlog: Window opacity and background blur.
-5. Backlog: Copilot working animation (uses the "Activity animations" switch).
+2. Backlog: Configurable keyboard shortcuts.
+3. Backlog: Window opacity and background blur.
+4. Backlog: Copilot working animation (uses the "Activity animations" switch).
 
 Switches for features not built yet (prompt at the bottom, command separators, agents typed
 at the prompt, long-command completion status) are added with those features, as the
@@ -300,7 +303,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 | Element | Look | Where |
 |---|---|---|
 | Context menu | Save as new config (= save as a named workspace) | Parked: named workspaces |
-| Clipboard notice | See Notifications and close warnings | Backlog: first item |
 
 "Share session" from the screenshot is not planned.
 
@@ -309,10 +311,6 @@ Reference screenshots: [sidebar + hover card](docs/ui-reference/sidebar-hover-ca
 - Notifications and close warnings:
   - Sound for agent events (Waiting, Ready for review): one bundled sound for both events, with an on/off
     switch and a volume setting. Basic silent in-app toasts are already implemented.
-  - Clipboard notice: a banner above the terminal when a program writes the clipboard
-    (OSC 52). The write is held until Allow (applied then) or Deny (dropped); a newer write
-    replaces the pending one. "Always for this tab" allows later writes until the tab closes
-    (not saved).
 - Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
   `cx.build_action`) from the settings file in place of `default_bindings`. First so the user
   can unbind Ctrl+V (paste) and get `^V` back for bash's quoted-insert and vim's visual block.

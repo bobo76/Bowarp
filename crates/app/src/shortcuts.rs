@@ -19,6 +19,10 @@ pub const SIDEBAR_KEY: &str = "b";
 pub const SEARCH_KEY: &str = "s";
 /// Ctrl+Shift+A: jump to the next tab needing attention.
 pub const ATTENTION_KEY: &str = "a";
+/// Ctrl+Shift+Y: allow the clipboard write waiting in the selected tab.
+pub const ALLOW_CLIPBOARD_KEY: &str = "y";
+/// Ctrl+Shift+N: deny it.
+pub const DENY_CLIPBOARD_KEY: &str = "n";
 /// Ctrl+Shift+|: show or hide the file explorer. Bound as the key that produces `|`, whatever
 /// the layout; GPUI reports it without Shift (Ctrl+|).
 pub const EXPLORER_KEY: &str = "|";
