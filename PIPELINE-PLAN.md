@@ -21,7 +21,7 @@ Event types: `begin`, `end`, `usage`, `docs` (see "After verification"), `split`
 - **Main session (me):** the latest Opus (currently Opus 5.5, `claude-opus-5-5`). If the session runs on another model, I stop and ask the user to switch (`/model opus`) before Step 0.
 - **Agents 1 and 2:** the latest Opus. Launch them with the Agent tool's `model` set to `opus`; never leave it unset, so a configured default subagent model can't downgrade them.
 - **Agent 3 (verify and fix):** Sonnet, `model: "sonnet"`. It is the only agent that runs on Sonnet.
-- **UX/UI agent:** the latest Opus, `model: "opus"`.
+- **UX/UI agent:** the latest Opus, `model: "opus"` (also set in its agent file).
 
 ## UI test tools (kept, git-ignored)
 `pipeline/tools/` holds the harness for driving the app in a headless display. Agents use it as is and do not rebuild it; if a tool is missing something a step needs, extend the script rather than writing a one-off. What the scripts are, how to call them and what they can't drive is in project memory, not here.
@@ -94,23 +94,14 @@ Launch this agent with the Agent tool's `model` set to `sonnet`.
 - Commit the fixes (`REVIEW.md` is git-ignored and stays local): "Address Rust review findings".
 - Write `pipeline/retros/<slug>/3-fix.md` (see Retro focus).
 
-## UX/UI questions — UX/UI agent (general-purpose, `model: "opus"`, I wait for it)
-Launch this agent with the Agent tool's `model` set to `opus`, whenever a UX/UI question comes up: in Step 0's pre-check, under "Open UX questions" in agent 1's report (run it before agent 2), or as a `UX` design-choice finding in `REVIEW.md` (run it before agent 3). One agent per batch of questions, not one per question.
+## UX/UI questions — UX/UI agent (`ux-designer`, `model: "opus"`, I wait for it)
+Launch it with the Agent tool's `subagent_type` set to `ux-designer` and `model` set to `opus`, whenever a UX/UI question comes up: in Step 0's pre-check, under "Open UX questions" in agent 1's report (run it before agent 2), or as a `UX` design-choice finding in `REVIEW.md` (run it before agent 3). One agent per batch of questions, not one per question.
+Its role, what it reads, how it weighs options (2-3 per question, with pros and cons), the `docs/ux-decisions.md` entry format and its final report are in `.claude/agents/ux-designer.md`; don't repeat them in the prompt. If that agent type isn't listed (the session started before the file existed), launch a general-purpose agent with `model: "opus"` and tell it to read and follow that file first.
 Prompt contents:
-- The questions, each with its context: the step text, where it came up (Step 0, agent 1's report, `REVIEW.md` #<n>) and the `file:line` of the code concerned, if any.
-- Read first: `docs/ux-decisions.md` (stay consistent with earlier decisions; never reopen one unless the step contradicts it, and say so), the matching sections of `FEATURES.md` and README.md, the reference screenshots in `docs/ui-reference/` that apply, and the UI code concerned. If it needs to see the current UI, it uses the scripts in `pipeline/tools/` (pass the Xvfb memory entry path) to take screenshots; it doesn't change code.
-- For each question: 2-3 options, each with pros and cons (discoverability, consistency with the existing UI and with common terminal/IDE apps, keyboard-first use, cost to build, Windows/Linux differences), then a recommendation with a one-line reason.
-- Append one entry per question to `docs/ux-decisions.md` (create it with a `# UX/UI decisions` title if missing; never rewrite earlier entries):
-  ```
-  ## <question in one line>
-  - Date: <YYYY-MM-DD>, step: <slug>, raised by: <Step 0 | agent 1 | REVIEW.md #n>
-  - Context: <one or two lines>
-  - Option A — <name>: <what it is>. Pros: <...>. Cons: <...>.
-  - Option B — ...
-  - Decision: <option>, because <reason>. Decided by: UX/UI agent (or: user)
-  ```
-- Don't commit; I commit `docs/ux-decisions.md` with the docs (see "After all agents"). Write `pipeline/retros/<slug>/ux-<n>.md` (see Retro focus; `<n>` counts the UX/UI agent runs of this run).
-- Its final report: per question, the decision in one line, so I can pass it on.
+- The questions, each with its context: the step text, the slug, where it came up (Step 0, agent 1's report, `REVIEW.md` #<n>) and the `file:line` of the code concerned, if any.
+- The Xvfb memory entry path, if it needs to see the current UI.
+- The log lines and the retro (`pipeline/retros/<slug>/ux-<n>.md`, `<n>` counting the UX/UI agent runs of this run), as in "Every agent prompt".
+- Don't commit; I commit `docs/ux-decisions.md` with the docs (see "After all agents").
 
 I adopt the recommendation and continue: append `<time> | <slug> | ux-agent | ux | <question> -> <decision>` to `pipeline/log.txt` per question, then pass the decisions on (to agent 1 from Step 0; to agent 3 from agent 1's report or `REVIEW.md`, as a fix to apply where it differs from what agent 1 built). Exception: when the agent says a question needs the user (it changes or contradicts `FEATURES.md`, or the options are equally good and the choice is a matter of product direction), I stop the loop like a non-UX design choice, show the user the entry from `docs/ux-decisions.md`, and record their pick in its `Decision:` line (`Decided by: user`).
 
