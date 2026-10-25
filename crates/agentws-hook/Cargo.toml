@@ -7,3 +7,6 @@ publish.workspace = true
 
 [dependencies]
 agent-status.workspace = true
+
+[lints]
+workspace = true

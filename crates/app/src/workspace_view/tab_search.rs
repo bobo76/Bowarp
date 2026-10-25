@@ -9,6 +9,7 @@ use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
     Styled, Subscription, Window, div,
 };
+use workspace_model::layout::Direction;
 use workspace_model::{SearchedTab, TabQuery, step_match};
 
 use super::{Tab, WorkspaceView};
@@ -133,7 +134,7 @@ impl WorkspaceView {
 
     /// Up/Down in the search field: select the previous or next tab the search shows, keeping
     /// the keyboard in the field to type on or move again.
-    fn step_search(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn step_search(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
         let query = self.search.query(cx);
         if query.is_empty() {
             return;
@@ -144,7 +145,7 @@ impl WorkspaceView {
             .map(|tab| self.tab_matches(tab, &query, cx))
             .collect();
         let cursor = self.search.cursor.and_then(|id| self.tab_index(id));
-        let Some(index) = step_match(&matching, cursor, forward) else {
+        let Some(index) = step_match(&matching, cursor, direction) else {
             return;
         };
         self.activate(index, window, cx);
@@ -165,11 +166,11 @@ impl WorkspaceView {
             )
             // Captured: the field itself would take Up/Down to move its caret.
             .capture_action(cx.listener(|workspace, _: &MoveUp, window, cx| {
-                workspace.step_search(false, window, cx);
+                workspace.step_search(Direction::Up, window, cx);
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &MoveDown, window, cx| {
-                workspace.step_search(true, window, cx);
+                workspace.step_search(Direction::Down, window, cx);
                 cx.stop_propagation();
             }))
             .child(

@@ -1,6 +1,8 @@
 mod agent_tracker;
+mod clipboard_notice;
 mod link_hover;
 mod pointer;
+mod search;
 
 use std::borrow::Cow;
 use std::fs;
@@ -10,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use agent_status::{AgentState, AgentStatus, HookEvent};
+use agent_status::{AgentEvent, AgentMode, AgentModeState, AgentState, AgentStatus};
 
 use futures::StreamExt;
 use futures::channel::mpsc;
@@ -25,12 +27,13 @@ use gpui_kit::{
 use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::term::TermMode;
 use term_core::{
-    EventCallback, LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions,
+    EventCallback, ExecutedCommand, LaunchSpec, Palette, Session, SessionEvent, SessionKind,
+    TermDimensions, TerminalSearch,
 };
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
-    COMMAND_LABEL_CHARS, Location, ProgressState, RUNNING_AFTER, RunningBadge, command_label,
-    running_badge,
+    AgentActivity, BusyReason, COMMAND_LABEL_CHARS, ClipboardGuard, Location, ProgressState,
+    RUNNING_AFTER, RunningBadge, TabActivity, WorkspaceFeatures, command_label, running_badge,
 };
 
 use self::agent_tracker::AgentTracker;
@@ -42,7 +45,9 @@ use crate::history_popup::HistoryPopup;
 use crate::keys;
 use crate::launcher;
 use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
+use crate::settings_file::{self, AppSettings};
 use crate::shell_integration;
+use crate::shortcuts::{self, ALLOW_CLIPBOARD_KEY, CLOSE_TAB_KEY, DENY_CLIPBOARD_KEY};
 use crate::sidebar::TabStatus;
 use crate::terminal_element::{TerminalElement, to_hsla};
 
@@ -55,7 +60,19 @@ const ACTIVITY_WINDOW: Duration = Duration::from_secs(2);
 /// completion, Shift+Tab for Claude Code's mode cycling, Ctrl+C for interrupt.
 const PASSTHROUGH_KEYS: &[&str] = &["tab", "shift-tab", "ctrl-c"];
 
-actions!(terminal, [Copy, Paste]);
+actions!(
+    terminal,
+    [
+        Copy,
+        CopyOrSend,
+        Paste,
+        PasteOrSend,
+        Find,
+        CloseFind,
+        AllowClipboard,
+        DenyClipboard
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.bind_keys(
@@ -66,14 +83,29 @@ pub fn init(cx: &mut App) {
     cx.bind_keys(default_bindings());
 }
 
-/// Terminal shortcuts. Bindings match before `on_key_down`, so these keys never reach the
-/// program. Kept as data so a user keymap can replace them later.
+/// Terminal shortcuts. Bindings match before `on_key_down`, so these keys only reach the
+/// program when their action propagates (`CopyOrSend`, `PasteOrSend` with nothing to do).
+/// Kept as data so a user keymap can replace them later. The clipboard keys only act while a
+/// write waits for an answer.
 fn default_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("ctrl-shift-c", Copy, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-insert", Copy, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-insert", CopyOrSend, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-shift-v", Paste, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-insert", Paste, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-v", PasteOrSend, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-shift-f", Find, Some(KEY_CONTEXT)),
+        KeyBinding::new("escape", CloseFind, Some(KEY_CONTEXT)),
+        KeyBinding::new(
+            &format!("ctrl-shift-{ALLOW_CLIPBOARD_KEY}"),
+            AllowClipboard,
+            Some(KEY_CONTEXT),
+        ),
+        KeyBinding::new(
+            &format!("ctrl-shift-{DENY_CLIPBOARD_KEY}"),
+            DenyClipboard,
+            Some(KEY_CONTEXT),
+        ),
     ]
 }
 
@@ -124,11 +156,43 @@ pub struct TabChanged;
 /// shell.
 pub struct AgentExited;
 
+/// A background agent changed to a status the user should see.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentNotice {
+    NeedsAttention,
+    Finished,
+    Exited(Option<i32>),
+}
+
+impl AgentNotice {
+    fn for_change(before: AgentStatus, after: AgentStatus) -> Option<Self> {
+        if before == after {
+            return None;
+        }
+        match after {
+            AgentStatus::NeedsAttention => Some(Self::NeedsAttention),
+            AgentStatus::Idle if before == AgentStatus::Working => Some(Self::Finished),
+            _ => None,
+        }
+    }
+}
+
 /// Emitted when a file path is Ctrl+clicked: the file is to be shown in the viewer.
 pub struct OpenFileRequest {
     pub path: PathBuf,
     pub place: FilePlace,
 }
+
+pub struct LastCommandChanged;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum StatusReporting {
+    Hooks,
+    OutputActivity,
+}
+
+const INITIAL_TERMINAL_COLUMNS: u16 = 80;
+const INITIAL_TERMINAL_LINES: u16 = 24;
 
 /// One terminal session and its interaction state.
 pub struct TerminalView {
@@ -136,17 +200,20 @@ pub struct TerminalView {
     /// Shown until the program sets a title.
     name: String,
     /// Folder the session was started in, used while the child's own cannot be read.
-    launch_cwd: Option<PathBuf>,
+    launch_folder: Option<PathBuf>,
     location: Option<Location>,
     /// How the program parses typed paths.
     pub(crate) shell: ShellSyntax,
     /// Status from Claude Code hooks, or from Copilot CLI's progress reports once it sent
     /// one; `None` for sessions without either.
     agent: Option<AgentTracker>,
+    mode: AgentModeState,
     /// The agent finished a turn while the tab was hidden; cleared when it is shown.
     finished_unseen: bool,
     /// The program rang the bell (BEL) while the tab was hidden; cleared when it is shown.
     bell_unseen: bool,
+    /// Clipboard writes (OSC 52) waiting for Allow or Deny, and "Always for this tab".
+    clipboard: ClipboardGuard,
     /// Hidden views do not paint, so they acknowledge wakeups themselves.
     visible: bool,
     /// Runs while the session counts as active, to report when it goes quiet.
@@ -155,9 +222,15 @@ pub struct TerminalView {
     pub(crate) geometry: Option<GridGeometry>,
     /// IME composition text not yet committed.
     pub(crate) marked_text: Option<String>,
-    /// The rest of a history command matching the typed text, drawn dimmed after the cursor.
-    pub(crate) ghost_text: Option<String>,
     pub(crate) history_popup: Option<HistoryPopup>,
+    pub(crate) last_command: workspace_model::LastCommand,
+    last_command_supported: bool,
+    /// How many "Clear saved session commands" requests this tab has handled.
+    saved_cleared_seen: u32,
+    /// The history switches last acted on; settings changes that leave them alone are ignored.
+    workspace_features: WorkspaceFeatures,
+    pub(crate) search: TerminalSearch,
+    search_bar: Option<search::SearchBar>,
     title: Option<String>,
     process: ProcessState,
     /// Set by the shell integration marks; agent sessions keep their hook status instead.
@@ -174,12 +247,11 @@ pub struct TerminalView {
 }
 
 impl TerminalView {
-    /// Start `spec` as session `id`. `reports_status` says whether the session was set up
-    /// with Claude Code status hooks.
+    /// Start `spec` as session `id`, tracking hook status when hooks were installed.
     pub fn spawn(
         id: u64,
         spec: &LaunchSpec,
-        reports_status: bool,
+        reporting: StatusReporting,
         cx: &mut App,
     ) -> io::Result<Entity<Self>> {
         let (sender, mut receiver) = mpsc::unbounded();
@@ -189,7 +261,7 @@ impl TerminalView {
         let session = Session::spawn(
             id,
             spec,
-            TermDimensions::new(80, 24),
+            TermDimensions::new(INITIAL_TERMINAL_COLUMNS, INITIAL_TERMINAL_LINES),
             Palette::default(),
             callback,
         )?;
@@ -205,33 +277,68 @@ impl TerminalView {
                     }
                 }
             });
-            Self::new(session, spec, reports_status, session_events, cx)
+            Self::new(session, spec, reporting, session_events, cx)
         }))
     }
 
     fn new(
         session: Session,
         spec: &LaunchSpec,
-        reports_status: bool,
+        reporting: StatusReporting,
         session_events: Task<()>,
         cx: &mut Context<Self>,
     ) -> Self {
+        cx.observe_global::<history::History>(|view, cx| {
+            if view.sync_last_command_with_history(cx) {
+                cx.emit(LastCommandChanged);
+            }
+            view.refresh_history(cx);
+            cx.notify();
+        })
+        .detach();
+        // Turning a history or last-command switch off closes the popup and drops suggestions
+        // at once.
+        cx.observe_global::<AppSettings>(|view, cx| {
+            let features = settings_file::workspace_features(cx);
+            if features == view.workspace_features {
+                return;
+            }
+            view.workspace_features = features;
+            view.refresh_history(cx);
+            cx.notify();
+        })
+        .detach();
+        let saved_cleared_seen = cx
+            .try_global::<history::History>()
+            .map_or(0, history::History::saved_cleared);
         Self {
+            saved_cleared_seen,
+            workspace_features: settings_file::workspace_features(cx),
             session,
             name: launcher::default_name(spec),
-            launch_cwd: spec.cwd.clone(),
+            launch_folder: spec.cwd.clone(),
             location: spec.cwd.clone().map(Location::read),
             shell: launcher::shell_syntax(spec),
-            agent: reports_status.then(|| AgentTracker::new(Instant::now())),
+            agent: (reporting == StatusReporting::Hooks).then(|| AgentTracker::new(Instant::now())),
+            mode: AgentModeState::default(),
             finished_unseen: false,
             bell_unseen: false,
+            clipboard: ClipboardGuard::default(),
             visible: true,
             activity_task: None,
             focus_handle: cx.focus_handle(),
             geometry: None,
             marked_text: None,
-            ghost_text: None,
             history_popup: None,
+            last_command: workspace_model::LastCommand::default(),
+            last_command_supported: spec.kind == SessionKind::Shell
+                && spec.mark_token.is_some()
+                && matches!(
+                    launcher::shell_syntax(spec),
+                    ShellSyntax::Posix | ShellSyntax::Wsl
+                ),
+            search: TerminalSearch::default(),
+            search_bar: None,
             title: None,
             process: ProcessState::Running,
             running_command: None,
@@ -247,6 +354,32 @@ impl TerminalView {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_test_session(
+        session: Session,
+        spec: &LaunchSpec,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new(
+            session,
+            spec,
+            StatusReporting::OutputActivity,
+            Task::ready(()),
+            cx,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dispatch_test_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
+        self.on_session_event(event, cx);
+    }
+
+    /// Count the (exited) test child as running again, so marks and hooks apply to it.
+    #[cfg(test)]
+    pub(crate) fn revive_for_test(&mut self) {
+        self.process = ProcessState::Running;
+    }
+
     pub fn id(&self) -> u64 {
         self.session.id()
     }
@@ -259,6 +392,26 @@ impl TerminalView {
     /// (always, without them) and the process is alive.
     pub fn at_prompt(&self) -> bool {
         self.running_command.is_none() && self.process == ProcessState::Running
+    }
+
+    /// Why closing the tab would stop work (a running command, a working or waiting agent),
+    /// or `None` when it can close without asking.
+    pub fn busy_reason(&self) -> Option<BusyReason> {
+        let agent = self.agent.as_ref().map(|agent| match agent.status() {
+            AgentStatus::Working => AgentActivity::Working,
+            AgentStatus::NeedsAttention => AgentActivity::Waiting,
+            AgentStatus::Idle | AgentStatus::Exited => AgentActivity::Idle,
+        });
+        TabActivity {
+            exited: self.process != ProcessState::Running,
+            agent,
+            command_running: self.running_command.is_some(),
+            command: self
+                .running_command
+                .as_ref()
+                .and_then(|running| running.label.clone()),
+        }
+        .busy_reason()
     }
 
     /// Make the shell change to `folder`: through its hidden key binding when it has one and
@@ -288,8 +441,12 @@ impl TerminalView {
     pub fn current_folder(&self) -> Option<PathBuf> {
         self.session
             .current_dir()
-            .or_else(|| self.location.as_ref().map(|location| location.dir.clone()))
-            .or_else(|| self.launch_cwd.clone())
+            .or_else(|| {
+                self.location
+                    .as_ref()
+                    .map(|location| location.folder.clone())
+            })
+            .or_else(|| self.launch_folder.clone())
     }
 
     /// The program's title, or the session's default name.
@@ -298,13 +455,15 @@ impl TerminalView {
     }
 
     pub fn tab_status(&self) -> TabStatus {
-        // A bell asks for the user like a waiting prompt, for programs without status hooks.
-        if self.bell_unseen && self.process == ProcessState::Running {
+        // A bell asks for the user like a waiting prompt, for programs without status hooks; so
+        // does a clipboard write waiting for an answer.
+        let asks = self.bell_unseen || self.clipboard.pending().is_some();
+        if asks && self.process == ProcessState::Running {
             return TabStatus::NeedsAttention;
         }
         if let Some(agent) = &self.agent {
             return match agent.status() {
-                AgentStatus::Idle if self.finished_unseen => TabStatus::Done,
+                AgentStatus::Idle if self.finished_unseen => TabStatus::ReadyForReview,
                 AgentStatus::Idle => TabStatus::Idle,
                 AgentStatus::Working => TabStatus::Working,
                 AgentStatus::NeedsAttention => TabStatus::NeedsAttention,
@@ -377,16 +536,17 @@ impl TerminalView {
         if self.refresh_location() || was_done || rang {
             cx.emit(TabChanged);
         }
+        self.refresh_history(cx);
         cx.notify();
     }
 
     /// Re-read the child's folder and its git branch. Returns whether either changed. When the
     /// folder cannot be read (exited child, unsupported platform) the last known one is kept.
     fn refresh_location(&mut self) -> bool {
-        let Some(dir) = self.current_folder() else {
+        let Some(folder) = self.current_folder() else {
             return false;
         };
-        let location = Some(Location::read(dir));
+        let location = Some(Location::read(folder));
         if location == self.location {
             return false;
         }
@@ -397,19 +557,64 @@ impl TerminalView {
     /// Tell the sidebar something changed, refreshing the folder and branch first: a shell's
     /// title changes and output bursts end around `cd` and `git checkout`, and hook events
     /// follow Claude Code's commands, so the location is read then instead of polled.
-    fn emit_tab_changed(&mut self, cx: &mut Context<Self>) {
+    fn refresh_location_and_notify(&mut self, cx: &mut Context<Self>) {
         self.refresh_location();
         cx.emit(TabChanged);
     }
 
-    /// Apply a status event from this session's Claude Code hooks.
-    pub fn apply_hook_event(&mut self, event: HookEvent, at: u64, cx: &mut Context<Self>) {
-        self.update_agent(|agent| agent.apply(event, at), cx);
+    pub fn agent_mode(&self) -> Option<AgentMode> {
+        self.mode.mode()
+    }
+
+    fn supports_last_command(&self) -> bool {
+        self.last_command_supported
+    }
+
+    pub fn restore_last_command(&mut self, command: Option<String>, cx: &mut Context<Self>) {
+        if self.supports_last_command() {
+            self.last_command.restore(command);
+            cx.notify();
+        }
+    }
+
+    pub fn last_command(&self) -> Option<&str> {
+        self.last_command.saved()
+    }
+
+    /// Mode reports must not change activity, lap time or the unseen-finished badge.
+    pub fn apply_hook_event(&mut self, event: AgentEvent, at: u64, cx: &mut Context<Self>) {
+        if self.process != ProcessState::Running {
+            return;
+        }
+        match event {
+            AgentEvent::Hook(event) if self.kind() == SessionKind::ClaudeCode => {
+                self.update_agent(|agent| agent.apply(event, at), cx);
+            }
+            AgentEvent::Hook(agent_status::HookEvent::InputRequested)
+                if self.kind() == SessionKind::CopilotCli =>
+            {
+                // Permission hooks can arrive before the first terminal progress report.
+                if self.agent.is_none() {
+                    self.agent = Some(AgentTracker::new(Instant::now()));
+                    self.activity_task = None;
+                }
+                self.update_agent(
+                    |agent| agent.apply(agent_status::HookEvent::InputRequested, at),
+                    cx,
+                );
+            }
+            AgentEvent::ModeChanged(mode)
+                if self.kind() == SessionKind::CopilotCli && self.mode.apply(mode, at) =>
+            {
+                cx.emit(TabChanged);
+            }
+            _ => {}
+        }
     }
 
     /// Apply a progress report from Copilot CLI. Its first one switches the tab from output
     /// activity to agent status, so a Copilot that never reports progress keeps the former.
-    fn apply_progress(&mut self, state: ProgressState, cx: &mut Context<Self>) {
+    fn apply_progress(&mut self, state: ProgressState, at: u64, cx: &mut Context<Self>) {
         if self.kind() != SessionKind::CopilotCli {
             return;
         }
@@ -418,7 +623,7 @@ impl TerminalView {
             self.agent = Some(AgentTracker::new(Instant::now()));
             self.activity_task = None;
         }
-        let changed = self.update_agent(|agent| agent.apply_progress(state.is_shown()), cx);
+        let changed = self.update_agent(|agent| agent.apply_progress(state, at), cx);
         if adopted && !changed {
             cx.emit(TabChanged);
         }
@@ -437,82 +642,145 @@ impl TerminalView {
             return false;
         };
         self.finished_unseen = finished_unseen(change.before, change.after, self.visible);
-        self.emit_tab_changed(cx);
+        if !self.visible
+            && let Some(notice) = AgentNotice::for_change(change.before, change.after)
+        {
+            cx.emit(notice);
+        }
+        self.refresh_location_and_notify(cx);
         true
     }
 
     fn on_session_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
         match event {
             SessionEvent::Wakeup => {
-                self.track_activity(cx);
-                self.refresh_link_hover(cx);
-                if !self.visible {
-                    // Nothing paints, so re-arm here to keep hearing about output.
-                    self.session.ack_wakeup();
+                if !self.on_wakeup(cx) {
                     return;
                 }
             }
             SessionEvent::TitleChanged(title) => {
                 self.title = title;
-                self.emit_tab_changed(cx);
+                self.refresh_location_and_notify(cx);
             }
             SessionEvent::Bell => {
-                // Claude Code's hooks already tell when it finished or waits.
-                let hooked = self.agent.is_some() && self.kind() == SessionKind::ClaudeCode;
-                if self.visible || self.bell_unseen || hooked {
+                if !self.on_bell(cx) {
                     return;
                 }
-                self.bell_unseen = true;
-                cx.emit(TabChanged);
             }
-            SessionEvent::CommandStarted(command) => {
-                let label =
-                    command.and_then(|command| command_label(&command, COMMAND_LABEL_CHARS));
-                match self.running_command.as_mut() {
-                    // A second C mark before a D mark: the same run goes on, with the new line.
-                    Some(running) => {
-                        running.label = label;
-                        if self.agent.is_none() {
-                            cx.emit(TabChanged);
-                        }
-                    }
-                    None => {
-                        self.running_command = Some(RunningCommand {
-                            label,
-                            started: Instant::now(),
-                            _reveal: self.reveal_running(cx),
-                        });
-                        // Not at the prompt any more: the explorer disables its cd entries.
-                        cx.emit(TabChanged);
-                    }
-                }
-            }
+            SessionEvent::CommandStarted(command) => self.on_command_started(command, cx),
             SessionEvent::CommandExecuted(command) => {
                 self.history_popup = None;
-                history::record(command, cx);
+                self.record_executed(command, cx);
             }
             SessionEvent::CommandFinished => {
                 self.running_command = None;
                 if self.agent.is_none() {
                     // The command may have changed the folder or the branch.
-                    self.emit_tab_changed(cx);
+                    self.refresh_location_and_notify(cx);
                 }
             }
-            SessionEvent::ProgressChanged(state) => self.apply_progress(state, cx),
-            SessionEvent::Exited(code) => {
-                self.process = ProcessState::Exited(code);
-                self.running_command = None;
-                if let Some(agent) = self.agent.as_mut() {
-                    agent.exit(Instant::now());
-                }
-                cx.emit(TabChanged);
-                // A failed agent keeps its last screen, so its error can be read.
-                if self.kind() != SessionKind::Shell && code == Some(0) {
-                    cx.emit(AgentExited);
-                }
+            SessionEvent::ProgressChanged { state, at } => self.apply_progress(state, at, cx),
+            SessionEvent::ClipboardStore(clipboard, text) => {
+                self.on_clipboard_store(clipboard, text, cx);
+                return;
             }
+            SessionEvent::Exited(code) => self.on_exited(code, cx),
         }
+        self.refresh_history(cx);
         cx.notify();
+    }
+
+    fn on_wakeup(&mut self, cx: &mut Context<Self>) -> bool {
+        self.search.invalidate();
+        self.track_activity(cx);
+        self.refresh_link_hover(cx);
+        if !self.visible {
+            // Nothing paints, so re-arm here to keep hearing about output.
+            self.session.ack_wakeup();
+            return false;
+        }
+        true
+    }
+
+    fn on_bell(&mut self, cx: &mut Context<Self>) -> bool {
+        let hooked = self.agent.is_some() && self.kind() == SessionKind::ClaudeCode;
+        if self.visible || self.bell_unseen || hooked {
+            return false;
+        }
+        self.bell_unseen = true;
+        if self.kind() != SessionKind::Shell {
+            cx.emit(AgentNotice::NeedsAttention);
+        }
+        cx.emit(TabChanged);
+        true
+    }
+
+    /// Command history off: nothing is collected or captured. "Remember last shell command" off
+    /// (or "Restore previous tabs" off) only stops the capture.
+    fn record_executed(&mut self, command: ExecutedCommand, cx: &mut Context<Self>) {
+        let features = settings_file::workspace_features(cx);
+        if !features.history().records() {
+            self.last_command.dismiss();
+            return;
+        }
+        if self.supports_last_command()
+            && features.captures_last_command()
+            && self.last_command.record(&command.command)
+        {
+            cx.emit(LastCommandChanged);
+        }
+        history::record(command, cx);
+    }
+
+    /// Apply a forgotten command and a "clear saved session commands" request to this tab's
+    /// saved last command. Returns whether it changed.
+    fn sync_last_command_with_history(&mut self, cx: &Context<Self>) -> bool {
+        let history = cx.global::<history::History>();
+        let forgotten = history
+            .forgotten()
+            .is_some_and(|command| self.last_command.forget(command));
+        let cleared = history.saved_cleared() != self.saved_cleared_seen;
+        self.saved_cleared_seen = history.saved_cleared();
+        let cleared = cleared && self.last_command.clear();
+        forgotten || cleared
+    }
+
+    fn on_command_started(&mut self, command: Option<String>, cx: &mut Context<Self>) {
+        let label = command.and_then(|command| command_label(&command, COMMAND_LABEL_CHARS));
+        if let Some(running) = self.running_command.as_mut() {
+            running.label = label;
+            if self.agent.is_none() {
+                cx.emit(TabChanged);
+            }
+            return;
+        }
+        self.running_command = Some(RunningCommand {
+            label,
+            started: Instant::now(),
+            _reveal: self.reveal_running(cx),
+        });
+        cx.emit(TabChanged);
+    }
+
+    fn on_exited(&mut self, code: Option<i32>, cx: &mut Context<Self>) {
+        if self.kind() != SessionKind::Shell
+            && !self.visible
+            && (code != Some(0) || !self.finished_unseen)
+        {
+            cx.emit(AgentNotice::Exited(code));
+        }
+        self.process = ProcessState::Exited(code);
+        self.running_command = None;
+        // Nobody is left to ask on behalf of.
+        self.clipboard.deny();
+        if let Some(agent) = self.agent.as_mut() {
+            agent.exit(Instant::now());
+        }
+        cx.emit(TabChanged);
+        // A failed agent keeps its last screen, so its error can be read.
+        if self.kind() != SessionKind::Shell && code == Some(0) {
+            cx.emit(AgentExited);
+        }
     }
 
     /// Tell the sidebar once the running command has run for [`RUNNING_AFTER`], when its status
@@ -556,7 +824,7 @@ impl TerminalView {
             }
             let _ = this.update(cx, |view, cx| {
                 view.activity_task = None;
-                view.emit_tab_changed(cx);
+                view.refresh_location_and_notify(cx);
             });
         }));
         cx.emit(TabChanged);
@@ -569,6 +837,7 @@ impl TerminalView {
 
     /// Send user input to the program, snapping the view back to the live screen.
     fn send_input(&mut self, bytes: Cow<'static, [u8]>, cx: &mut Context<Self>) {
+        self.last_command.dismiss();
         self.session.scroll_display(Scroll::Bottom);
         self.session.clear_selection();
         self.session.write(bytes);
@@ -580,18 +849,39 @@ impl TerminalView {
     }
 
     fn on_copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let text = self.session.selection_text();
-        if let Some(text) = text.filter(|text| !text.is_empty()) {
-            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.copy_selection(cx);
+    }
+
+    /// Without a selection of ours, the key goes on to `on_key_down` and the program: programs
+    /// with mouse reporting on (Copilot CLI) keep their own selection and copy it on Ctrl+Insert.
+    /// Ctrl+Shift+C stays a plain `Copy`, since it would reach the program as `^C`.
+    fn on_copy_or_send(&mut self, _: &CopyOrSend, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.copy_selection(cx) {
+            cx.propagate();
         }
     }
 
-    fn paste(&mut self, text: Option<String>, cx: &mut Context<Self>) {
+    /// Copy the selection to the clipboard; false when there is nothing selected.
+    fn copy_selection(&self, cx: &mut Context<Self>) -> bool {
+        let Some(text) = self
+            .session
+            .selection_text()
+            .filter(|text| !text.is_empty())
+        else {
+            return false;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        true
+    }
+
+    /// Send text as a paste; false when there is no text to send.
+    fn paste(&mut self, text: Option<String>, cx: &mut Context<Self>) -> bool {
         let Some(text) = text.filter(|text| !text.is_empty()) else {
-            return;
+            return false;
         };
         let bytes = keys::paste_bytes(&text, self.mode());
         self.send_input(bytes.into(), cx);
+        true
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -724,7 +1014,19 @@ impl TerminalView {
     }
 
     fn on_paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        self.paste(cx.read_from_clipboard().and_then(|item| item.text()), cx);
+        self.paste_clipboard(cx);
+    }
+
+    /// Without text on the clipboard, the key goes on to the program as `^V`: Claude Code then
+    /// reads a copied image from the clipboard itself.
+    fn on_paste_or_send(&mut self, _: &PasteOrSend, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.paste_clipboard(cx) {
+            cx.propagate();
+        }
+    }
+
+    fn paste_clipboard(&mut self, cx: &mut Context<Self>) -> bool {
+        self.paste(cx.read_from_clipboard().and_then(|item| item.text()), cx)
     }
 }
 
@@ -734,7 +1036,9 @@ fn is_shift_only(modifiers: &Modifiers) -> bool {
 
 impl EventEmitter<TabChanged> for TerminalView {}
 impl EventEmitter<AgentExited> for TerminalView {}
+impl EventEmitter<AgentNotice> for TerminalView {}
 impl EventEmitter<OpenFileRequest> for TerminalView {}
+impl EventEmitter<LastCommandChanged> for TerminalView {}
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -756,12 +1060,16 @@ impl Render for TerminalView {
         let background = self.session.palette().background;
         let view = div()
             .size_full()
+            .min_h_0()
             .bg(to_hsla(background))
-            .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::on_copy))
+            .on_action(cx.listener(Self::on_copy_or_send))
             .on_action(cx.listener(Self::on_paste))
+            .on_action(cx.listener(Self::on_paste_or_send))
+            .on_action(cx.listener(Self::on_allow_clipboard))
+            .on_action(cx.listener(Self::on_deny_clipboard))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
@@ -774,15 +1082,28 @@ impl Render for TerminalView {
             .on_mouse_up_out(MouseButton::Middle, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Right, cx.listener(Self::on_mouse_up));
 
-        let history_popup = self.update_history(cx);
+        let history_popup = self.render_history_popup(cx);
         let exit_banner = self.exit_banner(cx);
+        let search_bar = self.render_terminal_search(cx);
+        let clipboard_banner = self.clipboard_banner(cx);
         // The banner sits below the grid, which shrinks by its height, so no output is hidden.
-        view.relative()
+        div()
+            .size_full()
+            .key_context(KEY_CONTEXT)
+            .on_action(cx.listener(Self::on_find))
+            .on_action(cx.listener(Self::on_close_find))
             .flex()
             .flex_col()
-            .child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
-            .children(exit_banner)
-            .children(history_popup)
+            .children(clipboard_banner)
+            .children(search_bar)
+            .child(
+                view.relative()
+                    .flex()
+                    .flex_col()
+                    .child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
+                    .children(exit_banner)
+                    .children(history_popup),
+            )
     }
 }
 
@@ -816,7 +1137,7 @@ impl TerminalView {
                 div()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child("Ctrl+Shift+W closes the tab"),
+                    .child(shortcuts::with_shortcut("Close the tab", CLOSE_TAB_KEY)),
             );
         Some(banner.into_any_element())
     }
@@ -878,6 +1199,7 @@ impl EntityInputHandler for TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.last_command.dismiss();
         self.marked_text = (!text.is_empty()).then(|| text.to_string());
         cx.notify();
     }
@@ -907,27 +1229,10 @@ impl EntityInputHandler for TerminalView {
 }
 
 /// Whether a status change is a turn ending (Working -> Idle) on a tab the user is not looking
-/// at, which the sidebar shows as Done until the tab is selected.
+/// at, which the sidebar shows as Ready for review until the tab is selected.
 fn finished_unseen(before: AgentStatus, after: AgentStatus, visible: bool) -> bool {
     !visible && before == AgentStatus::Working && after == AgentStatus::Idle
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_a_hidden_finished_turn_is_done() {
-        use AgentStatus::*;
-        assert!(finished_unseen(Working, Idle, false));
-        assert!(!finished_unseen(Working, Idle, true));
-        assert!(!finished_unseen(NeedsAttention, Idle, false));
-        assert!(!finished_unseen(Working, NeedsAttention, false));
-        assert!(!finished_unseen(Working, Exited, false));
-    }
-
-    #[test]
-    fn default_bindings_parse() {
-        assert_eq!(default_bindings().len(), 4);
-    }
-}
+mod tests;

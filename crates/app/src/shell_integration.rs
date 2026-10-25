@@ -92,57 +92,8 @@ pub fn attach(spec: &mut LaunchSpec) -> bool {
         return false;
     };
     let token = new_mark_token();
-    match shell {
-        Shell::Bash => {
-            let login = !spec.args.is_empty();
-            spec.args = vec![
-                "--rcfile".into(),
-                dir.join(BASH_FILE).to_string_lossy().into_owned(),
-            ];
-            if login {
-                spec.args.push("-i".into());
-                spec.env.insert(BASH_LOGIN_ENV.into(), "1".into());
-            }
-        }
-        Shell::Zsh => {
-            if let Ok(user_zdotdir) = std::env::var(ZSH_DIR_ENV) {
-                spec.env.insert(USER_ZDOTDIR_ENV.into(), user_zdotdir);
-            }
-            spec.env.insert(
-                ZSH_DIR_ENV.into(),
-                dir.join(ZSH_DIR).to_string_lossy().into_owned(),
-            );
-        }
-        Shell::Pwsh => {
-            let script = dir.join(PWSH_FILE).to_string_lossy().into_owned();
-            spec.args = vec![
-                "-NoExit".into(),
-                "-Command".into(),
-                powershell_load(&script),
-            ];
-        }
-        Shell::Cmd => {
-            let prompt = std::env::var(CMD_PROMPT_ENV)
-                .ok()
-                .filter(|prompt| !prompt.is_empty());
-            spec.env.insert(
-                CMD_PROMPT_ENV.into(),
-                cmd_prompt(&token, prompt.as_deref().unwrap_or(CMD_DEFAULT_PROMPT)),
-            );
-        }
-        Shell::Wsl => {
-            let script = dir.join(BASH_FILE).to_string_lossy().into_owned();
-            spec.args
-                .extend(["-e", "sh", "-c", WSL_LAUNCH, "sh", script.as_str()].map(String::from));
-            let wsl_env = match std::env::var(WSL_ENV) {
-                Ok(names) if !names.is_empty() => format!("{names}:{MARK_TOKEN_ENV}"),
-                _ => MARK_TOKEN_ENV.into(),
-            };
-            spec.env.insert(WSL_ENV.into(), wsl_env);
-        }
-    }
-    // bash cannot redraw its prompt from a key binding (`bind -x`), so it gets a typed `cd`.
-    if matches!(shell, Shell::Zsh | Shell::Pwsh) {
+    shell.configure(spec, dir, &token);
+    if shell.has_hidden_cd() {
         let file = dir.join(CD_DIR).join(&token);
         spec.env
             .insert(CD_FILE_ENV.into(), file.to_string_lossy().into_owned());
@@ -151,6 +102,66 @@ pub fn attach(spec: &mut LaunchSpec) -> bool {
     spec.mark_token = Some(token);
     spec.program = Some(program);
     true
+}
+
+impl Shell {
+    fn has_hidden_cd(self) -> bool {
+        // bash cannot redraw its prompt from a key binding (`bind -x`), so it gets a typed cd.
+        matches!(self, Self::Zsh | Self::Pwsh)
+    }
+
+    fn configure(self, spec: &mut LaunchSpec, dir: &Path, token: &str) {
+        match self {
+            Shell::Bash => {
+                let login = !spec.args.is_empty();
+                spec.args = vec![
+                    "--rcfile".into(),
+                    dir.join(BASH_FILE).to_string_lossy().into_owned(),
+                ];
+                if login {
+                    spec.args.push("-i".into());
+                    spec.env.insert(BASH_LOGIN_ENV.into(), "1".into());
+                }
+            }
+            Shell::Zsh => {
+                if let Ok(user_zdotdir) = std::env::var(ZSH_DIR_ENV) {
+                    spec.env.insert(USER_ZDOTDIR_ENV.into(), user_zdotdir);
+                }
+                spec.env.insert(
+                    ZSH_DIR_ENV.into(),
+                    dir.join(ZSH_DIR).to_string_lossy().into_owned(),
+                );
+            }
+            Shell::Pwsh => {
+                let script = dir.join(PWSH_FILE).to_string_lossy().into_owned();
+                spec.args = vec![
+                    "-NoExit".into(),
+                    "-Command".into(),
+                    powershell_load(&script),
+                ];
+            }
+            Shell::Cmd => {
+                let prompt = std::env::var(CMD_PROMPT_ENV)
+                    .ok()
+                    .filter(|prompt| !prompt.is_empty());
+                spec.env.insert(
+                    CMD_PROMPT_ENV.into(),
+                    cmd_prompt(token, prompt.as_deref().unwrap_or(CMD_DEFAULT_PROMPT)),
+                );
+            }
+            Shell::Wsl => {
+                let script = dir.join(BASH_FILE).to_string_lossy().into_owned();
+                spec.args.extend(
+                    ["-e", "sh", "-c", WSL_LAUNCH, "sh", script.as_str()].map(String::from),
+                );
+                let wsl_env = match std::env::var(WSL_ENV) {
+                    Ok(names) if !names.is_empty() => format!("{names}:{MARK_TOKEN_ENV}"),
+                    _ => MARK_TOKEN_ENV.into(),
+                };
+                spec.env.insert(WSL_ENV.into(), wsl_env);
+            }
+        }
+    }
 }
 
 /// The shell a launch runs and its program, when it gets a script.
@@ -240,243 +251,4 @@ fn write_scripts(dir: &Path) -> io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn shells_are_recognized_by_program_name() {
-        assert_eq!(Shell::of_program("/usr/bin/bash"), Some(Shell::Bash));
-        assert_eq!(Shell::of_program("zsh"), Some(Shell::Zsh));
-        assert_eq!(
-            Shell::of_program(r"C:\Program Files\PowerShell\7\pwsh.exe"),
-            Some(Shell::Pwsh)
-        );
-        assert_eq!(Shell::of_program("powershell.exe"), Some(Shell::Pwsh));
-        assert_eq!(Shell::of_program("fish"), None);
-        assert_eq!(
-            Shell::of_program(r"C:\Windows\System32\cmd.exe"),
-            Some(Shell::Cmd)
-        );
-        assert_eq!(Shell::of_program("wsl.exe"), Some(Shell::Wsl));
-    }
-
-    #[test]
-    fn cmd_prompt_reports_the_folder_before_the_users_prompt() {
-        assert_eq!(
-            cmd_prompt("t0k", "$P$G"),
-            r"$e]133;D;aw=t0k;path=$P$e\$e]0;$P$e\$P$G"
-        );
-    }
-
-    #[test]
-    fn wsl_gets_the_script_for_a_distro_or_the_default_one() {
-        let wsl = |args: &[&str]| {
-            LaunchSpec::new(
-                SessionKind::Shell,
-                Some("wsl.exe".into()),
-                args.iter().map(|&arg| arg.into()).collect(),
-                None,
-            )
-        };
-        let shell = |spec: &LaunchSpec| target(spec).map(|(shell, _)| shell);
-        assert_eq!(shell(&wsl(&["-d", "Ubuntu"])), Some(Shell::Wsl));
-        assert_eq!(shell(&wsl(&[])), Some(Shell::Wsl));
-        assert_eq!(shell(&wsl(&["-e", "top"])), None);
-        assert_eq!(shell(&wsl(&["-d", "Ubuntu", "-e", "top"])), None);
-    }
-
-    #[test]
-    fn other_launches_are_left_alone() {
-        let mut claude = LaunchSpec::claude_code(None);
-        assert!(!attach(&mut claude));
-        assert!(claude.args.is_empty() && claude.env.is_empty());
-        let mut bash_script = LaunchSpec::new(
-            SessionKind::Shell,
-            Some("bash".into()),
-            vec!["build.sh".into()],
-            None,
-        );
-        assert!(!attach(&mut bash_script));
-        assert_eq!(bash_script.args, ["build.sh"]);
-        let mut fish = LaunchSpec::new(SessionKind::Shell, Some("fish".into()), vec![], None);
-        assert!(!attach(&mut fish));
-        assert_eq!(fish.program.as_deref(), Some("fish"));
-    }
-
-    #[test]
-    fn git_bash_and_windows_powershell_get_a_script() {
-        let git_bash = LaunchSpec::new(
-            SessionKind::Shell,
-            Some(r"C:\Program Files\Git\bin\bash.exe".into()),
-            vec!["-i".into(), "-l".into()],
-            None,
-        );
-        assert_eq!(target(&git_bash).map(|(shell, _)| shell), Some(Shell::Bash));
-        let login_zsh = LaunchSpec::new(
-            SessionKind::Shell,
-            Some("zsh".into()),
-            vec!["-i".into(), "-l".into()],
-            None,
-        );
-        assert_eq!(target(&login_zsh), None);
-        let powershell = LaunchSpec::new(
-            SessionKind::Shell,
-            Some("powershell.exe".into()),
-            vec![],
-            None,
-        );
-        assert_eq!(
-            target(&powershell).map(|(shell, _)| shell),
-            Some(Shell::Pwsh)
-        );
-    }
-
-    /// Runs `program` interactively on `input` (no terminal: no line editor) and returns the
-    /// marks it printed; `None` when the shell is not installed.
-    #[cfg(unix)]
-    fn run_shell(
-        program: &str,
-        args: &[&str],
-        env: &[(&str, &Path)],
-        input: &str,
-    ) -> Option<(Vec<workspace_model::PromptMark>, String)> {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
-
-        Command::new(program).arg("-c").arg("exit").status().ok()?;
-        // One pipe for both: the prompt goes to stderr, the hooks print to stdout.
-        let mut command = Command::new("sh");
-        command
-            .args(["-c", "exec \"$@\" 2>&1", "sh", program])
-            .args(args)
-            .env(MARK_TOKEN_ENV, "t0k")
-            .env_remove(ZSH_DIR_ENV)
-            .env_remove(USER_ZDOTDIR_ENV)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        for (key, value) in env {
-            command.env(key, value);
-        }
-        let mut child = command.spawn().ok()?;
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(input.as_bytes())
-            .unwrap();
-        let text = child.wait_with_output().unwrap().stdout;
-        let mut scanner = workspace_model::Osc133Scanner::new("t0k");
-        let mut marks = Vec::new();
-        let mut rest = &text[..];
-        while let Some((end, mark)) = scanner.scan(rest) {
-            marks.push(mark);
-            rest = &rest[end..];
-        }
-        Some((marks, String::from_utf8_lossy(&text).into_owned()))
-    }
-
-    #[cfg(unix)]
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("agentws-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("home")).unwrap();
-        write_scripts(&dir.join("scripts")).unwrap();
-        dir
-    }
-
-    /// What every script must print for `input`: a marked prompt, the command with its C mark,
-    /// no command for a planted mark, and no token in the command's environment.
-    #[cfg(unix)]
-    fn check_marks(marks: &[workspace_model::PromptMark], output: &str) {
-        use workspace_model::PromptMark::*;
-        let commands: Vec<&str> = marks
-            .iter()
-            .filter_map(|mark| match mark {
-                CommandExecuted(command) => Some(command.as_deref().unwrap_or("")),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            commands[0], "echo token=${AGENTWS_MARK_TOKEN-unset}",
-            "{output}"
-        );
-        assert!(output.contains("token=unset"), "{output}");
-        let start = marks.iter().position(|mark| *mark == PromptStart).unwrap();
-        assert_eq!(marks[start + 1], CommandStart, "{marks:?}");
-        assert!(
-            matches!(marks[start + 2], CommandExecuted(Some(_))),
-            "{marks:?}"
-        );
-        assert!(
-            marks
-                .iter()
-                .any(|mark| matches!(mark, CommandFinished(Some(folder)) if folder.is_absolute())),
-            "{marks:?}"
-        );
-        // The planted marks have the wrong token; only the printf command itself counts.
-        assert_eq!(commands.len(), 2, "{marks:?}");
-        assert!(commands[1].starts_with("printf"), "{marks:?}");
-    }
-
-    #[cfg(unix)]
-    const SCRIPT_INPUT: &str = concat!(
-        "echo token=${AGENTWS_MARK_TOKEN-unset}\n",
-        "printf '\\033]133;C;aw=bad;cmd=6c73\\007\\033]133;C;cmd=6c73\\007\\n'\n",
-    );
-
-    #[cfg(unix)]
-    #[test]
-    fn bash_script_marks_the_prompt() {
-        let dir = scratch("bash");
-        let script = dir.join("scripts").join(BASH_FILE);
-        let script = script.to_str().unwrap();
-        let home = dir.join("home");
-        let Some((marks, output)) = run_shell(
-            "bash",
-            &["--rcfile", script, "-i"],
-            &[("HOME", &home)],
-            SCRIPT_INPUT,
-        ) else {
-            return;
-        };
-        check_marks(&marks, &output);
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn zsh_script_marks_the_prompt_and_restores_zdotdir() {
-        let dir = scratch("zsh");
-        let zdotdir = dir.join("scripts").join(ZSH_DIR);
-        let home = dir.join("home");
-        fs::write(home.join(".zshrc"), "echo user-zshrc=$+ZDOTDIR\n").unwrap();
-        let Some((marks, output)) = run_shell(
-            "zsh",
-            &["-i"],
-            &[("HOME", &home), (ZSH_DIR_ENV, &zdotdir)],
-            SCRIPT_INPUT,
-        ) else {
-            return;
-        };
-        check_marks(&marks, &output);
-        // The user's own .zshrc ran, with ZDOTDIR unset again.
-        assert!(output.contains("user-zshrc=0"), "{output}");
-        let written: Vec<_> = fs::read_dir(&zdotdir)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect();
-        assert_eq!(written, [".zshenv"]);
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn powershell_paths_are_single_quoted() {
-        assert_eq!(powershell_quote(r"C:\a b\x.ps1"), r"'C:\a b\x.ps1'");
-        assert_eq!(powershell_quote("it's"), "'it''s'");
-        assert_eq!(
-            powershell_load(r"C:\x.ps1"),
-            r". ([ScriptBlock]::Create([IO.File]::ReadAllText('C:\x.ps1')))"
-        );
-    }
-}
+mod tests;

@@ -1,5 +1,7 @@
 //! How far the mouse wheel scrolls the terminal.
 
+use crate::Platform;
+
 /// Lines a wheel notch scrolls on Linux.
 const LINUX_NOTCH_LINES: f32 = 2.0;
 /// What GPUI reports for a wheel notch on Linux (X11 and Wayland), whatever the system setting.
@@ -11,8 +13,8 @@ const GPUI_LINUX_NOTCH_LINES: f32 = 3.0;
 /// touchpads (XInput2 smooth scrolling) also report lines, so they slow down by the same
 /// factor; only Wayland's continuous scrolling comes in pixels. The result is also the number
 /// of wheel reports (mouse reporting) or arrow keys (alternate scroll) sent to the program.
-pub fn notch_lines(lines: f32, linux: bool) -> f32 {
-    if !linux {
+pub fn notch_lines(lines: f32, platform: Platform) -> f32 {
+    if platform != Platform::Linux {
         return lines;
     }
     lines * LINUX_NOTCH_LINES / GPUI_LINUX_NOTCH_LINES
@@ -41,12 +43,14 @@ mod tests {
 
     #[test]
     fn a_notch_scrolls_two_lines_on_linux() {
-        assert_eq!(notch_lines(3.0, true), 2.0);
-        assert_eq!(notch_lines(-3.0, true), -2.0);
-        assert_eq!(notch_lines(3.0, false), 3.0);
+        assert_eq!(notch_lines(3.0, Platform::Linux), 2.0);
+        assert_eq!(notch_lines(-3.0, Platform::Linux), -2.0);
+        assert_eq!(notch_lines(3.0, Platform::Windows), 3.0);
+        assert_eq!(notch_lines(3.0, Platform::MacOs), 3.0);
+        assert_eq!(notch_lines(3.0, Platform::Other), 3.0);
         let mut wheel = WheelScroll::default();
         for _ in 0..10 {
-            assert_eq!(wheel.add(notch_lines(-3.0, true)), -2);
+            assert_eq!(wheel.add(notch_lines(-3.0, Platform::Linux)), -2);
         }
     }
 

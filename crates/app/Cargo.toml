@@ -42,12 +42,24 @@ image = { version = "0.25.10", default-features = false, features = [
 ] }
 log.workspace = true
 notify.workspace = true
+shell-words = "1.1"
 term-core.workspace = true
 unicode-width = "0.2"
 workspace-model.workspace = true
 
+[dev-dependencies]
+# Enable only the current backend's headless tests, not the facade's alternate backends.
+gpui = { package = "gpui-pre", version = "=0.3.9", features = ["test-support"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-registry = "0.6"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+[lints]
+workspace = true

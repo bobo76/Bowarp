@@ -1,22 +1,28 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 #[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use agent_status::{
-    HookMessage, HookServer, PIPE_ENV, SESSION_ENV, claude_settings, default_pipe_name,
+    HOOK_ENV, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, claude_settings, copilot_hooks,
+    default_pipe_name,
 };
 use term_core::{LaunchSpec, SessionKind};
 
+use crate::processes;
+
 /// Hook binary installed next to the app executable.
 const HOOK_PROGRAM: &str = "agentws-hook";
+/// Ends the name of an instance's Claude settings file, after `agentws-<pid>`.
+const CLAUDE_SETTINGS_SUFFIX: &str = "-claude-settings.json";
 
-/// Lets Claude Code sessions report their status: the hook server plus the settings file that
-/// registers `agentws-hook` with Claude Code.
+/// Receives Claude Code status hooks, Copilot permission hooks and extension mode reports.
 pub struct ClaudeHooks {
     server: HookServer,
     settings_path: PathBuf,
+    hook_program: PathBuf,
+    copilot_plugins_dir: PathBuf,
 }
 
 impl ClaudeHooks {
@@ -32,35 +38,161 @@ impl ClaudeHooks {
             ));
         }
         let server = HookServer::start(default_pipe_name(), on_message)?;
+        let settings_dir = settings_dir();
+        if let Err(error) = sweep_stale_files(&settings_dir, processes::is_running) {
+            log::warn!("could not sweep stale hook settings and Copilot plugins: {error}");
+        }
         // A file rather than inline JSON: the Windows command line would need JSON quoting.
-        let settings_path = settings_dir().join(format!(
-            "agentws-{}-claude-settings.json",
+        let settings_path = settings_dir.join(format!(
+            "agentws-{}{CLAUDE_SETTINGS_SUFFIX}",
             std::process::id()
         ));
-        write_private(&settings_path, claude_settings(&hook_program).as_bytes())?;
+        write_private(&settings_path, claude_settings(&hook_program)?.as_bytes())?;
         Ok(Self {
             server,
             settings_path,
+            hook_program,
+            copilot_plugins_dir: settings_dir.join(format!(
+                "agentws-{}-{}-copilot",
+                std::process::id(),
+                agent_status::now_micros()
+            )),
         })
     }
 
-    /// Make a Claude Code launch report its hook events as session `session`. Other session
-    /// kinds are left unchanged; returns whether the session will report its status.
+    /// Attach status hooks to Claude Code or the mode bridge to Copilot. Only Claude Code
+    /// reports activity through hooks; Copilot adds only permission requests and keeps using
+    /// terminal progress for Working/Idle. The result selects Claude's hooks-only reporting.
     pub fn attach(&self, session: u64, spec: &mut LaunchSpec) -> bool {
-        if spec.kind != SessionKind::ClaudeCode {
+        if spec.kind == SessionKind::Shell {
+            return false;
+        }
+        spec.env.insert(SESSION_ENV.into(), session.to_string());
+        spec.env
+            .insert(PIPE_ENV.into(), self.server.pipe_name().into());
+        if spec.kind == SessionKind::CopilotCli {
+            spec.env.insert(
+                HOOK_ENV.into(),
+                self.hook_program.to_string_lossy().into_owned(),
+            );
+            match self.copilot_plugin(session) {
+                Ok(plugin) => {
+                    spec.args.splice(
+                        0..0,
+                        ["--plugin-dir".into(), plugin.to_string_lossy().into_owned()],
+                    );
+                }
+                Err(error) => {
+                    self.remove_session(session);
+                    eprintln!("Copilot permission hooks unavailable; using progress: {error}");
+                }
+            }
             return false;
         }
         let settings = self.settings_path.to_string_lossy().into_owned();
         spec.args.splice(0..0, ["--settings".to_string(), settings]);
-        spec.env.insert(SESSION_ENV.into(), session.to_string());
-        spec.env
-            .insert(PIPE_ENV.into(), self.server.pipe_name().into());
         true
     }
 
-    /// Delete the settings file. Running Claude Code sessions have already read it.
+    fn copilot_plugin(&self, session: u64) -> io::Result<PathBuf> {
+        create_private_dir(&self.copilot_plugins_dir)?;
+        let plugin = self.copilot_plugins_dir.join(session.to_string());
+        create_private_dir(&plugin)?;
+        write_private(
+            &plugin.join("plugin.json"),
+            br#"{"name":"bowarp-attention","version":"1.0.0","hooks":"hooks.json"}"#,
+        )?;
+        write_private(
+            &plugin.join("hooks.json"),
+            copilot_hooks(&self.hook_program)?.as_bytes(),
+        )?;
+        Ok(plugin)
+    }
+
+    /// Remove a session's plugin after its process exits or its tab closes.
+    pub fn remove_session(&self, session: u64) {
+        remove_plugins(&self.copilot_plugins_dir.join(session.to_string()));
+    }
+
+    /// Delete the app-owned settings and plugins when all sessions are shutting down.
     pub fn remove_settings(&self) {
         let _ = fs::remove_file(&self.settings_path);
+        remove_plugins(&self.copilot_plugins_dir);
+    }
+}
+
+fn remove_plugins(path: &Path) {
+    if let Err(error) = fs::remove_dir_all(path)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        log::warn!("could not remove Copilot plugin: {error}");
+    }
+}
+
+/// What an app instance leaves in the settings folder, by its pid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OwnedEntry {
+    /// `agentws-<pid>-<µs>-copilot`, a folder.
+    CopilotPlugins(u32),
+    /// `agentws-<pid>-claude-settings.json`, a file.
+    ClaudeSettings(u32),
+}
+
+fn owned_entry(name: &str) -> Option<OwnedEntry> {
+    let name = name.strip_prefix("agentws-")?;
+    let valid_pid = |pid: &str| pid.parse::<u32>().ok().filter(|pid| *pid != 0);
+    if let Some(pid) = name.strip_suffix(CLAUDE_SETTINGS_SUFFIX) {
+        return valid_pid(pid).map(OwnedEntry::ClaudeSettings);
+    }
+    let (pid, timestamp) = name.strip_suffix("-copilot")?.split_once('-')?;
+    timestamp.parse::<u64>().ok()?;
+    valid_pid(pid).map(OwnedEntry::CopilotPlugins)
+}
+
+/// Remove the hook settings and Copilot plugins of instances that are gone (crashed).
+fn sweep_stale_files(dir: &Path, is_running: impl Fn(u32) -> bool) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let Some(owned) = entry.file_name().to_str().and_then(owned_entry) else {
+            continue;
+        };
+        let file_type = entry.file_type()?;
+        let (pid, expected_type) = match owned {
+            OwnedEntry::CopilotPlugins(pid) => (pid, file_type.is_dir()),
+            OwnedEntry::ClaudeSettings(pid) => (pid, file_type.is_file()),
+        };
+        if !expected_type || is_running(pid) {
+            continue;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            // The fallback runtime directory can be shared with other users.
+            if entry.metadata()?.uid() != processes::effective_uid() {
+                continue;
+            }
+        }
+        match owned {
+            OwnedEntry::CopilotPlugins(_) => remove_plugins(&entry.path()),
+            OwnedEntry::ClaudeSettings(_) => {
+                if let Err(error) = fs::remove_file(entry.path()) {
+                    log::warn!("could not remove stale Claude settings: {error}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn create_private_dir(path: &Path) -> io::Result<()> {
+    let builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    let mut builder = builder;
+    #[cfg(unix)]
+    builder.mode(0o700);
+    match builder.create(path) {
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
+        result => result,
     }
 }
 
@@ -82,3 +214,6 @@ fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
     options.mode(0o600);
     options.open(path)?.write_all(contents)
 }
+
+#[cfg(test)]
+mod tests;

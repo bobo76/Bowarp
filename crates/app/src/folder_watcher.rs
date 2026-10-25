@@ -33,13 +33,21 @@ pub trait WatchesFolders: Sized + 'static {
 
 /// The platform watcher of one view, each folder watched on its own (not recursively).
 pub struct FolderWatcher {
-    /// `None` when the platform watcher could not start: nothing is watched then.
+    /// `None` under the test scheduler or when the platform watcher could not start.
     watcher: Option<RecommendedWatcher>,
     _changes: Task<()>,
 }
 
 impl FolderWatcher {
     pub fn new<V: WatchesFolders>(window: &Window, cx: &mut Context<V>) -> Self {
+        // Native callbacks (including sender teardown) can wake tasks from outside GPUI's
+        // deterministic scheduler. Tests inject changes into deliver_batches instead.
+        if cx.is_test() {
+            return Self {
+                watcher: None,
+                _changes: Task::ready(()),
+            };
+        }
         let (sender, receiver) = mpsc::unbounded();
         let watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
             let Ok(event) = result else {
@@ -181,5 +189,78 @@ impl WatchedFolders {
         };
         self.real_paths.insert(folder.to_path_buf(), real.clone());
         real
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::AppContext;
+
+    #[derive(Default)]
+    struct TestOwner {
+        batches: Vec<Vec<PathBuf>>,
+    }
+
+    impl WatchesFolders for TestOwner {
+        const OWNER: &'static str = "test owner";
+
+        fn ignores(_: &EventKind) -> bool {
+            false
+        }
+
+        fn on_folder_changes(
+            &mut self,
+            paths: Vec<PathBuf>,
+            _: &mut Window,
+            _: &mut Context<Self>,
+        ) {
+            self.batches.push(paths);
+        }
+    }
+
+    #[gpui::test]
+    fn deterministic_scheduler_does_not_start_a_native_watcher(cx: &mut gpui_kit::TestAppContext) {
+        let cx = cx.add_empty_window();
+        cx.update(|window, cx| {
+            let owner = cx.new(|_| TestOwner::default());
+            owner.update(cx, |_, cx| {
+                let mut watcher = FolderWatcher::new(window, cx);
+                assert!(!watcher.is_available());
+                assert!(watcher.watch(&std::env::temp_dir()).is_err());
+                watcher.unwatch(&std::env::temp_dir());
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn injected_changes_are_delivered_in_batches(cx: &mut gpui_kit::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let (sender, receiver) = mpsc::unbounded();
+        let (owner, _delivery) = cx.update(|window, cx| {
+            let owner = cx.new(|_| TestOwner::default());
+            let delivery = owner.update(cx, |_, cx| deliver_batches(receiver, window, cx));
+            (owner, delivery)
+        });
+        cx.run_until_parked();
+        sender.unbounded_send(PathBuf::from("first.txt")).unwrap();
+        cx.run_until_parked();
+        sender.unbounded_send(PathBuf::from("second.txt")).unwrap();
+        cx.run_until_parked();
+        assert!(owner.read_with(cx, |owner, _| owner.batches.is_empty()));
+
+        cx.executor().advance_clock(CHANGE_BATCH);
+        cx.run_until_parked();
+        assert_eq!(
+            owner.read_with(cx, |owner, _| owner.batches.clone()),
+            vec![vec![
+                PathBuf::from("first.txt"),
+                PathBuf::from("second.txt")
+            ]]
+        );
+        drop(sender);
+        cx.run_until_parked();
+        assert_eq!(owner.read_with(cx, |owner, _| owner.batches.len()), 1);
     }
 }

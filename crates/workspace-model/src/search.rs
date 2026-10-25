@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use crate::layout::Direction;
 use crate::location::{Location, display_path};
 
 /// Whitespace-separated terms, each matched case-insensitively anywhere in a tab's fields
@@ -51,7 +52,7 @@ impl TabQuery {
     pub fn matches_tab(&self, tab: &SearchedTab, home: Option<&Path>) -> bool {
         let folder = tab
             .location
-            .map(|location| display_path(&location.dir, home));
+            .map(|location| display_path(&location.folder, home));
         let branch = tab
             .location
             .and_then(|location| location.head.as_ref().map(|head| head.name()));
@@ -70,17 +71,17 @@ impl TabQuery {
 /// `None` before the first move), given which tabs match in sidebar order. Down goes to the
 /// next match and Up to the previous one, wrapping around; the first move goes to the first
 /// match (Down) or the last one (Up). `None` when nothing matches.
-pub fn step_match(matching: &[bool], cursor: Option<usize>, forward: bool) -> Option<usize> {
+pub fn step_match(matching: &[bool], cursor: Option<usize>, direction: Direction) -> Option<usize> {
     let count = matching.len();
-    let order: Vec<usize> = match (cursor.filter(|&cursor| cursor < count), forward) {
-        (Some(cursor), true) => (1..=count)
+    let order: Vec<usize> = match (cursor.filter(|&cursor| cursor < count), direction) {
+        (Some(cursor), Direction::Down) => (1..=count)
             .map(|offset| (cursor + offset) % count)
             .collect(),
-        (Some(cursor), false) => (1..=count)
+        (Some(cursor), Direction::Up) => (1..=count)
             .map(|offset| (cursor + count - offset) % count)
             .collect(),
-        (None, true) => (0..count).collect(),
-        (None, false) => (0..count).rev().collect(),
+        (None, Direction::Down) => (0..count).collect(),
+        (None, Direction::Up) => (0..count).rev().collect(),
     };
     order.into_iter().find(|&index| matching[index])
 }
@@ -122,7 +123,7 @@ mod tests {
     fn looks_in_every_field_of_a_tab() {
         let home = Path::new("/home/user");
         let location = Location {
-            dir: home.join("dev").join("api"),
+            folder: home.join("dev").join("api"),
             head: Some(GitHead::Branch("feature/login".into())),
         };
         let tab = SearchedTab {
@@ -160,18 +161,21 @@ mod tests {
     #[test]
     fn up_and_down_step_through_the_matches() {
         let matching = [false, true, false, true, true];
-        assert_eq!(step_match(&matching, None, true), Some(1));
-        assert_eq!(step_match(&matching, None, false), Some(4));
-        assert_eq!(step_match(&matching, Some(1), true), Some(3));
-        assert_eq!(step_match(&matching, Some(3), false), Some(1));
+        assert_eq!(step_match(&matching, None, Direction::Down), Some(1));
+        assert_eq!(step_match(&matching, None, Direction::Up), Some(4));
+        assert_eq!(step_match(&matching, Some(1), Direction::Down), Some(3));
+        assert_eq!(step_match(&matching, Some(3), Direction::Up), Some(1));
         // Wrapping around both ends.
-        assert_eq!(step_match(&matching, Some(4), true), Some(1));
-        assert_eq!(step_match(&matching, Some(1), false), Some(4));
+        assert_eq!(step_match(&matching, Some(4), Direction::Down), Some(1));
+        assert_eq!(step_match(&matching, Some(1), Direction::Up), Some(4));
         // The only match stays put; no match, no move.
-        assert_eq!(step_match(&[false, true], Some(1), true), Some(1));
-        assert_eq!(step_match(&[false, false], None, true), None);
-        assert_eq!(step_match(&[], Some(0), false), None);
+        assert_eq!(
+            step_match(&[false, true], Some(1), Direction::Down),
+            Some(1)
+        );
+        assert_eq!(step_match(&[false, false], None, Direction::Down), None);
+        assert_eq!(step_match(&[], Some(0), Direction::Up), None);
         // A cursor past the end (a tab closed meanwhile) starts over.
-        assert_eq!(step_match(&matching, Some(9), true), Some(1));
+        assert_eq!(step_match(&matching, Some(9), Direction::Down), Some(1));
     }
 }

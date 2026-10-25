@@ -24,12 +24,12 @@ pub(super) struct SettingsPane {
 
 impl SettingsPane {
     pub fn new(cx: &mut Context<WorkspaceView>) -> Self {
-        // A change saved from the page (or its error) redraws it; rows read the settings when
-        // drawn.
+        // A change (from the page, or the file reloaded after a hand edit) redraws the page or
+        // the terminal: both read the settings when drawn, and the terminal measures its cells
+        // and resizes its pty then (a hidden tab does when it shows).
         let changes = cx.observe_global::<AppSettings>(|workspace, cx| {
-            if workspace.settings.shown {
-                cx.notify();
-            }
+            workspace.update_card_settings(cx);
+            cx.notify();
         });
         Self {
             open: false,
@@ -55,6 +55,14 @@ impl SettingsPane {
 }
 
 impl WorkspaceView {
+    fn toggle_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings.shown && self.settings.focus.contains_focused(window, cx) {
+            self.close_settings(window, cx);
+        } else {
+            self.open_settings(window, cx);
+        }
+    }
+
     /// Show the settings page in place of the selected tab's terminal, adding the sidebar's
     /// Settings row if it isn't there (the title bar button, or selecting the row).
     fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -91,6 +99,11 @@ impl WorkspaceView {
             }
             return;
         };
+        // With the panes off the file goes to the system's handler, as a button press asks.
+        if !settings_file::file_panes(cx).panes_enabled() {
+            cx.open_with_system(&path);
+            return;
+        }
         if let Some(id) = self.active_tab().map(|tab| tab.id) {
             self.open_file_in(id, path, FilePlace::default(), window, cx);
         }
@@ -103,7 +116,7 @@ impl WorkspaceView {
             .small()
             .selected(self.settings.shown)
             .tooltip("Settings")
-            .on_click(cx.listener(|workspace, _, window, cx| workspace.open_settings(window, cx)))
+            .on_click(cx.listener(|workspace, _, window, cx| workspace.toggle_settings(window, cx)))
     }
 
     /// The sidebar's Settings row, while it is open.
@@ -123,3 +136,6 @@ impl WorkspaceView {
         Some(row.into_any_element())
     }
 }
+
+#[cfg(test)]
+mod tests;

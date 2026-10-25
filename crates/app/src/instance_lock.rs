@@ -35,16 +35,27 @@ impl InstanceLock {
 
     /// Remove the lock file, if it is still ours, so the next start owns the tabs at once.
     pub fn release(&self) {
-        let Some(path) = &self.path else {
-            return;
-        };
-        let ours = fs::read_to_string(path)
-            .ok()
-            .and_then(|text| lock_pid(&text))
-            == Some(process::id());
-        if ours {
-            let _ = fs::remove_file(path);
+        if let Some(path) = &self.path {
+            release_at(path);
         }
+    }
+}
+
+/// Remove this process's lock, if it holds one, before exiting without closing the window
+/// (`process::exit` skips the window-close release).
+pub fn release_own() {
+    if let Some(path) = config_file("tabs.lock") {
+        release_at(&path);
+    }
+}
+
+fn release_at(path: &Path) {
+    let ours = fs::read_to_string(path)
+        .ok()
+        .and_then(|text| lock_pid(&text))
+        == Some(process::id());
+    if ours {
+        let _ = fs::remove_file(path);
     }
 }
 
@@ -79,16 +90,71 @@ fn try_create(path: &Path) -> io::Result<bool> {
 }
 
 /// Whether `pid` is a running instance of this app. On Linux, a process with that pid and our
-/// program name (so a reused pid doesn't count); elsewhere every pid counts as alive, so a lock
-/// left by a crash must be removed by hand.
+/// program name (so a reused pid doesn't count); elsewhere any running process with that pid,
+/// so a lock left by a crash is taken over once its pid is free.
 fn is_alive(pid: u32) -> bool {
     if !cfg!(target_os = "linux") {
-        return true;
+        return crate::processes::is_running(pid);
     }
     let comm = |pid: &str| fs::read_to_string(format!("/proc/{pid}/comm")).ok();
     match (comm(&pid.to_string()), comm("self")) {
         (Some(theirs), Some(ours)) => theirs == ours,
         (Some(_), None) => true,
         (None, _) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_lock(name: &str) -> PathBuf {
+        let folder = std::env::temp_dir().join(format!(
+            "agentws-lock-{name}-{}-{}",
+            process::id(),
+            agent_status::now_micros()
+        ));
+        fs::create_dir_all(&folder).unwrap();
+        folder.join("tabs.lock")
+    }
+
+    fn exited_pid() -> u32 {
+        #[cfg(unix)]
+        let mut child = process::Command::new("sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .unwrap();
+        #[cfg(windows)]
+        let mut child = process::Command::new("cmd")
+            .args(["/C", "exit 0"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    }
+
+    #[test]
+    fn a_crashed_owners_lock_is_taken_over() {
+        let path = temp_lock("crashed");
+        fs::write(&path, lock_text(exited_pid())).unwrap();
+        assert!(try_create(&path).unwrap());
+        assert_eq!(
+            lock_pid(&fs::read_to_string(&path).unwrap()),
+            Some(process::id())
+        );
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn release_removes_only_our_own_lock() {
+        let path = temp_lock("release");
+        fs::write(&path, lock_text(process::id() + 1)).unwrap();
+        release_at(&path);
+        assert!(path.is_file(), "another instance's lock stays");
+        fs::write(&path, lock_text(process::id())).unwrap();
+        release_at(&path);
+        assert!(!path.exists());
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 }

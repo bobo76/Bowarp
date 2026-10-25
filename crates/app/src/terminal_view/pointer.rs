@@ -10,7 +10,7 @@ use gpui_kit::{
 use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
 use term_core::alacritty_terminal::selection::SelectionType;
-use workspace_model::{WheelScroll, notch_lines};
+use workspace_model::{Platform, WheelScroll, notch_lines};
 
 use super::TerminalView;
 use crate::mouse::{self, Cell, MouseAction, ReportButton, WheelAction};
@@ -36,7 +36,7 @@ impl TerminalView {
             return;
         };
         let lines = match event.delta {
-            ScrollDelta::Lines(delta) => notch_lines(delta.y, cfg!(target_os = "linux")),
+            ScrollDelta::Lines(delta) => notch_lines(delta.y, Platform::CURRENT),
             ScrollDelta::Pixels(delta) => f32::from(delta.y) / f32::from(geometry.line_height),
         };
         let whole = self.pointer.wheel.add(lines);

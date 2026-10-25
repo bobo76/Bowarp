@@ -8,36 +8,58 @@ use std::sync::Arc;
 
 use gpui_kit::{
     App, BorderStyle, Bounds, CursorStyle, DispatchPhase, Element, ElementId, ElementInputHandler,
-    Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior,
-    Hsla, InspectorElementId, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    PaintQuad, Pixels, Point, ShapedLine, StrikethroughStyle, Style, TextAlign, TextRun,
-    UnderlineStyle, Window, WindowTextSystem, fill, font, outline, point, px, relative, size,
+    Entity, FocusHandle, Font, FontStyle, FontWeight, Global, GlobalElementId, Hitbox,
+    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine, SharedString,
+    StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window, WindowTextSystem, fill,
+    font, outline, point, px, relative, size,
 };
 use term_core::alacritty_terminal::grid::Dimensions;
 use term_core::alacritty_terminal::term::cell::Flags;
 use term_core::alacritty_terminal::term::{RenderableContent, TermMode};
 use term_core::alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Rgb};
-use term_core::{Palette, Session, TermDimensions, dim};
+use term_core::{Palette, TermDimensions, TerminalSearch, dim};
 use unicode_width::UnicodeWidthChar;
+use workspace_model::{Platform, installed_font_family};
 
 use crate::scrollbar::{ScrollMetrics, ScrollbarLayout, ScrollbarState};
+use crate::settings_file::{self, AppSettings};
 use crate::terminal_view::{GridGeometry, TerminalView};
 
+/// The terminal font when the settings name none, or one that isn't installed.
 #[cfg(target_os = "windows")]
-pub(crate) const FONT_FAMILY: &str = "Cascadia Mono";
+pub(crate) const DEFAULT_FONT_FAMILY: &str = "Cascadia Mono";
 #[cfg(not(target_os = "windows"))]
-pub(crate) const FONT_FAMILY: &str = "DejaVu Sans Mono";
-const FONT_SIZE: f32 = 14.0;
+pub(crate) const DEFAULT_FONT_FAMILY: &str = "DejaVu Sans Mono";
 const LINE_HEIGHT_FACTOR: f32 = 1.2;
 /// Space around the grid. The scroll bar sits in the right padding.
 const PADDING_X: f32 = 8.0;
 const PADDING_Y: f32 = 4.0;
 const SCROLLBAR_THUMB_WIDTH: f32 = 4.0;
 const SCROLLBAR_ACTIVE_THUMB_WIDTH: f32 = 6.0;
+const FALLBACK_CELL_WIDTH_FACTOR: f32 = 0.6;
+const SCROLLBAR_ACTIVE_OPACITY: f32 = 0.6;
+const SCROLLBAR_IDLE_OPACITY: f32 = 0.35;
+const SCROLLBAR_TRACK_OPACITY: f32 = 0.08;
 const SELECTION_BACKGROUND: Rgb = Rgb {
     r: 0x26,
     g: 0x4f,
     b: 0x78,
+};
+const SEARCH_BACKGROUND: Rgb = Rgb {
+    r: 0xe6,
+    g: 0xc0,
+    b: 0x70,
+};
+const ACTIVE_SEARCH_BACKGROUND: Rgb = Rgb {
+    r: 0xff,
+    g: 0x96,
+    b: 0x40,
+};
+const SEARCH_FOREGROUND: Rgb = Rgb {
+    r: 0x18,
+    g: 0x18,
+    b: 0x18,
 };
 
 pub struct TerminalElement {
@@ -53,9 +75,7 @@ impl TerminalElement {
 
 /// A run of cells on one line sharing a style, painted as one shaped line.
 struct TextBatch {
-    line: usize,
-    column: usize,
-    cells: usize,
+    span: CellSpan,
     text: String,
     style: CellStyle,
 }
@@ -63,17 +83,32 @@ struct TextBatch {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct CellStyle {
     foreground: Rgb,
-    bold: bool,
-    italic: bool,
-    underline: bool,
-    undercurl: bool,
-    strikeout: bool,
+    flags: Flags,
 }
 
-struct BackgroundRect {
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct CellSpan {
     line: usize,
     column: usize,
     cells: usize,
+}
+
+impl CellSpan {
+    fn new(line: usize, column: usize, cells: usize) -> Self {
+        Self {
+            line,
+            column,
+            cells,
+        }
+    }
+
+    fn continues(self, previous: Self) -> bool {
+        self.line == previous.line && self.column == previous.column + previous.cells
+    }
+}
+
+struct BackgroundRect {
+    span: CellSpan,
     color: Rgb,
 }
 
@@ -83,21 +118,12 @@ struct BackgroundRects(Vec<BackgroundRect>);
 
 impl BackgroundRects {
     /// Extend the last rect when this cell continues it, or start a new rect.
-    fn push(&mut self, line: usize, column: usize, cells: usize, color: Rgb) {
+    fn push(&mut self, span: CellSpan, color: Rgb) {
         match self.0.last_mut() {
-            Some(rect)
-                if rect.line == line
-                    && rect.column + rect.cells == column
-                    && rect.color == color =>
-            {
-                rect.cells += cells;
+            Some(rect) if span.continues(rect.span) && rect.color == color => {
+                rect.span.cells += span.cells;
             }
-            _ => self.0.push(BackgroundRect {
-                line,
-                column,
-                cells,
-                color,
-            }),
+            _ => self.0.push(BackgroundRect { span, color }),
         }
     }
 
@@ -107,9 +133,7 @@ impl BackgroundRects {
 }
 
 struct CursorCell {
-    line: usize,
-    column: usize,
-    cells: usize,
+    span: CellSpan,
     shape: CursorShape,
 }
 
@@ -122,6 +146,21 @@ struct GridSnapshot {
     cursor: Option<CursorCell>,
 }
 
+impl GridSnapshot {
+    fn paint_cursor(
+        &mut self,
+        span: CellSpan,
+        shape: CursorShape,
+        colors: (Rgb, Rgb),
+    ) -> (Rgb, Rgb) {
+        self.cursor = Some(CursorCell { span, shape });
+        if shape == CursorShape::Block {
+            return (colors.1, self.cursor_color);
+        }
+        colors
+    }
+}
+
 pub struct PrepaintState {
     background: Hsla,
     backgrounds: Vec<PaintQuad>,
@@ -129,6 +168,7 @@ pub struct PrepaintState {
     cursor: Option<PaintQuad>,
     marked_text: Option<(PaintQuad, Point<Pixels>, ShapedLine)>,
     ghost_text: Option<(Point<Pixels>, ShapedLine)>,
+    ghost_hint: Option<(Point<Pixels>, ShapedLine)>,
     geometry: GridGeometry,
     scrollbar: Option<PreparedScrollbar>,
     /// The underline of the link under a held Ctrl, and the hitboxes giving it a hand cursor.
@@ -178,6 +218,7 @@ impl Element for TerminalElement {
         (window.request_layout(style, [], cx), ())
     }
 
+    #[expect(clippy::too_many_lines, reason = "split when next changed")]
     fn prepaint(
         &mut self,
         _: Option<&GlobalElementId>,
@@ -187,23 +228,25 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        let shaper = TextShaper::new(window);
+        // Read at each frame: a font change re-measures the cells and resizes the pty below.
+        let shaper = TextShaper::new(window, cx);
         let cell_width = shaper.cell_width();
-        let line_height = px((FONT_SIZE * LINE_HEIGHT_FACTOR).round());
+        let line_height = px((f32::from(shaper.font_size) * LINE_HEIGHT_FACTOR).round());
         let grid_bounds = inset(bounds, px(PADDING_X), px(PADDING_Y));
         let (columns, screen_lines) = fit_grid(grid_bounds, cell_width, line_height);
         let focused = self.focus_handle.is_focused(window);
 
-        let view = self.view.read(cx);
-        let session = &view.session;
-        session.resize(TermDimensions {
-            columns,
-            lines: screen_lines,
-            cell_width: f32::from(cell_width) as u16,
-            cell_height: f32::from(line_height) as u16,
+        let (snapshot, scroll_metrics) = self.view.update(cx, |view, cx| {
+            view.session.resize(TermDimensions {
+                columns,
+                lines: screen_lines,
+                cell_width: f32::from(cell_width) as u16,
+                cell_height: f32::from(line_height) as u16,
+            });
+            take_snapshot(view, focused, cx)
         });
-        let (snapshot, scroll_metrics) = take_snapshot(session, focused);
-        let palette = session.palette();
+        let view = self.view.read(cx);
+        let palette = view.session.palette();
         let grid = CellGrid {
             origin: grid_bounds.origin,
             cell_width,
@@ -213,12 +256,7 @@ impl Element for TerminalElement {
         let backgrounds = snapshot
             .backgrounds
             .iter()
-            .map(|rect| {
-                fill(
-                    grid.bounds(rect.line, rect.column, rect.cells),
-                    to_hsla(rect.color),
-                )
-            })
+            .map(|rect| fill(grid.bounds(rect.span), to_hsla(rect.color)))
             .collect();
         let (cursor, cursor_origin) = prepare_cursor(
             snapshot.cursor.as_ref(),
@@ -227,10 +265,31 @@ impl Element for TerminalElement {
         );
         // Only next to a visible cursor, cut at the line's end.
         let ghost_text = snapshot.cursor.as_ref().and_then(|cursor| {
-            let room = (columns as usize).saturating_sub(cursor.column);
-            let text = fit_columns(view.ghost_text.as_deref()?, room);
+            let room = (columns as usize).saturating_sub(cursor.span.column);
+            let suggestion = view.history_suggestion(cx)?;
+            let text = fit_columns(&suggestion, room);
             let style = ghost_text_style(palette.foreground, snapshot.background);
             (!text.is_empty()).then(|| (cursor_origin, shaper.shape(text, style)))
+        });
+        let ghost_hint = snapshot.cursor.as_ref().and_then(|cursor| {
+            let suggestion = view.restored_suggestion(cx)?;
+            let hint = " \u{21a9} last session";
+            let cells = |text: &str| {
+                text.chars()
+                    .filter_map(UnicodeWidthChar::width)
+                    .sum::<usize>()
+            };
+            let used = cells(suggestion);
+            let room = (columns as usize).saturating_sub(cursor.span.column);
+            if used + cells(hint) > room || view.history_popup.is_some() {
+                return None;
+            }
+            let style = ghost_text_style(palette.foreground, snapshot.background);
+            let fainter = ghost_text_style(style.foreground, snapshot.background);
+            Some((
+                point(cursor_origin.x + cell_width * used as f32, cursor_origin.y),
+                shaper.shape(hint.to_owned(), fainter),
+            ))
         });
         let marked_text = view.marked_text.clone().map(|text| {
             let shaped = shaper.shape(text, marked_text_style(palette.foreground));
@@ -250,7 +309,7 @@ impl Element for TerminalElement {
             .iter()
             .flat_map(|link| &link.rows)
             .map(|row| {
-                let cells = grid.bounds(row.line, row.column, row.cells);
+                let cells = grid.bounds(CellSpan::new(row.line, row.column, row.cells));
                 let underline = Bounds::new(
                     point(cells.origin.x, cells.bottom() - px(2.)),
                     size(cells.size.width, px(1.)),
@@ -267,6 +326,7 @@ impl Element for TerminalElement {
             cursor,
             marked_text,
             ghost_text,
+            ghost_hint,
             geometry: GridGeometry {
                 origin: grid.origin,
                 cell_width,
@@ -310,6 +370,11 @@ impl Element for TerminalElement {
             && let Err(err) = line.paint(origin, line_height, TextAlign::Left, None, window, cx)
         {
             log::warn!("failed to paint the history suggestion: {err}");
+        }
+        if let Some((origin, line)) = prepaint.ghost_hint.take()
+            && let Err(err) = line.paint(origin, line_height, TextAlign::Left, None, window, cx)
+        {
+            log::warn!("failed to paint the last-session hint: {err}");
         }
         if let Some(cursor) = prepaint.cursor.take() {
             window.paint_quad(cursor);
@@ -394,11 +459,13 @@ struct TextShaper {
 }
 
 impl TextShaper {
-    fn new(window: &Window) -> Self {
+    /// In the font of the settings.
+    fn new(window: &Window, cx: &App) -> Self {
+        let text_system = window.text_system().clone();
         Self {
-            text_system: window.text_system().clone(),
-            font: font(FONT_FAMILY),
-            font_size: px(FONT_SIZE),
+            font: font(font_family(cx)),
+            font_size: px(settings_file::settings(cx).font_size.points()),
+            text_system,
         }
     }
 
@@ -408,7 +475,7 @@ impl TextShaper {
         self.text_system
             .advance(font_id, self.font_size, 'm')
             .map(|advance| advance.width)
-            .unwrap_or(px(FONT_SIZE * 0.6))
+            .unwrap_or(self.font_size * FALLBACK_CELL_WIDTH_FACTOR)
     }
 
     fn shape(&self, text: String, style: CellStyle) -> ShapedLine {
@@ -416,6 +483,56 @@ impl TextShaper {
         self.text_system
             .shape_line(text.into(), self.font_size, &[run], None)
     }
+}
+
+/// The terminal's font family, worked out from the settings when their family changes (not
+/// on each frame): the settings' one when it is installed, else the built-in one. GPUI would
+/// draw a missing family in the first font of its own fallback list that loads (often a
+/// proportional one), which breaks the grid.
+struct TerminalFont {
+    /// The settings' family it was worked out from (trimmed, empty for none).
+    requested: String,
+    family: SharedString,
+}
+
+impl Global for TerminalFont {}
+
+pub fn init(cx: &mut App) {
+    refresh_font_family(cx);
+    cx.observe_global::<AppSettings>(refresh_font_family)
+        .detach();
+}
+
+/// Checks the settings' family against the installed names (never `resolve_font`, which
+/// falls back or panics for a missing one) when it differs from the one last checked.
+fn refresh_font_family(cx: &mut App) {
+    let requested = settings_file::settings(cx)
+        .font_family()
+        .unwrap_or_default()
+        .to_owned();
+    if cx
+        .try_global::<TerminalFont>()
+        .is_some_and(|font| font.requested == requested)
+    {
+        return;
+    }
+    let family = if requested.is_empty() {
+        DEFAULT_FONT_FAMILY.into()
+    } else {
+        let installed = cx.text_system().all_font_names();
+        // DirectWrite matches family names in any case; cosmic-text (Linux) only exactly.
+        installed_font_family(&installed, &requested, Platform::CURRENT).map_or_else(
+            || DEFAULT_FONT_FAMILY.into(),
+            |family| family.to_owned().into(),
+        )
+    };
+    cx.set_global(TerminalFont { requested, family });
+}
+
+/// The terminal's font family (see `TerminalFont`).
+pub(crate) fn font_family(cx: &App) -> SharedString {
+    cx.try_global::<TerminalFont>()
+        .map_or_else(|| DEFAULT_FONT_FAMILY.into(), |font| font.family.clone())
 }
 
 /// Maps grid cells to window positions.
@@ -434,10 +551,10 @@ impl CellGrid {
         )
     }
 
-    fn bounds(&self, line: usize, column: usize, cells: usize) -> Bounds<Pixels> {
+    fn bounds(&self, span: CellSpan) -> Bounds<Pixels> {
         Bounds::new(
-            self.origin(line, column),
-            size(self.cell_width * cells as f32, self.line_height),
+            self.origin(span.line, span.column),
+            size(self.cell_width * span.cells as f32, self.line_height),
         )
     }
 }
@@ -453,18 +570,30 @@ fn fit_grid(bounds: Bounds<Pixels>, cell_width: Pixels, line_height: Pixels) -> 
     (columns, lines)
 }
 
-/// Copy the visible grid and its scroll position, holding the terminal lock only for the copy.
-fn take_snapshot(session: &Session, focused: bool) -> (GridSnapshot, ScrollMetrics) {
+/// Refresh search and copy the visible grid under one lock, keeping match coordinates aligned.
+fn take_snapshot(
+    view: &mut TerminalView,
+    focused: bool,
+    cx: &mut gpui_kit::Context<TerminalView>,
+) -> (GridSnapshot, ScrollMetrics) {
     // Re-arm before reading so output arriving mid-frame schedules another frame.
-    session.ack_wakeup();
-    let term = session.lock_term();
+    view.session.ack_wakeup();
+    let mut term = view.session.lock_term();
+    if view.search.refresh(&mut term) {
+        cx.notify();
+    }
     let grid = term.grid();
     let scroll_metrics = ScrollMetrics {
         history: grid.history_size(),
         display_offset: grid.display_offset(),
         screen_lines: grid.screen_lines(),
     };
-    let snapshot = snapshot(term.renderable_content(), session.palette(), focused);
+    let snapshot = snapshot(
+        term.renderable_content(),
+        view.session.palette(),
+        focused,
+        &view.search,
+    );
     (snapshot, scroll_metrics)
 }
 
@@ -476,7 +605,7 @@ fn shape_lines(
     batches
         .into_iter()
         .map(|batch| {
-            let origin = grid.origin(batch.line, batch.column);
+            let origin = grid.origin(batch.span.line, batch.span.column);
             (origin, shaper.shape(batch.text, batch.style))
         })
         .collect()
@@ -491,10 +620,10 @@ fn prepare_cursor(
     let Some(cursor) = cursor else {
         return (None, grid.origin);
     };
-    let cell = grid.bounds(cursor.line, cursor.column, cursor.cells);
+    let cell = grid.bounds(cursor.span);
     (
         cursor_quad(cursor.shape, cell, color),
-        grid.origin(cursor.line, cursor.column),
+        grid.origin(cursor.span.line, cursor.span.column),
     )
 }
 
@@ -543,12 +672,16 @@ fn scrollbar_quads(layout: ScrollbarLayout, active: bool, color: Hsla) -> Vec<Pa
         point(track.right() - width - px(1.), track.top() + px(top)),
         size(width, px(height)),
     );
-    let thumb_color = color.opacity(if active { 0.6 } else { 0.35 });
+    let thumb_color = color.opacity(if active {
+        SCROLLBAR_ACTIVE_OPACITY
+    } else {
+        SCROLLBAR_IDLE_OPACITY
+    });
     let thumb = fill(thumb, thumb_color).corner_radii(width / 2.);
     if !active {
         return vec![thumb];
     }
-    vec![fill(track, color.opacity(0.08)), thumb]
+    vec![fill(track, color.opacity(SCROLLBAR_TRACK_OPACITY)), thumb]
 }
 
 fn inset(bounds: Bounds<Pixels>, x: Pixels, y: Pixels) -> Bounds<Pixels> {
@@ -562,7 +695,12 @@ fn inset(bounds: Bounds<Pixels>, x: Pixels, y: Pixels) -> Bounds<Pixels> {
 }
 
 /// Copy the visible cells into paint batches. Runs under the terminal lock: no shaping here.
-fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) -> GridSnapshot {
+fn snapshot(
+    content: RenderableContent<'_>,
+    palette: &Palette,
+    focused: bool,
+    search: &TerminalSearch,
+) -> GridSnapshot {
     let colors = content.colors;
     let display_offset = content.display_offset as i32;
     let default_background = palette.resolve_index(NamedColor::Background as usize, colors);
@@ -598,6 +736,7 @@ fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) ->
         } else {
             1
         };
+        let span = CellSpan::new(line, column, cells);
 
         let selected = content
             .selection
@@ -608,42 +747,38 @@ fn snapshot(content: RenderableContent<'_>, palette: &Palette, focused: bool) ->
             palette.resolve(cell.bg, colors),
             selected,
         );
+        if !selected && let Some(active) = search.highlight(indexed.point) {
+            background = if active {
+                ACTIVE_SEARCH_BACKGROUND
+            } else {
+                SEARCH_BACKGROUND
+            };
+            foreground = if cell.flags.contains(Flags::HIDDEN) {
+                background
+            } else {
+                SEARCH_FOREGROUND
+            };
+        }
         if show_cursor && indexed.point == cursor_point {
-            if cursor_shape == CursorShape::Block {
-                foreground = background;
-                background = cursor_color;
-            }
-            snapshot.cursor = Some(CursorCell {
-                line,
-                column,
-                cells,
-                shape: cursor_shape,
-            });
+            (foreground, background) =
+                snapshot.paint_cursor(span, cursor_shape, (foreground, background));
         }
 
         if background != default_background {
-            snapshot.backgrounds.push(line, column, cells, background);
+            snapshot.backgrounds.push(span, background);
         }
 
-        let style = CellStyle {
-            foreground,
-            bold: cell.flags.contains(Flags::BOLD),
-            italic: cell.flags.contains(Flags::ITALIC),
-            underline: cell.flags.intersects(Flags::ALL_UNDERLINES),
-            undercurl: cell.flags.contains(Flags::UNDERCURL),
-            strikeout: cell.flags.contains(Flags::STRIKEOUT),
-        };
-        push_cell(
-            &mut snapshot.batches,
-            line,
-            column,
-            cells,
-            cell.c,
-            cell.zerowidth(),
-            style,
-        );
+        let style = cell_style(cell.flags, foreground);
+        push_cell(&mut snapshot.batches, span, cell.c, cell.zerowidth(), style);
     }
     snapshot
+}
+
+fn cell_style(flags: Flags, foreground: Rgb) -> CellStyle {
+    CellStyle {
+        foreground,
+        flags: flags & (Flags::BOLD | Flags::ITALIC | Flags::ALL_UNDERLINES | Flags::STRIKEOUT),
+    }
 }
 
 /// A cell's foreground and background after its DIM, INVERSE and HIDDEN attributes and the
@@ -697,11 +832,7 @@ fn cursor_quad(shape: CursorShape, cell: Bounds<Pixels>, color: Hsla) -> Option<
 fn marked_text_style(foreground: Rgb) -> CellStyle {
     CellStyle {
         foreground,
-        bold: false,
-        italic: false,
-        underline: true,
-        undercurl: false,
-        strikeout: false,
+        flags: Flags::UNDERLINE,
     }
 }
 
@@ -714,11 +845,7 @@ fn ghost_text_style(foreground: Rgb, background: Rgb) -> CellStyle {
             g: mix(foreground.g, background.g),
             b: mix(foreground.b, background.b),
         },
-        bold: false,
-        italic: false,
-        underline: false,
-        undercurl: false,
-        strikeout: false,
+        flags: Flags::empty(),
     }
 }
 
@@ -743,19 +870,20 @@ fn marked_text_overlay(
 /// positioned at their own column.
 fn push_cell(
     batches: &mut Vec<TextBatch>,
-    line: usize,
-    column: usize,
-    cells: usize,
+    span: CellSpan,
     character: char,
     zero_width: Option<&[char]>,
     style: CellStyle,
 ) {
-    let decorated = |style: &CellStyle| style.underline || style.strikeout;
+    let decorated = |style: &CellStyle| {
+        style
+            .flags
+            .intersects(Flags::ALL_UNDERLINES | Flags::STRIKEOUT)
+    };
     let blank = (character == ' ' || character == '\t') && zero_width.is_none();
     // An undecorated blank only needs a position, so it may join any undecorated batch.
     let continues = |batch: &TextBatch| {
-        batch.line == line
-            && batch.column + batch.cells == column
+        span.continues(batch.span)
             && batch.text.is_ascii()
             && (batch.style == style || blank && !decorated(&style) && !decorated(&batch.style))
     };
@@ -763,7 +891,7 @@ fn push_cell(
     if character.is_ascii() && zero_width.is_none() {
         if let Some(batch) = batches.last_mut().filter(|batch| continues(batch)) {
             batch.text.push(if blank { ' ' } else { character });
-            batch.cells += cells;
+            batch.span.cells += span.cells;
             return;
         }
         if blank && !decorated(&style) {
@@ -773,13 +901,7 @@ fn push_cell(
 
     let mut text = String::from(character);
     text.extend(zero_width.into_iter().flatten());
-    batches.push(TextBatch {
-        line,
-        column,
-        cells,
-        text,
-        style,
-    });
+    batches.push(TextBatch { span, text, style });
 }
 
 fn text_run(base: &Font, len: usize, style: CellStyle) -> TextRun {
@@ -787,12 +909,12 @@ fn text_run(base: &Font, len: usize, style: CellStyle) -> TextRun {
     TextRun {
         len,
         font: Font {
-            weight: if style.bold {
+            weight: if style.flags.contains(Flags::BOLD) {
                 FontWeight::BOLD
             } else {
                 FontWeight::NORMAL
             },
-            style: if style.italic {
+            style: if style.flags.contains(Flags::ITALIC) {
                 FontStyle::Italic
             } else {
                 FontStyle::Normal
@@ -801,15 +923,21 @@ fn text_run(base: &Font, len: usize, style: CellStyle) -> TextRun {
         },
         color,
         background_color: None,
-        underline: style.underline.then(|| UnderlineStyle {
-            thickness: px(1.),
-            color: Some(color),
-            wavy: style.undercurl,
-        }),
-        strikethrough: style.strikeout.then(|| StrikethroughStyle {
-            thickness: px(1.),
-            color: Some(color),
-        }),
+        underline: style
+            .flags
+            .intersects(Flags::ALL_UNDERLINES)
+            .then(|| UnderlineStyle {
+                thickness: px(1.),
+                color: Some(color),
+                wavy: style.flags.contains(Flags::UNDERCURL),
+            }),
+        strikethrough: style
+            .flags
+            .contains(Flags::STRIKEOUT)
+            .then(|| StrikethroughStyle {
+                thickness: px(1.),
+                color: Some(color),
+            }),
     }
 }
 
@@ -829,195 +957,4 @@ fn fit_columns(text: &str, columns: usize) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const RED: Rgb = Rgb {
-        r: 0xff,
-        g: 0,
-        b: 0,
-    };
-    const BLUE: Rgb = Rgb {
-        r: 0,
-        g: 0,
-        b: 0xff,
-    };
-
-    fn plain(foreground: Rgb) -> CellStyle {
-        CellStyle {
-            foreground,
-            bold: false,
-            italic: false,
-            underline: false,
-            undercurl: false,
-            strikeout: false,
-        }
-    }
-
-    fn underlined(foreground: Rgb) -> CellStyle {
-        CellStyle {
-            underline: true,
-            ..plain(foreground)
-        }
-    }
-
-    /// Push single-width cells on line 0 starting at column 0.
-    fn push_line(cells: &[(char, CellStyle)]) -> Vec<TextBatch> {
-        let mut batches = Vec::new();
-        for (column, &(character, style)) in cells.iter().enumerate() {
-            push_cell(&mut batches, 0, column, 1, character, None, style);
-        }
-        batches
-    }
-
-    /// `(column, cells, text)` of each batch.
-    fn layout(batches: &[TextBatch]) -> Vec<(usize, usize, &str)> {
-        batches
-            .iter()
-            .map(|batch| (batch.column, batch.cells, batch.text.as_str()))
-            .collect()
-    }
-
-    /// `(line, column, cells)` of each rect.
-    fn rects(backgrounds: &BackgroundRects) -> Vec<(usize, usize, usize)> {
-        backgrounds
-            .iter()
-            .map(|rect| (rect.line, rect.column, rect.cells))
-            .collect()
-    }
-
-    #[test]
-    fn adjacent_backgrounds_with_same_color_merge() {
-        let mut backgrounds = BackgroundRects::default();
-        backgrounds.push(0, 0, 1, RED);
-        backgrounds.push(0, 1, 2, RED);
-        backgrounds.push(0, 3, 1, RED);
-        assert_eq!(rects(&backgrounds), [(0, 0, 4)]);
-    }
-
-    #[test]
-    fn background_color_change_starts_a_new_rect() {
-        let mut backgrounds = BackgroundRects::default();
-        backgrounds.push(0, 0, 1, RED);
-        backgrounds.push(0, 1, 1, BLUE);
-        assert_eq!(rects(&backgrounds), [(0, 0, 1), (0, 1, 1)]);
-    }
-
-    #[test]
-    fn background_gap_or_new_line_starts_a_new_rect() {
-        let mut backgrounds = BackgroundRects::default();
-        backgrounds.push(0, 0, 1, RED);
-        backgrounds.push(0, 2, 1, RED);
-        backgrounds.push(1, 3, 1, RED);
-        assert_eq!(rects(&backgrounds), [(0, 0, 1), (0, 2, 1), (1, 3, 1)]);
-    }
-
-    #[test]
-    fn plain_cell_keeps_its_colors() {
-        assert_eq!(cell_colors(Flags::empty(), RED, BLUE, false), (RED, BLUE));
-    }
-
-    #[test]
-    fn dim_darkens_the_foreground() {
-        assert_eq!(cell_colors(Flags::DIM, RED, BLUE, false), (dim(RED), BLUE));
-    }
-
-    #[test]
-    fn inverse_swaps_after_dim() {
-        assert_eq!(
-            cell_colors(Flags::DIM | Flags::INVERSE, RED, BLUE, false),
-            (BLUE, dim(RED))
-        );
-    }
-
-    #[test]
-    fn hidden_text_takes_the_background_color() {
-        assert_eq!(cell_colors(Flags::HIDDEN, RED, BLUE, false), (BLUE, BLUE));
-        assert_eq!(
-            cell_colors(Flags::HIDDEN | Flags::INVERSE, RED, BLUE, false),
-            (RED, RED)
-        );
-    }
-
-    #[test]
-    fn selection_replaces_the_background() {
-        assert_eq!(
-            cell_colors(Flags::INVERSE, RED, BLUE, true),
-            (BLUE, SELECTION_BACKGROUND)
-        );
-    }
-
-    #[test]
-    fn adjacent_ascii_with_same_style_merges() {
-        let batches = push_line(&[('a', plain(RED)), ('b', plain(RED)), ('c', plain(RED))]);
-        assert_eq!(layout(&batches), [(0, 3, "abc")]);
-    }
-
-    #[test]
-    fn style_change_starts_a_new_batch() {
-        let batches = push_line(&[('a', plain(RED)), ('b', plain(BLUE))]);
-        assert_eq!(layout(&batches), [(0, 1, "a"), (1, 1, "b")]);
-    }
-
-    #[test]
-    fn leading_undecorated_blanks_are_skipped() {
-        let batches = push_line(&[(' ', plain(RED)), ('\t', plain(RED)), ('a', plain(RED))]);
-        assert_eq!(layout(&batches), [(2, 1, "a")]);
-    }
-
-    #[test]
-    fn decorated_blank_starts_a_batch() {
-        let batches = push_line(&[(' ', underlined(RED))]);
-        assert_eq!(layout(&batches), [(0, 1, " ")]);
-    }
-
-    #[test]
-    fn blank_between_styles_joins_the_earlier_batch() {
-        let batches = push_line(&[('a', plain(RED)), ('\t', plain(BLUE)), ('b', plain(BLUE))]);
-        assert_eq!(layout(&batches), [(0, 2, "a "), (2, 1, "b")]);
-    }
-
-    #[test]
-    fn undecorated_blank_does_not_join_a_decorated_batch() {
-        let batches = push_line(&[('a', underlined(RED)), (' ', plain(RED))]);
-        assert_eq!(layout(&batches), [(0, 1, "a")]);
-    }
-
-    #[test]
-    fn gap_in_columns_starts_a_new_batch() {
-        let mut batches = Vec::new();
-        push_cell(&mut batches, 0, 0, 1, 'a', None, plain(RED));
-        push_cell(&mut batches, 0, 2, 1, 'b', None, plain(RED));
-        push_cell(&mut batches, 1, 3, 1, 'c', None, plain(RED));
-        assert_eq!(layout(&batches), [(0, 1, "a"), (2, 1, "b"), (3, 1, "c")]);
-    }
-
-    #[test]
-    fn wide_char_gets_its_own_batch() {
-        let mut batches = Vec::new();
-        push_cell(&mut batches, 0, 0, 1, 'a', None, plain(RED));
-        push_cell(&mut batches, 0, 1, 2, '中', None, plain(RED));
-        push_cell(&mut batches, 0, 3, 1, 'b', None, plain(RED));
-        assert_eq!(layout(&batches), [(0, 1, "a"), (1, 2, "中"), (3, 1, "b")]);
-    }
-
-    #[test]
-    fn ascii_with_combining_mark_does_not_merge() {
-        let mut batches = Vec::new();
-        push_cell(&mut batches, 0, 0, 1, 'a', None, plain(RED));
-        push_cell(&mut batches, 0, 1, 1, 'e', Some(&['\u{301}']), plain(RED));
-        push_cell(&mut batches, 0, 2, 1, 'b', None, plain(RED));
-        assert_eq!(
-            layout(&batches),
-            [(0, 1, "a"), (1, 1, "e\u{301}"), (2, 1, "b")]
-        );
-    }
-
-    #[test]
-    fn ghost_text_is_cut_by_cell_width() {
-        assert_eq!(fit_columns("status", 3), "sta");
-        assert_eq!(fit_columns("\u{4f60}\u{597d}x", 3), "\u{4f60}");
-        assert_eq!(fit_columns("\u{4f60}\u{597d}x", 5), "\u{4f60}\u{597d}x");
-        assert_eq!(fit_columns("ab", 0), "");
-    }
-}
+mod tests;

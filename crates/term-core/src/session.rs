@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg, State};
@@ -14,7 +14,7 @@ use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{self, Term, TermMode};
+use alacritty_terminal::term::{self, ClipboardType, Term, TermMode};
 use alacritty_terminal::tty;
 use parking_lot::MutexGuard;
 use workspace_model::ProgressState;
@@ -44,8 +44,14 @@ pub enum SessionEvent {
     /// The command a shell with integration ran finished: the prompt is back. Also sent when
     /// the shell reports a new folder at a prompt without a command before it.
     CommandFinished,
-    /// The program reported a new progress state (OSC 9;4).
-    ProgressChanged(ProgressState),
+    /// The program reported progress (OSC 9;4), including repeated states.
+    ProgressChanged {
+        state: ProgressState,
+        /// I/O observation time, in microseconds since the Unix epoch.
+        at: u64,
+    },
+    /// The program wrote text to the clipboard or the primary selection (OSC 52).
+    ClipboardStore(ClipboardType, String),
 }
 
 /// Called on the session's I/O thread, sometimes while it holds the terminal lock: it must
@@ -114,6 +120,31 @@ struct Shared {
 }
 
 impl Shared {
+    fn new(size: TermDimensions, palette: Palette, callback: EventCallback) -> Self {
+        let prompt_callback = callback.clone();
+        let prompt = Arc::new(PromptTracker::new(move |event| {
+            prompt_callback(match event {
+                PromptEvent::Started(command) => SessionEvent::CommandStarted(command),
+                PromptEvent::Executed(command) => SessionEvent::CommandExecuted(command),
+                PromptEvent::Finished => SessionEvent::CommandFinished,
+            });
+        }));
+        Self {
+            callback,
+            palette,
+            sender: OnceLock::new(),
+            size: Mutex::new(size),
+            wakeup_pending: AtomicBool::new(false),
+            started_at: Instant::now(),
+            last_output_ms: AtomicU64::new(0),
+            exited: AtomicBool::new(false),
+            exit_code: Mutex::new(None),
+            prompt,
+            inputs: AtomicU64::new(0),
+            inputs_before_output: AtomicU64::new(0),
+        }
+    }
+
     fn record_output(&self) {
         let inputs = self.inputs.load(Ordering::Acquire);
         self.inputs_before_output.store(inputs, Ordering::Release);
@@ -177,7 +208,10 @@ impl EventListener for SessionListener {
                 let color = shared.palette.default_color(index);
                 shared.write(Cow::Owned(format(color).into_bytes()));
             }
-            // Clipboard (OSC 52) requests are wired up together with the renderer.
+            Event::ClipboardStore(clipboard, text) => {
+                (shared.callback)(SessionEvent::ClipboardStore(clipboard, text));
+            }
+            // Clipboard reads (OSC 52 `?`) are refused by `Osc52::OnlyCopy`, the default.
             other => log::trace!("unhandled terminal event: {other:?}"),
         }
     }
@@ -204,28 +238,7 @@ impl Session {
         palette: Palette,
         callback: EventCallback,
     ) -> io::Result<Self> {
-        let prompt_callback = callback.clone();
-        let prompt = Arc::new(PromptTracker::new(move |event| {
-            prompt_callback(match event {
-                PromptEvent::Started(command) => SessionEvent::CommandStarted(command),
-                PromptEvent::Executed(command) => SessionEvent::CommandExecuted(command),
-                PromptEvent::Finished => SessionEvent::CommandFinished,
-            });
-        }));
-        let shared = Arc::new(Shared {
-            callback,
-            palette,
-            sender: OnceLock::new(),
-            size: Mutex::new(size),
-            wakeup_pending: AtomicBool::new(false),
-            started_at: Instant::now(),
-            last_output_ms: AtomicU64::new(0),
-            exited: AtomicBool::new(false),
-            exit_code: Mutex::new(None),
-            prompt: prompt.clone(),
-            inputs: AtomicU64::new(0),
-            inputs_before_output: AtomicU64::new(0),
-        });
+        let shared = Arc::new(Shared::new(size, palette, callback));
         let listener = SessionListener(shared.clone());
         let term = Arc::new(FairMutex::new(Term::new(
             term::Config::default(),
@@ -233,30 +246,24 @@ impl Session {
             listener.clone(),
         )));
 
-        // Off Windows the struct update has nothing left to fill.
-        #[allow(clippy::needless_update)]
-        let options = tty::Options {
-            shell: spec.shell_command(),
-            working_directory: spec.cwd.clone(),
-            drain_on_exit: true,
-            env: session_env(spec.kind, &spec.env),
-            // Quote arguments holding spaces or quotes, so each reaches the program whole.
-            #[cfg(windows)]
-            escape_args: true,
-            ..Default::default()
-        };
+        let options = pty_options(spec);
         let pty = tty::new(&options, size.window_size(), id)?;
         let child_pid = child_pid(&pty);
         if let Some(pid) = child_pid {
-            prompt.set_child_pid(pid);
+            shared.prompt.set_child_pid(pid);
         }
         let progress_callback = shared.callback.clone();
         let pty = MarkedPty::new(
             pty,
             term.clone(),
-            prompt,
+            shared.prompt.clone(),
             spec.mark_token.as_deref(),
-            Box::new(move |state| progress_callback(SessionEvent::ProgressChanged(state))),
+            Box::new(move |state| {
+                let at = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |elapsed| elapsed.as_micros() as u64);
+                progress_callback(SessionEvent::ProgressChanged { state, at });
+            }),
         );
         let event_loop = EventLoop::new(term.clone(), listener, pty, options.drain_on_exit, false)?;
         let _ = shared.sender.set(event_loop.channel());
@@ -456,10 +463,14 @@ impl Drop for Session {
 
 #[cfg(unix)]
 fn kill_child(pid: Option<u32>) {
-    let Some(pid) = pid else {
+    // A pid that doesn't fit would wrap into another process group (or -1: every process).
+    let Some(group) = pid
+        .and_then(|pid| libc::pid_t::try_from(pid).ok())
+        .filter(|&pid| pid > 0)
+    else {
         return;
     };
-    log::warn!("child {pid} ignored SIGHUP, killing its process group");
+    log::warn!("child {group} ignored SIGHUP, killing its process group");
     // SAFETY: `kill` has no memory-safety preconditions. The child is a session leader
     // (alacritty `setsid`s it), so its pid is also its process group id; signalling the group
     // also ends the tools it started there. The reaper thread may reap the child between the
@@ -467,7 +478,7 @@ fn kill_child(pid: Option<u32>) {
     // only once the whole group is gone could a new process group take that id, a narrow
     // residual race (a pidfd taken at spawn would close it).
     unsafe {
-        libc::kill(-(pid as i32), libc::SIGKILL);
+        libc::kill(-group, libc::SIGKILL);
     }
 }
 
@@ -482,6 +493,20 @@ fn child_pid(pty: &tty::Pty) -> Option<u32> {
 #[cfg(windows)]
 fn child_pid(pty: &tty::Pty) -> Option<u32> {
     pty.child_watcher().pid().map(|pid| pid.get())
+}
+
+fn pty_options(spec: &LaunchSpec) -> tty::Options {
+    // Off Windows the struct update has nothing left to fill.
+    #[allow(clippy::needless_update)]
+    tty::Options {
+        shell: spec.shell_command(),
+        working_directory: spec.cwd.clone(),
+        drain_on_exit: true,
+        env: session_env(spec.kind, &spec.env),
+        #[cfg(windows)]
+        escape_args: true,
+        ..Default::default()
+    }
 }
 
 /// Environment for every child: advertise a capable terminal without mutating our own

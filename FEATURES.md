@@ -11,22 +11,26 @@ directly to model APIs.
 
 - Run multiple interactive terminal sessions simultaneously.
 - Launch Copilot CLI, Claude Code, or a regular shell in a selected project folder,
-  from a new-tab menu listing the installed shells (default shell first) and agents, each
-  with its own icon.
+  from a new-tab menu listing the installed shells (the default shell, chosen in the settings,
+  first) and agents, each with its own icon.
 - Support normal interactive CLI behavior, including permission prompts,
   cancellation, multiline input, colors, and terminal resizing.
 - Provide copy/paste, text selection, scrollback, and terminal search.
+- Search terminal output and retained scrollback with Ctrl+Shift+F: case-insensitive literal
+  matching, visible match highlights, a current/total count, Enter/Shift+Enter navigation
+  with wrapping, and Escape to close.
 - Pass mouse wheel, clicks and motion to programs that ask for them (scrolling a Claude Code
   transcript), with a modifier to keep local selection.
 - Shell command history shared by all shell tabs (with folder and time): an inline
   suggestion from history while typing and a history popup above the prompt (Up).
 - Open URLs and file paths printed in the output with Ctrl+click; a `path:line` opens in
-  the file viewer at that line.
+  the file viewer at that line. www.google.ca
 - When an agent (Claude Code, Copilot CLI) quits normally (exit code 0), its tab goes on as a
   shell in the agent's folder; when it fails, the tab keeps its last screen to read the error.
 - Support split panes, adjustable pane sizes, and quick switching between sessions.
 - Run any action or jump to any tab from a command palette.
 - Toggle full screen (F11).
+- Choose the terminal font family and size, applied live to every tab.
 - Light and dark themes, terminal color schemes, and adjustable window opacity.
 - Warn before closing a session or workspace with running processes.
 
@@ -52,7 +56,7 @@ directly to model APIs.
 ## Project Files
 
 - Browse the selected session's folder in a collapsible file tree that follows the
-  session's current folder and refreshes when files change.
+  session's current folder and refreshes when files change. The tree's width is resizable.
 - Act on files and folders from the tree: create, rename, delete, open a shell or an agent
   session or `cd` there (or to the parent folder), and copy paths.
 - View and edit a clicked file beside the terminal: Markdown rendered or as source, JSON
@@ -70,7 +74,8 @@ directly to model APIs.
 - Show when a command typed at a shell tab's prompt is running, and which command (shell
   integration).
 - Show how long the current command has been running in a shell tab.
-- Mark an agent that finished while its tab was not selected as done until it is viewed.
+- Mark an agent that finished while its tab was not selected as "Ready for review" until it
+  is viewed; this indicates unread work, not confirmation that the work is correct.
 - Mark a tab that rang the bell, or whose long shell command finished (or failed), while
   it was not selected, until it is viewed.
 - Read agent status from the CLI's own hooks without changing the user's CLI settings.
@@ -85,8 +90,8 @@ directly to model APIs.
 
 ## Workspace Persistence
 
-- Reopen the window with its last size, position, and tabs (programs, folders, names,
-  colors, pins, groups, order, and selection), starting fresh sessions.
+- Reopen the window with its last size, position, file explorer and viewer widths, and tabs (programs,
+  folders, names, colors, pins, groups, order, and selection), starting fresh sessions.
 - Save named workspaces with their groups, tab names, colors, icons, project
   folders, launch commands, and pane layouts.
 - Restore saved organization and offer to relaunch sessions when reopening a
@@ -98,6 +103,18 @@ directly to model APIs.
 - Edit preferences on a settings page opened from the title bar: searchable pages of
   settings applied as they change, a reset per setting, the file's errors shown, and a
   button to open the settings file itself.
+- Let the user switch optional behavior on or off (hover cards, activity animations),
+  applied live; a setting that depends on another is shown disabled with the reason.
+- Let the user switch command history, the history popup and inline suggestions on or off,
+  and clear the stored history and the saved session commands, with a confirmation.
+- Let the user turn off restoring the previous tabs at start and remembering the last shell
+  command; the stored tab snapshot is kept untouched while restoring is off, except that
+  clearing saved commands still removes them from it.
+- Let the user turn off the file explorer and viewer: both panes and their entry points
+  disappear after unsaved edits are resolved, nothing is watched or scanned for them, and
+  file links in the terminal are offered to the system's own application instead.
+- Let the user turn off in-app notifications for agent events; status and attention badges
+  stay, and a crashed agent, failures and warnings are still shown.
 
 ## Performance and Usability
 

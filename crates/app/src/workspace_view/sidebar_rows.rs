@@ -4,65 +4,37 @@ use std::path::Path;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme, IconName, Sizable};
 use gpui_kit::{
-    AnyElement, App, AppContext, ClickEvent, Context, Div, DragMoveEvent, InteractiveElement,
-    IntoElement, ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled,
-    WeakEntity, Window, div, px,
+    Anchor, AnyElement, App, AppContext, ClickEvent, Context, Div, DragMoveEvent,
+    InteractiveElement, IntoElement, ParentElement, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, WeakEntity, Window, div, px,
 };
 use workspace_model::{DropTarget, Group, GroupId, Item, Location, display_path};
 
 use super::{RenameTarget, WorkspaceView};
 use crate::launcher::{self, Launcher};
-use crate::shortcuts::{self, NEW_TAB_KEY};
+use crate::settings_file;
+use crate::shortcuts::{self, ATTENTION_KEY, NEW_TAB_KEY};
 use crate::sidebar::{
     self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabDetail,
     TabRow,
 };
 use crate::tab_menu;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GroupPresentation {
+    Layout,
+    SearchResults,
+}
+
 impl WorkspaceView {
     pub(super) fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = cx.entity().downgrade();
         let new_tab_button = self.new_tab_button(workspace.clone());
-        // While searching, only matching tabs show, and groups holding one show expanded.
-        let matches = self.search_matches(cx);
-        let shown = |id: &u64| matches.as_ref().is_none_or(|matches| matches.contains(id));
-        let mut rows = Vec::new();
-        for id in self.layout.pinned().iter().filter(|id| shown(id)) {
-            rows.extend(
-                self.render_tab_row(*id, cx)
-                    .map(IntoElement::into_any_element),
-            );
-        }
-        for (slot, item) in self.layout.items().iter().enumerate() {
-            match item {
-                Item::Tab(id) if shown(id) => rows.extend(
-                    self.render_tab_row(*id, cx)
-                        .map(IntoElement::into_any_element),
-                ),
-                Item::Tab(_) => {}
-                Item::Group(group) => match &matches {
-                    None => rows.extend(self.render_group(slot, group, None, cx)),
-                    Some(matches) => {
-                        let tabs: Vec<u64> = group
-                            .tabs()
-                            .iter()
-                            .copied()
-                            .filter(|id| matches.contains(id))
-                            .collect();
-                        if !tabs.is_empty() {
-                            rows.extend(self.render_group(slot, group, Some(&tabs), cx));
-                        }
-                    }
-                },
-            }
-        }
-        if matches.is_some() && rows.is_empty() {
-            rows.push(sidebar::no_matches_hint(cx).into_any_element());
-        }
-        rows.extend(self.render_settings_row(cx));
+        let rows = self.sidebar_rows(cx);
         let attention_button = self.attention_button(cx);
         let theme = cx.theme();
         div()
@@ -80,7 +52,7 @@ impl WorkspaceView {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .h(px(40.))
+                    .h(px(crate::ui_dimensions::HEADER_HEIGHT))
                     .pl_2()
                     .pr_1()
                     .child(self.render_search(cx))
@@ -94,7 +66,6 @@ impl WorkspaceView {
                     .flex_col()
                     .flex_1()
                     .overflow_y_scroll()
-                    // Leaving the list hides the marker; a drop applies the last marker shown.
                     .on_drag_move(cx.listener(
                         |workspace, event: &DragMoveEvent<DraggedTab>, _, cx| {
                             if !event.bounds.contains(&event.event.position) {
@@ -105,7 +76,6 @@ impl WorkspaceView {
                     .on_drop(cx.listener(|workspace, dragged: &DraggedTab, _, cx| {
                         workspace.drop_dragged(dragged.id, cx)
                     }))
-                    // A divider under every row, the last one included.
                     .children(
                         rows.into_iter()
                             .flat_map(|row| [row, sidebar::row_divider(cx).into_any_element()]),
@@ -114,16 +84,69 @@ impl WorkspaceView {
             )
     }
 
+    fn sidebar_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        // While searching, only matching tabs show, and groups holding one show expanded.
+        let matches = self.search_matches(cx);
+        let shown = |id: &u64| matches.as_ref().is_none_or(|matches| matches.contains(id));
+        let mut rows = Vec::new();
+        for id in self.layout.pinned().iter().filter(|id| shown(id)) {
+            rows.extend(
+                self.render_tab_row(*id, cx)
+                    .map(IntoElement::into_any_element),
+            );
+        }
+        for (slot, item) in self.layout.items().iter().enumerate() {
+            match item {
+                Item::Tab(id) if shown(id) => rows.extend(
+                    self.render_tab_row(*id, cx)
+                        .map(IntoElement::into_any_element),
+                ),
+                Item::Tab(_) => {}
+                Item::Group(group) => {
+                    rows.extend(self.sidebar_group_rows(slot, group, matches.as_ref(), cx))
+                }
+            }
+        }
+        if matches.is_some() && rows.is_empty() {
+            rows.push(sidebar::no_matches_hint(cx).into_any_element());
+        }
+        rows.extend(self.render_settings_row(cx));
+        rows
+    }
+
+    fn sidebar_group_rows(
+        &self,
+        slot: usize,
+        group: &Group,
+        matches: Option<&std::collections::HashSet<u64>>,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let Some(matches) = matches else {
+            return self.render_group(slot, group, None, cx);
+        };
+        let tabs: Vec<_> = group
+            .tabs()
+            .iter()
+            .copied()
+            .filter(|id| matches.contains(id))
+            .collect();
+        if tabs.is_empty() {
+            return Vec::new();
+        }
+        self.render_group(slot, group, Some(&tabs), cx)
+    }
+
     /// Shown while a tab needs attention: the count; clicking jumps to the next one.
     fn attention_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let count = self.attention_count(cx);
         if count == 0 {
             return None;
         }
-        let tooltip = match count {
-            1 => "1 tab needs attention: go to it (Ctrl+Shift+A)".to_string(),
-            count => format!("{count} tabs need attention: go to the next (Ctrl+Shift+A)"),
+        let label = match count {
+            1 => "1 tab needs attention: go to it".to_string(),
+            count => format!("{count} tabs need attention: go to the next"),
         };
+        let tooltip = shortcuts::with_shortcut(&label, ATTENTION_KEY);
         let button = Button::new("next-attention")
             .icon(IconName::TriangleAlert)
             .label(count.to_string())
@@ -146,7 +169,12 @@ impl WorkspaceView {
         only: Option<&[u64]>,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let mut rows = vec![self.render_group_header(slot, group, only.is_some(), cx)];
+        let presentation = if only.is_some() {
+            GroupPresentation::SearchResults
+        } else {
+            GroupPresentation::Layout
+        };
+        let mut rows = vec![self.render_group_header(slot, group, presentation, cx)];
         if group.collapsed && only.is_none() {
             return rows;
         }
@@ -187,6 +215,7 @@ impl WorkspaceView {
         let view = tab.view.read(cx);
         let name = SharedString::from(Self::tab_name(tab, cx));
         let kind = view.kind();
+        let may_animate = self.pulse_running && settings_file::activity_animations(cx);
         let row = TabRow {
             index,
             kind,
@@ -195,7 +224,7 @@ impl WorkspaceView {
                 .location()
                 .map(|location| tab_detail(location, self.home.as_deref())),
             status: view.tab_status(),
-            pulse: self.pulse_running && view.running_pulses(),
+            pulse: sidebar::running_pulse(may_animate, view.running_pulses()),
             selected: index == self.active && !self.settings.shows_page(),
             pinned: self.layout.is_pinned(id),
             color: self.tab_color(tab),
@@ -254,7 +283,7 @@ impl WorkspaceView {
         &self,
         slot: usize,
         group: &Group,
-        searching: bool,
+        presentation: GroupPresentation,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let workspace = cx.entity().downgrade();
@@ -264,19 +293,15 @@ impl WorkspaceView {
             .active_tab()
             .filter(|_| !self.settings.shows_page())
             .map(|tab| tab.id);
-        let statuses = group.tabs().iter().filter_map(|&tab| {
-            let index = self.tab_index(tab)?;
-            Some(self.tabs[index].view.read(cx).tab_status())
-        });
         let row = GroupRow {
             slot,
             name: group.name.clone().into(),
             color: group.color,
-            collapsed: group.collapsed && !searching,
+            collapsed: group.collapsed && presentation == GroupPresentation::Layout,
             tab_count: group.tabs().len(),
-            summary: GroupSummary::of(statuses),
+            summary: self.group_summary(group, cx),
             holds_selected: group.collapsed
-                && !searching
+                && presentation == GroupPresentation::Layout
                 && active_id.is_some_and(|active| group.tabs().contains(&active)),
             name_editor: self.name_editor(RenameTarget::Group(id), cx),
         };
@@ -289,6 +314,35 @@ impl WorkspaceView {
             Self::group_menu_builder(workspace, id),
             cx,
         );
+        let header = header.into_any_element();
+        let cards_on =
+            !cx.has_active_drag() && settings_file::settings(cx).group_hover_cards.is_on();
+        let header = if !cards_on {
+            header
+        } else {
+            let workspace = cx.entity().downgrade();
+            HoverCard::new(("group-card", slot))
+                .anchor(Anchor::LeftCenter)
+                .ml_2()
+                .trigger(header)
+                .content(move |_, _, cx| {
+                    let card = workspace.upgrade().and_then(|workspace| {
+                        let workspace = workspace.read(cx);
+                        let group = workspace.layout.group(id)?;
+                        Some(
+                            sidebar::group_card(
+                                group.name.clone().into(),
+                                group.tabs().len(),
+                                workspace.group_summary(group, cx),
+                                cx,
+                            )
+                            .into_any_element(),
+                        )
+                    });
+                    card.unwrap_or_else(|| div().into_any_element())
+                })
+                .into_any_element()
+        };
         let marker = self.drop_marker(DropTarget::IntoGroup(id), cx);
         sidebar::drop_slot(header, marker, cx)
             .id(("group-slot", slot))
@@ -306,6 +360,13 @@ impl WorkspaceView {
                 },
             ))
             .into_any_element()
+    }
+
+    fn group_summary(&self, group: &Group, cx: &App) -> GroupSummary {
+        GroupSummary::of(group.tabs().iter().filter_map(|&id| {
+            let index = self.tab_index(id)?;
+            Some(self.tabs[index].view.read(cx).tab_status())
+        }))
     }
 
     /// The placeholder under an expanded empty group; drops on it go into the group.
@@ -339,7 +400,7 @@ impl WorkspaceView {
             .ghost()
             .xsmall()
             .tooltip(shortcuts::with_shortcut("New tab", NEW_TAB_KEY))
-            .dropdown_menu(move |mut menu, _, _| {
+            .dropdown_menu(move |mut menu, _, cx| {
                 let open = |launcher: &Launcher| {
                     let launcher = launcher.clone();
                     let workspace = workspace.clone();
@@ -349,7 +410,10 @@ impl WorkspaceView {
                         });
                     }
                 };
-                let (default, shells, agents) = launcher::menu_sections(&launchers);
+                let (default, shells, agents) = launcher::menu_sections(
+                    &launchers,
+                    settings_file::settings(cx).default_shell(),
+                );
                 if let Some(default) = default {
                     let label = default.label.clone();
                     menu = menu.item(
@@ -369,11 +433,7 @@ impl WorkspaceView {
                         menu = menu.separator();
                     }
                     for launcher in group {
-                        let label = if launcher.program.is_some() {
-                            launcher.label.clone()
-                        } else {
-                            format!("{} (not installed)", launcher.label)
-                        };
+                        let label = launcher.display_label();
                         menu = menu.item(
                             PopupMenuItem::new(label)
                                 .icon(sidebar::launcher_icon(launcher.icon))
@@ -474,7 +534,7 @@ impl WorkspaceView {
 fn tab_detail(location: &Location, home: Option<&Path>) -> TabDetail {
     match &location.head {
         Some(head) => TabDetail::Branch(SharedString::from(head.name().to_string())),
-        None => TabDetail::Folder(display_path(&location.dir, home).into()),
+        None => TabDetail::Folder(display_path(&location.folder, home).into()),
     }
 }
 
@@ -488,11 +548,11 @@ mod tests {
     fn detail_prefers_the_branch_over_the_folder() {
         let home = Path::new("/home/user");
         let in_repo = Location {
-            dir: home.join("dev/app"),
+            folder: home.join("dev/app"),
             head: Some(GitHead::Branch("main".into())),
         };
         let plain = Location {
-            dir: home.join(".config"),
+            folder: home.join(".config"),
             head: None,
         };
 
