@@ -18,6 +18,12 @@ Run in this order (each stands alone and is tested):
 
 Implemented with automated coverage (Linux); the manual checks below are pending.
 
+Clipboard writes setting:
+
+- Settings → Terminal → Clipboard: the dropdown shows Ask / Allow / Deny and applies live;
+  with Allow a Claude Code tab starts without the clipboard notice, with Deny nothing is
+  copied (also in a tab set to "Always for this tab"); Linux and Windows.
+
 Copilot working spinner (driven under Xvfb with a stand-in `copilot` and a forced pulse):
 
 - With the real Copilot CLI on a hardware GPU: the ring turns while a turn runs, stops at

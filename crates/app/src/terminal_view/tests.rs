@@ -306,8 +306,9 @@ fn copilot_permission_hooks_add_waiting_but_only_progress_controls_working_and_i
 fn clipboard_writes_wait_for_an_answer(cx: &mut gpui_kit::TestAppContext) {
     use term_core::alacritty_terminal::term::ClipboardType;
 
-    use workspace_model::{ClipboardAnswer, ClipboardGuard};
+    use workspace_model::{ClipboardAnswer, ClipboardGuard, ClipboardPolicy};
 
+    cx.update(settings_file::init_in_memory);
     #[cfg(windows)]
     let (program, args) = ("cmd", vec!["/C", "exit 0"]);
     #[cfg(not(windows))]
@@ -370,6 +371,31 @@ fn clipboard_writes_wait_for_an_answer(cx: &mut gpui_kit::TestAppContext) {
     });
     assert_eq!(clipboard_text(cx).as_deref(), Some("carried"));
 
+    let set_policy = |policy, cx: &mut gpui_kit::TestAppContext| {
+        cx.update(|cx| settings_file::update(cx, |settings| settings.clipboard_writes = policy));
+    };
+    set_policy(ClipboardPolicy::Deny, cx);
+    view.update(cx, |view, cx| {
+        view.dispatch_test_event(store("denied by the setting"), cx);
+        assert!(!view.clipboard_pending());
+    });
+    assert_eq!(
+        clipboard_text(cx).as_deref(),
+        Some("carried"),
+        "Deny overrides Always for this tab"
+    );
+    set_policy(ClipboardPolicy::Allow, cx);
+    view.update(cx, |view, cx| {
+        view.set_clipboard_guard(ClipboardGuard::default());
+        view.dispatch_test_event(store("allowed by the setting"), cx);
+        assert!(!view.clipboard_pending());
+    });
+    assert_eq!(
+        clipboard_text(cx).as_deref(),
+        Some("allowed by the setting")
+    );
+    set_policy(ClipboardPolicy::Ask, cx);
+
     #[cfg(target_os = "linux")]
     view.update(cx, |view, cx| {
         view.set_clipboard_guard(ClipboardGuard::default());
@@ -394,5 +420,8 @@ fn clipboard_writes_wait_for_an_answer(cx: &mut gpui_kit::TestAppContext) {
         view.dispatch_test_event(store("after exit"), cx);
         assert!(!view.clipboard_pending());
     });
-    assert_eq!(clipboard_text(cx).as_deref(), Some("carried"));
+    assert_eq!(
+        clipboard_text(cx).as_deref(),
+        Some("allowed by the setting")
+    );
 }

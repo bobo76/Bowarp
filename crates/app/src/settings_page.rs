@@ -30,8 +30,8 @@ use gpui_kit::{
     IntoElement, ParentElement, SharedString, Styled, Subscription, Window, div, px,
 };
 use workspace_model::{
-    BlurControl, DependentState, FeatureSwitch, FontSize, Settings, UiTheme, WindowBlur,
-    WindowOpacity, blur_options, shown_blur,
+    BlurControl, ClipboardPolicy, DependentState, FeatureSwitch, FontSize, Settings, UiTheme,
+    WindowBlur, WindowOpacity, blur_options, shown_blur,
 };
 
 use crate::about;
@@ -268,7 +268,42 @@ fn terminal_groups(launchers: Rc<[Launcher]>) -> Vec<SettingGroup> {
             .item(default_shell_row(launchers.clone())),
         command_history_group(),
         agent_arguments_group(&launchers),
+        SettingGroup::new()
+            .title("Clipboard")
+            .item(clipboard_writes_row()),
     ]
+}
+
+/// The `clipboard_writes` setting: what happens when a program writes the clipboard.
+fn clipboard_writes_row() -> SettingItem {
+    let options = [
+        (ClipboardPolicy::Ask, "Ask"),
+        (ClipboardPolicy::Allow, "Allow"),
+        (ClipboardPolicy::Deny, "Deny"),
+    ]
+    .map(|(policy, label)| DropdownOption::new(policy.as_str(), label));
+    dropdown_row(
+        "Clipboard writes from programs",
+        "When a program copies text to the clipboard (OSC 52, e.g. Claude Code, Copilot CLI, \
+         tmux, vim). Ask: a notice above the terminal waits for Allow, Deny or \
+         \"Always for this tab\". Allow or Deny applies to every tab without asking, and Deny \
+         also overrides \"Always for this tab\".",
+        DropdownChoices::new(options, |value| format!("{value} (unknown)").into()),
+        SettingsField::new(
+            |settings| settings.clipboard_writes.as_str().to_owned(),
+            |settings, value| {
+                settings.clipboard_writes = ClipboardPolicy::from_name(&value).unwrap_or_default();
+            },
+        ),
+    )
+    .keywords([
+        "clipboard",
+        "copy",
+        "osc 52",
+        "paste",
+        "selection",
+        "permission",
+    ])
 }
 
 /// The Workspace page: the automatic tab snapshot and what it keeps per tab.

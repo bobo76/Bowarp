@@ -5,7 +5,13 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.31
+
+- Add **Clipboard writes from programs** (Ask, Allow, Deny) to Settings → Terminal → Clipboard,
+  also `clipboard_writes` in the settings file: Allow or Deny answers every program's clipboard
+  write in every tab without showing the notice.
 - Fix the Linux release build not starting on Ubuntu 24.04 (it needed glibc 2.43).
+
 ## 0.2.30
 
 - Show a blue ring turning in quarter steps left of a working Copilot tab's title in the

@@ -10,12 +10,13 @@ use term_core::alacritty_terminal::term::ClipboardType;
 use workspace_model::{ClipboardAnswer, ClipboardGuard, ClipboardOffer, ClipboardTarget};
 
 use super::{AllowClipboard, DenyClipboard, ProcessState, TabChanged, TerminalView};
-use crate::shortcuts;
 use crate::terminal_element::font_family;
+use crate::{settings_file, shortcuts};
 
 impl TerminalView {
-    /// A program wrote the clipboard or the primary selection: apply it when the tab allows
-    /// all writes, else hold it and show the notice (the sidebar shows Needs attention).
+    /// A program wrote the clipboard or the primary selection: apply or drop it as the
+    /// `clipboard_writes` setting says, apply it when the tab allows all writes, else hold it
+    /// and show the notice (the sidebar shows Needs attention).
     pub(super) fn on_clipboard_store(
         &mut self,
         clipboard: ClipboardType,
@@ -28,8 +29,10 @@ impl TerminalView {
         if self.process != ProcessState::Running {
             return;
         }
-        match self.clipboard.offer(target, text) {
+        let policy = settings_file::settings(cx).clipboard_writes;
+        match self.clipboard.offer(target, text, policy) {
             ClipboardOffer::Apply(target, text) => store_clipboard(target, text, cx),
+            ClipboardOffer::Drop => {}
             ClipboardOffer::Held { first } => {
                 if first {
                     cx.emit(TabChanged);

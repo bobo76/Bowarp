@@ -96,7 +96,9 @@ When a program writes the clipboard or the primary selection (OSC 52, e.g. Copil
 copy on Windows, tmux, vim), a notice above the terminal shows the text's size and a preview,
 and the write waits: Allow applies it, Deny drops it, and "Always for this tab" applies it and
 every later one until the tab closes. A newer write replaces the waiting one; a background tab
-with a waiting write shows Needs attention.
+with a waiting write shows Needs attention. Settings → Terminal → Clipboard → **Clipboard
+writes from programs** (`clipboard_writes`: `ask`, `allow` or `deny`) can instead allow or deny
+every write in every tab without asking; Deny also overrides "Always for this tab".
 
 Terminal search matches literal text, ignoring case, across the current screen and retained
 scrollback, including soft-wrapped lines. All visible matches are highlighted, with the active

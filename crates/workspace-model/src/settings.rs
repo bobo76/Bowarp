@@ -14,6 +14,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
+use crate::clipboard_guard::ClipboardPolicy;
 use crate::keymap::KeybindingOverlay;
 use crate::pane_width::{ExplorerWidth, ViewerFraction};
 use crate::window_background::{WindowBlur, WindowOpacity};
@@ -54,6 +55,10 @@ pub struct Settings {
     pub claude_args: String,
     #[serde(deserialize_with = "lenient")]
     pub copilot_args: String,
+    /// What happens when a program writes the clipboard (OSC 52): ask (the default), allow
+    /// or deny, in every tab.
+    #[serde(deserialize_with = "lenient")]
+    pub clipboard_writes: ClipboardPolicy,
     #[serde(deserialize_with = "lenient")]
     pub tab_card: TabCardFields,
     /// Whether group headers show a hover card (basic and extended); the collapsed-group

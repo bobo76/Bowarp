@@ -1,7 +1,10 @@
 //! Clipboard writes from programs (OSC 52) wait for the user's answer. A held write is applied
 //! on Allow and dropped on Deny; a newer write to the same target replaces it. "Always for
-//! this tab" applies the held write and every later one until the tab closes. This is a
-//! safeguard, not a notification: no switch turns it off.
+//! this tab" applies the held write and every later one until the tab closes. The
+//! `clipboard_writes` setting ([`ClipboardPolicy`]) can instead allow or deny every write
+//! without asking.
+
+use serde::{Deserialize, Serialize};
 
 use crate::running::command_label;
 
@@ -14,6 +17,37 @@ pub enum ClipboardTarget {
     Clipboard,
     /// The primary selection (X11/Wayland), pasted with the middle button.
     Selection,
+}
+
+/// What happens to a program's clipboard write: the `clipboard_writes` setting.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipboardPolicy {
+    /// Hold it and show the notice.
+    #[default]
+    Ask,
+    /// Write it at once, in every tab.
+    Allow,
+    /// Drop it at once, in every tab, even one set to "Always for this tab".
+    Deny,
+}
+
+impl ClipboardPolicy {
+    /// The value as written in the settings file.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+        }
+    }
+
+    /// The value written by [`ClipboardPolicy::as_str`]; anything else is `None`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::Ask, Self::Allow, Self::Deny]
+            .into_iter()
+            .find(|policy| policy.as_str() == name)
+    }
 }
 
 /// Held text per target: a program may write both the clipboard and the primary selection
@@ -97,8 +131,10 @@ pub struct ClipboardNotice {
 /// What to do with a write a program just sent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClipboardOffer {
-    /// Allowed for the tab: write it now.
+    /// Allowed (for the tab or by the setting): write it now.
     Apply(ClipboardTarget, String),
+    /// Denied by the setting: drop it.
+    Drop,
     /// Held for the user's answer. `first` is true when nothing was held before, so the
     /// notice just appeared.
     Held { first: bool },
@@ -123,11 +159,19 @@ impl ClipboardGuard {
         }
     }
 
-    /// Take a write from the program: apply it when the tab allows all writes, else hold it,
-    /// replacing an earlier held write to the same target.
-    pub fn offer(&mut self, target: ClipboardTarget, text: String) -> ClipboardOffer {
-        if self.always {
-            return ClipboardOffer::Apply(target, text);
+    /// Take a write from the program: apply or drop it as `policy` says, apply it when the tab
+    /// allows all writes, else hold it, replacing an earlier held write to the same target.
+    pub fn offer(
+        &mut self,
+        target: ClipboardTarget,
+        text: String,
+        policy: ClipboardPolicy,
+    ) -> ClipboardOffer {
+        match policy {
+            ClipboardPolicy::Deny => return ClipboardOffer::Drop,
+            ClipboardPolicy::Allow => return ClipboardOffer::Apply(target, text),
+            ClipboardPolicy::Ask if self.always => return ClipboardOffer::Apply(target, text),
+            ClipboardPolicy::Ask => {}
         }
         let first = self.pending.is_empty();
         *self.pending.slot(target) = Some(text);
@@ -206,6 +250,7 @@ fn size_label(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::ClipboardAnswer::{Allow, Always, Deny};
+    use super::ClipboardPolicy::Ask;
     use super::*;
 
     fn held(guard: &ClipboardGuard) -> ClipboardWrites {
@@ -217,11 +262,11 @@ mod tests {
         let mut guard = ClipboardGuard::default();
         assert_eq!(guard.pending(), None);
         assert_eq!(
-            guard.offer(ClipboardTarget::Clipboard, "one".into()),
+            guard.offer(ClipboardTarget::Clipboard, "one".into(), Ask),
             ClipboardOffer::Held { first: true }
         );
         assert_eq!(
-            guard.offer(ClipboardTarget::Clipboard, "two".into()),
+            guard.offer(ClipboardTarget::Clipboard, "two".into(), Ask),
             ClipboardOffer::Held { first: false },
             "a newer write replaces the held one"
         );
@@ -236,7 +281,7 @@ mod tests {
         assert_eq!(guard.notice(), None);
         assert!(!guard.always());
         assert_eq!(
-            guard.offer(ClipboardTarget::Clipboard, "three".into()),
+            guard.offer(ClipboardTarget::Clipboard, "three".into(), Ask),
             ClipboardOffer::Held { first: true },
             "Allow is for one write"
         );
@@ -246,8 +291,8 @@ mod tests {
     fn deny_drops_the_held_writes() {
         let mut guard = ClipboardGuard::default();
         assert!(!guard.deny());
-        guard.offer(ClipboardTarget::Clipboard, "a".into());
-        guard.offer(ClipboardTarget::Selection, "b".into());
+        guard.offer(ClipboardTarget::Clipboard, "a".into(), Ask);
+        guard.offer(ClipboardTarget::Selection, "b".into(), Ask);
         assert!(guard.deny());
         assert_eq!(guard.pending(), None);
         assert_eq!(guard.answer(Allow), None);
@@ -261,16 +306,16 @@ mod tests {
             assert_eq!(guard.answer(answer), None);
         }
         assert!(!guard.always());
-        guard.offer(ClipboardTarget::Clipboard, "a".into());
+        guard.offer(ClipboardTarget::Clipboard, "a".into(), Ask);
         assert_eq!(guard.answer(Deny), Some(ClipboardWrites::default()));
     }
 
     #[test]
     fn both_targets_wait_for_one_answer() {
         let mut guard = ClipboardGuard::default();
-        guard.offer(ClipboardTarget::Selection, "sel".into());
+        guard.offer(ClipboardTarget::Selection, "sel".into(), Ask);
         assert_eq!(
-            guard.offer(ClipboardTarget::Clipboard, "clip".into()),
+            guard.offer(ClipboardTarget::Clipboard, "clip".into(), Ask),
             ClipboardOffer::Held { first: false }
         );
         let writes: Vec<_> = guard.answer(Allow).unwrap().into_writes().collect();
@@ -286,22 +331,82 @@ mod tests {
     #[test]
     fn always_applies_the_held_write_and_later_ones() {
         let mut guard = ClipboardGuard::default();
-        guard.offer(ClipboardTarget::Clipboard, "held".into());
+        guard.offer(ClipboardTarget::Clipboard, "held".into(), Ask);
         let writes: Vec<_> = guard.answer(Always).unwrap().into_writes().collect();
         assert_eq!(writes, [(ClipboardTarget::Clipboard, "held".to_string())]);
         assert!(guard.always());
         assert_eq!(
-            guard.offer(ClipboardTarget::Selection, "later".into()),
+            guard.offer(ClipboardTarget::Selection, "later".into(), Ask),
             ClipboardOffer::Apply(ClipboardTarget::Selection, "later".into())
         );
         assert_eq!(guard.pending(), None);
         guard.always = false;
-        guard.offer(ClipboardTarget::Clipboard, "held".into());
+        guard.offer(ClipboardTarget::Clipboard, "held".into(), Ask);
         assert!(!guard.carry_over().always());
         guard.always = true;
         let carried = guard.carry_over();
         assert!(carried.always());
         assert_eq!(carried.pending(), None);
+    }
+
+    #[test]
+    fn the_setting_allows_or_denies_without_holding() {
+        let mut guard = ClipboardGuard::default();
+        assert_eq!(
+            guard.offer(
+                ClipboardTarget::Clipboard,
+                "a".into(),
+                ClipboardPolicy::Allow
+            ),
+            ClipboardOffer::Apply(ClipboardTarget::Clipboard, "a".into())
+        );
+        assert_eq!(
+            guard.offer(
+                ClipboardTarget::Clipboard,
+                "b".into(),
+                ClipboardPolicy::Deny
+            ),
+            ClipboardOffer::Drop
+        );
+        assert_eq!(guard.pending(), None);
+        assert_eq!(guard.notice(), None);
+        guard.always = true;
+        assert_eq!(
+            guard.offer(
+                ClipboardTarget::Clipboard,
+                "c".into(),
+                ClipboardPolicy::Deny
+            ),
+            ClipboardOffer::Drop,
+            "Deny wins over Always for this tab"
+        );
+    }
+
+    #[test]
+    fn policy_names_round_trip_and_the_file_defaults_to_ask() {
+        for policy in [
+            ClipboardPolicy::Ask,
+            ClipboardPolicy::Allow,
+            ClipboardPolicy::Deny,
+        ] {
+            assert_eq!(ClipboardPolicy::from_name(policy.as_str()), Some(policy));
+        }
+        assert_eq!(ClipboardPolicy::from_name("always"), None);
+        let read = |json: &str| crate::Settings::from_json(json).unwrap().clipboard_writes;
+        assert_eq!(read("{}"), ClipboardPolicy::Ask);
+        assert_eq!(
+            read(r#"{"clipboard_writes": "allow"}"#),
+            ClipboardPolicy::Allow
+        );
+        assert_eq!(
+            read(r#"{"clipboard_writes": "deny"}"#),
+            ClipboardPolicy::Deny
+        );
+        assert_eq!(
+            read(r#"{"clipboard_writes": "never"}"#),
+            ClipboardPolicy::Ask
+        );
+        assert_eq!(read(r#"{"clipboard_writes": false}"#), ClipboardPolicy::Ask);
     }
 
     #[test]
