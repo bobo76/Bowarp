@@ -1,7 +1,7 @@
 # Pipeline: next PLAN.md step → Rust review → verify & fix
 
 ## Context
-A reusable pipeline: each run takes the first item under "Next steps" in `PLAN.md` and runs three agents one after another: implement and commit, review with the Rust checklist and the `review-fm-ipl` skill into `REVIEW.md`, then verify the findings, fix what's worth it and commit. Each agent logs when it starts and ends, and writes a retrospective on the pipeline itself when it's done. When a run is done, its commits (up to ~4: a plan decision, the step, the review fixes, the docs update) are squashed into one and pushed. Runs follow one another until "Next steps" is empty (see "Loop until PLAN.md is done").
+A reusable pipeline: each run takes the first item under "Next steps" in `PLAN.md` and runs three agents one after another: implement and commit, review with the Rust checklist and the `review-fm-ipl` skill into `REVIEW.md`, then verify the findings, fix what's worth it and commit. Each agent logs when it starts and ends, and writes a retrospective on the pipeline itself when it's done. UX/UI questions that come up along the way go to a UX/UI agent, which investigates them and recommends a solution; each question, its options with pros and cons, and the decision are saved in `docs/ux-decisions.md` (see "UX/UI questions"). When a run is done, its commits (up to ~4: a plan decision, the step, the review fixes, the docs update) are squashed into one and pushed. Runs follow one another until "Next steps" is empty (see "Loop until PLAN.md is done").
 
 ## Pipeline files (git-ignored)
 Everything the pipeline produces about itself lives in `pipeline/` at the repo root, which is listed in `.gitignore`:
@@ -15,12 +15,13 @@ Everything the pipeline produces about itself lives in `pipeline/` at the repo r
 
 Get the time with `date -Iseconds`. Append to the log with `>>` and never edit earlier lines.
 
-Event types: `begin`, `end`, `usage`, `docs` (see "After verification"), `split` (the step was split; see Step 0), `restart` (an agent run again after an interruption; see Step 0), `rebase` and `ci` (see "Squash and push").
+Event types: `begin`, `end`, `usage`, `docs` (see "After verification"), `split` (the step was split; see Step 0), `restart` (an agent run again after an interruption; see Step 0), `rebase` and `ci` (see "Squash and push"), `ux` (a UX/UI question decided; see "UX/UI questions").
 
 ## Models
 - **Main session (me):** the latest Opus (currently Opus 5.5, `claude-opus-5-5`). If the session runs on another model, I stop and ask the user to switch (`/model opus`) before Step 0.
 - **Agents 1 and 2:** the latest Opus. Launch them with the Agent tool's `model` set to `opus`; never leave it unset, so a configured default subagent model can't downgrade them.
 - **Agent 3 (verify and fix):** Sonnet, `model: "sonnet"`. It is the only agent that runs on Sonnet.
+- **UX/UI agent:** the latest Opus, `model: "opus"`.
 
 ## UI test tools (kept, git-ignored)
 `pipeline/tools/` holds the harness for driving the app in a headless display. Agents use it as is and do not rebuild it; if a tool is missing something a step needs, extend the script rather than writing a one-off. What the scripts are, how to call them and what they can't drive is in project memory, not here.
@@ -47,6 +48,7 @@ In this order:
 4. Run `cargo build` and `cargo test`, so we know the baseline is green. If it's red, I stop and report back.
 5. **Record the base:** `git rev-parse HEAD`, then append `<time> | <slug> | pipeline | begin | <step text> (base <sha>)` to `pipeline/log.txt`, before any commit of this run, so a resumed run can find it.
 6. **Step size check:** if the step bundles several features that could each ship alone (e.g. a protocol, a store and two UI pieces), or would likely add more than ~1 500 lines, split it in `PLAN.md` into ordered sub-steps that each stand alone and can be tested, and commit that as the run's plan decision commit. Then take the first sub-step as the step, and append `<time> | <slug> | pipeline | split | <first sub-step>` (the slug stays the same for the run).
+7. **UX/UI pre-check:** if the step has UI, list the UX/UI questions its text, `FEATURES.md` and `docs/ux-decisions.md` leave open (where a control goes, what it looks like, its shortcut, what the user sees on an edge case). If there are any, run the UX/UI agent on them (see "UX/UI questions") and pass its decisions to agent 1. Minor questions with an obvious answer from the existing UI don't need it.
 
 ## Every agent prompt
 - First command: append `begin` with the agent's task to `pipeline/log.txt`. Last command, after the commit and the retro: append `end` with the outcome.
@@ -64,7 +66,7 @@ Prompt contents:
 - The step text from `PLAN.md`, verbatim.
 - Where to start: the key state fields and entry points (`file:line`) I found with a quick grep in Step 0, so the agent skips the search.
 - Read `PLAN.md` (the step, plus any reference screenshot it links to) and `FEATURES.md` (including "Optional Behavior" when the step adds a switch), then the code the step touches.
-- Where the step is ambiguous (key bindings, edge cases, exact behaviour), pick a sensible option consistent with the existing code and list the choice in its final report.
+- Where the step is ambiguous (key bindings, edge cases, exact behaviour), pick a sensible option consistent with the existing code and list the choice in its final report. Follow `docs/ux-decisions.md` and the UX/UI decisions given in the prompt. A new UX/UI question that neither settles: pick provisionally and list it under "Open UX questions" in the final report (question, the choice made, `file:line`), so it goes to the UX/UI agent before agent 2.
 - In the final report, list behaviour that changed for existing paths (e.g. tab close no longer keeps viewer edits) separately from new-feature choices: that is where regressions hide.
 - If the step can't be done or checked on this machine, stop before committing, revert your own changes and give the reason (see "Step not doable" under the loop section).
 - Rules:
@@ -81,7 +83,7 @@ Launch this agent with the Agent tool's `model` set to `opus`.
 - **Second pass, FM IPL standards:** also load the `review-fm-ipl` skill (Skill tool) and review the same diff against its Clean Code (CC-x) and Object Calisthenics (OC-x) rules. The skill is written for Java, so apply the rules to the Rust equivalents (function and module size, single responsibility, naming, nesting, primitive obsession, etc.) and skip rules with no Rust meaning. For Rust, apply only CC-1/2/3/9/12 and OC-1/2/6 (CC-9 covers positional `bool` arguments), so the agent can skip the skill's references; mark taste-only findings "(optional)". Every finding from this pass cites its rule code (e.g. `CC-3`, `OC-5`) and goes into the same `REVIEW.md`, numbered in sequence with the checklist findings, with a `Source:` line (`checklist` or `review-fm-ipl`). Same scope as the checklist pass: only code the diff adds or changes.
 - Skip any toolchain pass (also when the skill is loaded): the gate already ran fmt, clippy and test on this commit and they're green. Findings come from reading the code.
 - **Overwrite** `REVIEW.md` with the findings. Its first line is `<!-- <slug> <reviewed sha> -->`, so a resumed run can tell it belongs to this run. Each finding gets a number, a severity, `file:line`, the problem, a suggested fix, and **the relevant lines quoted** (a few lines, enough for agent 3 to check the finding without searching for the code). When the fix is under ~10 lines, give it as a near-ready diff.
-- List findings that need a design choice first in `REVIEW.md`. Flag them with the options, and name the existing API or code each option would use (or say there is none), so agent 3 doesn't explore for it. If there are any, I stop the loop before launching agent 3 (append `<time> | <slug> | pipeline | end | stopped: design choice needed on #<n>`) and ask the user to pick. When the user restarts, the resume check continues with agent 3 and I pass the decision in its prompt.
+- List findings that need a design choice first in `REVIEW.md`. Flag them with the options, and name the existing API or code each option would use (or say there is none), so agent 3 doesn't explore for it. Mark a design choice that is about UX/UI (what the user sees or does, not code structure) with `UX`. UX choices go to the UX/UI agent (see "UX/UI questions") and its decisions are passed to agent 3; the loop doesn't stop for them. For any other design choice, I stop the loop before launching agent 3 (append `<time> | <slug> | pipeline | end | stopped: design choice needed on #<n>`) and ask the user to pick. When the user restarts, the resume check continues with agent 3 and I pass the decision in its prompt.
 - Code changes: none. No commit. Exception: when every finding is Low, mechanical and has a ready diff (comment wrap, typo, rename) and none needs a design choice, agent 2 applies them, runs fmt/clippy/build/test, commits "Address Rust review findings", marks each finding **Verdict:** Confirmed (self) and **Status:** Fixed in `REVIEW.md`, and agent 3 is skipped (saves a ~40k-token agent).
 - Write `pipeline/retros/<slug>/2-review.md` (see Retro focus).
 
@@ -92,12 +94,33 @@ Launch this agent with the Agent tool's `model` set to `sonnet`.
 - Commit the fixes (`REVIEW.md` is git-ignored and stays local): "Address Rust review findings".
 - Write `pipeline/retros/<slug>/3-fix.md` (see Retro focus).
 
+## UX/UI questions — UX/UI agent (general-purpose, `model: "opus"`, I wait for it)
+Launch this agent with the Agent tool's `model` set to `opus`, whenever a UX/UI question comes up: in Step 0's pre-check, under "Open UX questions" in agent 1's report (run it before agent 2), or as a `UX` design-choice finding in `REVIEW.md` (run it before agent 3). One agent per batch of questions, not one per question.
+Prompt contents:
+- The questions, each with its context: the step text, where it came up (Step 0, agent 1's report, `REVIEW.md` #<n>) and the `file:line` of the code concerned, if any.
+- Read first: `docs/ux-decisions.md` (stay consistent with earlier decisions; never reopen one unless the step contradicts it, and say so), the matching sections of `FEATURES.md` and README.md, the reference screenshots in `docs/ui-reference/` that apply, and the UI code concerned. If it needs to see the current UI, it uses the scripts in `pipeline/tools/` (pass the Xvfb memory entry path) to take screenshots; it doesn't change code.
+- For each question: 2-3 options, each with pros and cons (discoverability, consistency with the existing UI and with common terminal/IDE apps, keyboard-first use, cost to build, Windows/Linux differences), then a recommendation with a one-line reason.
+- Append one entry per question to `docs/ux-decisions.md` (create it with a `# UX/UI decisions` title if missing; never rewrite earlier entries):
+  ```
+  ## <question in one line>
+  - Date: <YYYY-MM-DD>, step: <slug>, raised by: <Step 0 | agent 1 | REVIEW.md #n>
+  - Context: <one or two lines>
+  - Option A — <name>: <what it is>. Pros: <...>. Cons: <...>.
+  - Option B — ...
+  - Decision: <option>, because <reason>. Decided by: UX/UI agent (or: user)
+  ```
+- Don't commit; I commit `docs/ux-decisions.md` with the docs (see "After all agents"). Write `pipeline/retros/<slug>/ux-<n>.md` (see Retro focus; `<n>` counts the UX/UI agent runs of this run).
+- Its final report: per question, the decision in one line, so I can pass it on.
+
+I adopt the recommendation and continue: append `<time> | <slug> | ux-agent | ux | <question> -> <decision>` to `pipeline/log.txt` per question, then pass the decisions on (to agent 1 from Step 0; to agent 3 from agent 1's report or `REVIEW.md`, as a fix to apply where it differs from what agent 1 built). Exception: when the agent says a question needs the user (it changes or contradicts `FEATURES.md`, or the options are equally good and the choice is a matter of product direction), I stop the loop like a non-UX design choice, show the user the entry from `docs/ux-decisions.md`, and record their pick in its `Decision:` line (`Decided by: user`).
+
 ## Gate between agents
 Before launching the next agent, I check that:
 - the expected commit exists (agent 1: the step's commit; agent 3: review fixes commit), or for agent 2 that `REVIEW.md` was rewritten and the working tree has no code changes (or, when agent 2 applied the fixes itself, its review fixes commit exists and agent 3 is skipped);
 - the check (see "Pipeline files") is green; skip it when HEAD hasn't moved since the last gate (agent 2 with no fixes), because that commit was already checked;
 - the agent's retro exists in `pipeline/retros/<slug>/`;
 - `pipeline/log.txt` has the agent's `begin` and `end` lines.
+- after a UX/UI agent: `docs/ux-decisions.md` has one new entry per question, each with its options, pros/cons and a `Decision:` line, and the log has a `ux` line per question.
 
 Then I append `<time> | <slug> | <agent> | usage | <tokens> tokens, <tool uses> tool uses, <duration>` to `pipeline/log.txt`, from the agent's completion notice, so the retros of later runs can compare costs.
 
@@ -107,6 +130,7 @@ If any check fails, including agent 1 being unable to run a needed UI check, I s
 - **Docs:** bring the docs in line with what shipped, from the agents' final reports, so they go out in the same squashed commit:
   - **`FEATURES.md`:** if the step added or changed user-visible behaviour that no line describes (or describes differently), add or reword the line in the matching section. It stays a spec of the product, not a changelog: no step names, versions or file paths. Nothing to change for internal work (refactors, fixes of behaviour already described).
   - **Clean `PLAN.md` of what's done:** finished work lives in git history, not here. Remove what this run completed: backlog items the step covered (trim an item to its unfinished part when only part of it is done) and "Fixed, not tested yet" entries the step resolved. Also remove entries in `docs/known-limitations.md` the step lifted. Don't touch items the run didn't cover.
+  - **`docs/ux-decisions.md`:** the entries the UX/UI agent added this run.
   - If any of these files changed, commit them alone: "Update docs after <slug>".
 - **Squash and push:** the run's commits are `<base>..HEAD` (usually 2-4: a `PLAN.md` decision commit if any, the step, the review fixes, the docs update).
   - Check first that every commit in `git log <base>..HEAD` belongs to this run. If another one landed mid-run (e.g. the user's own commit), I stop and ask instead of squashing it in.
@@ -128,7 +152,7 @@ If any check fails, including agent 1 being unable to run a needed UI check, I s
 - `CHANGELOG.md` has a `## <version>` section for the new version (unless the step had no user-visible change), and `## Unreleased` is empty.
 - `REVIEW.md` has a verdict and a status on every finding.
 - `pipeline/log.txt` has begin, end and usage lines for each agent, and begin/end for the pipeline.
-- `pipeline/retros/<slug>/` holds 3 files (2 when agent 2 applied the fixes), `pipeline/` doesn't show up in `git status` or `git log`, and the squashed commit doesn't touch `PIPELINE-PLAN.md`.
+- `pipeline/retros/<slug>/` holds 3 files (2 when agent 2 applied the fixes) plus one `ux-<n>.md` per UX/UI agent run, every UX/UI decision of the run is in `docs/ux-decisions.md` and in the squashed commit, `pipeline/` doesn't show up in `git status` or `git log`, and the squashed commit doesn't touch `PIPELINE-PLAN.md`.
 - The step is gone from "Next steps" in `PLAN.md`.
 
 ## After verification — memory and pipeline (me)
@@ -144,4 +168,4 @@ When Verification and the memory and pipeline step are done, the run is over: I 
   - Agent 1 stops before committing and reverts its own uncommitted changes (leaving files it didn't touch alone), then says why in its final report.
   - I move the step from "Next steps" to a "Not doable yet" section in `PLAN.md` (create it after "Next steps" if missing), with the reason in one line, and commit `PLAN.md` alone: "Mark <step> as not doable yet". If Step 0 made a split commit for this run, squash it in (`git reset --soft <base>` and commit again with that message), so there is still one commit. Then push it (no tag, no version bump).
   - Append `<time> | <slug> | pipeline | end | not doable: <reason>` to `pipeline/log.txt` and start the next run.
-- The loop stops (and doesn't start the next run) on anything else that stops a run: a red baseline or gate, a failed Verification check, uncommitted changes Step 0 can't explain, or a review finding that needs a user design choice. I report why and which steps are left; the user restarts the loop after deciding.
+- The loop stops (and doesn't start the next run) on anything else that stops a run: a red baseline or gate, a failed Verification check, uncommitted changes Step 0 can't explain, or a review finding or UX/UI question that needs a user design choice (UX/UI questions the UX/UI agent decides don't stop it). I report why and which steps are left; the user restarts the loop after deciding.
