@@ -18,7 +18,7 @@ use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
-    AnyElement, App, AppContext, Bounds, ClipboardItem, Context, CursorStyle, Entity,
+    Action, AnyElement, App, AppContext, Bounds, ClipboardItem, Context, CursorStyle, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
     KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
     NoAction, ParentElement, Pixels, Point, Render, Styled, Task, UTF16Selection, Window, actions,
@@ -33,7 +33,8 @@ use term_core::{
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
     AgentActivity, BusyReason, COMMAND_LABEL_CHARS, ClipboardGuard, Location, ProgressState,
-    RUNNING_AFTER, RunningBadge, TabActivity, WorkspaceFeatures, command_label, running_badge,
+    RUNNING_AFTER, RunningBadge, Shortcut, TabActivity, WorkspaceFeatures, command_label,
+    running_badge,
 };
 
 use self::agent_tracker::AgentTracker;
@@ -42,6 +43,7 @@ use self::pointer::PointerState;
 use crate::file_viewer::FilePlace;
 use crate::history;
 use crate::history_popup::HistoryPopup;
+use crate::keymap;
 use crate::keys;
 use crate::launcher;
 use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
@@ -80,32 +82,29 @@ pub fn init(cx: &mut App) {
             .iter()
             .map(|key| KeyBinding::new(key, NoAction, Some(KEY_CONTEXT))),
     );
-    cx.bind_keys(default_bindings());
+    keymap::add_defaults(cx, default_bindings());
 }
 
 /// Terminal shortcuts. Bindings match before `on_key_down`, so these keys only reach the
 /// program when their action propagates (`CopyOrSend`, `PasteOrSend` with nothing to do).
-/// Kept as data so a user keymap can replace them later. The clipboard keys only act while a
-/// write waits for an answer.
-fn default_bindings() -> Vec<KeyBinding> {
+/// The settings file's `"keybindings"` change them (see `keymap`). The clipboard keys only
+/// act while a write waits for an answer.
+fn default_bindings() -> Vec<Shortcut> {
+    let bind =
+        |keys: &str, action: &dyn Action| Shortcut::new(keys, action.name(), Some(KEY_CONTEXT));
     vec![
-        KeyBinding::new("ctrl-shift-c", Copy, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-insert", CopyOrSend, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-shift-v", Paste, Some(KEY_CONTEXT)),
-        KeyBinding::new("shift-insert", Paste, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-v", PasteOrSend, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-shift-f", Find, Some(KEY_CONTEXT)),
-        KeyBinding::new("escape", CloseFind, Some(KEY_CONTEXT)),
-        KeyBinding::new(
+        bind("ctrl-shift-c", &Copy),
+        bind("ctrl-insert", &CopyOrSend),
+        bind("ctrl-shift-v", &Paste),
+        bind("shift-insert", &Paste),
+        bind("ctrl-v", &PasteOrSend),
+        bind("ctrl-shift-f", &Find),
+        bind("escape", &CloseFind),
+        bind(
             &format!("ctrl-shift-{ALLOW_CLIPBOARD_KEY}"),
-            AllowClipboard,
-            Some(KEY_CONTEXT),
+            &AllowClipboard,
         ),
-        KeyBinding::new(
-            &format!("ctrl-shift-{DENY_CLIPBOARD_KEY}"),
-            DenyClipboard,
-            Some(KEY_CONTEXT),
-        ),
+        bind(&format!("ctrl-shift-{DENY_CLIPBOARD_KEY}"), &DenyClipboard),
     ]
 }
 

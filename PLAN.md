@@ -9,7 +9,7 @@ an item only missing its manual check moves to "Fixed, not tested yet".
 
 Run in this order (each stands alone and is tested):
 
-1. Configurable keyboard shortcuts.
+1. Configurable keyboard shortcuts, part 2: the "Keyboard" settings page editor (Backlog).
 2. Window opacity and background blur.
 3. Copilot working animation.
 
@@ -37,6 +37,10 @@ Feature switches 0.2.20-0.2.24 (Xvfb-driven except as noted):
 - Busy-close warnings: the Linux title bar's close button (not drivable under Xvfb) and
   Windows/macOS window close.
 - Clipboard notice: Copilot CLI's copy on Windows (Allow should then copy as before).
+- `"keybindings"` overlay (Xvfb-driven: `ctrl-v: null` gives bash `^V`, a new binding, the
+  banners, a hand edit applied by opening the settings page). Not driven: vim's visual block
+  with Ctrl+V unbound, a keystroke sequence (`ctrl-k ctrl-c`), the reload on saving
+  `settings.json` in the file viewer, and Windows (PowerShell, cmd, Git Bash).
 
 Skipped or partially passed in the user's Windows check on 2026-10-23 (0.2.18):
 
@@ -92,15 +96,11 @@ version and commit.
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Configurable keyboard shortcuts: load a user keymap (keystroke -> action name, built with
-  `cx.build_action`) from the settings file in place of `default_bindings`. First so the user
-  can unbind Ctrl+V (paste) and get `^V` back for bash's quoted-insert and vim's visual block.
-  - Overlay: `"keybindings": {"ctrl-v": null, "ctrl-shift-v": "Paste"}` adds to or overrides
-    the defaults key by key; `null` removes a default, and the key then goes to the terminal.
+- Configurable keyboard shortcuts, part 2: edit the `"keybindings"` overlay from the settings
+  page (`workspace_model::Keymap` lists each action with its default and effective keys).
   - Full editor on a "Keyboard" settings page: one row per action showing its keys, click to
     record a keystroke, a reset to the default, and a way to unbind it.
-  - An invalid entry (unknown action, keystroke that can't be parsed) is skipped and the rest
-    still apply; the reasons are listed on the settings page, like a broken settings file.
+  - Tooltip and menu shortcut hints (`shortcuts.rs`) follow the keymap instead of the defaults.
 - Window opacity and background blur, set in the settings file (opacity applies to the
   terminal background only, text stays opaque); blur where the platform allows it (Windows
   acrylic/mica, KDE on X11).

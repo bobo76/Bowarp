@@ -18,18 +18,18 @@ use gpui_kit::component::notification::{Notification, NotificationDelivery};
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Selectable, Sizable, TitleBar, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, App, AppContext, ClipboardItem, Context, CursorStyle, DragMoveEvent, Empty, Entity,
-    FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, MouseButton,
-    MouseDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task,
-    WeakEntity, Window, actions, div, px,
+    Action, AnyElement, App, AppContext, ClipboardItem, Context, CursorStyle, DragMoveEvent, Empty,
+    Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task, WeakEntity,
+    Window, actions, div, px,
 };
 use term_core::{LaunchSpec, SessionKind};
 use workspace_model::layout::Direction;
 use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION, ExplorerWidth, ViewerFraction};
 use workspace_model::{
     Attention, DropTarget, FeatureSwitch, FileLinkAction, GroupId, Layout, PaneChange, PaneEntry,
-    TabColor, TabId, TabMeta, TabsState, ToastKind, exit_toast_kind, next_attention, pane_change,
-    waiting_count,
+    Shortcut, TabColor, TabId, TabMeta, TabsState, ToastKind, exit_toast_kind, next_attention,
+    pane_change, waiting_count,
 };
 
 use self::divider_drag::DividerDrag;
@@ -42,6 +42,7 @@ use crate::file_explorer::{CdAvailability, ExplorerEvent, FileExplorer};
 use crate::file_viewer::{FilePlace, FileViewer, ViewerEvent};
 use crate::history;
 use crate::hooks::ClaudeHooks;
+use crate::keymap;
 use crate::launcher::{self, Launcher, launch_name};
 use crate::settings_file;
 use crate::settings_page;
@@ -90,12 +91,9 @@ actions!(
     ]
 );
 
-/// F11 toggles full screen. Bound for the whole window, so it works whichever pane has the
-/// keyboard: bindings match before the terminal's key handler, so F11 is not sent to the
-/// program.
+/// Registers the workspace shortcuts (see `default_bindings`).
 pub fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("f11", ToggleFullScreen, None)]);
-    cx.bind_keys(default_bindings());
+    keymap::add_defaults(cx, default_bindings());
     // A global listener, so F11 also works while a dialog or notification has the keyboard
     // (they are not inside the workspace view) or nothing does.
     cx.on_action(|_: &ToggleFullScreen, cx| {
@@ -114,40 +112,38 @@ pub fn init(cx: &mut App) {
     });
 }
 
-fn default_bindings() -> Vec<KeyBinding> {
+/// Workspace shortcuts, changed by the settings file's `"keybindings"` (see `keymap`). F11
+/// toggles full screen. It is bound for the whole window, so it works whichever pane has the
+/// keyboard: bindings match before the terminal's key handler, so F11 is not sent to the
+/// program.
+fn default_bindings() -> Vec<Shortcut> {
+    let bind =
+        |keys: &str, action: &dyn Action| Shortcut::new(keys, action.name(), Some(KEY_CONTEXT));
     let mut bindings = vec![
-        KeyBinding::new("ctrl-tab", NextTab, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-shift-tab", PreviousTab, Some(KEY_CONTEXT)),
-        KeyBinding::new(
-            &format!("ctrl-{EXPLORER_KEY}"),
-            ToggleExplorer,
-            Some(KEY_CONTEXT),
-        ),
-        KeyBinding::new("ctrl-1", SelectTab1, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-2", SelectTab2, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-3", SelectTab3, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-4", SelectTab4, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-5", SelectTab5, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-6", SelectTab6, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-7", SelectTab7, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-8", SelectTab8, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-9", SelectTab9, Some(KEY_CONTEXT)),
+        Shortcut::new("f11", ToggleFullScreen.name(), None),
+        bind("ctrl-tab", &NextTab),
+        bind("ctrl-shift-tab", &PreviousTab),
+        bind(&format!("ctrl-{EXPLORER_KEY}"), &ToggleExplorer),
+        bind("ctrl-1", &SelectTab1),
+        bind("ctrl-2", &SelectTab2),
+        bind("ctrl-3", &SelectTab3),
+        bind("ctrl-4", &SelectTab4),
+        bind("ctrl-5", &SelectTab5),
+        bind("ctrl-6", &SelectTab6),
+        bind("ctrl-7", &SelectTab7),
+        bind("ctrl-8", &SelectTab8),
+        bind("ctrl-9", &SelectTab9),
     ];
-    macro_rules! bind {
-        ($key:expr, $action:expr) => {
-            bindings.push(KeyBinding::new(
-                &format!("ctrl-shift-{}", $key),
-                $action,
-                Some(KEY_CONTEXT),
-            ));
-        };
+    for (key, action) in [
+        (NEW_TAB_KEY, &NewTab as &dyn Action),
+        (DUPLICATE_TAB_KEY, &DuplicateTab),
+        (CLOSE_TAB_KEY, &CloseTab),
+        (SIDEBAR_KEY, &ToggleSidebar),
+        (SEARCH_KEY, &SearchTabs),
+        (ATTENTION_KEY, &NextAttention),
+    ] {
+        bindings.push(bind(&format!("ctrl-shift-{key}"), action));
     }
-    bind!(NEW_TAB_KEY, NewTab);
-    bind!(DUPLICATE_TAB_KEY, DuplicateTab);
-    bind!(CLOSE_TAB_KEY, CloseTab);
-    bind!(SIDEBAR_KEY, ToggleSidebar);
-    bind!(SEARCH_KEY, SearchTabs);
-    bind!(ATTENTION_KEY, NextAttention);
     bindings
 }
 

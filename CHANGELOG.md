@@ -5,6 +5,16 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.27
+
+- Rebind, add or remove keyboard shortcuts with a `"keybindings"` section in the settings file,
+  e.g. `{"ctrl-v": null, "ctrl-alt-t": "NewTab"}`. A removed shortcut's key goes to the
+  program, so `"ctrl-v": null` gives bash and vim their Ctrl+V back. Changes apply when the
+  settings are read again (opening Settings or saving the file in the viewer).
+- List each skipped shortcut entry (unknown action, key that can't be read) on the settings
+  page; the other entries still apply.
+- Allow rebinding F11 (full screen) like the other shortcuts.
+
 ## 0.2.26
 
 - Ask before a program writes the clipboard or the primary selection (OSC 52, e.g. Copilot

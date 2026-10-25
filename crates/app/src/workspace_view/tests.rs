@@ -1,8 +1,14 @@
 use super::*;
 
 #[test]
-fn default_bindings_parse() {
-    assert_eq!(default_bindings().len(), 18);
+fn default_bindings_name_workspace_actions() {
+    let bindings = default_bindings();
+    assert_eq!(bindings.len(), 19);
+    assert!(
+        bindings
+            .iter()
+            .all(|shortcut| shortcut.action.starts_with("workspace::"))
+    );
 }
 
 #[cfg(unix)]

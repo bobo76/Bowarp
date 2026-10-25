@@ -52,6 +52,8 @@ directly to model APIs.
 - Display an icon identifying the session type, with manual icon overrides.
 - Keep session identity, custom colors, and activity status visually distinct.
 - Provide keyboard shortcuts for opening, closing, and switching tabs and panes.
+- Let users rebind, add or remove shortcuts in the settings file; a removed shortcut's key
+  goes to the terminal program, and invalid entries are skipped and listed in settings.
 
 ## Project Files
 

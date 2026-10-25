@@ -895,3 +895,21 @@ fn file_panes_switch_defaults_on_round_trips_and_falls_back_when_mistyped() {
     }
     assert!(Settings::from_json("{}").unwrap().file_panes.is_on());
 }
+
+#[test]
+fn keybindings_are_kept_as_written_and_mistyped_gives_none() {
+    let text = r#"{"keybindings": {"ctrl-v": null, "ctrl-shift-v": "Paste", "x": 3}}"#;
+    let settings = Settings::from_json(text).unwrap();
+    assert_eq!(settings.keybindings.entries().len(), 3);
+    let again = Settings::from_json(&settings.to_json().unwrap()).unwrap();
+    assert_eq!(again.keybindings, settings.keybindings);
+    assert_eq!(again.keybindings.entries()["ctrl-v"], Value::Null);
+    for text in [
+        r#"{"keybindings": 1}"#,
+        r#"{"keybindings": ["ctrl-v"]}"#,
+        "{}",
+    ] {
+        let settings = Settings::from_json(text).unwrap();
+        assert!(settings.keybindings.entries().is_empty(), "{text}");
+    }
+}

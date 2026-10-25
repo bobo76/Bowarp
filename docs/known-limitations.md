@@ -92,3 +92,10 @@ entry when the limitation is lifted.
   edit to off is undone without a message, and if the write-back fails the switch may stay off
   until the next change. With the panes off a Ctrl+clicked file link asks "Open externally?"
   (system handler) and "Open settings file" opens the file externally.
+- `"keybindings"` apply when the settings file is read again (settings page opened, file saved
+  in the file viewer, a change on the page), not on an edit made elsewhere alone. Tooltips and
+  menu hints show the default shortcuts. A key name GPUI doesn't know (`ctrl-foo`) is accepted
+  but never matches; a `"keybindings"` value that isn't an object is ignored like any mistyped
+  setting and dropped at the next save. Ctrl+C, Tab and Shift+Tab bound to a workspace action
+  still go to the program while the terminal has the keyboard. Ctrl+Shift+| (explorer) is
+  bound as `ctrl-|`: GPUI on Linux reports it without Shift, so `ctrl-shift-|` never matches.

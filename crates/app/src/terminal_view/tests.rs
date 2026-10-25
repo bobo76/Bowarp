@@ -194,8 +194,14 @@ fn repeated_hooks_titles_and_output_do_not_repeat_agent_notices(cx: &mut gpui_ki
 }
 
 #[test]
-fn default_bindings_parse() {
-    assert_eq!(default_bindings().len(), 9);
+fn default_bindings_name_terminal_actions() {
+    let bindings = default_bindings();
+    assert_eq!(bindings.len(), 9);
+    assert!(
+        bindings
+            .iter()
+            .all(|shortcut| shortcut.action.starts_with("terminal::"))
+    );
 }
 
 #[gpui::test]

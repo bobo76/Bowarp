@@ -9,7 +9,8 @@
 //! output, the progress reports (OSC 9;4) in a program's output, how a running command is
 //! labeled and badged, which tabs closing would interrupt, which clipboard writes wait for the
 //! user, how far the mouse wheel scrolls,
-//! the About dialog's version line and the user's settings file. No UI dependency.
+//! the About dialog's version line, the user's settings file and keyboard shortcuts. No UI
+//! dependency.
 
 // Long test scenarios are exempt from the function length limit (docs/code-quality.md).
 #![cfg_attr(test, allow(clippy::too_many_lines))]
@@ -25,6 +26,7 @@ mod git;
 mod history;
 mod history_features;
 mod instance_lock;
+mod keymap;
 mod lap;
 mod last_command;
 mod launcher_icon;
@@ -65,6 +67,7 @@ pub use history::{
 };
 pub use history_features::{HistoryFeatures, HistoryKey};
 pub use instance_lock::{held_by_other, lock_pid, lock_text};
+pub use keymap::{KeybindingOverlay, Keymap, KeymapProblem, KeymapReason, Shortcut, short_name};
 pub use lap::{Lap, format_lap, until_next_second};
 pub use last_command::LastCommand;
 pub use launcher_icon::{LauncherIcon, distro_icon, shell_icon};

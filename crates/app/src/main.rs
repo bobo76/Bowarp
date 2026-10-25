@@ -12,6 +12,7 @@ mod history;
 mod history_popup;
 mod hooks;
 mod instance_lock;
+mod keymap;
 mod keys;
 mod launcher;
 mod mouse;

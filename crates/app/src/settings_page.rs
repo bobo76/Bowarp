@@ -33,6 +33,7 @@ use workspace_model::{DependentState, FeatureSwitch, FontSize, Settings, UiTheme
 use crate::about;
 use crate::assets::CODE_ICON;
 use crate::history;
+use crate::keymap;
 use crate::launcher::{self, Launcher};
 use crate::settings_file;
 use crate::sidebar;
@@ -626,7 +627,8 @@ fn about_groups(cx: &App) -> Vec<SettingGroup> {
     ]
 }
 
-/// One banner per error: the file is ignored (load), or the last change wasn't saved.
+/// One banner per error: the file is ignored (load), the last change wasn't saved, or a
+/// `"keybindings"` entry is skipped (see `keymap`).
 fn file_banners(cx: &App) -> Vec<AnyElement> {
     let file = settings_file::file(cx);
     let path = file
@@ -654,6 +656,16 @@ fn file_banners(cx: &App) -> Vec<AnyElement> {
             Alert::error("settings-save-error", message)
                 .banner()
                 .into_any_element(),
+        );
+    }
+    for (index, problem) in keymap::problems(cx).iter().enumerate() {
+        banners.push(
+            Alert::warning(
+                ("keybindings-problem", index),
+                format!("Keyboard shortcut {problem} The other \"keybindings\" apply."),
+            )
+            .banner()
+            .into_any_element(),
         );
     }
     banners

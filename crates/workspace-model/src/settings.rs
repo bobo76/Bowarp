@@ -14,6 +14,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
+use crate::keymap::KeybindingOverlay;
 use crate::pane_width::{ExplorerWidth, ViewerFraction};
 use crate::window_state::write_atomic;
 
@@ -91,6 +92,10 @@ pub struct Settings {
     /// settings page).
     #[serde(deserialize_with = "lenient")]
     pub file_explorer_width: ExplorerWidth,
+    /// Changes to the default keyboard shortcuts, key by key (see [`crate::Keymap`]): an
+    /// action name binds the key, `null` unbinds it. Kept as written, unusable entries too.
+    #[serde(deserialize_with = "lenient")]
+    pub keybindings: KeybindingOverlay,
     /// Fields this version doesn't know, written back as they were.
     #[serde(flatten)]
     pub extra: Map<String, Value>,

@@ -78,6 +78,7 @@ Code or Copilot CLI; agents that are not installed are listed but disabled. New 
 |---|---|
 | Ctrl+Shift+C, Ctrl+Insert | Copy the selection |
 | Ctrl+Shift+V, Shift+Insert | Paste |
+| Ctrl+V | Paste; sends `^V` to the program when the clipboard holds no text |
 | Ctrl+Shift+F | Search terminal output and scrollback |
 | Ctrl+Shift+Y / Ctrl+Shift+N | Allow / deny a program's clipboard write (while its notice shows) |
 | Enter / Shift+Enter (in terminal search) | Next / previous match, wrapping around |
@@ -506,6 +507,32 @@ status, status dots and attention badges are unchanged, and a toast already on s
 until it hides. An agent that exits with a nonzero or unknown exit code still shows its toast.
 Toasts that answer something you did (save or delete errors, history cleared, failed starts)
 and the persistent fallback-shell warning always show.
+
+### Keyboard shortcuts
+
+The `"keybindings"` object in `settings.json` changes the default shortcuts key by key: an
+action name binds the key (replacing its default), `null` unbinds a default key so it goes to
+the program. For example, to get `^V` back for bash's quoted-insert and vim's visual block and
+paste with Ctrl+Shift+V only:
+
+```json
+"keybindings": { "ctrl-v": null, "ctrl-alt-t": "NewTab" }
+```
+
+Keys are written as GPUI keystrokes: modifiers `ctrl`, `alt`, `shift`, `super` (Windows key)
+joined by `-` to a key (`a`, `f5`, `tab`, `escape`, `insert`, `pageup`; a capital letter
+adds Shift: `ctrl-V` is `ctrl-shift-v`); a space separates the keystrokes of a sequence (`ctrl-k ctrl-c`). Actions: `Copy`, `CopyOrSend`,
+`Paste`, `PasteOrSend`, `Find`, `CloseFind`, `AllowClipboard`, `DenyClipboard` (in the
+terminal); `NewTab`, `DuplicateTab`, `CloseTab`, `NextTab`, `PreviousTab`, `SelectTab1` to
+`SelectTab9`, `ToggleSidebar`, `ToggleExplorer`, `SearchTabs`, `NextAttention`,
+`ToggleFullScreen` (anywhere in the window). `terminal::Paste` and `workspace::NewTab` also
+work. An entry that can't be used (an unknown action, a key that can't be read, a value that
+is neither a name nor `null`, `null` for a key with no default) is skipped and named in a
+banner on the settings page; the others apply. A change applies when the file is read again:
+when the settings page opens, when the file is saved in the file viewer, or at the next
+change on the page. Ctrl+C, Tab and Shift+Tab bound to a workspace action still go to the
+program while the terminal has the keyboard. Tooltips and menus still show the default
+shortcuts.
 
 ## About
 
