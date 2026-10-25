@@ -9,27 +9,23 @@ an item only missing its manual check moves to "Fixed, not tested yet".
 
 Run in this order (each stands alone and is tested):
 
-1. Hide the file viewer while Settings shows (docs/ux-review.md #1): while `shows_page()`,
-   don't render the viewer or its divider; the tab keeps its open file and unsaved edits and
-   the viewer comes back with the tab. "Open settings file" (opens `settings.json` in the
-   viewer) must then close the page, or the file opens out of sight. The explorer stays.
-2. No hover card while a rename editor, a context menu or a dialog is open
+1. No hover card while a rename editor, a context menu or a dialog is open
    (docs/ux-review.md #9), like the existing "no card during a drag" rule.
-3. Attention toast says what the agent waits for (docs/ux-review.md #13): keep the hook's
+2. Attention toast says what the agent waits for (docs/ux-review.md #13): keep the hook's
    `notification_type` in `agent-status` and show "Waiting for permission" / "Waiting for
    your reply"; bell and clipboard keep "Needs attention". Add the jump key
    (Ctrl+Shift+A, from the keymap) as a tooltip on the toast.
-4. Agent status disabled shows in the UI (docs/ux-review.md #14): when `ClaudeHooks::start`
+3. Agent status disabled shows in the UI (docs/ux-review.md #14): when `ClaudeHooks::start`
    fails (`agentws-hook` missing next to the app, or the hook server can't start), show the
    persistent warning used for the shell fallback ("Agent status is off: agentws-hook not
    found next to the app. Reinstall to fix.", with the real reason) and give agent tabs the
    card status "Status unavailable" instead of Idle / No recent output. Shown once per
    start; dismissing hides it for the run.
-5. Closing the last tab keeps the window and the workspace (docs/ux-review.md #21, option A,
+4. Closing the last tab keeps the window and the workspace (docs/ux-review.md #21, option A,
    picked by the user): the window stays open with an empty state in the terminal area
    ("New tab" buttons for the launchers) and the sidebar still lists the groups, empty ones
    included; colors and groups are saved as usual. Closing the window itself works as today.
-6. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
+5. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
    `git check-ignore --stdin` per expanded folder, off the UI thread, refreshed with the
    folder watcher. Folder order unchanged; folders outside a repository show as today.
 
@@ -42,6 +38,12 @@ Run in this order (each stands alone and is tested):
 ## Fixed, not tested yet
 
 Implemented with automated coverage (Linux); the manual checks below are pending.
+
+Settings page hides the file viewer (Xvfb-driven: the page over an open, unsaved viewer,
+the edits back with the tab, "Open settings file" and an explorer click closing the page):
+
+- Windows: the same round trip (page over an unsaved viewer, back with the tab, "Open
+  settings file").
 
 Clipboard writes setting:
 

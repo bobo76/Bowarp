@@ -297,3 +297,41 @@
 - Option D — Turn at 2 frames a second. Pros: 5x fewer redraws, still reads as working. Cons:
   a stepped rather than smooth turn.
 - Decision: D, 2 frames a second with a 2 s turn (90° steps). Decided by: user
+
+## Discard prompt Cancel after opening a file from the settings page: put the page back?
+- Date: 2026-10-25, step: settings-viewer, raised by: REVIEW.md #1
+- Context: opening a file while Settings shows ("Open settings file", explorer click) closes
+  the page first (`activate`), then the hidden viewer's unsaved edits to another file trigger
+  "Discard changes?". On Cancel the page stays closed and the tab (with its edited file)
+  shows.
+- Option A — Keep it. Pros: the prompt shows over the file whose edits it is about, so the
+  user can see what they would lose; Cancel leaves them on the edited file, which is usually
+  what they want to save next; the Settings row is still in the sidebar, one click back; no
+  new code. Cons: Cancel does not fully undo the gesture.
+- Option B — Reopen the page on Cancel (`open_at_or` on `discard_then_or`). Pros: Cancel is
+  a strict undo. Cons: the prompt asks about a file the user can't see if shown first, or the
+  view flips twice (page -> tab -> page); ~15 lines and a dialog test for a rare path.
+- Decision: A, because seeing the file the prompt is about is worth more than an exact undo,
+  and returning to Settings is one click. Decided by: UX/UI agent
+
+## Focus after opening a file while the settings page shows
+- Date: 2026-10-25, step: settings-viewer, raised by: REVIEW.md #2
+- Context: closing the page via `activate` focuses the tab's terminal. Today no file-open
+  path focuses the viewer: a terminal link click keeps the terminal focused, an explorer
+  click leaves focus where it was (explorer rows are not focusable), and `FileViewer` has no
+  focus API. settings.json opens in the Rendered view, not editable until Raw is clicked.
+- Option A — Keep: focus goes to the tab's terminal (same as selecting the tab). Pros: same
+  as every other way of leaving the page; no new API. Cons: typing right after "Open settings
+  file" goes to the shell.
+- Option B — Focus the viewer after "Open settings file" only. Pros: matches the intent "edit
+  this file". Cons: the Rendered view takes no text, so typing still edits nothing until Raw
+  is clicked (that click focuses the editor anyway); one path focusing the viewer while all
+  others don't is inconsistent; needs a new FileViewer focus API.
+- Option C — Restore the focus held before the page opened. Pros: least surprise for
+  explorer clicks. Cons: needs tracking pre-page focus; the pre-page target is usually the
+  terminal anyway, so it mostly equals A.
+- Decision: A, because B gives no real edit-on-type win while the file opens Rendered and
+  would make one open path differ from the rest; "focus the viewer when a file opens" should
+  be decided once for all open paths (terminal links, explorer, settings button), not here.
+  Possible backlog item, needs the user (product direction): focus the viewer on file open,
+  and/or open settings.json in Raw. Decided by: UX/UI agent

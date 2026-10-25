@@ -410,7 +410,8 @@ unless it has unsaved edits, which are kept.
 ## Settings
 
 The gear button in the title bar (after the `i` button) opens the settings page in place of the
-terminal and adds a Settings row under the tabs; select a tab to go back, select the row to
+terminal and the file viewer and adds a Settings row under the tabs (the viewer keeps its file
+and unsaved edits and comes back with the tab); select a tab to go back, select the row to
 return, and close the row with its × or Ctrl+Shift+W. The row isn't reopened at the next start.
 Clicking the gear again while the page or one of its controls has focus closes the page and
 removes its row, returning focus to the terminal. If another pane has focus, the first click
@@ -418,9 +419,10 @@ focuses Settings instead.
 
 The search box filters the rows by title, description and keywords. A change saves to
 `settings.json` in the config folder at once; "Reset to default" under a changed row (or the
-page's reset button) restores the default. "Open settings file" shows `settings.json` in the
-file viewer, creating it first if it doesn't exist. A banner on the page says when the file
-can't be read (the defaults apply until it is fixed or a change moves it to
+page's reset button) restores the default. "Open settings file" goes back to the selected tab
+and shows `settings.json` in its file viewer, creating it first if it doesn't exist; opening a
+file from the explorer while the page shows also goes back to the tab. A banner on the page says
+when the file can't be read (the defaults apply until it is fixed or a change moves it to
 `settings.json.bak`) or a change couldn't be saved. The About page shows the version and the
 config folder.
 

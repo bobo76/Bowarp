@@ -1,5 +1,5 @@
-//! The settings page, shown in place of the selected tab's terminal, and its row in the
-//! sidebar.
+//! The settings page, shown in place of the selected tab (terminal and file viewer), and its
+//! row in the sidebar.
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::notification::Notification;
@@ -42,7 +42,7 @@ impl SettingsPane {
         }
     }
 
-    /// Whether the page hides the selected tab's terminal.
+    /// Whether the page hides the selected tab's terminal and file viewer.
     pub fn shows_page(&self) -> bool {
         self.shown
     }
@@ -66,9 +66,9 @@ impl WorkspaceView {
         }
     }
 
-    /// Show the settings page in place of the selected tab's terminal, adding the sidebar's
-    /// Settings row if it isn't there (the title bar button, or selecting the row).
-    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Show the settings page in place of the selected tab (terminal and viewer), adding the
+    /// sidebar's Settings row if it isn't there (the title bar button, or selecting the row).
+    pub(super) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // The file may have been edited by hand since: the page shows what it holds now.
         settings_file::reload(cx);
         self.settings.open = true;
@@ -92,7 +92,7 @@ impl WorkspaceView {
     }
 
     /// "Open settings file": settings.json (created with the current settings if missing) in
-    /// the selected tab's file viewer, beside the settings page.
+    /// the selected tab's file viewer; the page gives the tab its place back (the row stays).
     pub(super) fn open_settings_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(path) = settings_file::file_to_open(cx) else {
             // A failed write shows in the page's banner.

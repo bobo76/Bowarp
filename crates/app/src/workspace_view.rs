@@ -628,6 +628,11 @@ impl WorkspaceView {
             Self::offer_external_open(path, window, cx);
             return;
         }
+        // The settings page hides the selected tab's viewer: the tab shows again, or the file
+        // would open out of sight (the Settings row stays).
+        if index == self.active && self.settings.shows_page() {
+            self.activate(index, window, cx);
+        }
         let viewer = match &self.tabs[index].viewer {
             Some(viewer) => viewer.view.clone(),
             None => {
@@ -647,8 +652,12 @@ impl WorkspaceView {
         cx.notify();
     }
 
-    /// The selected tab's file viewer, while it shows a file.
+    /// The selected tab's file viewer, while it shows a file and the settings page doesn't
+    /// hide it (with the tab's terminal; the tab keeps its file and unsaved edits).
     fn active_viewer(&self, cx: &App) -> Option<Entity<FileViewer>> {
+        if self.settings.shows_page() {
+            return None;
+        }
         let viewer = &self.active_tab()?.viewer.as_ref()?.view;
         viewer.read(cx).is_open().then(|| viewer.clone())
     }

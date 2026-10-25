@@ -817,3 +817,53 @@ fn busy_tabs_are_asked_about_before_closing(cx: &mut gpui_kit::TestAppContext) {
     assert!(allow_close_or_ask(&mut h));
     assert!(!dialog(&mut h));
 }
+
+#[gpui::test]
+fn settings_page_hides_the_viewer_and_opening_a_file_shows_the_tab(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut h = PanesHarness::new("settings-viewer", cx);
+    let viewer = h.open_dirty_viewer();
+    let workspace = h.workspace.clone();
+    let shown = |h: &mut PanesHarness| {
+        h.workspace.read_with(&h.cx, |workspace, cx| {
+            (
+                workspace.settings.shows_page(),
+                workspace.active_viewer(cx).is_some(),
+            )
+        })
+    };
+    assert_eq!(shown(&mut h), (false, true));
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| workspace.open_settings(window, cx))
+    });
+    h.cx.run_until_parked();
+    assert_eq!(shown(&mut h), (true, false), "the page hides the viewer");
+    let (_, _, kept) = h.state();
+    assert_eq!(kept, Some(viewer.clone()), "the tab keeps its viewer");
+    h.cx.update(|_, cx| {
+        let viewer = viewer.upgrade().unwrap();
+        assert!(viewer.read(cx).is_open() && viewer.read(cx).is_dirty());
+    });
+    let page_focused =
+        h.cx.update(|window, cx| workspace.read(cx).settings.focus().is_focused(window));
+    assert!(page_focused, "the hidden viewer doesn't keep the keyboard");
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| workspace.close_settings(window, cx))
+    });
+    h.cx.run_until_parked();
+    assert_eq!(
+        shown(&mut h),
+        (false, true),
+        "the viewer comes back with the tab"
+    );
+    h.cx.update(|_, cx| assert!(viewer.upgrade().unwrap().read(cx).is_dirty()));
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| workspace.open_settings(window, cx))
+    });
+    h.cx.run_until_parked();
+    // Opening a file in the selected tab gives the tab its place back.
+    h.mark_dirty(&viewer, false);
+    h.open_file();
+    assert_eq!(shown(&mut h), (false, true), "the file opens in sight");
+}

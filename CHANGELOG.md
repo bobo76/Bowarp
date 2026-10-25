@@ -5,6 +5,13 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.32
+
+- Hide the file viewer while the settings page shows, so the page gets the full width; the
+  viewer keeps its file and unsaved edits and comes back with the tab.
+- **Open settings file** and opening a file from the explorer while the settings page shows
+  now go back to the selected tab and show the file there, instead of beside the page.
+
 ## 0.2.31
 
 - Add **Clipboard writes from programs** (Ask, Allow, Deny) to Settings → Terminal → Clipboard,
