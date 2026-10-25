@@ -9,10 +9,9 @@ an item only missing its manual check moves to "Fixed, not tested yet".
 
 Run in this order (each stands alone and is tested):
 
-1. Sound for agent events (Backlog, Notifications).
-2. Configurable keyboard shortcuts.
-3. Window opacity and background blur.
-4. Copilot working animation.
+1. Configurable keyboard shortcuts.
+2. Window opacity and background blur.
+3. Copilot working animation.
 
 ## Fixed, not tested yet
 
@@ -329,3 +328,4 @@ Not committed to; not in [FEATURES.md](FEATURES.md) until picked.
     (`rodio`). "Notification sounds" switch on the Notifications page, off by default (today
     is silent): off means no agent, long-command or bell sound, and no audio initialization;
     the volume slider stays, disabled, for when it is on. Visual status is unaffected.
+    Parked: `rodio` needs the ALSA dev package (`libasound2-dev`) to build on Linux, also in CI.
