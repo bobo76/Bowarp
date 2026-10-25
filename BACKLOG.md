@@ -9,33 +9,35 @@ an item only missing its manual check moves to "Fixed, not tested yet".
 
 Run in this order (each stands alone and is tested):
 
-1. Fix window opacity leaking outside the terminal: below 100 % the file explorer, file
-   viewer tabs and other panes turn see-through too (reported by the user, 2026-10-25), but
-   only the terminal's default background should (docs/ux-decisions.md, "Opacity: what turns
-   translucent below 100 %?"). Find every pane that paints no opaque background of its own.
-2. Hide the file viewer while Settings shows (docs/ux-review.md #1): while `shows_page()`,
+1. Hide the file viewer while Settings shows (docs/ux-review.md #1): while `shows_page()`,
    don't render the viewer or its divider; the tab keeps its open file and unsaved edits and
    the viewer comes back with the tab. "Open settings file" (opens `settings.json` in the
    viewer) must then close the page, or the file opens out of sight. The explorer stays.
-3. No hover card while a rename editor, a context menu or a dialog is open
+2. No hover card while a rename editor, a context menu or a dialog is open
    (docs/ux-review.md #9), like the existing "no card during a drag" rule.
-4. Attention toast says what the agent waits for (docs/ux-review.md #13): keep the hook's
+3. Attention toast says what the agent waits for (docs/ux-review.md #13): keep the hook's
    `notification_type` in `agent-status` and show "Waiting for permission" / "Waiting for
    your reply"; bell and clipboard keep "Needs attention". Add the jump key
    (Ctrl+Shift+A, from the keymap) as a tooltip on the toast.
-5. Agent status disabled shows in the UI (docs/ux-review.md #14): when `ClaudeHooks::start`
+4. Agent status disabled shows in the UI (docs/ux-review.md #14): when `ClaudeHooks::start`
    fails (`agentws-hook` missing next to the app, or the hook server can't start), show the
    persistent warning used for the shell fallback ("Agent status is off: agentws-hook not
    found next to the app. Reinstall to fix.", with the real reason) and give agent tabs the
    card status "Status unavailable" instead of Idle / No recent output. Shown once per
    start; dismissing hides it for the run.
-6. Closing the last tab keeps the window and the workspace (docs/ux-review.md #21, option A,
+5. Closing the last tab keeps the window and the workspace (docs/ux-review.md #21, option A,
    picked by the user): the window stays open with an empty state in the terminal area
    ("New tab" buttons for the launchers) and the sidebar still lists the groups, empty ones
    included; colors and groups are saved as usual. Closing the window itself works as today.
-7. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
+6. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
    `git check-ignore --stdin` per expanded folder, off the UI thread, refreshed with the
    folder watcher. Folder order unchanged; folders outside a repository show as today.
+
+## Not doable yet
+
+- Window opacity leaking outside the terminal (reported 2026-10-25): not reproducible
+  under Xvfb (every pane but the terminal renders alpha 255, light and dark); needs the
+  platform, desktop/compositor, theme, opacity and blur values, and a screenshot.
 
 ## Fixed, not tested yet
 
