@@ -237,6 +237,9 @@ pub struct WorkspaceView {
     sidebar_visible: bool,
     /// GPU capability is fixed for the lifetime of this window.
     pulse_running: bool,
+    /// The platform presents the window's frames (not minimized): sidebar animations run only
+    /// then, in case a platform still draws a hidden window.
+    window_visible: bool,
     explorer: Entity<FileExplorer>,
     /// The "close busy tabs?" question is open (it is never asked twice at once).
     close_question_open: bool,
@@ -270,6 +273,7 @@ pub struct WorkspaceView {
     /// `History::saved_cleared` / `forgets` as last handled by `scrub_retained_commands`.
     history_seen: (u32, u32),
     _history_observer: Subscription,
+    _visibility_observer: Subscription,
 }
 
 fn history_counts(cx: &App) -> (u32, u32) {
@@ -325,12 +329,18 @@ impl WorkspaceView {
         );
         let history_seen = history_counts(cx);
         let history_observer = cx.observe_global::<history::History>(Self::scrub_retained_commands);
+        let visibility_observer =
+            cx.observe_window_visibility(window, |workspace, visibility, _, cx| {
+                workspace.window_visible = visibility.is_visible();
+                cx.notify();
+            });
         Self {
             tabs: Vec::new(),
             layout: Layout::default(),
             active: 0,
             sidebar_visible: true,
             pulse_running: sidebar::pulse_allowed(window),
+            window_visible: window.is_visible(),
             explorer,
             close_question_open: false,
             explorer_visible: false,
@@ -353,6 +363,7 @@ impl WorkspaceView {
             _file_panes_observer: file_panes_observer,
             history_seen,
             _history_observer: history_observer,
+            _visibility_observer: visibility_observer,
         }
     }
 

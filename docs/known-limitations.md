@@ -62,9 +62,11 @@ entry when the limitation is lifted.
   allowed. Edits made on disk while running apply when the settings page opens, when the
   file is saved in the file viewer, or at the next change from the app; edits made in another
   editor while the page shows apply only then (no file watch).
-- Activity animations: the switch currently gates only the Running badge's pulse (no Working
-  animation exists yet; the Copilot one will consult `settings_file::activity_animations`).
-  Under software rendering the pulse is already off.
+- Activity animations: the switch gates the Running badge's pulse and the working Copilot
+  tab's spinner. Under software rendering both are already still. A Claude Code tab with a
+  custom name hides its title's working glyph, so its row shows no Working animation (the
+  spinner is Copilot-only). A window covered by others keeps animating on Windows and under
+  compositing X11 window managers (GPUI reports it visible there); minimized stops it.
 - Terminal font: a family that isn't installed (exact name; any case on Windows) silently uses
   the built-in one (DejaVu Sans Mono, Cascadia Mono on Windows); the page doesn't say so. So do
   GPUI's `.`-names (`.SystemUIFont`) and a localized or secondary family name (Linux lists only

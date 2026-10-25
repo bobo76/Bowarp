@@ -5,6 +5,13 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.30
+
+- Show a blue ring turning in quarter steps left of a working Copilot tab's title in the
+  sidebar; it stops when Copilot is no longer working. With **Activity animations** off it
+  stays still. It doesn't animate in a collapsed group or a minimized window.
+- Stop the Running badge's pulse while the window is minimized.
+
 ## 0.2.29
 
 - Add **Opacity** (30-100 %) and **Background blur** to Settings → Appearance → Window, also

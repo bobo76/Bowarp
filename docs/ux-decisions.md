@@ -183,3 +183,117 @@
   includes switching None/Acrylic/Mica live at 80 %, both ways and through 100 %. If that
   check shows `DWMSBT_NONE` doesn't clear Mica, fall back to A+ with the caption above and a
   known-limitations line. C stays worth posting later (needs the user). Decided by: UX/UI agent
+
+## Copilot Working spinner: what it looks like (no reference screenshot)?
+- Date: 2026-10-25, step: copilot-anim, raised by: Step 0
+- Context: PLAN.md asks for "a blue circular spinner ... matching the reference screenshot",
+  but `docs/ui-reference/` has no such screenshot, so this entry stands in for it. The row's
+  first line is `text_sm` (14 px); the attention triangle in the same slot is 13 px
+  (`ATTENTION_ICON_SIZE`). Status colors are fixed hex, the same in both themes; Working is
+  `TabStatus::Working.color()` = `#4c9aff` (sidebar.rs:84), already the Working badge dot.
+  The Running pulse caps at 10 fps (`RUNNING_PULSE_FPS`). gpui-kit ships Lucide
+  `IconName::LoaderCircle` (`icons/loader-circle.svg`, a 3/4 ring with round caps, listed in
+  gpui-kit-assets-0.7.3/default-icons.txt:57) and a `Spinner` component
+  (gpui-component-0.7.3/src/spinner.rs:10-75: `IconName::Loader` spokes, 0.8 s,
+  `ease_in_out`, `.repeat()`, no fps cap, fixed animation id `"circle"`).
+- Option A — Text glyph frames (braille/half-circle, like Claude's title). Pros: echoes
+  Claude. Cons: depends on the UI font having the glyphs (Windows fallback varies); a text
+  frame swap is not "a circular spinner"; can't be tinted apart from a glyph-in-title look.
+- Option B — gpui-kit `Spinner` as is. Pros: zero drawing code. Cons: spokes icon, not a
+  ring; ease-in-out at 0.8 s with no fps cap repaints at display rate for a whole turn
+  (minutes), against the idle/perf priority; can't set `with_max_fps` or `repeat_synced`.
+- Option C — `Icon::new(IconName::LoaderCircle)` rotated by the app's own `with_animation`,
+  like `running_dot`. Pros: a ring with a gap reads as "working" everywhere (VS Code,
+  Windows Terminal tab progress ring, Warp); the existing animation pattern; fps cap and
+  synced phase under our control; vector, so crisp at any scale. Cons: a few lines of our
+  own instead of the component.
+- Decision: C, because it is the circular spinner asked for and keeps the 10 fps cap. Exact:
+  `LoaderCircle`, `size(px(ATTENTION_ICON_SIZE))` (13 px), `text_color(TabStatus::Working
+  .color())` (#4c9aff, both themes), `Animation::new(1000 ms).repeat_synced()` (linear
+  easing) `.with_max_fps(RUNNING_PULSE_FPS)` (10 fps = 36 degrees a frame), mapped to
+  `Icon::transform(Transformation::rotate(percentage(delta)))` (icon.rs:158), animation id
+  `("working-spinner", index)`. Synced phase makes several Copilot rows repaint on the same
+  frames. In the light theme #4c9aff on white is about 2.9:1, just under 3:1, the same as
+  today's Working badge; acceptable because state is never color-only (shape, badge, the
+  card's "Working" label). Decided by: UX/UI agent
+
+## Copilot Working spinner with "Activity animations" off: what static indicator?
+- Date: 2026-10-25, step: copilot-anim, raised by: Step 0
+- Context: the switch's contract is "static indicators and no animation timers; status still
+  updates" (settings_page.rs:150-160); the Running badge then shows its dot unpulsed. The
+  same still state applies under software rendering (`pulse_allowed`) and GPUI's
+  `reduce_motion` (which renders a repeating animation's start state).
+- Option A — The same LoaderCircle, not rotating (angle 0, gap at the top right). Pros: the
+  row looks the same with or without motion, only the motion goes; still reads as "in
+  progress"; matches what `reduce_motion` already does; no new element. Cons: a still
+  loader can look "stuck" to some users.
+- Option B — A blue dot in the slot. Pros: clearly static. Cons: duplicates the Working dot
+  badge on the icon two centimetres away; a third look for one status.
+- Option C — Nothing in the slot. Pros: simplest. Cons: the title would shift when the
+  setting changes; the row loses the cue the setting promised to keep ("status still
+  updates").
+- Decision: A, because it mirrors the Running badge (same element, motion removed) and
+  `reduce_motion`; the Working badge and the hover card's "Working · 2m 14s" back it up.
+  Built as: the plain icon without `with_animation` when `may_animate` is false. Decided by:
+  UX/UI agent
+
+## Copilot Working spinner: reserve its space or let the title shift?
+- Date: 2026-10-25, step: copilot-anim, raised by: Step 0
+- Context: Claude's glyph is part of its OSC title (an idle mark and working frames, always
+  present), so Claude's title never shifts. The app's own precedent in that slot is the
+  NeedsAttention triangle (`name_line`, sidebar.rs:434-455): 13 px, `gap_1`, added only on
+  that status, so the title moves right by 17 px while it shows. The sidebar is 240 px.
+- Option A — Shift: add the spinner only while Working, in the triangle's slot. Pros: same as
+  the triangle; Working <-> NeedsAttention swaps two 13 px icons with no jump at all; idle
+  rows keep their full width. Cons: a 17 px shift at the start and end of each turn.
+- Option B — Reserve 17 px on every Copilot row. Pros: no shift ever. Cons: Copilot titles
+  look indented against shell/Claude rows in the same list; 7 % of the sidebar lost on idle
+  rows.
+- Option C — Reserve on every row of every kind. Pros: all titles aligned, no shift. Cons:
+  wastes width on all rows; shell and Claude rows never use it.
+- Decision: A, because it is the existing triangle behavior and the shift only happens at
+  turn boundaries, when the row is meant to draw the eye. Order on the line: spinner (or
+  triangle), name, pin. Decided by: UX/UI agent
+
+## Copilot Working spinner: selected/hovered/renamed rows, cards and other title places?
+- Date: 2026-10-25, step: copilot-anim, raised by: Step 0
+- Context: the spinner lives only in the sidebar row's `name_line`. Other places show the
+  status: the tab hover card's status chip ("Working · 2m 14s", static dot), the group hover
+  card and collapsed group header (counts, dot "not pulsing here", sidebar.rs:833), the drag
+  preview. There is no tab switcher. The sidebar is the only place that renders rows, so
+  "visible" means: rendered (search results included), not in a collapsed group (rows are
+  skipped, sidebar_rows.rs:179), window not minimized.
+- Option A — Spinner in the row only; everything else static. Pros: one timer source per
+  visible Copilot row and none in popovers; cards already say "Working" in words with a
+  running clock; matches the cards' "not pulsing here" rule. Cons: the card's dot doesn't
+  match the row's ring.
+- Option B — Also animate in the tab hover card's chip. Pros: visual echo. Cons: a second
+  animation for a popover shown for seconds; the card's lap clock already moves.
+- Option C — Static ring (not the dot) in the card chip too. Pros: same shape everywhere.
+  Cons: changes the shared `status_mark` for every Working tab, including Claude; out of
+  this step's scope.
+- Decision: A. Details: selected and hovered rows keep the same 13 px #4c9aff spinner (no
+  color change; the row background doesn't affect it); while renaming, the editor replaces
+  the line and the spinner is hidden (as the triangle is); a custom name doesn't hide it (it
+  is status, not title); the drag preview stays static (name only); a collapsed group
+  shows nothing extra (its header count already says Working); a focused-out but visible
+  window keeps animating; a minimized window must paint no frames — if GPUI keeps
+  scheduling them on a platform, gate `may_animate` on the window being visible, or record
+  it in docs/known-limitations.md. Not decided here (needs the user, product direction): a
+  Claude tab with a custom name hides its title glyph and so shows no Working animation in
+  the row; the spec keeps the spinner Copilot-only, so leave it as is unless the user wants
+  the same spinner for a renamed Claude tab. Decided by: UX/UI agent
+
+## Copilot spinner: how often may it redraw during a long turn?
+- Date: 2026-10-25, step: copilot-anim, raised by: REVIEW.md #1
+- Context: each spinner frame re-renders the whole window, the active terminal included (the
+  TerminalView is not cached), for the whole Working state, unlike the 10 s Running pulse.
+- Option A — Accept 10 fps, cache the terminal next. Pros: smooth. Cons: ~1-3 % of a core per
+  working Copilot tab until the caching step lands.
+- Option B — Cache the active TerminalView now. Pros: fixes all sidebar animations. Cons:
+  large and risky as a review fix.
+- Option C — Stop turning after N seconds. Pros: bounded cost. Cons: the ring then no longer
+  says "working".
+- Option D — Turn at 2 frames a second. Pros: 5x fewer redraws, still reads as working. Cons:
+  a stepped rather than smooth turn.
+- Decision: D, 2 frames a second with a 2 s turn (90° steps). Decided by: user

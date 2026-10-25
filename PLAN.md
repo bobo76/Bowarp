@@ -9,11 +9,16 @@ an item only missing its manual check moves to "Fixed, not tested yet".
 
 Run in this order (each stands alone and is tested):
 
-1. Copilot working animation.
-
 ## Fixed, not tested yet
 
 Implemented with automated coverage (Linux); the manual checks below are pending.
+
+Copilot working spinner (driven under Xvfb with a stand-in `copilot` and a forced pulse):
+
+- With the real Copilot CLI on a hardware GPU: the ring turns while a turn runs, stops at
+  its end and on a permission prompt (the triangle replaces it), and looks right in the
+  light theme. Minimize/restore through a real window manager (Xvfb only unmapped the
+  window) on Linux and Windows: no CPU while minimized, turning again after restore.
 
 Feature switches 0.2.20-0.2.24 (Xvfb-driven except as noted):
 
@@ -111,16 +116,6 @@ version and commit.
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Copilot working animation: show a blue circular spinner rotating beside the Copilot tab's
-  title in the sidebar while its status is Working, matching the reference screenshot.
-  Stop the animation when the status leaves Working; no animation timer while idle.
-  - Copilot only: Claude Code already animates its own title (the half-circle glyph).
-  - Same place: just left of the title on the row's first line, where the half-circle glyph
-    shows on a working Claude tab.
-  - It animates only while the row can be seen: no frames while its group is collapsed or the
-    window is minimized.
-  - Off with the "Activity animations" switch (`settings_file::activity_animations`): a static
-    indicator, no timer.
 - Light theme: soften the palette; the user found it too white and hard on the eyes
   (Windows, 2026-10-23). Recheck comfort after.
 - `claude` / `copilot` typed at a shell prompt open an agent tab: instead of running in the

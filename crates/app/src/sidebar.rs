@@ -9,8 +9,8 @@ use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Div, Hsla, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
-    div, pulsating_between, px, rgb,
+    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
+    Transformation, Window, div, percentage, pulsating_between, px, rgb,
 };
 use term_core::SessionKind;
 use workspace_model::{Attention, LauncherIcon, TabColor, format_clock, format_lap};
@@ -57,6 +57,13 @@ const ADDED_GREEN: u32 = 0x3fb950;
 const RUNNING_PULSE: Duration = Duration::from_millis(2000);
 const RUNNING_PULSE_OPACITY: (f32, f32) = (0.35, 1.);
 const RUNNING_PULSE_FPS: f32 = 10.;
+/// One turn of a working Copilot tab's spinner. It repaints `WORKING_SPIN_FPS` times a second,
+/// a quarter turn a frame, only while a working row is drawn. Each repaint redraws the whole
+/// window, so the rate is kept low.
+const WORKING_SPIN: Duration = Duration::from_millis(2000);
+const WORKING_SPIN_FPS: f32 = 2.;
+/// The spinner's positions in one turn (90 degrees apart).
+const WORKING_SPIN_STEPS: f32 = 4.;
 
 /// A tab's status, shown as a badge on its icon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -185,6 +192,8 @@ pub struct TabRow {
     pub status: TabStatus,
     /// Whether a Running badge pulses rather than stays still.
     pub pulse: RunningPulse,
+    /// The spinner left of the name, turning or still; see [`working_spinner`].
+    pub spinner: Option<RunningPulse>,
     pub selected: bool,
     pub pinned: bool,
     /// The tab's own color, else its group's.
@@ -193,6 +202,7 @@ pub struct TabRow {
     pub name_editor: Option<AnyElement>,
 }
 
+/// Whether an activity indicator (the Running badge, the working spinner) moves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunningPulse {
     Animated,
@@ -309,14 +319,49 @@ fn running_dot(color: Hsla, pulse: RunningPulse, index: usize) -> AnyElement {
     .into_any_element()
 }
 
-/// Whether a Running badge pulses: animation is allowed (the window, see [`pulse_allowed`], and
-/// the "Activity animations" switch) and the command is within its first seconds.
+/// Whether a Running badge pulses: animation is allowed (a hardware GPU, see
+/// [`pulse_allowed`], the window shown, and the "Activity animations" switch on) and the
+/// command is within its first seconds.
 pub fn running_pulse(may_animate: bool, pulsing: bool) -> RunningPulse {
     if may_animate && pulsing {
         RunningPulse::Animated
     } else {
         RunningPulse::Still
     }
+}
+
+/// The spinner a row shows left of its name: only a working Copilot tab has one (Claude Code
+/// animates its own title). `motion` is whether it turns (see [`running_pulse`]).
+pub fn working_spinner(
+    kind: SessionKind,
+    status: TabStatus,
+    motion: RunningPulse,
+) -> Option<RunningPulse> {
+    (kind == SessionKind::CopilotCli && status == TabStatus::Working).then_some(motion)
+}
+
+/// The spinner's turn at `delta` (0 to 1 through `WORKING_SPIN`), snapped to the nearest quarter
+/// so every frame shows a clean step whatever instant the timer fired at.
+fn spinner_turn(delta: f32) -> f32 {
+    (delta * WORKING_SPIN_STEPS).round() / WORKING_SPIN_STEPS
+}
+
+/// The working spinner: a ring with a gap, turning a quarter `WORKING_SPIN_FPS` times a second.
+fn spinner_icon(motion: RunningPulse, index: usize) -> AnyElement {
+    let icon = Icon::new(IconName::LoaderCircle)
+        .size(px(ATTENTION_ICON_SIZE))
+        .text_color(TabStatus::Working.color());
+    if motion == RunningPulse::Still {
+        return icon.into_any_element();
+    }
+    icon.with_animation(
+        ("working-spinner", index),
+        Animation::new(WORKING_SPIN)
+            .repeat_synced()
+            .with_max_fps(WORKING_SPIN_FPS),
+        |icon, delta| icon.transform(Transformation::rotate(percentage(spinner_turn(delta)))),
+    )
+    .into_any_element()
 }
 
 /// Whether Running badges may pulse in `window`: not on a software-emulated GPU (a VM, remote
@@ -430,28 +475,30 @@ fn single_line(text: SharedString) -> impl IntoElement {
         .child(text)
 }
 
-/// The first line: attention triangle, name and pin, or the name editor while renaming.
+/// The first line: working spinner or attention triangle, name and pin, or the name editor
+/// while renaming.
 fn name_line(row: &mut TabRow, muted: Hsla) -> impl IntoElement {
     let line = div().flex().items_center().gap_1().min_w_0().text_sm();
     if let Some(editor) = row.name_editor.take() {
         return line.child(editor);
     }
-    line.when(row.status == TabStatus::NeedsAttention, |line| {
-        line.child(
-            Icon::new(IconName::TriangleAlert)
-                .size(px(ATTENTION_ICON_SIZE))
-                .text_color(TabStatus::NeedsAttention.color()),
-        )
-    })
-    .child(single_line(row.name.clone()))
-    .when(row.pinned, |line| {
-        line.child(
-            Icon::empty()
-                .path(PIN_ICON)
-                .size(px(DETAIL_ICON_SIZE))
-                .text_color(muted),
-        )
-    })
+    line.children(row.spinner.map(|motion| spinner_icon(motion, row.index)))
+        .when(row.status == TabStatus::NeedsAttention, |line| {
+            line.child(
+                Icon::new(IconName::TriangleAlert)
+                    .size(px(ATTENTION_ICON_SIZE))
+                    .text_color(TabStatus::NeedsAttention.color()),
+            )
+        })
+        .child(single_line(row.name.clone()))
+        .when(row.pinned, |line| {
+            line.child(
+                Icon::empty()
+                    .path(PIN_ICON)
+                    .size(px(DETAIL_ICON_SIZE))
+                    .text_color(muted),
+            )
+        })
 }
 
 pub fn tab_row(
@@ -980,6 +1027,55 @@ mod tests {
         assert_eq!(running_pulse(true, true), RunningPulse::Animated);
         for (may_animate, pulsing) in [(false, true), (true, false), (false, false)] {
             assert_eq!(running_pulse(may_animate, pulsing), RunningPulse::Still);
+        }
+    }
+
+    #[test]
+    fn spinner_turns_in_clean_quarter_steps() {
+        for (delta, turn) in [
+            (0., 0.),
+            (0.2, 0.25),
+            (0.26, 0.25),
+            (0.49, 0.5),
+            (0.74, 0.75),
+        ] {
+            assert_eq!(spinner_turn(delta), turn, "{delta}");
+        }
+        assert_eq!(spinner_turn(0.99), 1., "a full turn looks like 0");
+    }
+
+    #[test]
+    fn only_a_working_copilot_tab_shows_the_spinner_turning_when_allowed() {
+        let copilot = SessionKind::CopilotCli;
+        assert_eq!(
+            working_spinner(copilot, TabStatus::Working, RunningPulse::Animated),
+            Some(RunningPulse::Animated)
+        );
+        assert_eq!(
+            working_spinner(copilot, TabStatus::Working, RunningPulse::Still),
+            Some(RunningPulse::Still),
+            "animations off or not allowed: a still spinner, no timer"
+        );
+        for status in [
+            TabStatus::NeedsAttention,
+            TabStatus::ReadyForReview,
+            TabStatus::Idle,
+            TabStatus::Running,
+            TabStatus::Active,
+            TabStatus::Quiet,
+            TabStatus::Exited,
+        ] {
+            assert_eq!(
+                working_spinner(copilot, status, RunningPulse::Animated),
+                None,
+                "{status:?}"
+            );
+        }
+        for kind in [SessionKind::ClaudeCode, SessionKind::Shell] {
+            assert_eq!(
+                working_spinner(kind, TabStatus::Working, RunningPulse::Animated),
+                None
+            );
         }
     }
 

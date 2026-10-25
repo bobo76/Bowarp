@@ -216,7 +216,9 @@ impl WorkspaceView {
         let view = tab.view.read(cx);
         let name = SharedString::from(Self::tab_name(tab, cx));
         let kind = view.kind();
-        let may_animate = self.pulse_running && settings_file::activity_animations(cx);
+        let may_animate =
+            self.pulse_running && self.window_visible && settings_file::activity_animations(cx);
+        let status = view.tab_status();
         let row = TabRow {
             index,
             kind,
@@ -224,8 +226,13 @@ impl WorkspaceView {
             detail: view
                 .location()
                 .map(|location| tab_detail(location, self.home.as_deref())),
-            status: view.tab_status(),
+            status,
             pulse: sidebar::running_pulse(may_animate, view.running_pulses()),
+            spinner: sidebar::working_spinner(
+                kind,
+                status,
+                sidebar::running_pulse(may_animate, true),
+            ),
             selected: index == self.active && !self.settings.shows_page(),
             pinned: self.layout.is_pinned(id),
             color: self.tab_color(tab),
