@@ -46,6 +46,8 @@ entry when the limitation is lifted.
   `history.jsonl` on the UI thread (like deleting one command), and a second instance only
   sees either clear after its next restart (history is loaded at start). Clearing saved
   session commands reaches only tabs open in this instance.
+- Last-command saves go through a background writer: a crash can lose queued or in-flight
+  updates, including a command just deleted from HISTORY.
 - Restore previous tabs off: `tabs.json` is kept unread and unwritten (the one exception:
   "Clear saved session commands" and forgetting a command remove just the matching
   `last_command` values from it, on the tabs writer thread), so the next

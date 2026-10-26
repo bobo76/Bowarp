@@ -3,58 +3,49 @@
 Backlog and next steps. The target is [FEATURES.md](FEATURES.md); how built features behave at
 their edges is in [docs/known-limitations.md](docs/known-limitations.md); finished work is in
 the git history and [CHANGELOG.md](CHANGELOG.md). Remove an item once it is built and verified;
-an item only missing its manual check moves to "Fixed, not tested yet".
+an item only missing its manual check moves to "Fixed, not tested yet", which lists the checks
+still to do (Windows included), not what was already tested.
 
 ## Next steps
 
-Run in this order (each stands alone and is tested):
+Each step stands alone and is tested:
 
-1. Agent status disabled shows in the UI (docs/ux-review.md #14): when `ClaudeHooks::start`
+1. Add new tabs below the current tab.
+2. Agent status disabled shows in the UI (docs/ux-review.md #14): when `ClaudeHooks::start`
    fails (`agentws-hook` missing next to the app, or the hook server can't start), show the
    persistent warning used for the shell fallback ("Agent status is off: agentws-hook not
    found next to the app. Reinstall to fix.", with the real reason) and give agent tabs the
    card status "Status unavailable" instead of Idle / No recent output. Shown once per
    start; dismissing hides it for the run.
-2. Closing the last tab keeps the window and the workspace (docs/ux-review.md #21, option A,
+3. Closing the last tab keeps the window and the workspace (docs/ux-review.md #21, option A,
    picked by the user): the window stays open with an empty state in the terminal area
    ("New tab" buttons for the launchers) and the sidebar still lists the groups, empty ones
    included; colors and groups are saved as usual. Closing the window itself works as today.
-3. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
+4. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
    `git check-ignore --stdin` per expanded folder, off the UI thread, refreshed with the
    folder watcher. Folder order unchanged; folders outside a repository show as today.
 
-## Not doable yet
-
-- Window opacity leaking outside the terminal (reported 2026-10-25): not reproducible
-  under Xvfb (every pane but the terminal renders alpha 255, light and dark); needs the
-  platform, desktop/compositor, theme, opacity and blur values, and a screenshot.
-
 ## Fixed, not tested yet
 
-Implemented with automated coverage (Linux); the manual checks below are pending.
+Built with automated coverage on Linux; the manual checks below are still to do.
 
-Attention toast says what the agent waits for (Xvfb-driven with fake hooks and stand-ins:
-`permission_prompt`, `PermissionRequest` for Claude and Copilot, `elicitation_dialog`,
-`agent_needs_input`, a Copilot bell; the Ctrl+Shift+A tooltip, and none once unbound):
+Attention toast says what the agent waits for:
 
 - With the real Claude Code: a permission prompt in a background tab toasts "Waiting for
   permission", a question (AskUserQuestion / MCP elicitation) "Waiting for your reply".
 - With the real Copilot CLI: a permission prompt in a background tab toasts "Waiting for
   permission"; Windows: the toast's tooltip shows on hover.
 
-Hover cards held back while a name editor, a menu or a dialog is open (Xvfb-driven: the tab
-menu, the new group's name editor, the busy-tab close question, the explorer's entry menu and
-rename editor; a held card comes back when the row is still hovered after the hold):
+Hover cards held back while a name editor, a menu or a dialog is open:
 
 - Windows: right-click a tab row while its card shows: the menu opens and the card goes; no
   card over the new group's name editor nor over the close question.
-- Not driven, same code path: the `+` menu, the `⋮` buttons' menus, group header cards.
+- The `+` menu, the `⋮` buttons' menus and group header cards hold the card back too.
 
-Settings page hides the file viewer (Xvfb-driven: the page over an open, unsaved viewer,
-the edits back with the tab, "Open settings file" and an explorer click closing the page):
+Settings page hides the file viewer:
 
-- Windows: the same round trip (page over an unsaved viewer, back with the tab, "Open
-  settings file").
+- Windows: open the page over an unsaved viewer, come back with the tab (edits kept), and
+  "Open settings file".
 
 Clipboard writes setting:
 
@@ -62,48 +53,38 @@ Clipboard writes setting:
   with Allow a Claude Code tab starts without the clipboard notice, with Deny nothing is
   copied (also in a tab set to "Always for this tab"); Linux and Windows.
 
-Copilot working spinner (driven under Xvfb with a stand-in `copilot` and a forced pulse):
+Copilot working spinner:
 
 - With the real Copilot CLI on a hardware GPU: the ring turns while a turn runs, stops at
   its end and on a permission prompt (the triangle replaces it), and looks right in the
-  light theme. Minimize/restore through a real window manager (Xvfb only unmapped the
-  window) on Linux and Windows: no CPU while minimized, turning again after restore.
+  light theme. Minimize/restore through a real window manager on Linux and Windows: no CPU
+  while minimized, turning again after restore.
 
-Feature switches 0.2.20-0.2.24 (Xvfb-driven except as noted):
+Feature switches (0.2.20-0.2.24):
 
-- Running badge pulse with Activity animations on/off: not drivable under Xvfb (software
-  rendering disables the pulse); only the pure decision is unit-tested.
+- Running badge pulse with Activity animations on and off, on a hardware GPU.
 - Terminal history switches: confirming the Clear history / Clear saved session commands
   dialogs, the last-session suggestion across a real restart, zsh and PowerShell, and two
   instances running together.
 - Workspace switches: toggling Restore previous tabs / Remember last shell command
-  mid-session and accepting the last-command suggestion with Right; not driven.
+  mid-session and accepting the last-command suggestion with Right.
 - File explorer and viewer switch: the "Open externally?" dialog and system launch, "Open
   settings file" while off, a hand edit of `settings.json` to off with an unsaved file, the
   prompt chain with two or more unsaved files, and Windows.
-- In-app notifications switch: the "Needs attention" and "Exited" toasts (only Ready for
-  review was driven; the rest are covered by a gpui test).
-- File panes off, last Discard (fo-files review): `drop_file_panes` calls `focus_active` while
-  the Discard dialog is closing; the dialog may restore focus to the dropped viewer.
-  Manual check: edit a file, turn the switch off, Discard; the terminal must take keys.
+- In-app notifications switch: the "Needs attention" and "Exited" toasts.
 - Busy-close warnings: the Linux title bar's close button (not drivable under Xvfb) and
   Windows/macOS window close.
 - Clipboard notice: Copilot CLI's copy on Windows (Allow should then copy as before).
-- `"keybindings"` overlay (Xvfb-driven: `ctrl-v: null` gives bash `^V`, a new binding, the
-  banners, a hand edit applied by opening the settings page). Not driven: vim's visual block
-  with Ctrl+V unbound, a keystroke sequence (`ctrl-k ctrl-c`), the reload on saving
-  `settings.json` in the file viewer, and Windows (PowerShell, cmd, Git Bash).
-- Keyboard settings page (Xvfb-driven: record with a conflict, +, ×, Reset, Reset all, Esc,
-  page change, hints in the new-tab tooltip and tab menu). Not driven: recording while a
-  dialog or toast has the keyboard, closing the Settings row with its × while recording, AltGr
-  and non-US layouts (`setxkbmap de`), the Ctrl+number hint in the tab hover card, the
-  clipboard notice tooltips, and Windows/macOS (Super/Win and Cmd keys).
-- Window opacity and blur (Xvfb-driven: the slider saves `window_opacity` and applies live,
-  a hand-written value applies at start, the disabled blur dropdown and its captions, only
-  the terminal background and padding turn translucent, the file viewer, explorer, menus and
-  hover cards stay opaque). Not seen anywhere (Xvfb has no compositor): the desktop actually
-  showing through and the blur. Manual checks: GNOME Wayland (see-through, dropdown "Not
-  available on this system", the title bar shadow over the background), KDE Plasma Wayland
+- `"keybindings"` overlay: vim's visual block with Ctrl+V unbound, a keystroke sequence
+  (`ctrl-k ctrl-c`), the reload on saving `settings.json` in the file viewer, and Windows
+  (PowerShell, cmd, Git Bash).
+- Keyboard settings page: recording while a dialog or toast has the keyboard, closing the
+  Settings row with its × while recording, AltGr and non-US layouts (`setxkbmap de`), the
+  Ctrl+number hint in the tab hover card, the clipboard notice tooltips, and Windows/macOS
+  (Super/Win and Cmd keys).
+- Window opacity and blur: the desktop actually showing through and the blur, on GNOME
+  Wayland (see-through, dropdown "Not available on this system", the title bar shadow over
+  the background), KDE Plasma Wayland
   (Blur on and off live), X11 with a compositor (see-through) and without one (darker
   background), Windows 10 (Acrylic; Mica shows the fallback caption and looks like Acrylic)
   and Windows 11 22H2+ (Acrylic, Mica), maximized and full screen, and the light theme.
@@ -111,54 +92,31 @@ Feature switches 0.2.20-0.2.24 (Xvfb-driven except as noted):
   Mica stays after leaving it, add the caption "Mica stays until the app restarts" (see
   docs/ux-decisions.md).
 
-Skipped or partially passed in the user's Windows check on 2026-10-23 (0.2.18):
+Earlier features (0.2.17-0.2.19), Windows and Linux unless noted:
 
-- Workspace shortcut capture (0.2.19): Ctrl+Shift+D duplicates without sending Ctrl+D/EOF
-  to the original terminal; other workspace shortcuts are consumed while plain terminal
-  shortcuts still pass through.
-  Manual Windows/Linux check: duplicate a live shell while it is idle and while a command
-  runs; verify the original stays open, tab navigation and sidebar/explorer shortcuts work,
-  and plain Ctrl+D still reaches the shell.
-- Background last-command persistence (0.2.19): an ordered writer saves snapshots without
-  blocking UI storage work, and close drains the final state before releasing ownership.
-  A crash can lose queued/in-flight updates, including HISTORY deletion.
-  Manual Windows/Linux check: run distinct useful commands in several integrated shell tabs,
-  delete a saved command from HISTORY, close and reopen, and verify the latest tab layout and
-  suggestions, no deleted suggestion and no saves from a second guest instance. Check UI
-  responsiveness during frequent commands and shutdown with pending writes.
-- Copilot plugin lifecycle and Windows argument guidance (0.2.19): cleanup covers session
-  exit/close/replacement, failed launch and stale dead-owner directories; settings explain
-  single-quoted Windows paths and doubled backslashes.
-  Manual Windows/Linux check: use two Copilot tabs, close/exit/relaunch one and verify only
-  its plugin is removed; after an app crash, verify startup removes stale plugins but keeps
-  a live instance's plugins and unrelated files. Launch agents with a quoted Windows path.
-- Initial shell fallback: a persistent warning retains the requested shell's failure reason.
-  User skipped the Windows check.
-- Persisted Light theme switch: Windows passed for readability (Sidebar, Settings, menus,
-  viewer, hover cards). Not checked: editing `ui_theme` through the file viewer, restart
-  persistence, an unchanged terminal palette, Linux.
-- Restore a shell tab's last command (0.2.17): integrated bash/zsh tabs (including Git Bash
-  and bash in WSL; not PowerShell, cmd or agents) save the last non-trivial, recordable
-  command at command start. `tabs.json` is owner-only on Unix at every write. The first empty
-  prompt offers a one-shot dimmed suggestion with a fainter last-session hint when it fits;
-  Right or End accepts, never Tab or Enter. Any line action dismisses it, including keys
-  before the first prompt; HISTORY deletion clears it from all tabs.
-  Manual check: run a useful command then `cd`/`ls`, restart and verify the useful command
-  is suggested; check Right/End, Tab/Enter pass-through, dismissal, narrow-window hint,
-  crash recovery and forgetting across tabs. User skipped the Windows check.
-- Agent launch arguments (0.2.17): Terminal shows Claude/Copilot paths and free-text argument
-  fields (`claude_args`, `copilot_args`). Shell-style quoting groups words without shell
-  expansion; malformed quoting blocks launch with an error. Arguments follow app hook
-  arguments; user `--settings` is passed through even if it overrides hooks. Menu/explorer
-  launches use current settings, while existing, duplicated and restored tabs keep original
-  args. Ctrl+Shift+T continues opening the default shell.
-  Manual check: launch with quoted arguments, empty fields, malformed quotes, Claude
-  `--permission-mode plan`/`--model opus` and Copilot `--mode plan`/`--yolo`; change settings
-  and confirm duplication/restoration keep the old arguments. User skipped the Windows check.
+- Workspace shortcut capture: Ctrl+Shift+D on a live shell, idle and while a command runs:
+  the original stays open (no Ctrl+D sent to it); tab navigation and sidebar/explorer
+  shortcuts work, and plain Ctrl+D still reaches the shell.
+- Last-command persistence: run distinct useful commands in several integrated shell tabs,
+  delete a saved command from HISTORY, close and reopen: the latest tab layout and
+  suggestions, no deleted suggestion, no saves from a second guest instance. The UI stays
+  responsive during frequent commands and shutdown with pending writes.
+- Copilot plugin lifecycle: with two Copilot tabs, close/exit/relaunch one: only its plugin
+  is removed; after an app crash, startup removes stale plugins but keeps a live instance's
+  plugins and unrelated files. Launch agents with a quoted Windows path.
+- Initial shell fallback (Windows): the persistent warning keeps the requested shell's
+  failure reason.
+- Light theme switch: editing `ui_theme` through the file viewer, restart persistence, an
+  unchanged terminal palette, and Linux.
+- Restore a shell tab's last command: run a useful command then `cd`/`ls`, restart: the
+  useful command is suggested; Right/End accept, Tab/Enter pass through, dismissal, the
+  narrow-window hint, crash recovery and forgetting across tabs. Windows: Git Bash and bash
+  in WSL.
+- Agent launch arguments: quoted arguments, empty fields, malformed quotes, Claude
+  `--permission-mode plan`/`--model opus` and Copilot `--mode plan`/`--yolo`; after changing
+  the settings, duplicated and restored tabs keep the old arguments.
 
-Not yet checked anywhere: Windows and Ubuntu CI for 0.2.19-0.2.26 (tags were pushed before
-CI ran), native Windows/Linux UI checks, packaged-app smoke tests and the About dialog's
-version and commit.
+Packaged apps on Windows and Linux: a smoke test and the About dialog's version and commit.
 
 ## Backlog
 
@@ -173,7 +131,13 @@ behavior"); items below name their switch where they need one.
   viewer, the settings page and the title bar stay opaque. At 100 % nothing changes. Update
   the ux-decisions entry and FEATURES.md ("Opacity applies to the terminal's default
   background only"); check with Xvfb that only those two panels drop below alpha 255.
-
+  - Reported 2026-10-25: opacity leaking outside the terminal, not reproducible under Xvfb
+    (every pane but the terminal renders alpha 255, light and dark). Ask for the platform,
+    desktop/compositor, theme, opacity and blur values, and a screenshot, and recheck the
+    report once the panels above are built.
+- File panes off with an unsaved file, Discard: `drop_file_panes` calls `focus_active` while
+  the Discard dialog is closing, and the dialog may give focus back to the dropped viewer.
+  Check: edit a file, turn the switch off, Discard; the terminal must take keys.
 - Renamed Claude tabs should also get the working spinner: a custom name hides
   Claude Code's animated title glyph, so a renamed Claude tab shows no working animation
   today (the spinner is Copilot only).
@@ -307,14 +271,15 @@ behavior"); items below name their switch where they need one.
   palette plus "Default") that tints the tab's sidebar row and its terminal background; saved
   with the tab in `tabs.json` and restored. The terminal's foreground colors stay unchanged,
   so the palette must keep text readable in light and dark themes.
-- Group hover card leaves out running shell commands: its "Working" line counts only agent
-  tabs (Claude Code / Copilot `TabStatus::Working`), so a group whose shells run a long command
-  shows "Working: 0". `GroupSummary::running` is already counted (the collapsed header shows
-  its chip) but `sidebar::group_card` never prints it. Add a "Running: N" line (or rename the
-  lines so agent vs. shell is clear) and unit-test the summary for a mixed group.
-- Extended group hover card (basic counts are implemented): one line per tab with kind icon,
-    name, status and lap time ("Working · 2m 14s", "Running for 40s") and branch, in sidebar
-    order; tabs that need attention (Waiting, Ready for review or failed) first.
+- Group hover card (today: the tab count and the Working / Waiting / Ready for review counts):
+  - Running shell commands: "Working" counts only agent tabs (Claude Code / Copilot
+    `TabStatus::Working`), so a group whose shells run a long command shows "Working: 0".
+    `GroupSummary::running` is already counted (the collapsed header shows its chip) but
+    `sidebar::group_card` never prints it. Add a "Running: N" line (or rename the lines so
+    agent vs. shell is clear) and unit-test the summary for a mixed group.
+  - One line per tab with kind icon, name, status and lap time ("Working · 2m 14s",
+    "Running for 40s") and branch, in sidebar order; tabs that need attention (Waiting, Ready
+    for review or failed) first.
   - Common folder or branch shown once in the header when every tab shares it.
   - Clicking a line selects that tab (expanding the group). The card ticks the lap times while
     it shows (`set_card_clock` for each working tab) and is built only while it shows; no
@@ -333,7 +298,8 @@ behavior"); items below name their switch where they need one.
   - Still behind (major versions): `gpui-kit`, `windows-registry`, `parking_lot` 0.13,
     `generic-array`.
   - Bigger updates, each on its own: `gpui-kit` 0.7.3 -> 0.8.0 (likely API changes in
-    GPUI / `gpui-component`), `windows-registry` 0.6 -> 0.100 (needs Rust 1.95).
+    GPUI / `gpui-component`), `windows-registry` 0.6 -> 0.100 (its Rust 1.95 minimum is
+    already the MSRV).
   - Pre-releases to watch, not adopt yet: `libc` 1.0 (alpha), `notify` 9.0 (rc).
 - PowerShell: the integration writes the `C` mark on Enter even when PSReadLine only adds a
   line to an unfinished command (`if ($x) {`), so the tab shows Running while typing; write it
