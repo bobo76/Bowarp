@@ -160,6 +160,15 @@ version and commit.
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
+- Window opacity on the sidebar and file explorer too (today only the terminal takes it,
+  docs/ux-decisions.md "Opacity: what turns translucent below 100 %?", option A): the sidebar
+  and explorer panel backgrounds take the same alpha as the terminal
+  (`window_background::terminal_alpha`), including their selected and hovered row colors,
+  which must stay visible over a light desktop. Menus, hover cards, dialogs, toasts, the file
+  viewer, the settings page and the title bar stay opaque. At 100 % nothing changes. Update
+  the ux-decisions entry and FEATURES.md ("Opacity applies to the terminal's default
+  background only"); check with Xvfb that only those two panels drop below alpha 255.
+
 - Renamed Claude tabs should also get the working spinner: a custom name hides
   Claude Code's animated title glyph, so a renamed Claude tab shows no working animation
   today (the spinner is Copilot only).
@@ -377,6 +386,23 @@ Not committed to; not in [FEATURES.md](FEATURES.md) until picked.
   AWS keys, `password=...`, plus user regexes from the settings file) is drawn masked in the
   terminal and copied masked unless the copy is confirmed; hover or a toggle reveals it. Agents
   often print `.env` contents. Display only, the program's output is unchanged.
+- Claude Code subagents on the tab: a subagent runs inside the parent `claude` process and has
+  no terminal of its own, so it is shown from hook events and its transcript, not as a live tab.
+  Claude Code only (Copilot has no subagent hooks).
+  - Events: register `SubagentStart` / `SubagentStop` in `HOOK_EVENTS`, take the description
+    and `subagent_type` from `PreToolUse` with `tool_name` `Agent` (formerly `Task`), and tag
+    tool events by `agent_id`. `hook_line` (`agent-status/src/ipc.rs`) forwards only the event
+    name and `notification_type` today, so the wire format must carry these fields. Check the
+    field names against the installed Claude Code first (log one real payload).
+  - Step 1, nested rows under the tab card: one row per subagent with type, description,
+    status (running / done / failed) and elapsed time; per-tab list in `workspace-model`,
+    unit-tested. Not saved in `tabs.json`.
+  - Step 2, transcript view: clicking a row opens a read-only pane (like the file viewer) that
+    tails `~/.claude/projects/<project>/<session>/subagents/agent-<id>.jsonl` with a file
+    watcher and shows its messages and tool calls. The JSONL format is undocumented: parse
+    leniently and fail gracefully.
+  - Not planned: real child tabs in the tab layout (pins, order and persistence for
+    short-lived, non-relaunchable tabs).
 - Notifications and close warnings:
   - Sound for agent events (Waiting, Ready for review): one bundled sound for both events
     (`rodio`). "Notification sounds" switch on the Notifications page, off by default (today
