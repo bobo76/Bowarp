@@ -4,7 +4,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use agent_status::{
-    AgentEvent, AgentMode, HookEvent, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, now_micros,
+    AgentEvent, AgentMode, HookEvent, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, WaitReason,
+    now_micros,
 };
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -90,7 +91,10 @@ fn copilot_permission_request_is_silent_and_isolated_to_its_tab() {
         assert!(output.stderr.is_empty(), "{output:?}");
         let message = receiver.recv_timeout(TIMEOUT).expect("permission message");
         assert_eq!(message.session.to_string(), session);
-        assert_eq!(message.event, AgentEvent::Hook(HookEvent::InputRequested));
+        assert_eq!(
+            message.event,
+            AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Permission))
+        );
     }
 }
 

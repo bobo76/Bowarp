@@ -96,7 +96,7 @@ fn unread_completions_are_acknowledged_and_replaced_for_both_agents(
             report(view, false, cx);
             assert_eq!(view.tab_status(), TabStatus::ReadyForReview);
             view.apply_hook_event(
-                AgentEvent::Hook(HookEvent::InputRequested),
+                AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Permission)),
                 agent_status::now_micros(),
                 cx,
             );
@@ -111,14 +111,16 @@ fn agent_notices_classify_status_transitions() {
     use AgentStatus::*;
     for before in [Idle, Working, NeedsAttention, Exited] {
         for after in [Idle, Working, NeedsAttention, Exited] {
-            let expected = match (before, after) {
-                (Working, Idle) => Some(AgentNotice::Finished),
-                (before, NeedsAttention) if before != NeedsAttention => {
-                    Some(AgentNotice::NeedsAttention)
-                }
-                _ => None,
-            };
-            assert_eq!(AgentNotice::for_change(before, after), expected);
+            for reason in [None, Some(WaitReason::Permission), Some(WaitReason::Reply)] {
+                let expected = match (before, after) {
+                    (Working, Idle) => Some(AgentNotice::Finished),
+                    (before, NeedsAttention) if before != NeedsAttention => {
+                        Some(AgentNotice::NeedsAttention(reason))
+                    }
+                    _ => None,
+                };
+                assert_eq!(AgentNotice::for_change(before, after, reason), expected);
+            }
         }
     }
 }
@@ -160,7 +162,7 @@ fn repeated_hooks_titles_and_output_do_not_repeat_agent_notices(cx: &mut gpui_ki
     view.update(cx, |view, cx| {
         for event in [
             HookEvent::PromptSubmitted,
-            HookEvent::InputRequested,
+            HookEvent::InputRequested(WaitReason::Permission),
             HookEvent::ToolStarted,
             HookEvent::Stopped,
         ] {
@@ -173,8 +175,8 @@ fn repeated_hooks_titles_and_output_do_not_repeat_agent_notices(cx: &mut gpui_ki
         view.hide();
         for (event, at) in [
             (HookEvent::PromptSubmitted, 1),
-            (HookEvent::InputRequested, 2),
-            (HookEvent::InputRequested, 3),
+            (HookEvent::InputRequested(WaitReason::Reply), 2),
+            (HookEvent::InputRequested(WaitReason::Permission), 3),
             (HookEvent::ToolStarted, 4),
             (HookEvent::Stopped, 5),
             (HookEvent::Stopped, 6),
@@ -189,7 +191,10 @@ fn repeated_hooks_titles_and_output_do_not_repeat_agent_notices(cx: &mut gpui_ki
     cx.run_until_parked();
     assert_eq!(
         *notices.borrow(),
-        [AgentNotice::NeedsAttention, AgentNotice::Finished]
+        [
+            AgentNotice::NeedsAttention(Some(WaitReason::Reply)),
+            AgentNotice::Finished
+        ]
     );
 }
 
@@ -201,6 +206,67 @@ fn default_bindings_name_terminal_actions() {
         bindings
             .iter()
             .all(|shortcut| shortcut.action.starts_with("terminal::"))
+    );
+}
+
+#[gpui::test]
+fn a_copilot_bell_keeps_the_pending_wait_reason(cx: &mut gpui_kit::TestAppContext) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use agent_status::HookEvent;
+
+    #[cfg(windows)]
+    let (program, args) = ("cmd", vec!["/C", "exit 0"]);
+    #[cfg(not(windows))]
+    let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+    let spec = LaunchSpec::new(
+        SessionKind::CopilotCli,
+        Some(program.into()),
+        args.into_iter().map(String::from).collect(),
+        None,
+    );
+    let session = Session::spawn(
+        3,
+        &spec,
+        TermDimensions::new(80, 24),
+        Palette::default(),
+        Arc::new(|_| {}),
+    )
+    .unwrap();
+    let view = cx.new(|cx| {
+        TerminalView::new(
+            session,
+            &spec,
+            StatusReporting::OutputActivity,
+            Task::ready(()),
+            cx,
+        )
+    });
+    let notices = Rc::new(RefCell::new(Vec::new()));
+    let captured = notices.clone();
+    let _events = cx.update(|cx| {
+        cx.subscribe(&view, move |_, notice: &AgentNotice, _| {
+            captured.borrow_mut().push(*notice);
+        })
+    });
+    view.update(cx, |view, cx| {
+        view.hide();
+        view.on_session_event(SessionEvent::Bell, cx);
+        view.show(cx);
+        view.hide();
+        view.apply_hook_event(
+            AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Permission)),
+            1,
+            cx,
+        );
+        view.on_session_event(SessionEvent::Bell, cx);
+    });
+    cx.run_until_parked();
+    let permission = AgentNotice::NeedsAttention(Some(WaitReason::Permission));
+    assert_eq!(
+        *notices.borrow(),
+        [AgentNotice::NeedsAttention(None), permission, permission]
     );
 }
 
@@ -241,7 +307,11 @@ fn copilot_permission_hooks_add_waiting_but_only_progress_controls_working_and_i
         assert!(view.agent.is_none());
         view.apply_hook_event(AgentEvent::Hook(HookEvent::ToolStarted), 0, cx);
         assert!(view.agent.is_none(), "Copilot ignores activity hooks");
-        view.apply_hook_event(AgentEvent::Hook(HookEvent::InputRequested), 0, cx);
+        view.apply_hook_event(
+            AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Permission)),
+            0,
+            cx,
+        );
         assert_eq!(
             view.agent.as_ref().unwrap().status(),
             AgentStatus::NeedsAttention
@@ -259,7 +329,11 @@ fn copilot_permission_hooks_add_waiting_but_only_progress_controls_working_and_i
             cx,
         );
         assert_eq!(view.agent.as_ref().unwrap().status(), AgentStatus::Working);
-        view.apply_hook_event(AgentEvent::Hook(HookEvent::InputRequested), 3, cx);
+        view.apply_hook_event(
+            AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Permission)),
+            3,
+            cx,
+        );
         view.on_session_event(
             SessionEvent::ProgressChanged {
                 state: ProgressState::Hidden,
@@ -286,7 +360,11 @@ fn copilot_permission_hooks_add_waiting_but_only_progress_controls_working_and_i
         );
         view.apply_progress(ProgressState::Hidden, 5, cx);
         assert_eq!(view.agent.as_ref().unwrap().status(), AgentStatus::Idle);
-        view.apply_hook_event(AgentEvent::Hook(HookEvent::InputRequested), 0, cx);
+        view.apply_hook_event(
+            AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Permission)),
+            0,
+            cx,
+        );
         assert_eq!(
             view.agent.as_ref().unwrap().status(),
             AgentStatus::Idle,
@@ -294,7 +372,7 @@ fn copilot_permission_hooks_add_waiting_but_only_progress_controls_working_and_i
         );
         view.on_session_event(SessionEvent::Exited(Some(0)), cx);
         view.apply_hook_event(
-            AgentEvent::Hook(HookEvent::InputRequested),
+            AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Permission)),
             agent_status::now_micros(),
             cx,
         );

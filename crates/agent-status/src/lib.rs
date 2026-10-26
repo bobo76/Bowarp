@@ -19,4 +19,4 @@ pub use ipc::{
 };
 pub use mode::{AgentMode, AgentModeState};
 pub use settings::{HOOK_EVENTS, claude_settings, copilot_hooks};
-pub use status::{AgentState, AgentStatus, HookEvent};
+pub use status::{AgentState, AgentStatus, HookEvent, WaitReason};

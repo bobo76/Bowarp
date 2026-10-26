@@ -368,3 +368,53 @@
   hold that starts again while suppressed keeps it suppressed. docs/known-limitations.md
   lines 128-129 ("shows once it ends while its row is still hovered") no longer apply once
   built. Decided by: UX/UI agent
+
+## Attention toast jump key: hover tooltip, visible second line, or both?
+- Date: 2026-10-25, step: toast-kind, raised by: agent 1
+- Context: gpui-component's `Notification` has no tooltip API; agent 1 overlays an empty
+  `absolute().inset_0()` div with `.tooltip()` through `.content()`, covering the title and
+  message column (not the icon or close button). The key comes from the live keymap; nothing
+  when unbound. docs/ux-review.md #13 (the step as planned) asked for a tooltip.
+- Option A — Tooltip only (as built): Pros: matches the planned step and the app's habit of
+  putting keys in tooltips (sidebar attention button, title bar buttons); toast stays two lines
+  and the same height as every other toast; unbound key simply shows nothing. Cons: keyboard
+  users who never hover don't see it; the toast may hide before anyone hovers.
+- Option B — Visible second line ("Ctrl+Shift+A: next tab needing attention"): Pros: seen
+  without the mouse. Cons: every attention toast grows a third line of repeated text, noisy
+  with several agents; inconsistent with the other toasts; contradicts the planned step; the
+  key is already taught by the sidebar button's tooltip and README.
+- Option C — Both: Cons of B, plus the tooltip would repeat the visible line.
+- Decision: A, because it is what the step planned, costs nothing on screen and follows the
+  app's "key in the tooltip" pattern; the overlay not covering icon/close is fine (the text is
+  where the pointer rests). Decided by: UX/UI agent
+
+## Attention toast tooltip wording
+- Date: 2026-10-25, step: toast-kind, raised by: agent 1
+- Context: built text is "Jump to tabs needing attention (Ctrl+Shift+A)", while a click on the
+  toast opens that toast's tab and the key goes to the next tab needing attention after the
+  selected one (README shortcut row: "Go to the next tab needing attention"; sidebar button:
+  "1 tab needs attention: go to it" / "N tabs need attention: go to the next", key appended by
+  `shortcuts::with_shortcut`).
+- Option A — Keep "Jump to tabs needing attention (keys)": Pros: no change. Cons: "Jump" and
+  the plural are used nowhere else; reads as if it described the click.
+- Option B — "Go to the next tab needing attention (keys)": Pros: same verb and phrase as the
+  README row and the sidebar button; "next" makes clear it is the key's cycle, not this toast;
+  build it with `shortcuts::with_shortcut`'s "label (keys)" format. Cons: doesn't mention the
+  click.
+- Option C — "Click to open this tab; Ctrl+Shift+A: next tab needing attention": Pros: explains
+  both. Cons: long for a tooltip; no other app tooltip says "Click to"; toast click is the
+  convention users already expect (VS Code, Windows notifications).
+- Decision: B, because it reuses the app's existing wording for this action exactly and avoids
+  suggesting the key targets this toast's tab. Decided by: UX/UI agent
+
+## Attention toast text when the wait reason changes while the tab already needs attention
+- Date: 2026-10-25, step: toast-kind, raised by: agent 1 (note)
+- Context: a tab going from "Waiting for permission" to "Waiting for your reply" without
+  leaving NeedsAttention sends no new toast; the toast shown keeps its first text.
+- Option A — Keep (as built): Pros: no second toast for one wait; the first reason is usually
+  still true (a pending permission prompt is still pending); toasts hide on their own. Cons:
+  the shown text can be stale for a few seconds.
+- Option B — Re-toast on reason change (replaces the tab's toast, keyed per tab): Pros: always
+  current. Cons: a second pop-up for the same wait, re-arming the hide timer; more noise.
+- Decision: A, because a toast is a one-off nudge, not a live status; the sidebar keeps the
+  live state. Decided by: UX/UI agent

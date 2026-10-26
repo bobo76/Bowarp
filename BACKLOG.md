@@ -9,21 +9,17 @@ an item only missing its manual check moves to "Fixed, not tested yet".
 
 Run in this order (each stands alone and is tested):
 
-1. Attention toast says what the agent waits for (docs/ux-review.md #13): keep the hook's
-   `notification_type` in `agent-status` and show "Waiting for permission" / "Waiting for
-   your reply"; bell and clipboard keep "Needs attention". Add the jump key
-   (Ctrl+Shift+A, from the keymap) as a tooltip on the toast.
-2. Agent status disabled shows in the UI (docs/ux-review.md #14): when `ClaudeHooks::start`
+1. Agent status disabled shows in the UI (docs/ux-review.md #14): when `ClaudeHooks::start`
    fails (`agentws-hook` missing next to the app, or the hook server can't start), show the
    persistent warning used for the shell fallback ("Agent status is off: agentws-hook not
    found next to the app. Reinstall to fix.", with the real reason) and give agent tabs the
    card status "Status unavailable" instead of Idle / No recent output. Shown once per
    start; dismissing hides it for the run.
-3. Closing the last tab keeps the window and the workspace (docs/ux-review.md #21, option A,
+2. Closing the last tab keeps the window and the workspace (docs/ux-review.md #21, option A,
    picked by the user): the window stays open with an empty state in the terminal area
    ("New tab" buttons for the launchers) and the sidebar still lists the groups, empty ones
    included; colors and groups are saved as usual. Closing the window itself works as today.
-4. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
+3. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
    `git check-ignore --stdin` per expanded folder, off the UI thread, refreshed with the
    folder watcher. Folder order unchanged; folders outside a repository show as today.
 
@@ -36,6 +32,15 @@ Run in this order (each stands alone and is tested):
 ## Fixed, not tested yet
 
 Implemented with automated coverage (Linux); the manual checks below are pending.
+
+Attention toast says what the agent waits for (Xvfb-driven with fake hooks and stand-ins:
+`permission_prompt`, `PermissionRequest` for Claude and Copilot, `elicitation_dialog`,
+`agent_needs_input`, a Copilot bell; the Ctrl+Shift+A tooltip, and none once unbound):
+
+- With the real Claude Code: a permission prompt in a background tab toasts "Waiting for
+  permission", a question (AskUserQuestion / MCP elicitation) "Waiting for your reply".
+- With the real Copilot CLI: a permission prompt in a background tab toasts "Waiting for
+  permission"; Windows: the toast's tooltip shows on hover.
 
 Hover cards held back while a name editor, a menu or a dialog is open (Xvfb-driven: the tab
 menu, the new group's name editor, the busy-tab close question, the explorer's entry menu and

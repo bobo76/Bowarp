@@ -10,11 +10,12 @@ entry when the limitation is lifted.
   integration's marks (a shell started inside a tab, ssh), jobs left running in the
   background (`&`), Copilot before its first progress report and agents without status
   hooks. Closing the window still drops unsaved file viewer edits without asking.
-- In-app notifications off drops only the agent status toasts (Needs attention, Ready for
-  review, Agent finished on a clean exit); a toast already shown stays until it hides. A
-  background agent that exits with a nonzero or unknown code still toasts, as do user-action
-  feedback (save, delete, clear history, start failures) and the persistent fallback-shell
-  warning. Agent toasts are keyed per tab, so a new one replaces the tab's earlier one.
+- In-app notifications off drops only the agent status toasts (Needs attention / Waiting for
+  permission / Waiting for your reply, Ready for review, Agent finished on a clean exit); a
+  toast already shown stays until it hides. A background agent that exits with a nonzero or
+  unknown code still toasts, as do user-action feedback (save, delete, clear history, start
+  failures) and the persistent fallback-shell warning. Agent toasts are keyed per tab, so a
+  new one replaces the tab's earlier one.
 - Clipboard notice: every program clipboard write (OSC 52) now waits for Allow, including
   Copilot CLI's copy on Windows. One answer covers the held clipboard and primary-selection
   writes; a write held when the program exits is dropped. "Always for this tab" survives an

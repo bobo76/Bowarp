@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.34
+
+- Attention toasts say what the agent waits for: "Waiting for permission" or "Waiting for
+  your reply" (a bell still shows "Needs attention"); hovering the toast shows the key that
+  goes to the next tab needing attention.
+
 ## 0.2.33
 
 - Don't show tab and group hover cards while a name is being edited, or a menu or dialog is

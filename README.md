@@ -298,12 +298,15 @@ while you are on another tab shows Needs attention until you select it. Claude C
 hooks ignore the bell, since their hooks already report it.
 
 Background Claude Code and Copilot tabs show an in-app toast when they need attention, finish
-a turn, or exit (an unsuccessful exit includes its code when available). Background means the
-terminal is hidden: another tab is selected or Settings is shown, not just that the keyboard
-is in another pane. Repeated status reports, titles and output do not repeat the toast.
-Click a toast to select its tab, expanding its group; click its close button to dismiss it
-without switching tabs, or let it disappear automatically. A newer notice for the same tab
-replaces the previous one. There is no sound or OS notification.
+a turn, or exit (an unsuccessful exit includes its code when available). An attention toast
+says what the agent waits for: "Waiting for permission", "Waiting for your reply", or "Needs
+attention" after a bell; hovering its text shows the key that goes to the next tab needing
+attention (nothing while that action has no key). Background means the terminal is hidden:
+another tab is selected or Settings is shown, not just that the keyboard is in another pane.
+Repeated status reports, titles and output do not repeat the toast. Click a toast to select
+its tab, expanding its group; click its close button to dismiss it without switching tabs, or
+let it disappear automatically. A newer notice for the same tab replaces the previous one.
+There is no sound or OS notification.
 
 Right-click a row or use its `⋮` button for the tab menu: duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
 and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working

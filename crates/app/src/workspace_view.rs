@@ -9,19 +9,20 @@ use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use agent_status::HookMessage;
+use agent_status::{HookMessage, WaitReason};
 use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::notification::{Notification, NotificationDelivery};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Selectable, Sizable, TitleBar, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     Action, AnyElement, App, AppContext, ClipboardItem, Context, CursorStyle, DragMoveEvent, Empty,
     Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task, WeakEntity,
-    Window, actions, div, px,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
+    WeakEntity, Window, actions, div, px,
 };
 use term_core::{LaunchSpec, SessionKind};
 use workspace_model::layout::Direction;
@@ -510,7 +511,7 @@ impl WorkspaceView {
     ) {
         let kind = match notice {
             AgentNotice::Exited(code) => exit_toast_kind(code),
-            AgentNotice::NeedsAttention | AgentNotice::Finished => ToastKind::AgentStatus,
+            AgentNotice::NeedsAttention(_) | AgentNotice::Finished => ToastKind::AgentStatus,
         };
         if !settings_file::notifications(cx).shows(kind) {
             return;
@@ -520,7 +521,11 @@ impl WorkspaceView {
         };
         let name = Self::tab_name(&self.tabs[index], cx);
         let notification = match notice {
-            AgentNotice::NeedsAttention => Notification::warning("Needs attention"),
+            AgentNotice::NeedsAttention(reason) => Notification::warning(reason.map_or(
+                sidebar::TabStatus::NeedsAttention.label(),
+                WaitReason::label,
+            ))
+            .content(|_, _, cx| jump_key_tooltip(cx)),
             AgentNotice::Finished => Notification::info(sidebar::TabStatus::ReadyForReview.label()),
             AgentNotice::Exited(Some(0)) => Notification::success("Agent finished"),
             AgentNotice::Exited(Some(code)) => {
@@ -1945,6 +1950,23 @@ impl Render for WorkspaceView {
                     }),
             )
     }
+}
+
+/// Covers an attention toast's text with a tooltip naming the key that goes to the next tab
+/// needing attention, read from the keymap in use; nothing while no key runs it. The toast has
+/// no tooltip of its own.
+fn jump_key_tooltip(cx: &App) -> AnyElement {
+    let Some(keys) = shortcuts::shortcut_text(NextAttention.name(), cx) else {
+        return Empty.into_any_element();
+    };
+    // `shortcuts::with_shortcut`'s "label (keys)" format, without its unbound fallback.
+    let tooltip: SharedString = format!("Go to the next tab needing attention ({keys})").into();
+    div()
+        .id("agent-notice-jump-key")
+        .absolute()
+        .inset_0()
+        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+        .into_any_element()
 }
 
 #[cfg(test)]

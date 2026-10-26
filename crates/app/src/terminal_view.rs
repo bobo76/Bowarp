@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use agent_status::{AgentEvent, AgentMode, AgentModeState, AgentState, AgentStatus};
+use agent_status::{AgentEvent, AgentMode, AgentModeState, AgentState, AgentStatus, WaitReason};
 
 use futures::StreamExt;
 use futures::channel::mpsc;
@@ -160,18 +160,23 @@ pub struct AgentExited;
 /// A background agent changed to a status the user should see.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentNotice {
-    NeedsAttention,
+    /// What the agent waits for, `None` when it did not say (a bell).
+    NeedsAttention(Option<WaitReason>),
     Finished,
     Exited(Option<i32>),
 }
 
 impl AgentNotice {
-    fn for_change(before: AgentStatus, after: AgentStatus) -> Option<Self> {
+    fn for_change(
+        before: AgentStatus,
+        after: AgentStatus,
+        wait_reason: Option<WaitReason>,
+    ) -> Option<Self> {
         if before == after {
             return None;
         }
         match after {
-            AgentStatus::NeedsAttention => Some(Self::NeedsAttention),
+            AgentStatus::NeedsAttention => Some(Self::NeedsAttention(wait_reason)),
             AgentStatus::Idle if before == AgentStatus::Working => Some(Self::Finished),
             _ => None,
         }
@@ -591,7 +596,7 @@ impl TerminalView {
             AgentEvent::Hook(event) if self.kind() == SessionKind::ClaudeCode => {
                 self.update_agent(|agent| agent.apply(event, at), cx);
             }
-            AgentEvent::Hook(agent_status::HookEvent::InputRequested)
+            AgentEvent::Hook(event @ agent_status::HookEvent::InputRequested(_))
                 if self.kind() == SessionKind::CopilotCli =>
             {
                 // Permission hooks can arrive before the first terminal progress report.
@@ -599,10 +604,7 @@ impl TerminalView {
                     self.agent = Some(AgentTracker::new(Instant::now()));
                     self.activity_task = None;
                 }
-                self.update_agent(
-                    |agent| agent.apply(agent_status::HookEvent::InputRequested, at),
-                    cx,
-                );
+                self.update_agent(|agent| agent.apply(event, at), cx);
             }
             AgentEvent::ModeChanged(mode)
                 if self.kind() == SessionKind::CopilotCli && self.mode.apply(mode, at) =>
@@ -644,7 +646,8 @@ impl TerminalView {
         };
         self.finished_unseen = finished_unseen(change.before, change.after, self.visible);
         if !self.visible
-            && let Some(notice) = AgentNotice::for_change(change.before, change.after)
+            && let Some(notice) =
+                AgentNotice::for_change(change.before, change.after, agent.wait_reason())
         {
             cx.emit(notice);
         }
@@ -710,7 +713,9 @@ impl TerminalView {
         }
         self.bell_unseen = true;
         if self.kind() != SessionKind::Shell {
-            cx.emit(AgentNotice::NeedsAttention);
+            // A bell replaces the tab's toast: keep the reason a pending request gave.
+            let wait_reason = self.agent.as_ref().and_then(AgentTracker::wait_reason);
+            cx.emit(AgentNotice::NeedsAttention(wait_reason));
         }
         cx.emit(TabChanged);
         true

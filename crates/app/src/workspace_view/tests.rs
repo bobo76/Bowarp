@@ -341,7 +341,7 @@ fn in_app_notifications_switch_gates_agent_toasts_live(cx: &mut gpui_kit::TestAp
     let turn_off = |h: &mut PanesHarness| switch_to(h, false);
     let turn_on = |h: &mut PanesHarness| switch_to(h, true);
 
-    notify(&mut h, AgentNotice::NeedsAttention);
+    notify(&mut h, AgentNotice::NeedsAttention(None));
     assert_eq!(count(&mut h), 1, "on by default");
     turn_off(&mut h);
     assert_eq!(count(&mut h), 1, "turning off keeps what is shown");
