@@ -91,8 +91,16 @@ fn restored_command_is_one_shot_and_never_accepted_by_tab_or_enter(
         view.restore_last_command(Some("git push".into()), cx);
         assert!(view.handle_history_key(&Keystroke::parse("right").unwrap(), cx));
         assert!(view.restored_suggestion(cx).is_none());
-        assert!(view.session.awaiting_echo());
     });
+    // The tty echoes typed bytes at once, so `awaiting_echo` may already be false here: wait
+    // for the command to reach the screen instead.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !view.read_with(cx, |view, _| {
+        view.session.visible_text()[0].contains("git push")
+    }) {
+        assert!(Instant::now() < deadline, "accepted command was not typed");
+        std::thread::sleep(Duration::from_millis(10));
+    }
     for program in ["pwsh", "powershell", "cmd"] {
         let mut excluded = spec.clone();
         excluded.program = Some(program.into());
