@@ -12,8 +12,9 @@ use workspace_model::GroupId;
 use workspace_model::TabColor;
 use workspace_model::layout::Direction;
 
-use crate::shortcuts::{self, DUPLICATE_TAB_KEY};
+use crate::shortcuts;
 use crate::sidebar::tab_color;
+use crate::workspace_view::DuplicateTab;
 
 /// What the tab menu (`⋮` button or right-click) does to its tab.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,8 +71,8 @@ pub fn build(
     let duplicate = run.clone();
     menu.min_w(px(crate::ui_dimensions::MENU_WIDTH))
         .item(
-            PopupMenuItem::element(|_, _| {
-                shortcuts::menu_label_with_hint("duplicate-tab", "Duplicate tab", DUPLICATE_TAB_KEY)
+            PopupMenuItem::element(|_, cx| {
+                shortcuts::menu_label_with_hint("duplicate-tab", "Duplicate tab", &DuplicateTab, cx)
             })
             .on_click(move |_, window, cx| duplicate(TabCommand::Duplicate, window, cx)),
         )

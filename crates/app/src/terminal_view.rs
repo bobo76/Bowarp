@@ -12,13 +12,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use agent_status::{AgentEvent, AgentMode, AgentModeState, AgentState, AgentStatus};
+use agent_status::{AgentEvent, AgentMode, AgentModeState, AgentState, AgentStatus, WaitReason};
 
 use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui_kit::component::ActiveTheme;
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, App, AppContext, Bounds, ClipboardItem, Context, CursorStyle, Entity,
+    Action, AnyElement, App, AppContext, Bounds, ClipboardItem, Context, CursorStyle, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
     KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
     NoAction, ParentElement, Pixels, Point, Render, Styled, Task, UTF16Selection, Window, actions,
@@ -33,7 +34,8 @@ use term_core::{
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
     AgentActivity, BusyReason, COMMAND_LABEL_CHARS, ClipboardGuard, Location, ProgressState,
-    RUNNING_AFTER, RunningBadge, TabActivity, WorkspaceFeatures, command_label, running_badge,
+    RUNNING_AFTER, RunningBadge, Shortcut, TabActivity, WorkspaceFeatures, command_label,
+    running_badge,
 };
 
 use self::agent_tracker::AgentTracker;
@@ -42,14 +44,16 @@ use self::pointer::PointerState;
 use crate::file_viewer::FilePlace;
 use crate::history;
 use crate::history_popup::HistoryPopup;
+use crate::keymap;
 use crate::keys;
 use crate::launcher;
 use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
 use crate::settings_file::{self, AppSettings};
 use crate::shell_integration;
-use crate::shortcuts::{self, ALLOW_CLIPBOARD_KEY, CLOSE_TAB_KEY, DENY_CLIPBOARD_KEY};
+use crate::shortcuts::{self, ALLOW_CLIPBOARD_KEY, DENY_CLIPBOARD_KEY};
 use crate::sidebar::TabStatus;
 use crate::terminal_element::{TerminalElement, to_hsla};
+use crate::workspace_view::CloseTab;
 
 const KEY_CONTEXT: &str = "Terminal";
 
@@ -80,32 +84,29 @@ pub fn init(cx: &mut App) {
             .iter()
             .map(|key| KeyBinding::new(key, NoAction, Some(KEY_CONTEXT))),
     );
-    cx.bind_keys(default_bindings());
+    keymap::add_defaults(cx, default_bindings());
 }
 
 /// Terminal shortcuts. Bindings match before `on_key_down`, so these keys only reach the
 /// program when their action propagates (`CopyOrSend`, `PasteOrSend` with nothing to do).
-/// Kept as data so a user keymap can replace them later. The clipboard keys only act while a
-/// write waits for an answer.
-fn default_bindings() -> Vec<KeyBinding> {
+/// The settings file's `"keybindings"` change them (see `keymap`). The clipboard keys only
+/// act while a write waits for an answer.
+fn default_bindings() -> Vec<Shortcut> {
+    let bind =
+        |keys: &str, action: &dyn Action| Shortcut::new(keys, action.name(), Some(KEY_CONTEXT));
     vec![
-        KeyBinding::new("ctrl-shift-c", Copy, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-insert", CopyOrSend, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-shift-v", Paste, Some(KEY_CONTEXT)),
-        KeyBinding::new("shift-insert", Paste, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-v", PasteOrSend, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-shift-f", Find, Some(KEY_CONTEXT)),
-        KeyBinding::new("escape", CloseFind, Some(KEY_CONTEXT)),
-        KeyBinding::new(
+        bind("ctrl-shift-c", &Copy),
+        bind("ctrl-insert", &CopyOrSend),
+        bind("ctrl-shift-v", &Paste),
+        bind("shift-insert", &Paste),
+        bind("ctrl-v", &PasteOrSend),
+        bind("ctrl-shift-f", &Find),
+        bind("escape", &CloseFind),
+        bind(
             &format!("ctrl-shift-{ALLOW_CLIPBOARD_KEY}"),
-            AllowClipboard,
-            Some(KEY_CONTEXT),
+            &AllowClipboard,
         ),
-        KeyBinding::new(
-            &format!("ctrl-shift-{DENY_CLIPBOARD_KEY}"),
-            DenyClipboard,
-            Some(KEY_CONTEXT),
-        ),
+        bind(&format!("ctrl-shift-{DENY_CLIPBOARD_KEY}"), &DenyClipboard),
     ]
 }
 
@@ -159,18 +160,23 @@ pub struct AgentExited;
 /// A background agent changed to a status the user should see.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentNotice {
-    NeedsAttention,
+    /// What the agent waits for, `None` when it did not say (a bell).
+    NeedsAttention(Option<WaitReason>),
     Finished,
     Exited(Option<i32>),
 }
 
 impl AgentNotice {
-    fn for_change(before: AgentStatus, after: AgentStatus) -> Option<Self> {
+    fn for_change(
+        before: AgentStatus,
+        after: AgentStatus,
+        wait_reason: Option<WaitReason>,
+    ) -> Option<Self> {
         if before == after {
             return None;
         }
         match after {
-            AgentStatus::NeedsAttention => Some(Self::NeedsAttention),
+            AgentStatus::NeedsAttention => Some(Self::NeedsAttention(wait_reason)),
             AgentStatus::Idle if before == AgentStatus::Working => Some(Self::Finished),
             _ => None,
         }
@@ -590,7 +596,7 @@ impl TerminalView {
             AgentEvent::Hook(event) if self.kind() == SessionKind::ClaudeCode => {
                 self.update_agent(|agent| agent.apply(event, at), cx);
             }
-            AgentEvent::Hook(agent_status::HookEvent::InputRequested)
+            AgentEvent::Hook(event @ agent_status::HookEvent::InputRequested(_))
                 if self.kind() == SessionKind::CopilotCli =>
             {
                 // Permission hooks can arrive before the first terminal progress report.
@@ -598,10 +604,7 @@ impl TerminalView {
                     self.agent = Some(AgentTracker::new(Instant::now()));
                     self.activity_task = None;
                 }
-                self.update_agent(
-                    |agent| agent.apply(agent_status::HookEvent::InputRequested, at),
-                    cx,
-                );
+                self.update_agent(|agent| agent.apply(event, at), cx);
             }
             AgentEvent::ModeChanged(mode)
                 if self.kind() == SessionKind::CopilotCli && self.mode.apply(mode, at) =>
@@ -643,7 +646,8 @@ impl TerminalView {
         };
         self.finished_unseen = finished_unseen(change.before, change.after, self.visible);
         if !self.visible
-            && let Some(notice) = AgentNotice::for_change(change.before, change.after)
+            && let Some(notice) =
+                AgentNotice::for_change(change.before, change.after, agent.wait_reason())
         {
             cx.emit(notice);
         }
@@ -709,7 +713,9 @@ impl TerminalView {
         }
         self.bell_unseen = true;
         if self.kind() != SessionKind::Shell {
-            cx.emit(AgentNotice::NeedsAttention);
+            // A bell replaces the tab's toast: keep the reason a pending request gave.
+            let wait_reason = self.agent.as_ref().and_then(AgentTracker::wait_reason);
+            cx.emit(AgentNotice::NeedsAttention(wait_reason));
         }
         cx.emit(TabChanged);
         true
@@ -1058,10 +1064,13 @@ impl Drop for TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let background = self.session.palette().background;
+        // Below 100 % opacity the grid alone paints the translucent background: painted here
+        // too, it would be twice as opaque.
+        let opaque = settings_file::window_opacity(cx).is_opaque();
         let view = div()
             .size_full()
             .min_h_0()
-            .bg(to_hsla(background))
+            .when(opaque, |view| view.bg(to_hsla(background)))
             .track_focus(&self.focus_handle)
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::on_copy))
@@ -1137,7 +1146,7 @@ impl TerminalView {
                 div()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(shortcuts::with_shortcut("Close the tab", CLOSE_TAB_KEY)),
+                    .child(shortcuts::with_shortcut("Close the tab", &CloseTab, cx)),
             );
         Some(banner.into_any_element())
     }

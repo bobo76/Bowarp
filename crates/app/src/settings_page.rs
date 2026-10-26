@@ -6,7 +6,8 @@
 //! A row bound to a field of `Settings` ([`bound_row`], [`switch_row`], [`text_row`],
 //! [`slider_row`], [`dropdown_row`]) applies a change live and saves it once per gesture, and
 //! offers "Reset to default" while the value differs from the default. Rows go into the page
-//! functions below ([`appearance_groups`], [`terminal_groups`]).
+//! functions below ([`appearance_groups`], [`terminal_groups`]); the Keyboard page is in
+//! `keyboard`.
 
 use std::rc::Rc;
 use std::sync::LazyLock;
@@ -25,18 +26,27 @@ use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Side, Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    Anchor, AnyElement, App, AppContext, Axis, ClickEvent, ClipboardItem, Entity, Focusable,
+    Anchor, AnyElement, App, AppContext, Axis, ClickEvent, ClipboardItem, Div, Entity, Focusable,
     IntoElement, ParentElement, SharedString, Styled, Subscription, Window, div, px,
 };
-use workspace_model::{DependentState, FeatureSwitch, FontSize, Settings, UiTheme};
+use workspace_model::{
+    BlurControl, ClipboardPolicy, DependentState, FeatureSwitch, FontSize, Settings, UiTheme,
+    WindowBlur, WindowOpacity, blur_options, shown_blur,
+};
 
 use crate::about;
 use crate::assets::CODE_ICON;
 use crate::history;
+use crate::keymap;
 use crate::launcher::{self, Launcher};
 use crate::settings_file;
 use crate::sidebar;
 use crate::terminal_element::DEFAULT_FONT_FAMILY;
+use crate::window_background;
+
+mod keyboard;
+
+pub use keyboard::{KeyRecorder, init as init_keyboard};
 
 /// The settings page: the error banners, the pages, and the "Open settings file" button.
 pub fn render(
@@ -60,6 +70,7 @@ pub fn render(
                     page("Terminal", terminal_groups(launchers)),
                     page("Workspace", workspace_groups()),
                     page("Notifications", notification_groups()),
+                    page("Keyboard", keyboard::keyboard_groups(cx)),
                     page("About", about_groups(cx)),
                 ])),
         )
@@ -82,7 +93,7 @@ pub fn render(
         )
 }
 
-/// The Appearance page's UI theme and terminal font.
+/// The Appearance page: UI theme, terminal font, window background and hover cards.
 fn appearance_groups() -> Vec<SettingGroup> {
     vec![
         SettingGroup::new().title("Theme").item(
@@ -123,6 +134,7 @@ fn appearance_groups() -> Vec<SettingGroup> {
             )
             .keywords(["text", "zoom", "points"]),
         ]),
+        window_group(),
         tab_card_group(),
         SettingGroup::new().title("Group hover card").item(
             switch_row(
@@ -139,8 +151,9 @@ fn appearance_groups() -> Vec<SettingGroup> {
         SettingGroup::new().title("Animation").item(
             switch_row(
                 "Activity animations",
-                "Animate the sidebar's activity indicators (the Running badge's pulse). Off: \
-                 static indicators and no animation timers; status still updates.",
+                "Animate the sidebar's activity indicators (the Running badge's pulse, a \
+                 working Copilot tab's spinner). Off: static indicators and no animation \
+                 timers; status still updates.",
                 SettingsField::new(
                     |settings| settings.activity_animations.is_on(),
                     |settings, value| settings.activity_animations = FeatureSwitch::new(value),
@@ -156,7 +169,96 @@ const FONT_SIZE_SLIDER: SliderRange = SliderRange {
     min: 8.,
     max: 32.,
     step: 1.,
+    unit: "",
 };
+
+/// The opacity slider, in percent; the file accepts the same range.
+const OPACITY_SLIDER: SliderRange = SliderRange {
+    min: WindowOpacity::MIN as f32,
+    max: WindowOpacity::MAX as f32,
+    step: 5.,
+    unit: "%",
+};
+
+/// The window background: the terminal's opacity and what shows through it.
+fn window_group() -> SettingGroup {
+    SettingGroup::new().title("Window").items([
+        slider_row(
+            "Opacity",
+            "Applies to terminal tabs: how opaque the terminal's background is. Below 100 % \
+             the desktop shows through it; text, colored cells and the rest of the window stay \
+             opaque.",
+            OPACITY_SLIDER,
+            SettingsField::new(
+                |settings| f32::from(settings.window_opacity.percent()),
+                |settings, percent| {
+                    settings.window_opacity = WindowOpacity::new(f64::from(percent));
+                },
+            ),
+        )
+        .keywords([
+            "window",
+            "transparency",
+            "transparent",
+            "translucent",
+            "see-through",
+            "alpha",
+        ]),
+        blur_row(),
+    ])
+}
+
+/// The `window_blur` setting, with this system's choices (Acrylic and Mica on Windows), disabled
+/// where it can't apply (see `BlurControl`).
+fn blur_row() -> SettingItem {
+    let windows = cfg!(windows);
+    let options: Vec<_> = blur_options(windows)
+        .iter()
+        .map(|(blur, label)| DropdownOption::new(blur.as_str(), *label))
+        .collect();
+    let description = if windows {
+        "What shows through the terminal's translucent background: the desktop as it is, \
+         blurred (Acrylic), or Windows 11's Mica material."
+    } else {
+        "What shows through the terminal's translucent background: the desktop as it is, or \
+         blurred. Blur works on KDE Plasma (Wayland)."
+    };
+    dropdown_row(
+        "Background blur",
+        description,
+        DropdownChoices::new(options, |value| format!("{value} (unknown)").into()).state(|cx| {
+            let settings = settings_file::settings(cx);
+            let control = BlurControl::new(
+                settings.window_opacity,
+                settings.window_blur,
+                window_background::blur_support(cx),
+            );
+            ControlState {
+                enabled: control.enabled,
+                caption: control.caption.map(SharedString::from),
+            }
+        }),
+        SettingsField::new(
+            move |settings| {
+                shown_blur(windows, settings.window_blur)
+                    .as_str()
+                    .to_owned()
+            },
+            |settings, value| {
+                settings.window_blur = WindowBlur::from_name(&value).unwrap_or_default();
+            },
+        ),
+    )
+    .keywords([
+        "window",
+        "acrylic",
+        "mica",
+        "frosted",
+        "glass",
+        "transparency",
+        "backdrop",
+    ])
+}
 
 /// The Terminal page's groups. Later steps add their rows (launcher paths and icons) here.
 fn terminal_groups(launchers: Rc<[Launcher]>) -> Vec<SettingGroup> {
@@ -166,7 +268,42 @@ fn terminal_groups(launchers: Rc<[Launcher]>) -> Vec<SettingGroup> {
             .item(default_shell_row(launchers.clone())),
         command_history_group(),
         agent_arguments_group(&launchers),
+        SettingGroup::new()
+            .title("Clipboard")
+            .item(clipboard_writes_row()),
     ]
+}
+
+/// The `clipboard_writes` setting: what happens when a program writes the clipboard.
+fn clipboard_writes_row() -> SettingItem {
+    let options = [
+        (ClipboardPolicy::Ask, "Ask"),
+        (ClipboardPolicy::Allow, "Allow"),
+        (ClipboardPolicy::Deny, "Deny"),
+    ]
+    .map(|(policy, label)| DropdownOption::new(policy.as_str(), label));
+    dropdown_row(
+        "Clipboard writes from programs",
+        "When a program copies text to the clipboard (OSC 52, e.g. Claude Code, Copilot CLI, \
+         tmux, vim). Ask: a notice above the terminal waits for Allow, Deny or \
+         \"Always for this tab\". Allow or Deny applies to every tab without asking, and Deny \
+         also overrides \"Always for this tab\".",
+        DropdownChoices::new(options, |value| format!("{value} (unknown)").into()),
+        SettingsField::new(
+            |settings| settings.clipboard_writes.as_str().to_owned(),
+            |settings, value| {
+                settings.clipboard_writes = ClipboardPolicy::from_name(&value).unwrap_or_default();
+            },
+        ),
+    )
+    .keywords([
+        "clipboard",
+        "copy",
+        "osc 52",
+        "paste",
+        "selection",
+        "permission",
+    ])
 }
 
 /// The Workspace page: the automatic tab snapshot and what it keeps per tab.
@@ -626,7 +763,8 @@ fn about_groups(cx: &App) -> Vec<SettingGroup> {
     ]
 }
 
-/// One banner per error: the file is ignored (load), or the last change wasn't saved.
+/// One banner per error: the file is ignored (load), the last change wasn't saved, or a
+/// `"keybindings"` entry is skipped (see `keymap`).
 fn file_banners(cx: &App) -> Vec<AnyElement> {
     let file = settings_file::file(cx);
     let path = file
@@ -654,6 +792,16 @@ fn file_banners(cx: &App) -> Vec<AnyElement> {
             Alert::error("settings-save-error", message)
                 .banner()
                 .into_any_element(),
+        );
+    }
+    for (index, problem) in keymap::problems(cx).iter().enumerate() {
+        banners.push(
+            Alert::warning(
+                ("keybindings-problem", index),
+                format!("Keyboard shortcut {problem} The other \"keybindings\" apply."),
+            )
+            .banner()
+            .into_any_element(),
         );
     }
     banners
@@ -874,6 +1022,8 @@ pub struct SliderRange {
     pub min: f32,
     pub max: f32,
     pub step: f32,
+    /// Written after the value (`"%"`); empty for none.
+    pub unit: &'static str,
 }
 
 /// A slider row for an `f32` field of `Settings` (see [`bound_row`]), with the value written
@@ -914,7 +1064,19 @@ fn slider_field(
         .items_center()
         .gap_3()
         .child(Slider::new(&slider).w_48())
-        .child(div().w_8().text_sm().text_right().child(format!("{value}")))
+        .child(
+            div()
+                .map(|label| {
+                    if range.unit.is_empty() {
+                        label.w_8()
+                    } else {
+                        label.w_10()
+                    }
+                })
+                .text_sm()
+                .text_right()
+                .child(format!("{value}{}", range.unit)),
+        )
         .into_any_element()
 }
 
@@ -979,6 +1141,7 @@ impl DropdownOption {
 pub struct DropdownChoices {
     options: Rc<[DropdownOption]>,
     unlisted: Rc<dyn Fn(&str) -> SharedString>,
+    state: Option<Rc<StateFn>>,
 }
 
 impl DropdownChoices {
@@ -989,9 +1152,26 @@ impl DropdownChoices {
         Self {
             options: options.into(),
             unlisted: Rc::new(unlisted),
+            state: None,
         }
     }
+
+    /// Read at each draw: whether the dropdown can be changed now and the caption under it.
+    /// Disabled, it keeps its value (as a switch that needs another option does).
+    pub fn state(mut self, state: impl Fn(&App) -> ControlState + 'static) -> Self {
+        self.state = Some(Rc::new(state));
+        self
+    }
 }
+
+/// Whether a row's control can be changed now, and a caption under it (why it can't, or a
+/// note about the chosen value).
+pub struct ControlState {
+    pub enabled: bool,
+    pub caption: Option<SharedString>,
+}
+
+type StateFn = dyn Fn(&App) -> ControlState;
 
 /// A dropdown row for a `String` field of `Settings` (see [`bound_row`]): a button showing the
 /// chosen option's label that opens a menu of `options`; picking one saves it at once. A
@@ -1002,37 +1182,70 @@ pub fn dropdown_row(
     choices: DropdownChoices,
     field: SettingsField<String>,
 ) -> SettingItem {
-    let DropdownChoices { options, unlisted } = choices;
+    let DropdownChoices {
+        options,
+        unlisted,
+        state,
+    } = choices;
     bound_row(
         title,
         description,
         field,
-        Rc::new(move |value: String, binding, _, _| {
+        Rc::new(move |value: String, binding, _, cx| {
             let chosen = options.iter().find(|option| option.value == value.as_str());
             let label = chosen.map_or_else(|| unlisted(&value), |option| option.label.clone());
             let (options, binding) = (options.clone(), binding.clone());
+            let state = state.as_ref().map_or(
+                ControlState {
+                    enabled: true,
+                    caption: None,
+                },
+                |state| state(cx),
+            );
             // The id keys the menu's open state: unique per row (see `Binding::state_key`).
-            Button::new(binding.state_key("dropdown"))
+            let button = Button::new(binding.state_key("dropdown"))
                 .label(label)
                 .when_some(chosen.and_then(|option| option.icon.clone()), Button::icon)
                 .dropdown_caret(true)
                 .outline()
-                .small()
-                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                    let menu = options.iter().fold(menu, |menu, option| {
-                        let binding = binding.clone();
-                        let picked = option.value.to_string();
-                        menu.item(
-                            PopupMenuItem::new(option.label.clone())
-                                .when_some(option.icon.clone(), PopupMenuItem::icon)
-                                .checked(option.value == value.as_str())
-                                .on_click(move |_, _, cx| binding.save(picked.clone(), cx)),
-                        )
-                    });
-                    // The check on the right: on the left an option's icon would hide it.
-                    menu.check_side(Side::Right).scrollable(true)
-                })
-                .into_any_element()
+                .small();
+            let caption = state.caption.map(|caption| {
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(caption)
+            });
+            // Disabled: no menu at all, so a click can't open it.
+            if !state.enabled {
+                return with_caption(button.disabled(true), caption);
+            }
+            let button = button.dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                let menu = options.iter().fold(menu, |menu, option| {
+                    let binding = binding.clone();
+                    let picked = option.value.to_string();
+                    menu.item(
+                        PopupMenuItem::new(option.label.clone())
+                            .when_some(option.icon.clone(), PopupMenuItem::icon)
+                            .checked(option.value == value.as_str())
+                            .on_click(move |_, _, cx| binding.save(picked.clone(), cx)),
+                    )
+                });
+                // The check on the right: on the left an option's icon would hide it.
+                menu.check_side(Side::Right).scrollable(true)
+            });
+            with_caption(button, caption)
         }),
     )
+}
+
+/// A row's control with an optional caption under it, right-aligned.
+fn with_caption(control: impl IntoElement, caption: Option<Div>) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .items_end()
+        .gap_0p5()
+        .child(control)
+        .children(caption)
+        .into_any_element()
 }

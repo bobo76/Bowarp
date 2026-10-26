@@ -9,18 +9,19 @@ use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use agent_status::HookMessage;
+use agent_status::{HookMessage, WaitReason};
 use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::notification::{Notification, NotificationDelivery};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Selectable, Sizable, TitleBar, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, App, AppContext, ClipboardItem, Context, CursorStyle, DragMoveEvent, Empty, Entity,
-    FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, MouseButton,
-    MouseDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task,
+    Action, AnyElement, App, AppContext, ClipboardItem, Context, CursorStyle, DragMoveEvent, Empty,
+    Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
     WeakEntity, Window, actions, div, px,
 };
 use term_core::{LaunchSpec, SessionKind};
@@ -28,8 +29,8 @@ use workspace_model::layout::Direction;
 use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION, ExplorerWidth, ViewerFraction};
 use workspace_model::{
     Attention, DropTarget, FeatureSwitch, FileLinkAction, GroupId, Layout, PaneChange, PaneEntry,
-    TabColor, TabId, TabMeta, TabsState, ToastKind, exit_toast_kind, next_attention, pane_change,
-    waiting_count,
+    Shortcut, TabColor, TabId, TabMeta, TabsState, ToastKind, exit_toast_kind, next_attention,
+    pane_change, waiting_count,
 };
 
 use self::divider_drag::DividerDrag;
@@ -42,7 +43,9 @@ use crate::file_explorer::{CdAvailability, ExplorerEvent, FileExplorer};
 use crate::file_viewer::{FilePlace, FileViewer, ViewerEvent};
 use crate::history;
 use crate::hooks::ClaudeHooks;
+use crate::keymap;
 use crate::launcher::{self, Launcher, launch_name};
+use crate::open_menu::OpenMenu;
 use crate::settings_file;
 use crate::settings_page;
 use crate::shell_integration;
@@ -90,12 +93,9 @@ actions!(
     ]
 );
 
-/// F11 toggles full screen. Bound for the whole window, so it works whichever pane has the
-/// keyboard: bindings match before the terminal's key handler, so F11 is not sent to the
-/// program.
+/// Registers the workspace shortcuts (see `default_bindings`).
 pub fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("f11", ToggleFullScreen, None)]);
-    cx.bind_keys(default_bindings());
+    keymap::add_defaults(cx, default_bindings());
     // A global listener, so F11 also works while a dialog or notification has the keyboard
     // (they are not inside the workspace view) or nothing does.
     cx.on_action(|_: &ToggleFullScreen, cx| {
@@ -114,41 +114,55 @@ pub fn init(cx: &mut App) {
     });
 }
 
-fn default_bindings() -> Vec<KeyBinding> {
+/// Workspace shortcuts, changed by the settings file's `"keybindings"` (see `keymap`). F11
+/// toggles full screen. It is bound for the whole window, so it works whichever pane has the
+/// keyboard: bindings match before the terminal's key handler, so F11 is not sent to the
+/// program.
+fn default_bindings() -> Vec<Shortcut> {
+    let bind =
+        |keys: &str, action: &dyn Action| Shortcut::new(keys, action.name(), Some(KEY_CONTEXT));
     let mut bindings = vec![
-        KeyBinding::new("ctrl-tab", NextTab, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-shift-tab", PreviousTab, Some(KEY_CONTEXT)),
-        KeyBinding::new(
-            &format!("ctrl-{EXPLORER_KEY}"),
-            ToggleExplorer,
-            Some(KEY_CONTEXT),
-        ),
-        KeyBinding::new("ctrl-1", SelectTab1, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-2", SelectTab2, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-3", SelectTab3, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-4", SelectTab4, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-5", SelectTab5, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-6", SelectTab6, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-7", SelectTab7, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-8", SelectTab8, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-9", SelectTab9, Some(KEY_CONTEXT)),
+        Shortcut::new("f11", ToggleFullScreen.name(), None),
+        bind("ctrl-tab", &NextTab),
+        bind("ctrl-shift-tab", &PreviousTab),
+        bind(&format!("ctrl-{EXPLORER_KEY}"), &ToggleExplorer),
+        bind("ctrl-1", &SelectTab1),
+        bind("ctrl-2", &SelectTab2),
+        bind("ctrl-3", &SelectTab3),
+        bind("ctrl-4", &SelectTab4),
+        bind("ctrl-5", &SelectTab5),
+        bind("ctrl-6", &SelectTab6),
+        bind("ctrl-7", &SelectTab7),
+        bind("ctrl-8", &SelectTab8),
+        bind("ctrl-9", &SelectTab9),
     ];
-    macro_rules! bind {
-        ($key:expr, $action:expr) => {
-            bindings.push(KeyBinding::new(
-                &format!("ctrl-shift-{}", $key),
-                $action,
-                Some(KEY_CONTEXT),
-            ));
-        };
+    for (key, action) in [
+        (NEW_TAB_KEY, &NewTab as &dyn Action),
+        (DUPLICATE_TAB_KEY, &DuplicateTab),
+        (CLOSE_TAB_KEY, &CloseTab),
+        (SIDEBAR_KEY, &ToggleSidebar),
+        (SEARCH_KEY, &SearchTabs),
+        (ATTENTION_KEY, &NextAttention),
+    ] {
+        bindings.push(bind(&format!("ctrl-shift-{key}"), action));
     }
-    bind!(NEW_TAB_KEY, NewTab);
-    bind!(DUPLICATE_TAB_KEY, DuplicateTab);
-    bind!(CLOSE_TAB_KEY, CloseTab);
-    bind!(SIDEBAR_KEY, ToggleSidebar);
-    bind!(SEARCH_KEY, SearchTabs);
-    bind!(ATTENTION_KEY, NextAttention);
     bindings
+}
+
+/// The action that selects the tab at `index` (Ctrl+1 to Ctrl+9 by default), if any.
+pub fn select_tab_action(index: usize) -> Option<&'static str> {
+    let actions: [&dyn Action; 9] = [
+        &SelectTab1,
+        &SelectTab2,
+        &SelectTab3,
+        &SelectTab4,
+        &SelectTab5,
+        &SelectTab6,
+        &SelectTab7,
+        &SelectTab8,
+        &SelectTab9,
+    ];
+    actions.get(index).map(|action| action.name())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,6 +239,9 @@ pub struct WorkspaceView {
     sidebar_visible: bool,
     /// GPU capability is fixed for the lifetime of this window.
     pulse_running: bool,
+    /// The platform presents the window's frames (not minimized): sidebar animations run only
+    /// then, in case a platform still draws a hidden window.
+    window_visible: bool,
     explorer: Entity<FileExplorer>,
     /// The "close busy tabs?" question is open (it is never asked twice at once).
     close_question_open: bool,
@@ -241,6 +258,8 @@ pub struct WorkspaceView {
     /// The same for the explorer's width, in pixels (`explorer_width`).
     explorer_drag: DividerDrag<ExplorerWidth>,
     renaming: Option<Rename>,
+    /// The sidebar menu (tab, group, `+`) that is open, if any.
+    menu: OpenMenu,
     search: TabSearch,
     cards: TabCards,
     /// Where the tab being dragged would land, from the last drag move over the sidebar.
@@ -258,6 +277,7 @@ pub struct WorkspaceView {
     /// `History::saved_cleared` / `forgets` as last handled by `scrub_retained_commands`.
     history_seen: (u32, u32),
     _history_observer: Subscription,
+    _visibility_observer: Subscription,
 }
 
 fn history_counts(cx: &App) -> (u32, u32) {
@@ -313,12 +333,18 @@ impl WorkspaceView {
         );
         let history_seen = history_counts(cx);
         let history_observer = cx.observe_global::<history::History>(Self::scrub_retained_commands);
+        let visibility_observer =
+            cx.observe_window_visibility(window, |workspace, visibility, _, cx| {
+                workspace.window_visible = visibility.is_visible();
+                cx.notify();
+            });
         Self {
             tabs: Vec::new(),
             layout: Layout::default(),
             active: 0,
             sidebar_visible: true,
             pulse_running: sidebar::pulse_allowed(window),
+            window_visible: window.is_visible(),
             explorer,
             close_question_open: false,
             explorer_visible: false,
@@ -327,6 +353,7 @@ impl WorkspaceView {
             viewer_drag: DividerDrag::new(Self::save_viewer_fraction),
             explorer_drag: DividerDrag::new(Self::save_explorer_width),
             renaming: None,
+            menu: OpenMenu::default(),
             search: TabSearch::new(window, cx),
             cards: TabCards::default(),
             drop_hint: None,
@@ -341,6 +368,7 @@ impl WorkspaceView {
             _file_panes_observer: file_panes_observer,
             history_seen,
             _history_observer: history_observer,
+            _visibility_observer: visibility_observer,
         }
     }
 
@@ -483,7 +511,7 @@ impl WorkspaceView {
     ) {
         let kind = match notice {
             AgentNotice::Exited(code) => exit_toast_kind(code),
-            AgentNotice::NeedsAttention | AgentNotice::Finished => ToastKind::AgentStatus,
+            AgentNotice::NeedsAttention(_) | AgentNotice::Finished => ToastKind::AgentStatus,
         };
         if !settings_file::notifications(cx).shows(kind) {
             return;
@@ -493,7 +521,11 @@ impl WorkspaceView {
         };
         let name = Self::tab_name(&self.tabs[index], cx);
         let notification = match notice {
-            AgentNotice::NeedsAttention => Notification::warning("Needs attention"),
+            AgentNotice::NeedsAttention(reason) => Notification::warning(reason.map_or(
+                sidebar::TabStatus::NeedsAttention.label(),
+                WaitReason::label,
+            ))
+            .content(|_, _, cx| jump_key_tooltip(cx)),
             AgentNotice::Finished => Notification::info(sidebar::TabStatus::ReadyForReview.label()),
             AgentNotice::Exited(Some(0)) => Notification::success("Agent finished"),
             AgentNotice::Exited(Some(code)) => {
@@ -563,10 +595,8 @@ impl WorkspaceView {
             .focus_handle
             .is_focused(window);
         // "Always for this tab" lasts until the tab closes, across its sessions.
-        let clipboard_always = self.tabs[index].view.read(cx).clipboard_always();
-        view.update(cx, |view, _| {
-            view.inherit_clipboard_always(clipboard_always)
-        });
+        let clipboard = self.tabs[index].view.read(cx).clipboard_carry_over();
+        view.update(cx, |view, _| view.set_clipboard_guard(clipboard));
         let tab = &mut self.tabs[index];
         if let Some(hooks) = &self.hooks {
             hooks.remove_session(tab.view.read(cx).id());
@@ -607,6 +637,11 @@ impl WorkspaceView {
             Self::offer_external_open(path, window, cx);
             return;
         }
+        // The settings page hides the selected tab's viewer: the tab shows again, or the file
+        // would open out of sight (the Settings row stays).
+        if index == self.active && self.settings.shows_page() {
+            self.activate(index, window, cx);
+        }
         let viewer = match &self.tabs[index].viewer {
             Some(viewer) => viewer.view.clone(),
             None => {
@@ -626,8 +661,12 @@ impl WorkspaceView {
         cx.notify();
     }
 
-    /// The selected tab's file viewer, while it shows a file.
+    /// The selected tab's file viewer, while it shows a file and the settings page doesn't
+    /// hide it (with the tab's terminal; the tab keeps its file and unsaved edits).
     fn active_viewer(&self, cx: &App) -> Option<Entity<FileViewer>> {
+        if self.settings.shows_page() {
+            return None;
+        }
         let viewer = &self.active_tab()?.viewer.as_ref()?.view;
         viewer.read(cx).is_open().then(|| viewer.clone())
     }
@@ -1339,7 +1378,7 @@ impl WorkspaceView {
     }
 
     /// The page's switch (or a hand edit) already wrote "off": write "on" back (settings.json
-    /// is off for a moment, see PLAN.md) and start the discard questions, unless a chain of
+    /// is off for a moment, see BACKLOG.md) and start the discard questions, unless a chain of
     /// them is already waiting for answers.
     fn refuse_file_panes_off(
         &mut self,
@@ -1699,7 +1738,7 @@ impl WorkspaceView {
             .icon(icon)
             .ghost()
             .small()
-            .tooltip(shortcuts::with_shortcut(label, SIDEBAR_KEY))
+            .tooltip(shortcuts::with_shortcut(label, &ToggleSidebar, cx))
             .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_sidebar(cx)))
     }
 
@@ -1714,7 +1753,7 @@ impl WorkspaceView {
             .ghost()
             .small()
             .selected(self.explorer_visible)
-            .tooltip(shortcuts::with_shortcut(label, EXPLORER_KEY))
+            .tooltip(shortcuts::with_shortcut(label, &ToggleExplorer, cx))
             .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_explorer(cx)))
     }
 }
@@ -1738,6 +1777,7 @@ impl Focusable for WorkspaceView {
 impl Render for WorkspaceView {
     #[expect(clippy::too_many_lines, reason = "split when next changed")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.hold_hover_cards(window, cx);
         let active = self
             .active_tab()
             .filter(|_| !self.settings.shows_page())
@@ -1879,19 +1919,26 @@ impl Render for WorkspaceView {
                     .when(self.explorer_visible, |content| {
                         content.child(self.explorer_panel(cx))
                     })
-                    .child(div().flex_1().min_w_0().h_full().children(active).when(
-                        self.settings.shows_page(),
-                        |area| {
-                            area.track_focus(self.settings.focus())
-                                .child(settings_page::render(
-                                    self.launchers.clone(),
-                                    cx.listener(|workspace, _, window, cx| {
-                                        workspace.open_settings_file(window, cx)
-                                    }),
-                                    cx,
-                                ))
-                        },
-                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            // Only a terminal is see-through (window opacity below 100 %).
+                            .when(active.is_none(), |area| area.bg(cx.theme().background))
+                            .children(active)
+                            .when(self.settings.shows_page(), |area| {
+                                area.track_focus(self.settings.focus()).child(
+                                    settings_page::render(
+                                        self.launchers.clone(),
+                                        cx.listener(|workspace, _, window, cx| {
+                                            workspace.open_settings_file(window, cx)
+                                        }),
+                                        cx,
+                                    ),
+                                )
+                            }),
+                    )
                     .when_some(viewer, |content, viewer| {
                         content.child(self.viewer_divider(cx)).child(
                             div()
@@ -1903,6 +1950,23 @@ impl Render for WorkspaceView {
                     }),
             )
     }
+}
+
+/// Covers an attention toast's text with a tooltip naming the key that goes to the next tab
+/// needing attention, read from the keymap in use; nothing while no key runs it. The toast has
+/// no tooltip of its own.
+fn jump_key_tooltip(cx: &App) -> AnyElement {
+    let Some(keys) = shortcuts::shortcut_text(NextAttention.name(), cx) else {
+        return Empty.into_any_element();
+    };
+    // `shortcuts::with_shortcut`'s "label (keys)" format, without its unbound fallback.
+    let tooltip: SharedString = format!("Go to the next tab needing attention ({keys})").into();
+    div()
+        .id("agent-notice-jump-key")
+        .absolute()
+        .inset_0()
+        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+        .into_any_element()
 }
 
 #[cfg(test)]

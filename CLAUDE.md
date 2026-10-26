@@ -4,8 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Agent Workspace (repo "Bowarp") is a GPUI desktop terminal app for running Claude Code, Copilot CLI
 and shells side by side in tabs, with per-tab agent status. User-facing behavior and shortcuts are
-documented in README.md; the target spec is FEATURES.md; current status, backlog and known
-limitations are in PLAN.md.
+documented in README.md; the target spec is FEATURES.md; the backlog, next steps and pending
+manual checks are in BACKLOG.md; known limitations of built features are in
+docs/known-limitations.md.
 
 ## Commands
 
@@ -29,10 +30,14 @@ rustfmt does not wrap comments; keep lines ≤ 100 chars by hand.
 
 Version bumps: `scripts/bump-version.sh [patch|minor|major]` (refuses a dirty `Cargo.toml`). Each
 pushed feature is a patch bump tagged `v<version>`; a finished milestone bumps minor. The release
-checklist is RELEASE.md (also update PLAN.md, CHANGELOG.md "Unreleased", README.md).
+checklist is RELEASE.md (also update BACKLOG.md, CHANGELOG.md "Unreleased", README.md).
 
 ## Constraints
 
+- Stack: Rust + GPUI + `alacritty_terminal`. Priorities: performance, then memory, then
+  Windows, then Ubuntu; event-driven redraw (no work when idle). Only `app` depends on GPUI.
+- Zed's `terminal` / `terminal_view` crates are GPL-3: reference only, never copy code from
+  them (`gpui` and `alacritty_terminal` are Apache-2.0).
 - Edition 2024, MSRV 1.95 (`rust-version` in root `Cargo.toml`): don't use newer std APIs.
 - `alacritty_terminal` is pinned `=0.26.0`: `term-core/src/prompt.rs` mirrors its crate-private
   pty poll token; re-check on any bump (`session::tests` fails if wrong).
@@ -87,8 +92,10 @@ Cargo workspace, `crates/*`:
   on Linux (no Windows clippy cross-check available locally).
 - Bytes typed into the PTY (`TerminalView::type_text`) are raw; paths go through
   `file_tree::quote_path` / `cd_command`.
-- PLAN.md: remove items once fully done and verified; implemented-but-unchecked items go under
-  "Fixed, not tested yet". It may contain the user's uncommitted edits — stage only your hunks.
+- BACKLOG.md: remove items once fully done and verified; implemented-but-unchecked items go under
+  "Fixed, not tested yet". It holds work to do only: no status, test counts or verification
+  records; a new limitation of a built feature goes to docs/known-limitations.md. It may
+  contain the user's uncommitted edits — stage only your hunks.
 - CHANGELOG.md lists user-visible changes only, under "Unreleased" until release.
 - `pipeline/` (git-ignored) holds the multi-agent pipeline's logs, retros and the Xvfb UI test
-  harness (`pipeline/tools/`); the pipeline itself is described in PIPELINE-PLAN.md.
+  harness (`pipeline/tools/`); the pipeline itself is described in PIPELINE-BACKLOG.md.

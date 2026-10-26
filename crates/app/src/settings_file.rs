@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use gpui_kit::component::{ActiveTheme, Theme, ThemeMode};
 use gpui_kit::{App, Global};
 use workspace_model::{
-    FilePaneFeatures, HistoryFeatures, NotificationFeatures, Settings, SettingsFile, UiTheme,
-    WorkspaceFeatures,
+    FilePaneFeatures, HistoryFeatures, KeybindingOverlay, NotificationFeatures, Settings,
+    SettingsFile, UiTheme, WindowOpacity, WorkspaceFeatures,
 };
 
 use crate::window_bounds::config_file;
@@ -94,6 +94,21 @@ pub fn notifications(cx: &App) -> NotificationFeatures {
         .map_or_else(NotificationFeatures::default, |settings| {
             NotificationFeatures::from_settings(settings.0.settings())
         })
+}
+
+/// The terminal background's opacity; 100 % while settings aren't loaded (unit tests).
+pub fn window_opacity(cx: &App) -> WindowOpacity {
+    cx.try_global::<AppSettings>()
+        .map_or_else(WindowOpacity::default, |settings| {
+            settings.0.settings().window_opacity
+        })
+}
+
+/// The settings file's `"keybindings"` overlay (see `keymap`); `None` while settings aren't
+/// loaded (unit tests).
+pub fn keybindings(cx: &App) -> Option<&KeybindingOverlay> {
+    cx.try_global::<AppSettings>()
+        .map(|settings| &settings.0.settings().keybindings)
 }
 
 /// The settings file, for its `load_error` and `save_error` (shown on the settings page).

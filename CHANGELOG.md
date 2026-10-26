@@ -5,6 +5,80 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.34
+
+- Attention toasts say what the agent waits for: "Waiting for permission" or "Waiting for
+  your reply" (a bell still shows "Needs attention"); hovering the toast shows the key that
+  goes to the next tab needing attention.
+
+## 0.2.33
+
+- Don't show tab and group hover cards while a name is being edited, or a menu or dialog is
+  open; a card hidden that way shows again once the pointer leaves the row and comes back.
+- After dropping a dragged tab, the card under the pointer no longer pops up at once.
+
+## 0.2.32
+
+- Hide the file viewer while the settings page shows, so the page gets the full width; the
+  viewer keeps its file and unsaved edits and comes back with the tab.
+- **Open settings file** and opening a file from the explorer while the settings page shows
+  now go back to the selected tab and show the file there, instead of beside the page.
+
+## 0.2.31
+
+- Add **Clipboard writes from programs** (Ask, Allow, Deny) to Settings → Terminal → Clipboard,
+  also `clipboard_writes` in the settings file: Allow or Deny answers every program's clipboard
+  write in every tab without showing the notice.
+- Fix the Linux release build not starting on Ubuntu 24.04 (it needed glibc 2.43).
+
+## 0.2.30
+
+- Show a blue ring turning in quarter steps left of a working Copilot tab's title in the
+  sidebar; it stops when Copilot is no longer working. With **Activity animations** off it
+  stays still. It doesn't animate in a collapsed group or a minimized window.
+- Stop the Running badge's pulse while the window is minimized.
+
+## 0.2.29
+
+- Add **Opacity** (30-100 %) and **Background blur** to Settings → Appearance → Window, also
+  `window_opacity` and `window_blur` in the settings file. Opacity applies live to the
+  terminal's default background only; text, colored cells and the rest of the window stay
+  opaque.
+- Blur offers None / Acrylic / Mica on Windows (Mica uses Acrylic before Windows 11 22H2) and
+  None / Blur on KDE Plasma (Wayland). Elsewhere, or at 100 % opacity, the choice is disabled
+  and says why.
+- Save a slider value (such as the font size) when no settings file exists yet; it was lost.
+
+## 0.2.28
+
+- Add a **Keyboard** settings page to edit shortcuts: click a key to record a new one, **+** to
+  add a key, **×** to remove one, **Reset to default** per action and **Reset all**. A key
+  taken from another action moves to the new one, and a notice says so.
+- Refuse keys that belong to the terminal program while recording: typing keys and Ctrl or
+  Alt plus a letter alone (Ctrl+D, Ctrl+C, Alt+B). Esc cancels recording.
+- Show the keys in use in menu and tooltip hints, and no key while an action is unbound. The
+  explorer hint now reads Ctrl+|, the key that is actually bound.
+
+## 0.2.27
+
+- Rebind, add or remove keyboard shortcuts with a `"keybindings"` section in the settings file,
+  e.g. `{"ctrl-v": null, "ctrl-alt-t": "NewTab"}`. A removed shortcut's key goes to the
+  program, so `"ctrl-v": null` gives bash and vim their Ctrl+V back. Changes apply when the
+  settings are read again (opening Settings or saving the file in the viewer).
+- List each skipped shortcut entry (unknown action, key that can't be read) on the settings
+  page; the other entries still apply.
+- Allow rebinding F11 (full screen) like the other shortcuts.
+
+## 0.2.26
+
+- Ask before a program writes the clipboard or the primary selection (OSC 52, e.g. Copilot
+  CLI's copy on Windows, tmux, vim): a notice above the terminal shows the text's size and a
+  preview, and **Allow** (Ctrl+Shift+Y), **Deny** (Ctrl+Shift+N) or **Always for this tab**
+  answers it. A newer write replaces the waiting one, and a background tab with a waiting write
+  shows Needs attention.
+- Show both texts in the notice when a program writes different text to the clipboard and
+  the primary selection.
+
 ## 0.2.25
 
 - Ask before closing a tab whose command is still running or whose agent is working or

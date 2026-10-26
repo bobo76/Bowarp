@@ -205,6 +205,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::WaitReason;
 
     #[test]
     fn parses_lines() {
@@ -218,7 +219,15 @@ mod tests {
         );
         assert_eq!(
             parse_line("7 1000 Notification permission_prompt\n").map(|m| m.event),
-            Some(AgentEvent::Hook(HookEvent::InputRequested))
+            Some(AgentEvent::Hook(HookEvent::InputRequested(
+                WaitReason::Permission
+            )))
+        );
+        assert_eq!(
+            parse_line("7 1000 Notification elicitation_dialog\n").map(|m| m.event),
+            Some(AgentEvent::Hook(HookEvent::InputRequested(
+                WaitReason::Reply
+            )))
         );
         assert_eq!(
             parse_line("7 1000 CopilotMode autopilot\n").map(|m| m.event),

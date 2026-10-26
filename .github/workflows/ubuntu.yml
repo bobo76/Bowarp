@@ -12,7 +12,9 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # The release binary needs the build host's glibc or newer: build on the oldest supported
+    # LTS, not ubuntu-latest (26.04's glibc 2.43 broke the app on 24.04).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
@@ -29,6 +31,16 @@ jobs:
 
       - name: Build
         run: cargo build --release --workspace --locked
+
+      - name: Check glibc requirement
+        run: |
+          max=$(objdump -T target/release/agent-workspace target/release/agentws-hook \
+            | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+          echo "Highest glibc symbol version: $max"
+          if [ "$(printf '%s\n' "$max" GLIBC_2.39 | sort -V | tail -1)" != GLIBC_2.39 ]; then
+            echo "::error::Binary needs $max; Ubuntu 24.04 ships GLIBC_2.39"
+            exit 1
+          fi
 
       # Branches reuse the release dependencies for speed; main keeps debug
       # assertions and overflow checks.

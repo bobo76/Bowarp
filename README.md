@@ -1,7 +1,8 @@
 # Agent Workspace
 
 A terminal workspace for running Claude Code, Copilot CLI and shell sessions side by side, with
-per-tab agent status. Feature spec: [FEATURES.md](FEATURES.md). Plan and status: [PLAN.md](PLAN.md).
+per-tab agent status. Feature spec: [FEATURES.md](FEATURES.md). Backlog: [BACKLOG.md](BACKLOG.md).
+Known limitations: [docs/known-limitations.md](docs/known-limitations.md).
 
 ## Install on Windows
 
@@ -77,6 +78,7 @@ Code or Copilot CLI; agents that are not installed are listed but disabled. New 
 |---|---|
 | Ctrl+Shift+C, Ctrl+Insert | Copy the selection |
 | Ctrl+Shift+V, Shift+Insert | Paste |
+| Ctrl+V | Paste; sends `^V` to the program when the clipboard holds no text |
 | Ctrl+Shift+F | Search terminal output and scrollback |
 | Ctrl+Shift+Y / Ctrl+Shift+N | Allow / deny a program's clipboard write (while its notice shows) |
 | Enter / Shift+Enter (in terminal search) | Next / previous match, wrapping around |
@@ -94,7 +96,9 @@ When a program writes the clipboard or the primary selection (OSC 52, e.g. Copil
 copy on Windows, tmux, vim), a notice above the terminal shows the text's size and a preview,
 and the write waits: Allow applies it, Deny drops it, and "Always for this tab" applies it and
 every later one until the tab closes. A newer write replaces the waiting one; a background tab
-with a waiting write shows Needs attention.
+with a waiting write shows Needs attention. Settings → Terminal → Clipboard → **Clipboard
+writes from programs** (`clipboard_writes`: `ask`, `allow` or `deny`) can instead allow or deny
+every write in every tab without asking; Deny also overrides "Always for this tab".
 
 Terminal search matches literal text, ignoring case, across the current screen and retained
 scrollback, including soft-wrapped lines. All visible matches are highlighted, with the active
@@ -193,7 +197,9 @@ launch folder for now).
 The badge on the icon shows the status. Hover a row for a moment to see its card: the status,
 the full folder, the branch, the program's title, the session kind and, in a repository, the
 lines added in the working tree (`+N`: changes to tracked files from `git diff HEAD` plus new
-files not yet added and not ignored, refreshed at most every 5 s).
+files not yet added and not ignored, refreshed at most every 5 s). No card opens while a tab
+is dragged, a name is edited, or a menu or dialog is open; a card hidden that way comes back
+after the pointer leaves the row and hovers it again.
 
 Appearance → Tab hover card controls the card and its Status, Location, Changes, Program
 title and Session kind pieces (all on initially). The tab name and Ctrl+number shortcut
@@ -201,9 +207,9 @@ always remain. Program title appears when a custom name hides it. Turning the ca
 disables, but remembers, the piece switches; turning every piece off also hides the card.
 Changes off skips `git diff`; Status off stops the card's clock. Group cards are unaffected.
 Appearance → Group hover cards (on) turns the cards beside group headers off (a collapsed
-group still shows its status); Activity animations (on) off makes the Running badge static
-and starts no animation timers. Both apply live and are saved as `group_hover_cards` and
-`activity_animations` (missing or non-boolean means on).
+group still shows its status); Activity animations (on) off makes the Running badge and a
+working Copilot tab's spinner static and starts no animation timers. Both apply live and are
+saved as `group_hover_cards` and `activity_animations` (missing or non-boolean means on).
 
 ### Copilot permission status (CLI 1.0.103)
 
@@ -272,7 +278,7 @@ Run the extension's tests with `node --test .\crates\app\copilot-extension\bridg
 
 | Badge | Status |
 |---|---|
-| blue | Working |
+| blue; a Copilot tab also shows a turning blue ring before the title (still with Activity animations off or on a software-rendered GPU) | Working |
 | orange, plus a warning triangle before the title | Needs attention |
 | green with a check | Ready for review: finished while you were on another tab (until you select it) |
 | green | Idle |
@@ -292,12 +298,15 @@ while you are on another tab shows Needs attention until you select it. Claude C
 hooks ignore the bell, since their hooks already report it.
 
 Background Claude Code and Copilot tabs show an in-app toast when they need attention, finish
-a turn, or exit (an unsuccessful exit includes its code when available). Background means the
-terminal is hidden: another tab is selected or Settings is shown, not just that the keyboard
-is in another pane. Repeated status reports, titles and output do not repeat the toast.
-Click a toast to select its tab, expanding its group; click its close button to dismiss it
-without switching tabs, or let it disappear automatically. A newer notice for the same tab
-replaces the previous one. There is no sound or OS notification.
+a turn, or exit (an unsuccessful exit includes its code when available). An attention toast
+says what the agent waits for: "Waiting for permission", "Waiting for your reply", or "Needs
+attention" after a bell; hovering its text shows the key that goes to the next tab needing
+attention (nothing while that action has no key). Background means the terminal is hidden:
+another tab is selected or Settings is shown, not just that the keyboard is in another pane.
+Repeated status reports, titles and output do not repeat the toast. Click a toast to select
+its tab, expanding its group; click its close button to dismiss it without switching tabs, or
+let it disappear automatically. A newer notice for the same tab replaces the previous one.
+There is no sound or OS notification.
 
 Right-click a row or use its `⋮` button for the tab menu: duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
 and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working
@@ -406,7 +415,8 @@ unless it has unsaved edits, which are kept.
 ## Settings
 
 The gear button in the title bar (after the `i` button) opens the settings page in place of the
-terminal and adds a Settings row under the tabs; select a tab to go back, select the row to
+terminal and the file viewer and adds a Settings row under the tabs (the viewer keeps its file
+and unsaved edits and comes back with the tab); select a tab to go back, select the row to
 return, and close the row with its × or Ctrl+Shift+W. The row isn't reopened at the next start.
 Clicking the gear again while the page or one of its controls has focus closes the page and
 removes its row, returning focus to the terminal. If another pane has focus, the first click
@@ -414,9 +424,10 @@ focuses Settings instead.
 
 The search box filters the rows by title, description and keywords. A change saves to
 `settings.json` in the config folder at once; "Reset to default" under a changed row (or the
-page's reset button) restores the default. "Open settings file" shows `settings.json` in the
-file viewer, creating it first if it doesn't exist. A banner on the page says when the file
-can't be read (the defaults apply until it is fixed or a change moves it to
+page's reset button) restores the default. "Open settings file" goes back to the selected tab
+and shows `settings.json` in its file viewer, creating it first if it doesn't exist; opening a
+file from the explorer while the page shows also goes back to the tab. A banner on the page says
+when the file can't be read (the defaults apply until it is fixed or a change moves it to
 `settings.json.bak`) or a change couldn't be saved. The About page shows the version and the
 config folder.
 
@@ -428,6 +439,19 @@ The Appearance page also sets the terminal font: its family (an installed font's
 empty, or a font that isn't installed, uses DejaVu Sans Mono, Cascadia Mono on Windows) and
 size (the slider applies while dragged and saves when released; the file accepts 6 to 72
 points). Each tab re-measures its cells and resizes its terminal when it is next shown.
+
+Appearance → Window sets the terminal background's opacity and blur, applied live:
+
+- Opacity (`"window_opacity"`, a percent, default 100; the file accepts 30 to 100, the
+  slider steps by 5 and saves when released): below 100 % the desktop shows through the
+  terminal's background and padding. Text, cells a program colored, the selection, the cursor
+  and the rest of the window (title bar, sidebar, settings, file panes, menus) stay opaque.
+- Background blur (`"window_blur"`: `"none"` (default), `"blur"` or `"mica"`): what shows
+  through. On Windows: None, Acrylic (`"blur"`) or Mica, which needs Windows 11 22H2 or
+  later (Acrylic is used before). On Linux: None or Blur, on KDE Plasma (Wayland) only;
+  elsewhere (GNOME, X11) the opacity still applies and the dropdown is disabled ("Not
+  available on this system"). A saved `"mica"` means Blur on Linux. It needs an opacity
+  below 100 %.
 
 The Terminal page sets the default shell: the one the `+` menu lists first and Ctrl+Shift+T,
 "Open in new tab" and an agent tab that quits open, and the first tab when no tabs are saved.
@@ -505,6 +529,40 @@ status, status dots and attention badges are unchanged, and a toast already on s
 until it hides. An agent that exits with a nonzero or unknown exit code still shows its toast.
 Toasts that answer something you did (save or delete errors, history cleared, failed starts)
 and the persistent fallback-shell warning always show.
+
+### Keyboard shortcuts
+
+The `"keybindings"` object in `settings.json` changes the default shortcuts key by key: an
+action name binds the key (replacing its default), `null` unbinds a default key so it goes to
+the program. For example, to get `^V` back for bash's quoted-insert and vim's visual block and
+paste with Ctrl+Shift+V only:
+
+```json
+"keybindings": { "ctrl-v": null, "ctrl-alt-t": "NewTab" }
+```
+
+Keys are written as GPUI keystrokes: modifiers `ctrl`, `alt`, `shift`, `super` (Windows key)
+joined by `-` to a key (`a`, `f5`, `tab`, `escape`, `insert`, `pageup`; a capital letter
+adds Shift: `ctrl-V` is `ctrl-shift-v`); a space separates the keystrokes of a sequence (`ctrl-k ctrl-c`). Actions: `Copy`, `CopyOrSend`,
+`Paste`, `PasteOrSend`, `Find`, `CloseFind`, `AllowClipboard`, `DenyClipboard` (in the
+terminal); `NewTab`, `DuplicateTab`, `CloseTab`, `NextTab`, `PreviousTab`, `SelectTab1` to
+`SelectTab9`, `ToggleSidebar`, `ToggleExplorer`, `SearchTabs`, `NextAttention`,
+`ToggleFullScreen` (anywhere in the window). `terminal::Paste` and `workspace::NewTab` also
+work. An entry that can't be used (an unknown action, a key that can't be read, a value that
+is neither a name nor `null`, `null` for a key with no default) is skipped and named in a
+banner on the settings page; the others apply. A change applies when the file is read again:
+when the settings page opens, when the file is saved in the file viewer, or at the next
+change on the page. Ctrl+C, Tab and Shift+Tab bound to a workspace action still go to the
+program while the terminal has the keyboard. Tooltips and menus show the shortcuts in use.
+
+The settings page's Keyboard page edits the same object: one row per action with its keys.
+Click a key and press the new shortcut to replace it, `+` to add one, `×` to remove one, and
+"Reset to default" (or "Reset all" at the end) to go back to the defaults. Recording takes a
+single keystroke (plain Esc cancels). Keys that terminal programs use are refused with a toast:
+typing keys (letters, Space, Enter, arrows) and Ctrl or Alt plus a letter (Ctrl+D, Alt+B); use
+Ctrl+Shift, Super or a key like F5.
+A shortcut already in use moves to the new action, and a toast names the action that had it.
+Entries the app can't read are left in the file.
 
 ## About
 

@@ -9,7 +9,9 @@
 //! output, the progress reports (OSC 9;4) in a program's output, how a running command is
 //! labeled and badged, which tabs closing would interrupt, which clipboard writes wait for the
 //! user, how far the mouse wheel scrolls,
-//! the About dialog's version line and the user's settings file. No UI dependency.
+//! the About dialog's version line, the user's settings file and keyboard shortcuts, and the
+//! window background's opacity and blur. No UI
+//! dependency.
 
 // Long test scenarios are exempt from the function length limit (docs/code-quality.md).
 #![cfg_attr(test, allow(clippy::too_many_lines))]
@@ -25,6 +27,7 @@ mod git;
 mod history;
 mod history_features;
 mod instance_lock;
+mod keymap;
 mod lap;
 mod last_command;
 mod launcher_icon;
@@ -43,14 +46,15 @@ mod tab;
 mod tabs_state;
 mod time;
 mod wheel;
+mod window_background;
 mod window_state;
 mod workspace_features;
 
 pub use about::version_line;
 pub use attention::{Attention, next_attention, waiting_count};
 pub use clipboard_guard::{
-    CLIPBOARD_PREVIEW_CHARS, ClipboardGuard, ClipboardNotice, ClipboardOffer, ClipboardTarget,
-    ClipboardWrites,
+    CLIPBOARD_PREVIEW_CHARS, ClipboardAnswer, ClipboardGuard, ClipboardNotice, ClipboardOffer,
+    ClipboardPolicy, ClipboardTarget, ClipboardWrites,
 };
 pub use close_warning::{
     AgentActivity, BusyReason, BusyTab, CloseTarget, CloseWarning, TabActivity, close_warning,
@@ -65,6 +69,10 @@ pub use history::{
 };
 pub use history_features::{HistoryFeatures, HistoryKey};
 pub use instance_lock::{held_by_other, lock_pid, lock_text};
+pub use keymap::{
+    HeldModifiers, KeybindingOverlay, Keymap, KeymapProblem, KeymapReason, Shortcut, action_label,
+    is_terminal_input, short_name,
+};
 pub use lap::{Lap, format_lap, until_next_second};
 pub use last_command::LastCommand;
 pub use launcher_icon::{LauncherIcon, distro_icon, shell_icon};
@@ -88,5 +96,9 @@ pub use settings::{
 pub use tab::{TabColor, TabMeta};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};
 pub use wheel::{WheelScroll, notch_lines};
+pub use window_background::{
+    BLUR_NEEDS_OPACITY, BLUR_UNAVAILABLE, Backdrop, BlurControl, BlurSupport, MICA_FALLBACK,
+    MICA_MIN_WINDOWS_BUILD, WindowBlur, WindowOpacity, WindowsSwitch, blur_options, shown_blur,
+};
 pub use window_state::{Rect, WindowMode, WindowState};
 pub use workspace_features::WorkspaceFeatures;

@@ -60,7 +60,7 @@ Windows build and visual/manual checks remain pending (no local MSVC linker).
 - [x] Run affected tests, formatting, and Clippy.
 - [ ] Manually check focus behavior, menus, theme contrast, hover cards, fallback
   warnings, and background-only notifications on the target platform.
-- [x] Update the relevant user documentation and `PLAN.md`. Its policy is to
+- [x] Update the relevant user documentation and `BACKLOG.md`. Its policy is to
   remove fully verified items and retain items awaiting manual checks.
 
 The existing local Docker image `bowarp-build` and volumes `bowarp-target` and

@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use agent_status::{AgentState, AgentStatus};
+use agent_status::{AgentState, AgentStatus, WaitReason};
 use workspace_model::Lap;
 
 /// A status change.
@@ -30,6 +30,11 @@ impl AgentTracker {
 
     pub fn status(&self) -> AgentStatus {
         self.state.status()
+    }
+
+    /// What the agent waits for, while it needs attention.
+    pub fn wait_reason(&self) -> Option<WaitReason> {
+        self.state.wait_reason()
     }
 
     /// How long the agent has been working on the current turn, or `None` when it is not

@@ -31,6 +31,7 @@ use crate::assets::{
 };
 use crate::folder_watcher::{FolderWatcher, WatchedFolders, WatchesFolders};
 use crate::launcher::Launcher;
+use crate::open_menu::OpenMenu;
 use crate::sidebar;
 
 const ROW_HEIGHT: f32 = 24.;
@@ -106,6 +107,8 @@ pub struct FileExplorer {
     listings: HashMap<PathBuf, Listing>,
     selected: Option<PathBuf>,
     editing: Option<NameEdit>,
+    /// The entry menu that is open, if any.
+    menu: OpenMenu,
     /// The expanded folders. Without a platform watcher, folders refresh only when expanded
     /// again or changed from the explorer.
     watches: WatchedFolders,
@@ -151,9 +154,15 @@ impl FileExplorer {
             listings: HashMap::new(),
             selected: None,
             editing: None,
+            menu: OpenMenu::default(),
             watches: WatchedFolders::new(FolderWatcher::new(window, cx)),
             rows: Rc::new([]),
         }
+    }
+
+    /// Whether a name editor or an entry menu is open, which a popup must not cover.
+    pub fn holds_popups(&self) -> bool {
+        self.editing.is_some() || self.menu.is_open()
     }
 
     /// Show `root` (the selected tab's folder) with the tab's directory-change capability.
@@ -480,6 +489,7 @@ impl FileExplorer {
         let agents = self.agents.clone();
         let cd = self.cd;
         move |menu, window, cx| {
+            OpenMenu::track(&explorer, |explorer| &mut explorer.menu, cx);
             let item = |label: &'static str, command: EntryCommand, enabled: bool| {
                 command_item(&explorer, &row, label.into(), command, enabled)
             };
