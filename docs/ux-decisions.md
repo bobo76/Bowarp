@@ -746,3 +746,13 @@
 - Decision: A, because closing the last tab is no longer destructive, so no path needs a
   special case. The tabs snapshot is saved as after any close (zero tabs, groups kept).
   Decided by: UX/UI agent
+
+## Copilot Working spinner: one shared timer, 4 steps a second
+- Date: 2026-10-26, raised by: user
+- Context: each spinner ran its own `with_animation` timer (2 fps). Timers of several working
+  Copilot rows usually fire in the same frame, but any that land either side of a frame each
+  repaint the whole window, terminal included.
+- Decision: one `SpinnerClock` on `WorkspaceView` (`workspace_view/spinner_clock.rs`) ticks
+  every `WORKING_SPIN_TICK` (250 ms, a quarter turn: one turn a second); every row draws the
+  shared step. A tick is scheduled only by a frame that drew a turning spinner, so nothing
+  runs while none is drawn. Decided by: user

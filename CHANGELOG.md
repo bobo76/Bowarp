@@ -5,6 +5,9 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- The working Copilot tab's spinner turns once a second (was every two seconds); several
+  working Copilot tabs now turn together on one timer instead of one each.
+
 ## 0.2.38
 
 - Keep the window open when the last tab closes: it shows "No open tabs" with a button per

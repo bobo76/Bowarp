@@ -20,8 +20,8 @@ use crate::open_menu::OpenMenu;
 use crate::settings_file;
 use crate::shortcuts;
 use crate::sidebar::{
-    self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabDetail,
-    TabRow,
+    self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, RunningPulse, SIDEBAR_WIDTH,
+    TabDetail, TabRow,
 };
 use crate::tab_menu;
 use crate::workspace_view::{NewTab, NextAttention};
@@ -233,7 +233,11 @@ impl WorkspaceView {
                 kind,
                 status,
                 sidebar::running_pulse(may_animate, true),
-            ),
+            )
+            .map(|motion| match motion {
+                RunningPulse::Animated => self.spinner_clock.drawn_step(),
+                RunningPulse::Still => 0,
+            }),
             selected: index == self.active && !self.settings.shows_page(),
             pinned: self.layout.is_pinned(id),
             color: self.tab_color(tab),

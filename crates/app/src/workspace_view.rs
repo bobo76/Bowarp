@@ -3,6 +3,7 @@ mod divider_drag;
 mod empty_state;
 mod settings_pane;
 mod sidebar_rows;
+mod spinner_clock;
 mod tab_card;
 mod tab_search;
 
@@ -36,6 +37,7 @@ use workspace_model::{
 
 use self::divider_drag::DividerDrag;
 use self::settings_pane::SettingsPane;
+use self::spinner_clock::SpinnerClock;
 use self::tab_card::TabCards;
 use self::tab_search::TabSearch;
 use crate::about;
@@ -243,6 +245,7 @@ pub struct WorkspaceView {
     /// The platform presents the window's frames (not minimized): sidebar animations run only
     /// then, in case a platform still draws a hidden window.
     window_visible: bool,
+    spinner_clock: SpinnerClock,
     explorer: Entity<FileExplorer>,
     /// The "close busy tabs?" question is open (it is never asked twice at once).
     close_question_open: bool,
@@ -376,6 +379,7 @@ impl WorkspaceView {
             sidebar_visible: true,
             pulse_running: sidebar::pulse_allowed(window),
             window_visible: window.is_visible(),
+            spinner_clock: SpinnerClock::default(),
             explorer,
             close_question_open: false,
             explorer_visible: false,
@@ -1878,6 +1882,11 @@ impl Render for WorkspaceView {
             f32::from(window.viewport_size().width),
             self.fixed_panes_width(cx),
         );
+        self.spinner_clock.begin_frame();
+        let sidebar = self
+            .sidebar_visible
+            .then(|| self.render_sidebar(cx).into_any_element());
+        self.spinner_clock.end_frame(cx);
         div()
             .size_full()
             .flex()
@@ -2002,9 +2011,7 @@ impl Render for WorkspaceView {
                             workspace.drag_explorer_edge(event, cx);
                         },
                     ))
-                    .when(self.sidebar_visible, |content| {
-                        content.child(self.render_sidebar(cx))
-                    })
+                    .children(sidebar)
                     .when(self.explorer_shown(), |content| {
                         content.child(self.explorer_panel(cx))
                     })

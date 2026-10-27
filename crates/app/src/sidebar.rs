@@ -57,13 +57,12 @@ const ADDED_GREEN: u32 = 0x3fb950;
 const RUNNING_PULSE: Duration = Duration::from_millis(2000);
 const RUNNING_PULSE_OPACITY: (f32, f32) = (0.35, 1.);
 const RUNNING_PULSE_FPS: f32 = 10.;
-/// One turn of a working Copilot tab's spinner. It repaints `WORKING_SPIN_FPS` times a second,
-/// a quarter turn a frame, only while a working row is drawn. Each repaint redraws the whole
+/// How often working Copilot tabs' spinners turn a step, all on one shared tick (the
+/// workspace's `SpinnerClock`), only while one is drawn. Each repaint redraws the whole
 /// window, so the rate is kept low.
-const WORKING_SPIN: Duration = Duration::from_millis(2000);
-const WORKING_SPIN_FPS: f32 = 2.;
+pub const WORKING_SPIN_TICK: Duration = Duration::from_millis(250);
 /// The spinner's positions in one turn (90 degrees apart).
-const WORKING_SPIN_STEPS: f32 = 4.;
+pub const WORKING_SPIN_STEPS: u8 = 4;
 
 /// A tab's status, shown as a badge on its icon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,8 +195,9 @@ pub struct TabRow {
     pub status: TabStatus,
     /// Whether a Running badge pulses rather than stays still.
     pub pulse: RunningPulse,
-    /// The spinner left of the name, turning or still; see [`working_spinner`].
-    pub spinner: Option<RunningPulse>,
+    /// The spinner left of the name, at its step out of `WORKING_SPIN_STEPS` (0 when still);
+    /// see [`working_spinner`].
+    pub spinner: Option<u8>,
     pub selected: bool,
     pub pinned: bool,
     /// The tab's own color, else its group's.
@@ -344,28 +344,13 @@ pub fn working_spinner(
     (kind == SessionKind::CopilotCli && status == TabStatus::Working).then_some(motion)
 }
 
-/// The spinner's turn at `delta` (0 to 1 through `WORKING_SPIN`), snapped to the nearest quarter
-/// so every frame shows a clean step whatever instant the timer fired at.
-fn spinner_turn(delta: f32) -> f32 {
-    (delta * WORKING_SPIN_STEPS).round() / WORKING_SPIN_STEPS
-}
-
-/// The working spinner: a ring with a gap, turning a quarter `WORKING_SPIN_FPS` times a second.
-fn spinner_icon(motion: RunningPulse, index: usize) -> AnyElement {
-    let icon = Icon::new(IconName::LoaderCircle)
+/// The working spinner: a ring with a gap, turned `step` quarter turns.
+fn spinner_icon(step: u8) -> impl IntoElement {
+    let turn = f32::from(step) / f32::from(WORKING_SPIN_STEPS);
+    Icon::new(IconName::LoaderCircle)
         .size(px(ATTENTION_ICON_SIZE))
-        .text_color(TabStatus::Working.color());
-    if motion == RunningPulse::Still {
-        return icon.into_any_element();
-    }
-    icon.with_animation(
-        ("working-spinner", index),
-        Animation::new(WORKING_SPIN)
-            .repeat_synced()
-            .with_max_fps(WORKING_SPIN_FPS),
-        |icon, delta| icon.transform(Transformation::rotate(percentage(spinner_turn(delta)))),
-    )
-    .into_any_element()
+        .text_color(TabStatus::Working.color())
+        .transform(Transformation::rotate(percentage(turn)))
 }
 
 /// Whether Running badges may pulse in `window`: not on a software-emulated GPU (a VM, remote
@@ -486,7 +471,7 @@ fn name_line(row: &mut TabRow, muted: Hsla) -> impl IntoElement {
     if let Some(editor) = row.name_editor.take() {
         return line.child(editor);
     }
-    line.children(row.spinner.map(|motion| spinner_icon(motion, row.index)))
+    line.children(row.spinner.map(spinner_icon))
         .when(row.status == TabStatus::NeedsAttention, |line| {
             line.child(
                 Icon::new(IconName::TriangleAlert)
@@ -1032,20 +1017,6 @@ mod tests {
         for (may_animate, pulsing) in [(false, true), (true, false), (false, false)] {
             assert_eq!(running_pulse(may_animate, pulsing), RunningPulse::Still);
         }
-    }
-
-    #[test]
-    fn spinner_turns_in_clean_quarter_steps() {
-        for (delta, turn) in [
-            (0., 0.),
-            (0.2, 0.25),
-            (0.26, 0.25),
-            (0.49, 0.5),
-            (0.74, 0.75),
-        ] {
-            assert_eq!(spinner_turn(delta), turn, "{delta}");
-        }
-        assert_eq!(spinner_turn(0.99), 1., "a full turn looks like 0");
     }
 
     #[test]

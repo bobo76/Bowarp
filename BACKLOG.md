@@ -40,24 +40,6 @@ New tabs open below the selected tab:
   selected one (in its group; below a pinned tab, first after the pinned tabs); Windows: the
   `+` menu, Ctrl+Shift+T and the explorer entries.
 
-Attention toast says what the agent waits for:
-
-- With the real Claude Code: a permission prompt in a background tab toasts "Waiting for
-  permission", a question (AskUserQuestion / MCP elicitation) "Waiting for your reply".
-- With the real Copilot CLI: a permission prompt in a background tab toasts "Waiting for
-  permission"; Windows: the toast's tooltip shows on hover.
-
-Hover cards held back while a name editor, a menu or a dialog is open:
-
-- Windows: right-click a tab row while its card shows: the menu opens and the card goes; no
-  card over the new group's name editor nor over the close question.
-- The `+` menu, the `⋮` buttons' menus and group header cards hold the card back too.
-
-Settings page hides the file viewer:
-
-- Windows: open the page over an unsaved viewer, come back with the tab (edits kept), and
-  "Open settings file".
-
 Settings page hides the file explorer:
 
 - Windows: open the page with the explorer shown and a folder expanded, come back with the tab
@@ -65,16 +47,13 @@ Settings page hides the file explorer:
 
 Clipboard writes setting:
 
-- Settings → Terminal → Clipboard: the dropdown shows Ask / Allow / Deny and applies live;
-  with Allow a Claude Code tab starts without the clipboard notice, with Deny nothing is
-  copied (also in a tab set to "Always for this tab"); Linux and Windows.
+- Linux: Settings → Terminal → Clipboard Ask / Allow / Deny (Windows: see the Deny bug in
+  the Backlog).
 
 Copilot working spinner:
 
-- With the real Copilot CLI on a hardware GPU: the ring turns while a turn runs, stops at
-  its end and on a permission prompt (the triangle replaces it), and looks right in the
-  light theme. Minimize/restore through a real window manager on Linux and Windows: no CPU
-  while minimized, turning again after restore.
+- On a permission prompt the ring stops and the triangle replaces it (blocked by the Copilot
+  permission bug in the Backlog). Linux: minimize/restore through a real window manager.
 
 Feature switches (0.2.20-0.2.24):
 
@@ -82,14 +61,11 @@ Feature switches (0.2.20-0.2.24):
 - Terminal history switches: confirming the Clear history / Clear saved session commands
   dialogs, the last-session suggestion across a real restart, zsh and PowerShell, and two
   instances running together.
-- Workspace switches: toggling Restore previous tabs / Remember last shell command
-  mid-session and accepting the last-command suggestion with Right.
 - File explorer and viewer switch: the "Open externally?" dialog and system launch, "Open
   settings file" while off, a hand edit of `settings.json` to off with an unsaved file, the
   prompt chain with two or more unsaved files, and Windows.
-- In-app notifications switch: the "Needs attention" and "Exited" toasts.
 - Busy-close warnings: the Linux title bar's close button (not drivable under Xvfb) and
-  Windows/macOS window close.
+  macOS window close.
 - Clipboard notice: Copilot CLI's copy on Windows (Allow should then copy as before).
 - `"keybindings"` overlay: vim's visual block with Ctrl+V unbound, a keystroke sequence
   (`ctrl-k ctrl-c`), the reload on saving `settings.json` in the file viewer, and Windows
@@ -102,11 +78,8 @@ Feature switches (0.2.20-0.2.24):
   Wayland (see-through, dropdown "Not available on this system", the title bar shadow over
   the background), KDE Plasma Wayland
   (Blur on and off live), X11 with a compositor (see-through) and without one (darker
-  background), Windows 10 (Acrylic; Mica shows the fallback caption and looks like Acrylic)
-  and Windows 11 22H2+ (Acrylic, Mica), maximized and full screen, and the light theme.
-  Windows 11: switch None/Acrylic/Mica live at 80 %, in both directions and through 100 %; if
-  Mica stays after leaving it, add the caption "Mica stays until the app restarts" (see
-  docs/ux-decisions.md).
+  background) and Windows 10 (Acrylic; Mica shows the fallback caption and looks like
+  Acrylic).
 
 Earlier features (0.2.17-0.2.19), Windows and Linux unless noted:
 
@@ -151,6 +124,28 @@ behavior"); items below name their switch where they need one.
     (every pane but the terminal renders alpha 255, light and dark). Ask for the platform,
     desktop/compositor, theme, opacity and blur values, and a screenshot, and recheck the
     report once the panels above are built.
+- Copilot permission prompts show no Waiting status (Windows, 0.2.34): a background Copilot
+  tab showing its own approval prompt keeps the spinner, with no triangle, no toast, and
+  Ctrl+Shift+A doesn't go to it. Not diagnosed: check that the `--plugin-dir` plugin
+  (`app/src/hooks.rs`) is written and loaded by this Copilot version, and that its
+  `PermissionRequest` hook runs `agentws-hook` and reaches the `HookServer` (log one event).
+- Copilot questions show no Waiting status: when Copilot asks the user a question, the tab
+  stays Working, since the plugin hooks only `PermissionRequest`. Find out whether Copilot
+  exposes a hook or event for its questions, then map it to Waiting ("Waiting for your
+  reply") like Claude's AskUserQuestion.
+- Clipboard Deny doesn't stop agent copies (Windows, Claude Code and Copilot CLI): the
+  `clipboard_writes` guard filters only OSC 52, but both CLIs also write the system
+  clipboard themselves, so the text is copied before the notice is answered. The app can't
+  block a native write: decide whether Deny should say it covers terminal (OSC 52) copies
+  only (Settings caption and docs/known-limitations.md), or remove the setting for agent tabs.
+- Mica doesn't show (Windows 11 build 26100, 0.2.34): with Blur set to Mica and opacity below
+  100 % the terminal looks opaque, with no caption, live or after a restart. Likely cause,
+  unverified: GPUI's `MicaBackdrop` only sets `DWMWA_SYSTEMBACKDROP_TYPE` and never calls
+  `DwmExtendFrameIntoClientArea` with -1 margins, so Mica covers only the non-client area,
+  and the app first applies `Opaque` (`opaque_first`), which turns the accent off. Try
+  extending the frame from `app/src/window_background.rs` (beside `clear_mica`), then check
+  whether Mica stays after leaving it (if so, add the caption "Mica stays until the app
+  restarts", docs/ux-decisions.md).
 - File panes off with an unsaved file, Discard: `drop_file_panes` calls `focus_active` while
   the Discard dialog is closing, and the dialog may give focus back to the dropped viewer.
   Check: edit a file, turn the switch off, Discard; the terminal must take keys.
