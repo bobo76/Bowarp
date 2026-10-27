@@ -60,15 +60,22 @@ The `+` button above the tab list opens a new tab with one of the supported shel
 Fish, PowerShell) found on `PATH` (the default shell first, see [Settings](#settings)), Claude
 Code or Copilot CLI; agents that are not installed are listed but disabled. New tabs start in the
 selected tab's folder and open right below it (below a pinned tab: first after the pinned tabs);
-the tab named on the command line goes after the restored ones.
+with no tab open, they start in the last closed tab's folder, at the end of the list. The tab
+named on the command line goes after the restored ones.
+
+Closing the last tab keeps the window and its groups: the terminal area shows "No open tabs"
+with a button per program of the `+` menu, in the same order (the default shell first; Tab and
+Shift+Tab move between them, Enter or Space opens one), and the file explorer hides until the
+next tab. Closing the window works as usual; at the next start the groups come back and the
+default shell opens as the first tab.
 
 | Keys | Action |
 |---|---|
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+1..9 | Select tab 1..9 |
-| Ctrl+Shift+T | New tab with the default shell, in the selected tab's folder |
+| Ctrl+Shift+T | New tab with the default shell, in the selected tab's folder (no tab: the last closed tab's, at the end) |
 | Ctrl+Shift+D | Duplicate the selected tab: same program, its folder (also in the tab menu) |
-| Ctrl+Shift+W | Close the selected tab (or the Settings row while it is selected) |
+| Ctrl+Shift+W | Close the selected tab (or the Settings row while it is selected); nothing with no tab |
 | Ctrl+Shift+B | Hide or show the sidebar (also the title bar button) |
 | Ctrl+Shift+S | Search tabs (shows the sidebar if hidden) |
 | Ctrl+Shift+\| | Hide or show the file explorer (also the title bar button; the key that types `\|`) |
@@ -431,7 +438,8 @@ focuses Settings instead.
 The search box filters the rows by title, description and keywords. A change saves to
 `settings.json` in the config folder at once; "Reset to default" under a changed row (or the
 page's reset button) restores the default. "Open settings file" goes back to the selected tab
-and shows `settings.json` in its file viewer, creating it first if it doesn't exist; opening a
+and shows `settings.json` in its file viewer, creating it first if it doesn't exist (with no tab
+open it is disabled: there is no viewer to show it in); opening a
 file from the explorer while the page shows also goes back to the tab. A banner on the page says
 when the file can't be read (the defaults apply until it is fixed or a change moves it to
 `settings.json.bak`) or a change couldn't be saved. The About page shows the version and the

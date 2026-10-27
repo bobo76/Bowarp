@@ -157,6 +157,15 @@ pub(super) struct PanesHarness {
 
 impl PanesHarness {
     pub(super) fn new(name: &str, cx: &mut gpui_kit::TestAppContext) -> Self {
+        Self::with_launchers(name, Rc::from([]), cx)
+    }
+
+    /// Like `new`, with these launchers for the `+` menu and the empty state.
+    fn with_launchers(
+        name: &str,
+        launchers: Rc<[Launcher]>,
+        cx: &mut gpui_kit::TestAppContext,
+    ) -> Self {
         use gpui_kit::VisualTestContext;
         use gpui_kit::component::Root;
         use std::cell::RefCell;
@@ -188,7 +197,7 @@ impl PanesHarness {
             let (_, messages) = futures::channel::mpsc::unbounded();
             let workspace = cx.new(|cx| {
                 WorkspaceView::new(
-                    Rc::from([]),
+                    launchers,
                     None,
                     messages,
                     Rc::new(tabs_file::TabsWriter::new(false)),
@@ -1067,4 +1076,206 @@ fn agent_status_off_warning_stays_once_beside_the_fallback_warning(
         assert_eq!(window.notifications(cx).len(), 2, "both persist");
     });
     assert!(cx.shown_system_notifications().is_empty());
+}
+
+/// A launcher that starts `/bin/sh -c "exit 0"` (`None`: not installed). Shells started with
+/// their own arguments get no integration script, so nothing is written to a config folder.
+#[cfg(unix)]
+fn test_launcher(id: &str, kind: SessionKind, installed: bool) -> Launcher {
+    Launcher {
+        id: id.into(),
+        label: id.to_uppercase(),
+        kind,
+        program: installed.then(|| "/bin/sh".into()),
+        args: vec!["-c".into(), "exit 0".into()],
+        icon: workspace_model::LauncherIcon::Shell,
+    }
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn closing_the_last_tab_keeps_the_window_its_groups_and_the_explorer_state(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let launchers: Rc<[Launcher]> = Rc::from([
+        test_launcher("one", SessionKind::Shell, true),
+        test_launcher("two", SessionKind::Shell, true),
+        test_launcher("agent", SessionKind::ClaudeCode, false),
+    ]);
+    let mut h = PanesHarness::with_launchers("last-tab", launchers, cx);
+    let workspace = h.workspace.clone();
+    let first = workspace.read_with(&h.cx, |workspace, _| workspace.tabs[0].id);
+    h.cx.update(|_, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let group = workspace.layout.new_group_with(first, "G").unwrap();
+            workspace.layout.group_mut(group).unwrap().color = Some(TabColor::Green);
+            workspace.sync_order(cx);
+        })
+    });
+    h.toggle_explorer();
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    h.cx.simulate_keystrokes("ctrl-shift-w");
+    h.cx.run_until_parked();
+    // (tabs, groups, explorer remembered on, explorer shown)
+    let state = |h: &mut PanesHarness| {
+        h.workspace.read_with(&h.cx, |workspace, _| {
+            (
+                workspace.tabs.len(),
+                workspace.layout.groups().count(),
+                workspace.explorer_visible,
+                workspace.explorer_shown(),
+            )
+        })
+    };
+    assert_eq!(
+        state(&mut h),
+        (0, 1, true, false),
+        "the window and its group stay"
+    );
+    let saved = workspace.read_with(&h.cx, |workspace, _| {
+        workspace.layout.save_selected(None, |_| Some(()))
+    });
+    assert!(matches!(
+        &saved.0.items[..],
+        [workspace_model::SavedItem::Group(group)]
+            if group.name == "G" && group.color == Some(TabColor::Green) && group.tabs.is_empty()
+    ));
+    let focus = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            let empty = workspace.read(cx).empty_focus.clone();
+            (empty.contains_focused(window, cx), window.focused(cx))
+        })
+    };
+    // The default shell's button takes the keyboard once drawn; Tab skips the disabled agent.
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    h.cx.run_until_parked();
+    let (inside, default_button) = focus(&mut h);
+    let default_button = default_button.unwrap();
+    assert!(inside);
+    assert!(workspace.read_with(&h.cx, |workspace, _| default_button
+        != workspace.empty_focus));
+    h.cx.simulate_keystrokes("tab");
+    let (inside, second) = focus(&mut h);
+    assert!(inside && second.as_ref() != Some(&default_button));
+    h.cx.simulate_keystrokes("tab");
+    assert_eq!(
+        focus(&mut h),
+        (true, Some(default_button.clone())),
+        "Tab stays in the empty state"
+    );
+
+    // The tab keys do nothing without a tab.
+    for keys in [
+        "ctrl-shift-w",
+        "ctrl-tab",
+        "ctrl-shift-tab",
+        "ctrl-1",
+        "ctrl-shift-a",
+    ] {
+        h.cx.simulate_keystrokes(keys);
+        h.cx.run_until_parked();
+        assert_eq!(state(&mut h).0, 0, "{keys}");
+    }
+    h.cx.simulate_keystrokes("ctrl-shift-d");
+    h.cx.run_until_parked();
+    assert_eq!(state(&mut h).0, 0);
+
+    // Enter opens the default shell in the last tab's folder, ungrouped at the end.
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert_eq!(focus(&mut h), (true, Some(default_button)));
+    // A button clicks on the key's release (`simulate_keystrokes` sends only presses).
+    let enter = gpui_kit::Keystroke::parse("enter").unwrap();
+    h.cx.simulate_event(gpui_kit::KeyDownEvent {
+        keystroke: enter.clone(),
+        is_held: false,
+        prefer_character_input: false,
+    });
+    h.cx.simulate_event(gpui_kit::KeyUpEvent { keystroke: enter });
+    h.cx.run_until_parked();
+    let folder = h.folder.clone();
+    h.cx.update(|window, cx| {
+        let workspace = workspace.read(cx);
+        let tab = workspace.active_tab().expect("a tab opened");
+        wait_for_exit(&tab.view.read(cx).session);
+        assert_eq!(tab.spec.cwd, Some(folder));
+        assert_eq!(workspace.layout.group_of(tab.id), None);
+        assert!(matches!(
+            workspace.layout.items(),
+            [workspace_model::Item::Group(_), workspace_model::Item::Tab(id)] if *id == tab.id
+        ));
+        assert!(workspace.last_closed_folder.is_none());
+        assert!(tab.view.focus_handle(cx).is_focused(window));
+    });
+    assert_eq!(state(&mut h), (1, 1, true, true), "the explorer comes back");
+}
+
+#[gpui::test]
+fn settings_page_stays_after_the_last_tab_and_closing_it_shows_the_empty_state(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut h = PanesHarness::new("last-tab-settings", cx);
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_settings(window, cx);
+            workspace.close_tab(0, window, cx);
+        })
+    });
+    h.cx.run_until_parked();
+    h.cx.update(|window, cx| {
+        let workspace = workspace.read(cx);
+        assert!(workspace.tabs.is_empty() && workspace.settings.shows_page());
+        assert!(workspace.settings.focus().is_focused(window));
+    });
+    // Ctrl+Shift+W still closes the page.
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    h.cx.simulate_keystrokes("ctrl-shift-w");
+    h.cx.run_until_parked();
+    // No launcher here, so no button: the keyboard stays on the empty state once drawn.
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    h.cx.run_until_parked();
+    h.cx.update(|window, cx| {
+        let workspace = workspace.read(cx);
+        assert!(!workspace.settings.shows_page());
+        assert!(workspace.empty_focus.is_focused(window));
+    });
+}
+
+#[gpui::test]
+fn restoring_no_tab_keeps_the_saved_groups(cx: &mut gpui_kit::TestAppContext) {
+    use workspace_model::{SavedGroup, SavedItem, SavedLayout};
+
+    let mut h = PanesHarness::new("restore-groups", cx);
+    let workspace = h.workspace.clone();
+    let opened = h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.close_tab(0, window, cx);
+            let layout = SavedLayout {
+                pinned: Vec::new(),
+                items: vec![SavedItem::Group(SavedGroup {
+                    name: "Kept".into(),
+                    color: Some(TabColor::Blue),
+                    collapsed: true,
+                    tabs: Vec::new(),
+                })],
+            };
+            workspace.restore(
+                TabsState {
+                    layout,
+                    selected: None,
+                },
+                window,
+                cx,
+            )
+        })
+    });
+    assert!(!opened, "no tab reopened: the first tab opens as usual");
+    workspace.read_with(&h.cx, |workspace, _| {
+        let groups: Vec<_> = workspace
+            .layout
+            .groups()
+            .map(|group| (group.name.clone(), group.color, group.collapsed))
+            .collect();
+        assert_eq!(groups, vec![("Kept".into(), Some(TabColor::Blue), true)]);
+    });
 }

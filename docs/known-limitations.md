@@ -29,6 +29,9 @@ entry when the limitation is lifted.
 - File viewer images: still WebP files share animated GIF/WebP's 2 MB limit (other images
   50 MB), and images over 16384 pixels on a side are refused rather than scaled down.
 - An OSC 8 link spanning several lines: only its row is underlined.
+- With no tab open (the empty state), the file explorer is hidden and can't be used to pick a
+  folder first; the next tab starts in the last closed tab's folder, which is kept in memory
+  only: after a restart with no tab saved, the first tab starts in the app's working folder.
 - An agent tab going on as a shell starts in the agent's last known folder: on Linux its
   `/proc` folder as of its last title change or hook event, elsewhere the folder it started in.
 - Window opacity: on X11 without a compositor the window can't be see-through, and the

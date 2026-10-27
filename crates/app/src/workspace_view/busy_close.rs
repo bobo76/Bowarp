@@ -15,7 +15,7 @@ use super::WorkspaceView;
 
 impl WorkspaceView {
     /// Close a tab, ending its process: first asking when it is busy, then about unsaved edits
-    /// in its file viewer. Closing the last tab closes the window.
+    /// in its file viewer. Closing the last tab leaves the empty state.
     pub(super) fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.tabs.get(index).map(|tab| tab.id) else {
             return;

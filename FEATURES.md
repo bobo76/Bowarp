@@ -44,6 +44,8 @@ directly to model APIs.
 - Create, rename, reorder (menu or drag and drop), duplicate, and move tabs between groups.
   A new tab opens right below the selected one, in its group (first after the pinned tabs
   when a pinned tab is selected).
+- Closing the last tab keeps the window and its groups, with buttons to open a new tab; the
+  groups are kept for the next start too.
 - Pin tabs to the top of the list.
 - Show each tab's git branch, or its current folder outside a repository, under its name.
 - Show a tab's details on hover: status, full folder, branch, program title, session

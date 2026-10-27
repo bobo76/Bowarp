@@ -616,3 +616,133 @@
   message; dismissing one dismisses both; extra code.
 - Decision: A, because the causes are independent and the case is rare. Needs no live UI.
   Decided by: UX/UI agent
+
+## Empty state when the last tab closes: content, layout, keyboard and focus
+- Date: 2026-10-26, step: last-tab-keeps-window, raised by: Step 0
+- Context: closing the last tab now keeps the window (docs/ux-review.md #21 A, picked by the
+  user). The terminal area needs an empty state with "New tab" buttons for the launchers.
+  The `+` menu lists every launcher, default shell first, agents not installed disabled.
+  gpui-component `Button` has `tab_index`/`tab_stop` and tracks its own focus.
+- Option A — One button per launcher, same list and order as the `+` menu: centred column,
+  heading "No open tabs", then a button per launcher with its icon and name (the default
+  shell first, as the primary/filled button; the rest plain; agents not installed disabled
+  with the `+` menu's wording), then one dim hint line "Ctrl+Shift+T opens <default shell>".
+  Pros: one click to any program; same list as the `+` menu, so nothing new to learn (VS Code's
+  empty editor and JetBrains' welcome list actions the same way); cheap (reuses the launcher
+  list and `open_launcher_in`). Cons: with several WSL distros the column gets long.
+- Option B — One primary "New tab" button (default shell) plus a "New tab with..." button
+  that opens the existing `+` menu. Pros: compact, fixed height. Cons: agents, the app's main
+  use, take two clicks; the menu is a second place to navigate by keyboard.
+- Option C — Text only ("Press Ctrl+Shift+T or use +"). Pros: no widgets. Cons: the step
+  asks for buttons; mouse users must find the small `+`.
+- Decision: A, because it is the `+` menu laid out in place, with no new list to keep in sync.
+  Keyboard: Ctrl+Shift+T works as usual (default shell). The empty state owns a persistent
+  focus handle (not a fresh `cx.focus_handle()` per call), and when it appears the default
+  shell button takes focus with a visible focus ring; Tab / Shift+Tab move between enabled
+  buttons (disabled ones are not tab stops), Enter / Space activate. Clicking the empty area
+  keeps focus inside the empty state. Narrow or short window: the column scrolls vertically
+  and labels truncate with an ellipsis; nothing reflows sideways. Not colour-only: the default
+  is marked by the filled style and its first position, and the hint names it. Decided by:
+  UX/UI agent
+
+## Folder, group and position of a tab opened from the empty state
+- Date: 2026-10-26, step: last-tab-keeps-window, raised by: Step 0
+- Context: new tabs take the selected tab's folder and go right below it (README "Tabs");
+  with no tab, `tab_folder` falls back to the app's working directory. The group header menu
+  has no new-tab entry (`GroupCommand`).
+- Option A — Folder of the last closed tab (its `current_folder()` read just before removal,
+  kept in memory), else the app's working directory as today; the tab goes at the end of the
+  top level, ungrouped. Pros: continues "new tabs start in the selected tab's folder" (the
+  last closed tab was the selected one); closing and reopening a shell lands where the user
+  was; position matches the command-line tab rule (no related tab, so end of top level).
+  Cons: one remembered `Option<PathBuf>`.
+- Option B — Home folder. Pros: predictable. Cons: a third folder rule; loses the project
+  the user was in, which is the usual reason to open a tab right after closing one.
+- Option C — Put the tab in the last closed tab's group. Pros: keeps grouping. Cons: the
+  group is invisible context in the empty state; a tab "below nothing" landing in a group the
+  user may have just emptied on purpose ("Close tabs in group") is surprising.
+- Decision: A, because it keeps the existing folder rule with the last selected tab as the
+  reference and needs no persisted state (the empty state never survives a restart, see the
+  start-up entry below). No group "new tab" affordance in this step: the group menu has none
+  today and the step does not ask for one; a dragged tab joins a group as usual. README "Tabs"
+  ("New tabs start in the selected tab's folder", and the Ctrl+Shift+T row) needs "with no
+  tab open, the last closed tab's folder, at the end of the list". Decided by: UX/UI agent
+
+## Tab keys with no tab: Ctrl+Shift+W, Ctrl+Tab, Ctrl+1..9, Ctrl+Shift+A, Ctrl+Shift+D
+- Date: 2026-10-26, step: last-tab-keeps-window, raised by: Step 0
+- Context: `close_active` closes the settings page when it shows, else the selected tab.
+  VS Code closes the window on Ctrl+W with no editor open; Windows Terminal closes the window
+  with the last tab (today's app behaviour, which the user chose to drop).
+- Option A — Nothing: with no tab, Ctrl+Shift+W does nothing (on the settings page it still
+  closes the page), and next/previous, Ctrl+1..9, next-attention and duplicate do nothing.
+  Pros: holding or repeating Ctrl+Shift+W cannot close the window by accident right after the
+  last tab goes, which is the point of keeping the window; closing the window stays an explicit
+  window gesture (title bar ×, Alt+F4, the OS). Cons: differs from VS Code's Ctrl+W.
+- Option B — Ctrl+Shift+W with no tab closes the window (VS Code). Pros: familiar to VS Code
+  users. Cons: a key repeat turns "close the last tab" into "close the window", exactly the
+  accident the step removes; groups are saved either way, but the window goes.
+- Decision: A, because a key that closes tabs should never close the window. No beep or toast:
+  the empty state already shows why nothing happened. Decided by: UX/UI agent
+
+## File explorer, viewer, sidebar search, window title and settings page with no tab
+- Date: 2026-10-26, step: last-tab-keeps-window, raised by: Step 0
+- Context: the explorer is rooted at the selected tab's folder; viewers are per tab; the
+  settings page hides the explorer while it shows (shown state =
+  `explorer_visible && !settings.shows_page()`); the window title is always the app name;
+  "Open settings file" goes back to the selected tab and shows the file in its viewer.
+- Option A — Hide the explorer and its divider while no tab exists, keeping the remembered
+  `explorer_visible`, width and expanded folders; it comes back with the next tab (rooted at
+  that tab's folder). Pros: same pattern as the settings page (shown state gains
+  `&& has_tab`); no stale tree of a folder no tab is in; the empty state gets the width.
+  Cons: the explorer can't be used to pick a folder before opening a tab.
+- Option B — Keep it rooted at the last closed tab's folder. Pros: browse before opening.
+  Cons: "Open in new tab" / cd entries have no tab to act on for cd; a second root rule.
+- Option C — Show it empty. Pros: none. Cons: a dead panel.
+- Decision: A. Following the settings-page decision, the title bar explorer button and
+  Ctrl+Shift+| read the explorer as not shown while no tab exists; a press changes only the
+  remembered state (there is no tab to go back to), and the button tooltip says
+  "Show explorer" as usual. Viewers close with their tab. Sidebar search works as usual over
+  the (empty) groups and shows the existing "No matching tabs."; group headers stay listed,
+  empty groups included, with the existing "No tabs. Drag one here." hint. Window title stays
+  the app name (unchanged). Settings page: it can stay open after its tab list empties (a
+  sidebar "Close" can remove the last tab while it shows); closing the page then shows the
+  empty state. "Open settings file" with no tab is disabled with the tooltip "Open a tab to
+  view the file" (opening a shell just to host the viewer would start a process the user did
+  not ask for). README "Settings" ("Open settings file goes back to the selected tab") needs
+  that exception. Decided by: UX/UI agent
+
+## Next start after quitting with zero tabs, and the guest instance
+- Date: 2026-10-26, step: last-tab-keeps-window, raised by: Step 0
+- Context: `restore` returns false when no tab reopens, then `open_first_tab` opens the default
+  shell (with the fallback-shell path). README: the default shell is "the first tab when no
+  tabs are saved". A guest instance never restores and never saves tabs.
+- Option A — Restore the empty state: the window with its groups and the empty state, no
+  process started. Pros: exactly what the user left; VS Code reopens an empty window. Cons:
+  a terminal app that starts with no terminal; drops the start-up fallback-shell path and
+  contradicts README "the first tab when no tabs are saved".
+- Option B — Restore the groups (names, colours, collapsed state, order) and open the default
+  shell tab as today when no tab restores, ungrouped at the end of the top level (or the
+  command-line tab instead, as today). Pros: start-up keeps its current contract (there is
+  always a tab after launch, Windows Terminal/WezTerm do the same); the workspace organisation,
+  the value #21 protects, survives; no new start-up state. Cons: one tab the user did not ask
+  for, closed in one key.
+- Decision: B, because it keeps the documented start-up behaviour and still saves what #21 is
+  about. `restore` must apply the saved groups even when zero tabs reopen (today the layout is
+  dropped with the false return); the same applies when every saved tab failed to start.
+  Guest: closing its last tab shows the same empty state (its sidebar has only the groups it
+  made in this run); nothing is saved, as today. Decided by: UX/UI agent
+
+## Closing the last tab through the busy-close warning, group close or the tab menu
+- Date: 2026-10-26, step: last-tab-keeps-window, raised by: Step 0
+- Context: every close path ends in `remove_tab`. "Close other tabs" and "Close tabs below"
+  always keep at least one tab; "Close tabs in group" can remove every tab.
+- Option A — Nothing special: the busy-close warning asks as today (it is about the running
+  process, not the window); Cancel keeps the tab, confirming shows the empty state. Group
+  close leaving zero tabs shows the empty state and keeps the group (README: "Groups stay
+  when their last tab leaves"). Focus goes to the empty state's default button in every case.
+  Pros: one outcome for every path; no new wording. Cons: none notable.
+- Option B — Warn "This closes the last tab" first. Pros: none now that the window stays.
+  Cons: an extra prompt for a harmless action.
+- Decision: A, because closing the last tab is no longer destructive, so no path needs a
+  special case. The tabs snapshot is saved as after any close (zero tabs, groups kept).
+  Decided by: UX/UI agent

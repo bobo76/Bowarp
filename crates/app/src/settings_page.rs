@@ -23,11 +23,13 @@ use gpui_kit::component::setting::{
 };
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::switch::Switch;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Side, Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     Anchor, AnyElement, App, AppContext, Axis, ClickEvent, ClipboardItem, Div, Entity, Focusable,
-    IntoElement, ParentElement, SharedString, Styled, Subscription, Window, div, px,
+    InteractiveElement, IntoElement, ParentElement, SharedString, StatefulInteractiveElement,
+    Styled, Subscription, Window, div, px,
 };
 use workspace_model::{
     BlurControl, ClipboardPolicy, DependentState, FeatureSwitch, FontSize, Settings, UiTheme,
@@ -48,13 +50,24 @@ mod keyboard;
 
 pub use keyboard::{KeyRecorder, init as init_keyboard};
 
-/// The settings page: the error banners, the pages, and the "Open settings file" button.
+/// What the page's "Open settings file" button can do right now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsFileButton {
+    Opens,
+    /// The file would open in the file viewer, and no tab is open to hold it.
+    NeedsTab,
+}
+
+/// The settings page: the error banners, the pages, and the "Open settings file" button, which
+/// is disabled for [`SettingsFileButton::NeedsTab`].
 pub fn render(
     launchers: Rc<[Launcher]>,
+    file_button: SettingsFileButton,
     on_open_file: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     cx: &App,
 ) -> impl IntoElement {
     let theme = cx.theme();
+    let needs_tab = file_button == SettingsFileButton::NeedsTab;
     div()
         .size_full()
         .flex()
@@ -81,14 +94,31 @@ pub fn render(
                 .border_t_1()
                 .border_color(theme.border)
                 .child(
-                    Button::new("open-settings-file")
-                        .icon(Icon::empty().path(CODE_ICON))
-                        .label("Open settings file")
-                        .outline()
-                        .small()
+                    // A disabled button shows no tooltip of its own: the box around it does.
+                    div()
+                        .id("open-settings-file-box")
                         .w(px(234.))
-                        .tooltip("Show settings.json in the file viewer (or the system's app)")
-                        .on_click(on_open_file),
+                        .when(needs_tab, |button_box| {
+                            button_box.tooltip(|window, cx| {
+                                Tooltip::new("Open a tab to view the file").build(window, cx)
+                            })
+                        })
+                        .child(
+                            Button::new("open-settings-file")
+                                .icon(Icon::empty().path(CODE_ICON))
+                                .label("Open settings file")
+                                .outline()
+                                .small()
+                                .w_full()
+                                .disabled(needs_tab)
+                                .when(!needs_tab, |button| {
+                                    button.tooltip(
+                                        "Show settings.json in the file viewer (or the system's \
+                                         app)",
+                                    )
+                                })
+                                .on_click(on_open_file),
+                        ),
                 ),
         )
 }

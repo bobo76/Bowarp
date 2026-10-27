@@ -10,17 +10,21 @@ still to do (Windows included), not what was already tested.
 
 Each step stands alone and is tested:
 
-1. Closing the last tab keeps the window and the workspace (docs/ux-review.md #21, option A,
-   picked by the user): the window stays open with an empty state in the terminal area
-   ("New tab" buttons for the launchers) and the sidebar still lists the groups, empty ones
-   included; colors and groups are saved as usual. Closing the window itself works as today.
-2. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
+1. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
    `git check-ignore --stdin` per expanded folder, off the UI thread, refreshed with the
    folder watcher. Folder order unchanged; folders outside a repository show as today.
 
 ## Fixed, not tested yet
 
 Built with automated coverage on Linux; the manual checks below are still to do.
+
+Closing the last tab keeps the window:
+
+- Windows: close the last tab (Ctrl+Shift+W, the tab menu, a busy tab's question, "Close tabs
+  in group"): the window stays with its groups and the empty state, the default button has a
+  visible focus ring, Tab / Shift+Tab / Enter / Space work; quit, restart: groups and a shell.
+- With a screen reader or high contrast: the empty state's buttons and the disabled "Open
+  settings file" tooltip ("Open a tab to view the file") on the settings page.
 
 Agent status off shows in the UI:
 

@@ -339,3 +339,41 @@ fn blank_group_names_keep_the_old_name() {
     group.rename("  ");
     assert_eq!(group.name, "api");
 }
+
+#[test]
+fn a_layout_with_no_tab_left_keeps_its_groups_through_save_and_restore() {
+    let (mut layout, a, _) = sample();
+    layout.group_mut(a).unwrap().color = Some(TabColor::Green);
+    layout.group_mut(a).unwrap().collapsed = true;
+    for id in 1..=6 {
+        layout.remove(id);
+    }
+    let (saved, selected) = layout.save_selected(None, Some);
+    assert_eq!(selected, None);
+    assert!(saved.tabs().is_empty());
+    let mut restored = Layout::restore(saved.filter_map(Some));
+    let groups: Vec<_> = restored
+        .groups()
+        .map(|group| {
+            (
+                group.name.clone(),
+                group.color,
+                group.collapsed,
+                group.tabs().len(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        groups,
+        vec![
+            ("A".to_owned(), Some(TabColor::Green), true, 0),
+            ("B".to_owned(), None, false, 0),
+        ]
+    );
+    // The next tab goes ungrouped below the groups.
+    restored.add(7);
+    assert!(matches!(
+        restored.items(),
+        [Item::Group(_), Item::Group(_), Item::Tab(7)]
+    ));
+}

@@ -82,17 +82,24 @@ impl WorkspaceView {
         cx.notify();
     }
 
-    /// Remove the Settings row; if its page showed, the tab selected before shows again.
+    /// Remove the Settings row; if its page showed, the tab selected before shows again (the
+    /// empty state while no tab is open).
     pub(super) fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.settings.open = false;
         if self.settings.shown {
-            self.activate(self.active, window, cx);
+            if self.tabs.is_empty() {
+                self.settings.hide_page();
+                self.focus_active(window, cx);
+            } else {
+                self.activate(self.active, window, cx);
+            }
         }
         cx.notify();
     }
 
     /// "Open settings file": settings.json (created with the current settings if missing) in
     /// the selected tab's file viewer; the page gives the tab its place back (the row stays).
+    /// With no tab there is no viewer to show it in: the page's button is disabled then.
     pub(super) fn open_settings_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(path) = settings_file::file_to_open(cx) else {
             // A failed write shows in the page's banner.

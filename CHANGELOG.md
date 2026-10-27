@@ -5,6 +5,16 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.38
+
+- Keep the window open when the last tab closes: it shows "No open tabs" with a button per
+  shell and agent (the default shell first, focused), and the sidebar keeps every group.
+  Ctrl+Shift+T opens the new tab in the last closed tab's folder.
+- Keep the groups (names, colors, order) at the next start when no tab was open on quit; the
+  default shell opens as the first tab.
+- With no tab open, tab shortcuts (Ctrl+Shift+W, Ctrl+Tab, Ctrl+1..9) do nothing, the file
+  explorer is hidden until the next tab, and "Open settings file" is disabled.
+
 ## 0.2.37
 
 - Say when agent status is off at start (for example "Agent status is off: agentws-hook not
