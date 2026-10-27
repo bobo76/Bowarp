@@ -160,6 +160,16 @@ impl FileExplorer {
         }
     }
 
+    /// The root and the expanded folders shown.
+    #[cfg(test)]
+    pub(crate) fn expanded_for_test(&self) -> (Option<PathBuf>, Vec<PathBuf>) {
+        let expanded = self.rows.iter().filter_map(|row| match row {
+            ListRow::Entry(row) if row.expanded => Some(row.path.clone()),
+            _ => None,
+        });
+        (self.root.clone(), expanded.collect())
+    }
+
     /// Whether a name editor or an entry menu is open, which a popup must not cover.
     pub fn holds_popups(&self) -> bool {
         self.editing.is_some() || self.menu.is_open()

@@ -418,3 +418,54 @@
   current. Cons: a second pop-up for the same wait, re-arming the hide timer; more noise.
 - Decision: A, because a toast is a one-off nudge, not a live status; the sidebar keeps the
   live state. Decided by: UX/UI agent
+
+## Explorer button and Ctrl+Shift+| while the settings page hides the explorer
+- Date: 2026-10-26, step: settings-hides-explorer, raised by: Step 0
+- Context: this step hides the explorer panel and its divider while the settings page
+  shows, and restores them (open, width, expanded folders) on leaving the page. The title
+  bar button (`explorer_toggle`, `.selected(self.explorer_visible)`) and `ToggleExplorer`
+  (Ctrl+Shift+|, captured at the root) still exist then. A tab always exists (closing the
+  last tab closes the window), so "leave the page" is `activate(self.active)`, which keeps the
+  Settings row.
+- Option A — Show it: leave the page and show the explorer. While the page shows, the button
+  reads the explorer as not shown (unselected, tooltip "Show explorer"); a press (or the key)
+  goes back to the selected tab with the explorer shown, whatever the remembered state was.
+  Pros: the button always tells the truth about what is on screen, and a press always gives a
+  visible result; same pattern as opening a file from the page (`open_file` leaves the page
+  first, decision "Discard prompt Cancel after opening a file from the settings page");
+  the Settings row stays, one click back. Cons: a press while the page shows never hides the
+  explorer (nothing to hide on screen anyway); needs `window` in the toggle path.
+- Option B — Toggle the remembered state only: the page stays, the change shows on leaving
+  it. Pros: no navigation. Cons: a key press with no visible effect looks broken; the button
+  state would show something not on screen; easy to toggle twice by mistake.
+- Option C — Disable the button and ignore the key while the page shows. Pros: no surprise
+  navigation. Cons: a dead control and a silent key for no clear reason; needs a disabled
+  tooltip to explain it; the sidebar toggle next to it still works, so it is inconsistent.
+- Option D — Show the explorer next to the page. Pros: what VS Code does (its Settings editor
+  sits beside the side bar). Cons: contradicts the step text (the page hides the explorer);
+  the explorer follows the tab's folder, which is unrelated to the page. Would need the user.
+- Decision: A, because a visible control should reflect the screen and do something visible,
+  and leaving the page is already how file opens behave there. Details: the shown state is
+  `explorer_visible && !settings.shows_page()`, used by the button's selected state and label,
+  the panel/divider render and `fixed_panes_width`; window state saves the remembered
+  `explorer_visible` (the page is not restored at start). Turning "File explorer and viewer"
+  off on the page still clears the remembered state (`drop_file_panes`), so the explorer stays
+  closed on leaving, as today. Decided by: UX/UI agent
+
+## Viewer "reveal folder" (and other explorer-on paths) while the settings page shows
+- Date: 2026-10-26, step: settings-hides-explorer, raised by: Step 0
+- Context: `ViewerEvent::RevealFolder` comes only from a folder link clicked in the viewer's
+  Markdown page (`file_viewer.rs` `open_link`). The selected tab's viewer is hidden (not
+  rendered) while the page shows and other tabs' viewers are hidden too, so it cannot be
+  clicked; no other path sets `explorer_visible = true` except `toggle_explorer`; turning the
+  file panes on (`PaneChange::Show`) does not show the explorer.
+- Option A — No guard: rely on it not firing. Pros: no code. Cons: the handler only calls
+  `toggle_explorer` when `!explorer_visible`, so if it ever fires with the explorer
+  remembered open it would reveal into a hidden panel and the page would stay.
+- Option B — Route it through the same "show explorer" path as the button (Q above, A):
+  leave the page if it shows, set the explorer shown, then reveal. Pros: one helper for every
+  explorer-on path, correct even if a future path (keyboard link activation, a new command)
+  fires it during the page; no extra test burden beyond the button's. Cons: a few lines.
+- Decision: B, because it costs nothing over the button's helper and keeps every
+  "show the explorer" path consistent with the page; no user-visible change today since the
+  event cannot fire while the page shows. Decided by: UX/UI agent

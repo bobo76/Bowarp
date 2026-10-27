@@ -415,9 +415,11 @@ unless it has unsaved edits, which are kept.
 ## Settings
 
 The gear button in the title bar (after the `i` button) opens the settings page in place of the
-terminal and the file viewer and adds a Settings row under the tabs (the viewer keeps its file
-and unsaved edits and comes back with the tab); select a tab to go back, select the row to
-return, and close the row with its × or Ctrl+Shift+W. The row isn't reopened at the next start.
+terminal, the file viewer and the file explorer and adds a Settings row under the tabs (the
+viewer keeps its file and unsaved edits, the explorer its width and expanded folders; both come
+back with the tab); select a tab to go back, select the row to return, and close the row with
+its × or Ctrl+Shift+W. The explorer button or Ctrl+Shift+| on the page goes back to the tab with
+the explorer shown. The row isn't reopened at the next start.
 Clicking the gear again while the page or one of its controls has focus closes the page and
 removes its row, returning focus to the terminal. If another pane has focus, the first click
 focuses Settings instead.

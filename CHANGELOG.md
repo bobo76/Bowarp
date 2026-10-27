@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.35
+
+- Hide the file explorer while the settings page shows; it comes back as it was (width,
+  expanded folders) when the page closes. The explorer button and Ctrl+| on the page leave
+  the page and show the explorer.
+
 ## 0.2.34
 
 - Attention toasts say what the agent waits for: "Waiting for permission" or "Waiting for

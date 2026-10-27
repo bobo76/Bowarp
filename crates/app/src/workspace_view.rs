@@ -245,6 +245,7 @@ pub struct WorkspaceView {
     explorer: Entity<FileExplorer>,
     /// The "close busy tabs?" question is open (it is never asked twice at once).
     close_question_open: bool,
+    /// The explorer is on (remembered while the settings page hides it: `explorer_shown`).
     explorer_visible: bool,
     /// Whether the file explorer and viewer panes work: the "File explorer and viewer" switch
     /// as last applied (it stays on while unsaved edits wait for an answer).
@@ -1279,6 +1280,36 @@ impl WorkspaceView {
         cx.notify();
     }
 
+    /// Whether the explorer is on screen: the settings page hides it (and its divider) without
+    /// turning it off, so it comes back as it was (width, folder, expanded folders).
+    fn explorer_shown(&self) -> bool {
+        self.explorer_visible && !self.settings.shows_page()
+    }
+
+    /// The explorer button and shortcut: hide or show the explorer; while the settings page
+    /// shows, go back to the selected tab with the explorer shown.
+    fn press_explorer_toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings.shows_page() {
+            self.show_explorer(window, cx);
+            return;
+        }
+        self.toggle_explorer(cx);
+    }
+
+    /// Turn the explorer on in sight (the button or shortcut on the settings page, "Reveal
+    /// folder"): leaves the settings page first (the Settings row stays).
+    fn show_explorer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !settings_file::file_panes(cx).allows(PaneEntry::ToggleExplorer) {
+            return;
+        }
+        if self.settings.shows_page() {
+            self.activate(self.active, window, cx);
+        }
+        if !self.explorer_visible {
+            self.toggle_explorer(cx);
+        }
+    }
+
     fn toggle_explorer(&mut self, cx: &mut Context<Self>) {
         if !settings_file::file_panes(cx).allows(PaneEntry::ToggleExplorer) {
             return;
@@ -1558,9 +1589,7 @@ impl WorkspaceView {
             }
             ViewerEvent::Saved(_) => {}
             ViewerEvent::RevealFolder(folder) => {
-                if !self.explorer_visible {
-                    self.toggle_explorer(cx);
-                }
+                self.show_explorer(window, cx);
                 let shown = self
                     .explorer
                     .update(cx, |explorer, cx| explorer.reveal(folder, cx));
@@ -1582,7 +1611,7 @@ impl WorkspaceView {
 
     /// The width the sidebar and the explorer take from the row of panes.
     fn fixed_panes_width(&self, cx: &App) -> f32 {
-        let explorer = if self.explorer_visible {
+        let explorer = if self.explorer_shown() {
             self.explorer_width(cx)
         } else {
             0.
@@ -1743,7 +1772,7 @@ impl WorkspaceView {
     }
 
     fn explorer_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let label = if self.explorer_visible {
+        let label = if self.explorer_shown() {
             "Hide explorer"
         } else {
             "Show explorer"
@@ -1752,9 +1781,11 @@ impl WorkspaceView {
             .icon(Icon::empty().path(FILES_ICON))
             .ghost()
             .small()
-            .selected(self.explorer_visible)
+            .selected(self.explorer_shown())
             .tooltip(shortcuts::with_shortcut(label, &ToggleExplorer, cx))
-            .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_explorer(cx)))
+            .on_click(
+                cx.listener(|workspace, _, window, cx| workspace.press_explorer_toggle(window, cx)),
+            )
     }
 }
 
@@ -1820,8 +1851,8 @@ impl Render for WorkspaceView {
                 workspace.toggle_sidebar(cx);
                 cx.stop_propagation();
             }))
-            .capture_action(cx.listener(|workspace, _: &ToggleExplorer, _, cx| {
-                workspace.toggle_explorer(cx);
+            .capture_action(cx.listener(|workspace, _: &ToggleExplorer, window, cx| {
+                workspace.press_explorer_toggle(window, cx);
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &SearchTabs, window, cx| {
@@ -1916,7 +1947,7 @@ impl Render for WorkspaceView {
                     .when(self.sidebar_visible, |content| {
                         content.child(self.render_sidebar(cx))
                     })
-                    .when(self.explorer_visible, |content| {
+                    .when(self.explorer_shown(), |content| {
                         content.child(self.explorer_panel(cx))
                     })
                     .child(

@@ -174,7 +174,7 @@ impl PanesHarness {
             SessionKind::Shell,
             Some(program.into()),
             args.into_iter().map(String::from).collect(),
-            None,
+            Some(folder.clone()),
         );
         let captured = Rc::new(RefCell::new(None));
         let capture = captured.clone();
@@ -866,4 +866,92 @@ fn settings_page_hides_the_viewer_and_opening_a_file_shows_the_tab(
     h.mark_dirty(&viewer, false);
     h.open_file();
     assert_eq!(shown(&mut h), (false, true), "the file opens in sight");
+}
+
+#[gpui::test]
+fn settings_page_hides_the_explorer_and_keeps_it_as_it_was(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("settings-explorer", cx);
+    let sub = h.folder.join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(sub.join("inner.txt"), "x").unwrap();
+    let width = h.save_widths().1.get();
+    h.toggle_explorer();
+    let workspace = h.workspace.clone();
+    h.cx.update(|_, cx| {
+        let explorer = workspace.read(cx).explorer.clone();
+        assert!(explorer.update(cx, |explorer, cx| explorer.reveal(&sub, cx)));
+    });
+    // (page shows, explorer remembered on, on screen, width taken)
+    let panes = |h: &mut PanesHarness| {
+        h.workspace.read_with(&h.cx, |workspace, cx| {
+            (
+                workspace.settings.shows_page(),
+                workspace.explorer_visible,
+                workspace.explorer_shown(),
+                workspace.fixed_panes_width(cx) - workspace.sidebar_width(),
+            )
+        })
+    };
+    // (root, expanded folders)
+    let tree = |h: &mut PanesHarness| {
+        h.workspace.read_with(&h.cx, |workspace, cx| {
+            workspace.explorer.read(cx).expanded_for_test()
+        })
+    };
+    assert_eq!(panes(&mut h), (false, true, true, width));
+    let tree_before = tree(&mut h);
+    assert!(tree_before.1.contains(&sub), "the folder is expanded");
+    let page = |h: &mut PanesHarness| {
+        let workspace = h.workspace.clone();
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| workspace.open_settings(window, cx))
+        });
+        h.cx.run_until_parked();
+    };
+    page(&mut h);
+    assert_eq!(
+        panes(&mut h),
+        (true, true, false, 0.),
+        "the page hides the explorer and gives its width back"
+    );
+    assert_eq!(
+        tree(&mut h),
+        tree_before,
+        "hiding keeps the folder and expanded folders"
+    );
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| workspace.close_settings(window, cx))
+    });
+    h.cx.run_until_parked();
+    assert_eq!(panes(&mut h), (false, true, true, width));
+    assert_eq!(
+        tree(&mut h),
+        tree_before,
+        "the explorer comes back as it was"
+    );
+
+    // The shortcut (and the button, same method) on the page goes back to the tab with the
+    // explorer shown.
+    for remembered in [true, false] {
+        if !remembered {
+            h.toggle_explorer();
+        }
+        page(&mut h);
+        h.cx.update(|window, cx| window.draw(cx).clear(cx));
+        h.cx.simulate_keystrokes(&format!("ctrl-{EXPLORER_KEY}"));
+        h.cx.run_until_parked();
+        let (page_shows, _, explorer_shown, _) = panes(&mut h);
+        assert_eq!(
+            (page_shows, explorer_shown),
+            (false, true),
+            "remembered on: {remembered}"
+        );
+        let terminal_focused = h.cx.update(|window, cx| {
+            workspace.read(cx).tabs[0]
+                .view
+                .focus_handle(cx)
+                .is_focused(window)
+        });
+        assert!(terminal_focused, "the tab's terminal gets the keyboard");
+    }
 }

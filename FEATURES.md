@@ -112,7 +112,8 @@ directly to model APIs.
   unknown or mistyped entries; a file that can't be read is set aside, never lost.
 - Edit preferences on a settings page opened from the title bar: searchable pages of
   settings applied as they change, a reset per setting, the file's errors shown, and a
-  button to open the settings file itself.
+  button to open the settings file itself. The page takes the place of the terminal, the file
+  explorer and the file viewer, which come back as they were when it closes.
 - Let the user switch optional behavior on or off (hover cards, activity animations),
   applied live; a setting that depends on another is shown disabled with the reason.
 - Let the user switch command history, the history popup and inline suggestions on or off,
