@@ -58,7 +58,7 @@ In this order:
 - Ask for a final report that lists the library/platform facts the code relies on, each with the source `file:line` that confirms it, so the next agent checks those lines instead of searching again. For agent 1 this also includes the `file:line` of each state change the feature relies on (where a field is set, cleared and read, which event triggers a redraw), so the reviewer can follow the state flow without a grep round.
 - For agent 2: the path of agent 1's retro and agent 1's final report (what was verified and how, what was not driven, the choices made). Read those before the code instead of working them out again.
 - For agent 3: agent 2's final report and any user decisions; point to `REVIEW.md` for the findings instead of pasting them, and use REVIEW.md's finding numbers. No retros needed.
-- Tell agents to run `cargo test --no-fail-fast`, tee its output to a scratch file named with the slug (the scratchpad is shared) and count from it, not run the tests twice, and to take the app's real shortcuts from project memory rather than guessing them.
+- Tell agents to run `cargo test --no-fail-fast`, tee its output to a scratch file named with the slug (the scratchpad is shared) and count from it with the toolchain memory's test-count command (it skips filtered reruns), not run the tests twice, and to take the app's real shortcuts from project memory rather than guessing them.
 
 ## Agent 1 — implement the step (general-purpose, `model: "opus"`, I wait for it)
 Launch this agent with the Agent tool's `model` set to `opus`.
@@ -99,7 +99,7 @@ Launch this agent with the Agent tool's `model` set to `sonnet`.
 Launch it with the Agent tool's `subagent_type` set to `ux-designer` and `model` set to `opus`, whenever a UX/UI question comes up: in Step 0's pre-check, under "Open UX questions" in agent 1's report (run it before agent 2), or as a `UX` design-choice finding in `REVIEW.md` (run it before agent 3). One agent per batch of questions, not one per question.
 Its role, what it reads, how it weighs options (2-3 per question, with pros and cons), the `docs/ux-decisions.md` entry format and its final report are in `.claude/agents/ux-designer.md`; don't repeat them in the prompt. If that agent type isn't listed (the session started before the file existed), launch a general-purpose agent with `model: "opus"` and tell it to read and follow that file first.
 Prompt contents:
-- The questions, each with its context: the step text, the slug, where it came up (Step 0, agent 1's report, `REVIEW.md` #<n>) and the `file:line` of the code concerned, if any.
+- The questions, each with its context: the step text, the slug, where it came up (Step 0, agent 1's report, `REVIEW.md` #<n>) and the `file:line` of the code concerned, if any, including every line that writes the state in question, and edge facts it would otherwise grep for (e.g. whether a tab always exists).
 - The Xvfb memory entry path, if it needs to see the current UI.
 - The log lines and the retro (`pipeline/retros/<slug>/ux-<n>.md`, `<n>` counting the UX/UI agent runs of this run), as in "Every agent prompt".
 - Don't commit; I commit `docs/ux-decisions.md` with the docs (see "After all agents"). If a decision makes a `docs/known-limitations.md` line wrong, name the line in the report; agent 3 updates it. Say "no need to see the UI live" when the question is about behaviour or timing, not layout.
