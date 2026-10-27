@@ -14,8 +14,12 @@ entry when the limitation is lifted.
   permission / Waiting for your reply, Ready for review, Agent finished on a clean exit); a
   toast already shown stays until it hides. A background agent that exits with a nonzero or
   unknown code still toasts, as do user-action feedback (save, delete, clear history, start
-  failures) and the persistent fallback-shell warning. Agent toasts are keyed per tab, so a
-  new one replaces the tab's earlier one.
+  failures) and the persistent fallback-shell and agent-status-off warnings. Agent toasts are
+  keyed per tab, so a new one replaces the tab's earlier one.
+- Agent status off (`agentws-hook` missing or the status listener could not start): Claude
+  Code tabs fall back to output activity ("Status unavailable" when quiet) and a bell asks for
+  attention as in a shell; a Copilot CLI permission prompt reads Working, not Needs attention,
+  unless it rings the bell. The warning shows once per start, not again when an agent tab opens.
 - Clipboard notice: every program clipboard write (OSC 52) now waits for Allow, including
   Copilot CLI's copy on Windows. One answer covers the held clipboard and primary-selection
   writes; a write held when the program exits is dropped. "Always for this tab" survives an

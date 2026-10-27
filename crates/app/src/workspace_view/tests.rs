@@ -1028,3 +1028,43 @@ fn settings_page_hides_the_explorer_and_keeps_it_as_it_was(cx: &mut gpui_kit::Te
         assert!(terminal_focused, "the tab's terminal gets the keyboard");
     }
 }
+
+#[gpui::test]
+fn agent_status_off_warning_stays_once_beside_the_fallback_warning(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use gpui_kit::VisualTestContext;
+    use gpui_kit::component::Root;
+
+    cx.update(gpui_kit::init);
+    cx.update(settings_file::init);
+    let window = cx.add_window(move |window, cx| {
+        let (_, messages) = futures::channel::mpsc::unbounded();
+        let workspace = cx.new(|cx| {
+            WorkspaceView::new(
+                Rc::from([]),
+                None,
+                messages,
+                Rc::new(tabs_file::TabsWriter::new(false)),
+                window,
+                cx,
+            )
+        });
+        workspace.update(cx, |workspace, cx| {
+            let warning = "Agent status is off: agentws-hook not found next to the app.";
+            workspace.warn_agent_status_off(warning.into(), window, cx);
+            workspace.warn_agent_status_off(warning.into(), window, cx);
+            workspace.warn_shell_fallback("Could not start broken-shell".into(), window, cx);
+        });
+        Root::new(workspace, window, cx)
+    });
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    cx.update(|window, cx| assert_eq!(window.notifications(cx).len(), 2));
+    cx.executor().advance_clock(Duration::from_secs(60));
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        assert_eq!(window.notifications(cx).len(), 2, "both persist");
+    });
+    assert!(cx.shown_system_notifications().is_empty());
+}

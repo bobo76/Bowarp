@@ -10,23 +10,25 @@ still to do (Windows included), not what was already tested.
 
 Each step stands alone and is tested:
 
-1. Agent status disabled shows in the UI (docs/ux-review.md #14): when `ClaudeHooks::start`
-   fails (`agentws-hook` missing next to the app, or the hook server can't start), show the
-   persistent warning used for the shell fallback ("Agent status is off: agentws-hook not
-   found next to the app. Reinstall to fix.", with the real reason) and give agent tabs the
-   card status "Status unavailable" instead of Idle / No recent output. Shown once per
-   start; dismissing hides it for the run.
-2. Closing the last tab keeps the window and the workspace (docs/ux-review.md #21, option A,
+1. Closing the last tab keeps the window and the workspace (docs/ux-review.md #21, option A,
    picked by the user): the window stays open with an empty state in the terminal area
    ("New tab" buttons for the launchers) and the sidebar still lists the groups, empty ones
    included; colors and groups are saved as usual. Closing the window itself works as today.
-3. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
+2. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
    `git check-ignore --stdin` per expanded folder, off the UI thread, refreshed with the
    folder watcher. Folder order unchanged; folders outside a repository show as today.
 
 ## Fixed, not tested yet
 
 Built with automated coverage on Linux; the manual checks below are still to do.
+
+Agent status off shows in the UI:
+
+- Windows: without `agentws-hook.exe` next to the app, the warning names
+  `agentws-hook.exe`; a quiet Claude Code tab reads "Status unavailable".
+- The status listener failing to start (e.g. a socket/pipe that can't be created) shows "could
+  not start the status listener (...). Restart the app to retry."; with a broken default shell
+  too, both warnings show, agent status first.
 
 New tabs open below the selected tab:
 

@@ -302,6 +302,26 @@ impl WorkspaceView {
         });
     }
 
+    /// The status hooks could not start: say so until dismissed. A fixed id, so it never
+    /// stacks twice.
+    pub fn warn_agent_status_off(
+        &self,
+        message: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        struct AgentStatusOff;
+        // Startup runs before the notification layer's root exists.
+        cx.defer_in(window, move |_, window, cx| {
+            window.push_notification(
+                Notification::warning(message)
+                    .id::<AgentStatusOff>()
+                    .autohide(false),
+                cx,
+            );
+        });
+    }
+
     pub fn new(
         launchers: Rc<[Launcher]>,
         hooks: Option<Rc<ClaudeHooks>>,

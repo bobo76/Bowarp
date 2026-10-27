@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.37
+
+- Say when agent status is off at start (for example "Agent status is off: agentws-hook not
+  found next to the app. Reinstall to fix."), in a warning that stays until closed. Quiet
+  Claude Code tabs then read "Status unavailable" instead of "No recent output".
+
 ## 0.2.36
 
 - Open new tabs (the `+` menu, Ctrl+Shift+T, the explorer's "Open in new tab") right below

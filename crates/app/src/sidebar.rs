@@ -82,6 +82,8 @@ pub enum TabStatus {
     Active,
     /// A session without agent status has been quiet for a while.
     Quiet,
+    /// A quiet Claude Code session while status hooks are off: its silence says nothing.
+    Unavailable,
     Exited,
 }
 
@@ -93,7 +95,7 @@ impl TabStatus {
             Self::ReadyForReview | Self::Idle => rgb(0x3fb950),
             Self::Running => rgb(0x2dd4bf),
             Self::Active => rgb(0xc9d1d9),
-            Self::Quiet | Self::Exited => rgb(0x545d68),
+            Self::Quiet | Self::Unavailable | Self::Exited => rgb(0x545d68),
         }
         .into()
     }
@@ -107,6 +109,7 @@ impl TabStatus {
             Self::Running => "Running",
             Self::Active => "Recent output",
             Self::Quiet => "No recent output",
+            Self::Unavailable => "Status unavailable",
             Self::Exited => "Exited",
         }
     }
@@ -121,6 +124,7 @@ impl TabStatus {
             | Self::Running
             | Self::Active
             | Self::Quiet
+            | Self::Unavailable
             | Self::Exited => None,
         }
     }
@@ -377,8 +381,8 @@ pub fn pulse_allowed(window: &Window) -> bool {
             .is_some_and(|specs| specs.is_software_emulated)
 }
 
-/// The badge on the icon's bottom-right corner. Quiet sessions get none. The Running badge
-/// pulses when `pulse` is set; `index` tells the rows' animations apart.
+/// The badge on the icon's bottom-right corner. Quiet and Unavailable sessions get none. The
+/// Running badge pulses when `pulse` is set; `index` tells the rows' animations apart.
 fn status_badge(
     status: TabStatus,
     pulse: RunningPulse,
@@ -398,7 +402,7 @@ fn status_badge(
             style.border_color(hovered)
         });
     let badge = match status {
-        TabStatus::Quiet => return None,
+        TabStatus::Quiet | TabStatus::Unavailable => return None,
         TabStatus::ReadyForReview => badge
             .flex()
             .items_center()
@@ -1063,6 +1067,7 @@ mod tests {
             TabStatus::Running,
             TabStatus::Active,
             TabStatus::Quiet,
+            TabStatus::Unavailable,
             TabStatus::Exited,
         ] {
             assert_eq!(
@@ -1096,6 +1101,7 @@ mod tests {
             TabStatus::Running,
             TabStatus::ReadyForReview,
             TabStatus::Quiet,
+            TabStatus::Unavailable,
             TabStatus::Active,
         ]);
         assert_eq!(

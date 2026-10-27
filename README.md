@@ -36,7 +36,8 @@ sudo apt install build-essential pkg-config libvulkan-dev libwayland-dev libxkbc
 ```
 
 Build the whole workspace first: `agentws-hook` must sit next to the app binary, or agent
-status is disabled.
+status is disabled: the app then shows a warning that stays until closed ("Agent status is off:
+..." with the cause) and quiet Claude Code tabs read "Status unavailable".
 
 ```
 cargo build
@@ -287,6 +288,7 @@ Run the extension's tests with `node --test .\crates\app\copilot-extension\bridg
 | teal, pulsing for the first 10 s | Running: a command typed at the prompt of a bash, zsh or PowerShell tab has run for half a second; the card shows it and how long it has run (`Running for 2:14`, ticking while the card is open; no pulse on a software-rendered GPU) |
 | light grey | Recent output (shell or Copilot) |
 | none | No recent output |
+| none | Status unavailable (agent status off): a quiet Claude Code tab while the status hooks could not start |
 | hollow ring | Exited |
 
 Ready for review marks an unread Working-to-Idle transition, not confirmation that the

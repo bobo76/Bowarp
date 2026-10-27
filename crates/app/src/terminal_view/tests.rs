@@ -503,3 +503,50 @@ fn clipboard_writes_wait_for_an_answer(cx: &mut gpui_kit::TestAppContext) {
         Some("allowed by the setting")
     );
 }
+
+#[gpui::test]
+fn a_quiet_claude_tab_without_hooks_shows_status_unavailable(cx: &mut gpui_kit::TestAppContext) {
+    #[cfg(windows)]
+    let (program, args) = ("cmd", vec!["/C", "exit 0"]);
+    #[cfg(not(windows))]
+    let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+    for (kind, quiet) in [
+        (SessionKind::ClaudeCode, TabStatus::Unavailable),
+        (SessionKind::CopilotCli, TabStatus::Quiet),
+        (SessionKind::Shell, TabStatus::Quiet),
+    ] {
+        let spec = LaunchSpec::new(
+            kind,
+            Some(program.into()),
+            args.iter().copied().map(String::from).collect(),
+            None,
+        );
+        let session = Session::spawn(
+            4,
+            &spec,
+            TermDimensions::new(80, 24),
+            Palette::default(),
+            Arc::new(|_| {}),
+        )
+        .unwrap();
+        let view = cx.new(|cx| {
+            TerminalView::new(
+                session,
+                &spec,
+                StatusReporting::OutputActivity,
+                Task::ready(()),
+                cx,
+            )
+        });
+        view.update(cx, |view, cx| {
+            assert_eq!(view.tab_status(), quiet, "{kind:?}");
+            view.hide();
+            view.on_session_event(SessionEvent::Bell, cx);
+            assert_eq!(
+                view.tab_status(),
+                TabStatus::NeedsAttention,
+                "{kind:?}: without hooks a bell asks for the user"
+            );
+        });
+    }
+}

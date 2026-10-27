@@ -537,3 +537,82 @@
   different tabs.
 - Decision: A, because `activate` already handles every visibility case and keeping folder and
   placement tied to the same selected tab is the simplest model. Decided by: UX/UI agent
+
+## Which agent tabs show "Status unavailable" when agent status hooks fail, and in which states
+- Date: 2026-10-26, step: hooks-unavailable, raised by: Step 0
+- Context: without `ClaudeHooks`, Claude Code tabs fall back to output activity ("Recent
+  output" / "No recent output"; never Idle). Copilot CLI tabs lose only the PermissionRequest
+  plugin: Working/Idle still come from OSC 9;4, and before the first progress report they use
+  output activity exactly as they do with hooks. A Copilot permission prompt keeps sending
+  `9;4;3`, so without hooks it reads Working, not Idle. FEATURES.md: label output activity as
+  recent activity; never read silence as idle.
+- Option A — Claude Code tabs only; "Status unavailable" replaces "No recent output" (Quiet),
+  "Recent output" stays; Exited, bell / clipboard Needs attention unchanged. Pros: changes only
+  the tabs whose status really depends on the hooks; keeps the output-activity label FEATURES.md
+  asks for; one new status, one place in `tab_status` (the no-agent branch, gated on "Claude tab
+  and hooks off"). Cons: the label alternates with "Recent output" as the agent prints.
+- Option B — Claude Code always "Status unavailable" (even with recent output). Pros: one
+  stable label. Cons: drops the only live signal the tab has; contradicts FEATURES.md's "label
+  output activity as recent activity".
+- Option C — Also Copilot tabs (every Idle / output-activity state). Pros: literal reading of
+  "agent tabs". Cons: Copilot's Working/Idle come from the CLI itself and stay right; before its
+  first progress report nothing differs from a run with hooks; its real loss (Waiting reads as
+  Working) is not an Idle-vs-silence problem, so the label would be wrong more often than right.
+- Decision: A, because it marks exactly the status the failure removes and keeps every signal
+  that still works. Copilot tabs are unchanged (Working during a permission prompt is a new
+  known limitation). A Claude tab without hooks counts the bell like any program without hooks
+  (the "Claude tabs ignore the bell" rule assumes hooks). Needs no live UI. Decided by: UX/UI
+  agent
+
+## How "Status unavailable" looks and counts
+- Date: 2026-10-26, step: hooks-unavailable, raised by: Step 0
+- Context: `TabStatus` colors and labels (sidebar.rs:89-112), badges (Quiet has none,
+  sidebar.rs:401), hover card status chip with a dot mark, `attention()`, `GroupSummary`
+  (counts Needs attention, Working, Running, Ready for review only).
+- Option A — Like Quiet: grey (0x545d68), no badge on the row icon, hover card chip "Status
+  unavailable" with the grey dot; no reason line in the card. Not in `attention()` (None), not
+  in group chips. Pros: no new visuals; the failure is app-wide, so a per-row badge would say
+  nothing the start warning doesn't; the label (not color) carries the state. Cons: at a glance
+  the row looks like a quiet shell until hovered.
+- Option B — A distinct badge (e.g. an off / question icon). Pros: visible without hovering.
+  Cons: a new badge for a broken-install state; every Claude row gets it; the toast already
+  told the user once.
+- Option C — Hover card adds the failure reason under the chip. Pros: reason visible after the
+  toast is dismissed. Cons: needs the error plumbed into every card; long paths in a narrow card;
+  README covers it.
+- Decision: A, because it is the cheapest and the start warning plus README carry the reason;
+  the README badge table gains "none | Status unavailable (agent status off)". Needs no live UI.
+  Decided by: UX/UI agent
+
+## Agent-status-off warning text per failure cause, and who sees it
+- Date: 2026-10-26, step: hooks-unavailable, raised by: Step 0
+- Context: `ClaudeHooks::start` (hooks.rs:30-50) fails on `current_exe()`, a missing hook
+  program, `HookServer::start` (socket / named pipe), the Claude settings JSON, or
+  `write_private` of the settings file. Toasts are narrow; io errors render as
+  "Permission denied (os error 13)".
+- Option A — One prefix "Agent status is off: " + cause + fix:
+  missing program: "agentws-hook not found next to the app. Reinstall to fix." (file name from
+  the real path, so `agentws-hook.exe` on Windows; no folder); server: "could not start the
+  status listener (<io error>). Restart the app to retry."; settings write: "could not write
+  <full settings path> (<io error>)." (the path is what the user can fix); `current_exe` or
+  anything else: "<io error>.". Pros: same shape as the fallback-shell warning; the path only
+  where it helps; one wording for socket and pipe. Cons: `start` must return a cause the app can
+  match (an error enum or kind), not just an io::Error string.
+- Option B — Always "Agent status is off: <raw error>". Pros: no classification. Cons: the
+  missing-program case shows a long absolute path and no fix; less readable.
+- Decision: A, because it gives each cause a reason and a fix in one line. Shown once per start
+  in every window start, also with only shell tabs (a Claude tab can be opened later) and also
+  with in-app notifications off (like the fallback-shell warning); not re-shown when a Claude tab
+  opens. Each running instance shows its own (each starts its own server). Give it a fixed
+  notification id so it is never stacked twice. Needs no live UI. Decided by: UX/UI agent
+
+## Agent-status-off and fallback-shell warnings both at start
+- Date: 2026-10-26, step: hooks-unavailable, raised by: Step 0
+- Context: both are persistent warnings with a close button; gpui-component stacks toasts (own
+  uuid each, up to 10).
+- Option A — Two stacked toasts, agent-status first (it is app-wide and happens before tabs).
+  Pros: each keeps its own cause and close button; no new code. Cons: two toasts at start.
+- Option B — Merge into one toast. Pros: one item. Cons: unrelated causes and fixes in one
+  message; dismissing one dismisses both; extra code.
+- Decision: A, because the causes are independent and the case is rare. Needs no live UI.
+  Decided by: UX/UI agent

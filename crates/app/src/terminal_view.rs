@@ -487,6 +487,10 @@ impl TerminalView {
                 TabStatus::Running
             }
             ProcessState::Running if self.activity_task.is_some() => TabStatus::Active,
+            // With hooks a Claude tab always has an agent: none means they are off.
+            ProcessState::Running if self.kind() == SessionKind::ClaudeCode => {
+                TabStatus::Unavailable
+            }
             ProcessState::Running => TabStatus::Quiet,
         }
     }

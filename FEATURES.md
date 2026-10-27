@@ -99,6 +99,9 @@ directly to model APIs.
   "recent activity" rather than claiming the agent is thinking or working.
 - Do not treat a running process as proof that the agent is actively working,
   or terminal silence as proof that it is idle.
+- When agent status can't start (its helper missing next to the app, or its listener
+  failing), say so once per start in a warning that stays until dismissed, with the cause
+  and the fix, and show quiet agent tabs as "Status unavailable".
 
 ## Workspace Persistence
 
