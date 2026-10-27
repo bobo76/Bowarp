@@ -42,6 +42,8 @@ directly to model APIs.
 - Organize terminal tabs into named, collapsible groups, such as projects or tasks.
 - Collapse a group without interrupting its sessions.
 - Create, rename, reorder (menu or drag and drop), duplicate, and move tabs between groups.
+  A new tab opens right below the selected one, in its group (first after the pinned tabs
+  when a pinned tab is selected).
 - Pin tabs to the top of the list.
 - Show each tab's git branch, or its current folder outside a repository, under its name.
 - Show a tab's details on hover: status, full folder, branch, program title, session

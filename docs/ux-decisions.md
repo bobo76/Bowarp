@@ -469,3 +469,71 @@
 - Decision: B, because it costs nothing over the button's helper and keeps every
   "show the explorer" path consistent with the page; no user-visible change today since the
   event cannot fire while the page shows. Decided by: UX/UI agent
+
+## New tab (and duplicate) when the selected tab is pinned
+- Date: 2026-10-26, step: new-tab-below, raised by: Step 0
+- Context: the step puts new tabs right below the selected tab (`layout.add_after`). Pinned
+  tabs sit at the top and are never in a group; `add_after` below a pinned tab today puts the
+  tab ungrouped at the end of the list (duplicate's behaviour).
+- Option A — End of the list (as `add_after` does today): Pros: no layout change; matches
+  today's duplicate. Cons: with many tabs the new tab lands far from the one it came from,
+  often off-screen (activate does not scroll the sidebar); breaks "below the current tab"
+  exactly where pinned tabs make it matter (pins are the tabs users work from).
+- Option B — First unpinned position, right below the pinned block (ungrouped, before any
+  group or loose tab): Pros: the closest spot to "below" that keeps the pinned block made only
+  of tabs the user pinned; what Firefox does for tabs opened from a pinned tab and what VS Code
+  does for editors opened next to a pinned one; always visible near the top. Cons: a small
+  `layout.rs` change (insert at `items[0]`); new tabs from different pins stack in reverse
+  order of creation at the top of the unpinned list.
+- Option C — Pinned, right below the selected pinned tab: Pros: literally "below". Cons: the
+  app pins tabs the user never pinned; pins grow with every new tab; unpinning becomes a chore;
+  no familiar tool does this.
+- Decision: B, and duplicate follows the same rule (one placement rule for every "new tab
+  next to this one", already shared through `add_after`), because it is the nearest position
+  that never pins a tab on the user's behalf. An unknown `after` id keeps falling back to the
+  end of the list. Decided by: UX/UI agent
+
+## Which entry points open the new tab below the selected tab
+- Date: 2026-10-26, step: new-tab-below, raised by: Step 0
+- Context: entry points today: `+` menu (`open_launcher` -> `open_launcher_in`), Ctrl+Shift+T
+  (`open_default_shell`), explorer "Open in new tab" / "Open in new tab with" (`ExplorerEvent::
+  OpenTab`, workspace_view.rs:1540-1546, same two functions), tab-menu Duplicate (already
+  `After`), command-line tab after the restored ones (`open_requested_tab`, end of top level on
+  purpose), first tab at start-up when nothing is restored (`open_first_tab` -> `open_tab`,
+  main.rs:300/305). The group header menu has no new-tab entry (`GroupCommand`: rename,
+  collapse, move, close tabs, delete). An agent tab that quits reopens a shell in the same
+  tab, not a new one.
+- Option A — Every interactive "new tab" (`+` menu, Ctrl+Shift+T, both explorer entries,
+  duplicate) goes below the selected tab; the command-line tab keeps the end of the top level;
+  the start-up first tab is moot (no tab yet, falls back to the end of the empty list).
+  Pros: one rule for everything the user does from inside the window, matching how the folder
+  is already taken from the selected tab (README "New tabs start in the selected tab's
+  folder"); the explorer always shows the selected tab's folder, so its tabs relate to that tab
+  too; the command-line tab is not related to whichever restored tab happens to be selected.
+  Cons: none notable.
+- Option B — Also put the command-line tab below the restored selected tab. Pros: one rule
+  everywhere. Cons: it lands in a random group (whatever was selected at last exit), which is
+  why it was moved to the end of the top level on purpose.
+- Option C — Only Ctrl+Shift+T and `+` go below; explorer tabs go to the end of the group.
+  Pros: none clear. Cons: two rules for the same "Open in new tab" gesture; nothing to explain.
+- Decision: A, because every in-window new tab relates to the selected tab, while the
+  command-line one does not. `open_tab` (start-up) can use the same `After(active)` path or
+  keep `EndOf`: with no tab the result is the same. README.md:343 ("New tabs join the selected
+  tab's group") must change to "New tabs open right below the selected tab, in its group" with
+  the pinned rule. Decided by: UX/UI agent
+
+## New tab while the settings page shows, or below a tab in a collapsed group / hidden by search
+- Date: 2026-10-26, step: new-tab-below, raised by: Step 0
+- Context: `active_tab()` still returns the tab under the settings page; the new tab already
+  takes that tab's folder. `activate` hides the page, expands a collapsed group (`reveal`) and
+  ends a sidebar search that hides the tab (`clear_search_hiding`).
+- Option A — Nothing special: place below the tab under the page / inside the collapsed group /
+  below the search-hidden tab, then `activate` the new tab as today. Pros: consistent with the
+  folder already coming from that tab; `activate` already shows the result (page left, group
+  expanded, search ended if it hides the new tab); no new code or test paths. Cons: a new tab
+  opened from the page lands next to a tab the user is not looking at (same as its folder).
+- Option B — From the settings page, go to the end of the list instead. Pros: no hidden
+  "current" tab involved. Cons: a second rule; the folder and the placement would come from
+  different tabs.
+- Decision: A, because `activate` already handles every visibility case and keeping folder and
+  placement tied to the same selected tab is the simplest model. Decided by: UX/UI agent

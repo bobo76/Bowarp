@@ -57,7 +57,9 @@ the Linux build and tests on a Windows machine (Docker or WSL):
 
 The `+` button above the tab list opens a new tab with one of the supported shells (Bash, Zsh,
 Fish, PowerShell) found on `PATH` (the default shell first, see [Settings](#settings)), Claude
-Code or Copilot CLI; agents that are not installed are listed but disabled. New tabs start in the selected tab's folder.
+Code or Copilot CLI; agents that are not installed are listed but disabled. New tabs start in the
+selected tab's folder and open right below it (below a pinned tab: first after the pinned tabs);
+the tab named on the command line goes after the restored ones.
 
 | Keys | Action |
 |---|---|
@@ -340,8 +342,8 @@ that is Ready for review. A tab in a collapsed group is revealed.
 
 Click a group header to collapse or expand it; a collapsed group shows how many of its tabs
 need attention, are working, run a command, or are ready for review. Selecting a tab in a collapsed group
-(Ctrl+1..9, Ctrl+Tab) expands it. New tabs join the selected tab's group. A tab without its own
-color shows its group's color. Groups stay when their last tab leaves.
+(Ctrl+1..9, Ctrl+Tab) expands it. New tabs open right below the selected tab, in its group. A tab
+without its own color shows its group's color. Groups stay when their last tab leaves.
 
 Hover any group header for its tab count and Working, Waiting and Ready for review totals, including
 zero totals for an empty group. Counts cover the whole group even while searching. The card

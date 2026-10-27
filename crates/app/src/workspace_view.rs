@@ -211,9 +211,9 @@ impl Render for ExplorerDivider {
 /// Where `open_tab_in` puts a new tab.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NewTabPlace {
-    /// At the end of the group (`None`: of the top level).
-    EndOf(Option<GroupId>),
-    /// Right below this tab (duplicates).
+    /// Ungrouped at the end of the list.
+    End,
+    /// Right below this tab (see `Layout::add_after`).
     After(TabId),
 }
 
@@ -394,15 +394,20 @@ impl WorkspaceView {
         }
     }
 
-    /// Start `spec` in a new tab and select it. The tab joins the selected tab's group.
+    /// Start `spec` in a new tab right below the selected one and select it.
     pub fn open_tab(
         &mut self,
         spec: LaunchSpec,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> io::Result<()> {
-        let group = self.active_group();
-        self.open_tab_in(spec, NewTabPlace::EndOf(group), window, cx)
+        self.open_tab_in(spec, self.below_selected(), window, cx)
+    }
+
+    /// Right below the selected tab, else at the end of the (empty) list.
+    fn below_selected(&self) -> NewTabPlace {
+        self.active_tab()
+            .map_or(NewTabPlace::End, |tab| NewTabPlace::After(tab.id))
     }
 
     /// Start `spec` in a new tab at `place` and select it.
@@ -415,7 +420,7 @@ impl WorkspaceView {
     ) -> io::Result<()> {
         let id = self.spawn_tab(spec, TabMeta::default(), window, cx)?;
         match place {
-            NewTabPlace::EndOf(group) => self.layout.add(id, group),
+            NewTabPlace::End => self.layout.add(id),
             NewTabPlace::After(tab) => self.layout.add_after(id, tab),
         }
         self.sync_order(cx);
@@ -754,14 +759,14 @@ impl WorkspaceView {
         window_bounds::close(window);
     }
 
+    /// Open a tab right below the selected one, or show why it failed.
     pub fn open_tab_or_notify(
         &mut self,
         spec: LaunchSpec,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let group = self.active_group();
-        self.open_tab_in_or_notify(spec, NewTabPlace::EndOf(group), window, cx);
+        self.open_tab_in_or_notify(spec, self.below_selected(), window, cx);
     }
 
     /// Open the tab named on the command line after the restored ones: at the end of the top
@@ -772,7 +777,7 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_tab_in_or_notify(spec, NewTabPlace::EndOf(None), window, cx);
+        self.open_tab_in_or_notify(spec, NewTabPlace::End, window, cx);
     }
 
     fn open_tab_in_or_notify(
@@ -957,12 +962,6 @@ impl WorkspaceView {
 
     fn active_tab(&self) -> Option<&Tab> {
         self.tabs.get(self.active)
-    }
-
-    fn active_group(&self) -> Option<GroupId> {
-        self.active_tab()
-            .and_then(|tab| self.layout.group_of(tab.id))
-            .map(|group| group.id)
     }
 
     fn tab_index(&self, id: u64) -> Option<usize> {

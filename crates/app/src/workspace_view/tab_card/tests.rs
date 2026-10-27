@@ -68,7 +68,7 @@ fn card_settings_stop_existing_clocks_and_skip_disabled_work(cx: &mut gpui_kit::
                 viewer: None,
                 _view_events: events,
             });
-            workspace.layout.add(1, None);
+            workspace.layout.add(1);
             let card = workspace.tab_card(1, cx).unwrap();
             assert_eq!(card.name.as_ref(), "Custom tab name");
             assert!(card.title.is_some());

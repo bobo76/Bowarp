@@ -10,24 +10,29 @@ still to do (Windows included), not what was already tested.
 
 Each step stands alone and is tested:
 
-1. Add new tabs below the current tab.
-2. Agent status disabled shows in the UI (docs/ux-review.md #14): when `ClaudeHooks::start`
+1. Agent status disabled shows in the UI (docs/ux-review.md #14): when `ClaudeHooks::start`
    fails (`agentws-hook` missing next to the app, or the hook server can't start), show the
    persistent warning used for the shell fallback ("Agent status is off: agentws-hook not
    found next to the app. Reinstall to fix.", with the real reason) and give agent tabs the
    card status "Status unavailable" instead of Idle / No recent output. Shown once per
    start; dismissing hides it for the run.
-3. Closing the last tab keeps the window and the workspace (docs/ux-review.md #21, option A,
+2. Closing the last tab keeps the window and the workspace (docs/ux-review.md #21, option A,
    picked by the user): the window stays open with an empty state in the terminal area
    ("New tab" buttons for the launchers) and the sidebar still lists the groups, empty ones
    included; colors and groups are saved as usual. Closing the window itself works as today.
-4. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
+3. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
    `git check-ignore --stdin` per expanded folder, off the UI thread, refreshed with the
    folder watcher. Folder order unchanged; folders outside a repository show as today.
 
 ## Fixed, not tested yet
 
 Built with automated coverage on Linux; the manual checks below are still to do.
+
+New tabs open below the selected tab:
+
+- The explorer's "Open in new tab" and "Open in new tab with" put the tab right below the
+  selected one (in its group; below a pinned tab, first after the pinned tabs); Windows: the
+  `+` menu, Ctrl+Shift+T and the explorer entries.
 
 Attention toast says what the agent waits for:
 

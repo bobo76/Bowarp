@@ -4,7 +4,7 @@ use super::*;
 fn sample() -> (Layout, GroupId, GroupId) {
     let mut layout = Layout::default();
     for id in 1..=6 {
-        layout.add(id, None);
+        layout.add(id);
     }
     layout.toggle_pin(1);
     let a = layout.new_group_with(3, "A").unwrap();
@@ -202,12 +202,11 @@ fn groups_stay_when_empty() {
 }
 
 #[test]
-fn new_tabs_join_the_given_group() {
-    let (mut layout, a, _) = sample();
-    layout.add(7, Some(a));
-    layout.add(8, None);
-    assert_eq!(layout.group(a).unwrap().tabs(), &[3, 4, 7]);
-    assert_eq!(layout.tabs(), vec![1, 2, 3, 4, 7, 5, 6, 8]);
+fn new_tabs_go_ungrouped_at_the_end() {
+    let (mut layout, _, _) = sample();
+    layout.add(7);
+    assert_eq!(layout.tabs(), vec![1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(layout.group_of(7), None);
 }
 
 #[test]
@@ -225,12 +224,24 @@ fn tabs_added_after_another_go_right_below_it() {
 }
 
 #[test]
-fn tabs_added_after_a_pinned_or_unknown_tab_go_to_the_end() {
+fn tabs_added_after_a_pinned_tab_go_first_after_the_pinned_ones() {
     let (mut layout, _, _) = sample();
+    layout.toggle_pin(2);
     layout.add_after(7, 1);
-    layout.add_after(8, 42);
-    assert_eq!(layout.pinned(), &[1]);
-    assert_eq!(layout.tabs(), vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    layout.add_after(8, 2);
+    assert_eq!(layout.pinned(), &[1, 2]);
+    // Ungrouped, above the earlier first unpinned tab and the groups.
+    assert!(matches!(layout.items()[0], Item::Tab(8)));
+    assert!(matches!(layout.items()[1], Item::Tab(7)));
+    assert_eq!(layout.tabs(), vec![1, 2, 8, 7, 3, 4, 5, 6]);
+    assert_eq!(layout.group_of(7), None);
+}
+
+#[test]
+fn tabs_added_after_an_unknown_tab_go_to_the_end() {
+    let (mut layout, _, _) = sample();
+    layout.add_after(7, 42);
+    assert_eq!(layout.tabs(), vec![1, 2, 3, 4, 5, 6, 7]);
     assert_eq!(layout.group_of(7), None);
 }
 

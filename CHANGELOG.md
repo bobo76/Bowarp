@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.36
+
+- Open new tabs (the `+` menu, Ctrl+Shift+T, the explorer's "Open in new tab") right below
+  the selected tab, in its group, instead of at the end of the group or list. With a pinned
+  tab selected, a new or duplicated tab goes first after the pinned tabs.
+
 ## 0.2.35
 
 - Hide the file explorer while the settings page shows; it comes back as it was (width,

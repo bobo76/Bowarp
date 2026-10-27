@@ -1,5 +1,17 @@
 use super::*;
 
+use std::time::{Duration, Instant};
+
+/// Let the PTY reader finish before GPUI's deterministic executor polls the event receiver; a
+/// later wake from that thread fails the test.
+fn wait_for_exit(session: &term_core::Session) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !session.has_exited() {
+        assert!(Instant::now() < deadline, "test child did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
 fn default_bindings_name_workspace_actions() {
     let bindings = default_bindings();
@@ -20,7 +32,6 @@ fn last_command_events_and_history_deletion_are_flushed_with_the_final_snapshot(
     use gpui_kit::component::Root;
     use std::cell::RefCell;
     use std::sync::mpsc;
-    use std::time::{Duration, Instant};
     use term_core::{ExecutedCommand, SessionEvent};
 
     cx.update(|cx| {
@@ -52,12 +63,7 @@ fn last_command_events_and_history_deletion_are_flushed_with_the_final_snapshot(
             spec.mark_token = Some("test".into());
             for _ in 0..2 {
                 workspace.open_tab(spec.clone(), window, cx).unwrap();
-                let session = &workspace.tabs.last().unwrap().view.read(cx).session;
-                let deadline = Instant::now() + Duration::from_secs(30);
-                while !session.has_exited() {
-                    assert!(Instant::now() < deadline, "test child did not exit");
-                    std::thread::sleep(Duration::from_millis(10));
-                }
+                wait_for_exit(&workspace.tabs.last().unwrap().view.read(cx).session);
             }
         });
         *capture.borrow_mut() = Some(workspace.clone());
@@ -192,17 +198,7 @@ impl PanesHarness {
             });
             workspace.update(cx, |workspace, cx| {
                 workspace.open_tab(spec, window, cx).unwrap();
-                // Let the PTY reader finish before GPUI's deterministic executor polls
-                // the event receiver; a later wake from that thread fails the test.
-                let session = &workspace.tabs[0].view.read(cx).session;
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-                while !session.has_exited() {
-                    assert!(
-                        std::time::Instant::now() < deadline,
-                        "test child did not exit"
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
+                wait_for_exit(&workspace.tabs[0].view.read(cx).session);
             });
             *capture.borrow_mut() = Some(workspace.clone());
             Root::new(workspace, window, cx)
@@ -497,15 +493,6 @@ fn duplicate_shortcut_does_not_send_eof_to_the_original_terminal(
     use gpui_kit::VisualTestContext;
     use gpui_kit::component::Root;
     use std::cell::RefCell;
-    use std::time::{Duration, Instant};
-
-    fn wait_for_exit(session: &term_core::Session) {
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while !session.has_exited() {
-            assert!(Instant::now() < deadline, "test child did not exit");
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
 
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -678,6 +665,100 @@ fn startup_fallback_warning_is_deferred_until_the_root_exists(cx: &mut gpui_kit:
 }
 
 #[gpui::test]
+fn new_tabs_open_below_the_selected_tab(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("new-tab-below", cx);
+    let workspace = h.workspace.clone();
+    // Open a tab the way the `+` menu, Ctrl+Shift+T and the explorer do; returns its id.
+    let open = |h: &mut PanesHarness, select: u64| -> u64 {
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                let index = workspace.tab_index(select).unwrap();
+                workspace.activate(index, window, cx);
+                let spec = workspace.tabs[0].spec.clone();
+                workspace.open_tab_or_notify(spec, window, cx);
+                let tab = workspace.active_tab().unwrap();
+                wait_for_exit(&tab.view.read(cx).session);
+                tab.id
+            })
+        })
+    };
+    let order = |h: &mut PanesHarness| {
+        workspace.read_with(&h.cx, |workspace, _| {
+            let ids: Vec<u64> = workspace.tabs.iter().map(|tab| tab.id).collect();
+            assert_eq!(ids, workspace.layout.tabs());
+            ids
+        })
+    };
+    let first = order(&mut h)[0];
+    let second = open(&mut h, first);
+    let third = open(&mut h, second);
+    // Selected first of three: the new tab is second.
+    let below_first = open(&mut h, first);
+    assert_eq!(order(&mut h), vec![first, below_first, second, third]);
+    // In a group: right below the selected tab, in the group.
+    let group = h.cx.update(|_, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let group = workspace.layout.new_group_with(second, "G").unwrap();
+            workspace.layout.move_to_group(third, group);
+            workspace.sync_order(cx);
+            group
+        })
+    });
+    let in_group = open(&mut h, second);
+    assert_eq!(
+        order(&mut h),
+        vec![first, below_first, second, in_group, third]
+    );
+    workspace.read_with(&h.cx, |workspace, _| {
+        assert_eq!(
+            workspace.layout.group(group).unwrap().tabs(),
+            &[second, in_group, third]
+        );
+    });
+    // Below a pinned tab: ungrouped, first after the pinned ones.
+    h.cx.update(|_, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.layout.toggle_pin(first);
+            workspace.layout.toggle_pin(third);
+            workspace.sync_order(cx);
+        })
+    });
+    let below_pinned = open(&mut h, first);
+    assert_eq!(
+        order(&mut h),
+        vec![first, third, below_pinned, below_first, second, in_group]
+    );
+    workspace.read_with(&h.cx, |workspace, _| {
+        assert_eq!(workspace.layout.group_of(below_pinned), None);
+        assert_eq!(workspace.active_tab().unwrap().id, below_pinned);
+    });
+    // From the settings page: below the tab under the page, and the page leaves.
+    let under_page = h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let index = workspace.tab_index(second).unwrap();
+            workspace.activate(index, window, cx);
+            workspace.open_settings(window, cx);
+            let spec = workspace.tabs[0].spec.clone();
+            workspace.open_tab_or_notify(spec, window, cx);
+            assert!(!workspace.settings.shows_page());
+            let tab = workspace.active_tab().unwrap();
+            wait_for_exit(&tab.view.read(cx).session);
+            tab.id
+        })
+    });
+    let expected = [
+        first,
+        third,
+        below_pinned,
+        below_first,
+        second,
+        under_page,
+        in_group,
+    ];
+    assert_eq!(order(&mut h), expected);
+}
+
+#[gpui::test]
 fn busy_tabs_are_asked_about_before_closing(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::component::WindowExt;
     use term_core::SessionEvent;
@@ -689,15 +770,7 @@ fn busy_tabs_are_asked_about_before_closing(cx: &mut gpui_kit::TestAppContext) {
             for _ in 0..3 {
                 let spec = workspace.tabs[0].spec.clone();
                 workspace.open_tab(spec, window, cx).unwrap();
-                let session = &workspace.tabs.last().unwrap().view.read(cx).session;
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-                while !session.has_exited() {
-                    assert!(
-                        std::time::Instant::now() < deadline,
-                        "test child did not exit"
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
+                wait_for_exit(&workspace.tabs.last().unwrap().view.read(cx).session);
             }
         })
     });
