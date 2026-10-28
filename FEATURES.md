@@ -21,8 +21,10 @@ directly to model APIs.
   with wrapping, and Escape to close.
 - Pass mouse wheel, clicks and motion to programs that ask for them (scrolling a Claude Code
   transcript), with a modifier to keep local selection.
-- Shell command history shared by all shell tabs (with folder and time): an inline
-  suggestion from history while typing and a history popup above the prompt (Up).
+- Shell command history kept per shell (with folder and time): an inline suggestion from
+  the tab's own shell while typing and a history popup above the prompt (Up) that opens on
+  the tab's shell, with a chip per shell plus "All" to switch (Alt + the chip's letter, or a
+  click); deleting a command forgets it in the selected shell only ("All": in every shell).
 - Open URLs and file paths printed in the output with Ctrl+click; a `path:line` opens in
   the file viewer at that line. www.google.ca
 - When an agent (Claude Code, Copilot CLI) quits normally (exit code 0), its tab goes on as a

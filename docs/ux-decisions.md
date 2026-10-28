@@ -783,3 +783,123 @@
   `.git/info/exclude`, the global excludes file and tracked/untracked status stay a documented
   limitation (rare, and watching them needs extra watches outside the tree or git config
   lookups); collapse/expand stays the way to refresh them. Decided by: UX/UI agent
+
+## HISTORY popup: which keys switch the shell chip?
+- Date: 2026-10-28, step: history-per-shell, raised by: Step 0
+- Context: in the popup, Tab picks, Left/Right edit the line, plain letters filter, and every
+  other key closes the popup and goes to the shell. The header gets one chip per shell plus
+  "All"; labels are menu names (Bash, Zsh, PowerShell, Windows PowerShell, Git Bash, WSL
+  distro names), so first letters rarely collide (Ubuntu / Ubuntu-22.04, Arch / All). No app
+  shortcut uses Alt+letter; GNOME and Windows bind Alt+F-keys, Alt+Tab and Alt+Space, not
+  Alt+letter.
+- Option A — Alt+first letter of the chip, letter underlined, pressing it again cycles
+  through chips with the same letter. Pros: the Windows/Linux mnemonic convention (VS Code and
+  dialog menus use Alt+underlined letter), one key to any chip, the underline is the hint.
+  Cons: while the popup is open readline's Alt+B/F/D etc. are taken for letters that a chip
+  uses; collisions need a second press; non-Latin layouts may not report the Latin letter.
+- Option B — Ctrl+Left / Ctrl+Right through the chips. Pros: no collisions, order is visible.
+  Cons: Ctrl+Left/Right are the shells' word moves, the same family as Left/Right that already
+  mean "edit the line" here, so it breaks the popup's own rule; slow with five or six chips.
+- Option C — Shift+Tab cycles. Pros: one key, no collisions. Cons: next to Tab (pick), so a
+  slip picks a command; one direction only; PowerShell users know Shift+Tab as reverse
+  completion; slow with many chips.
+- Decision: A, because it is the convention users already know for "Alt + underlined
+  letter", reaches any chip in one press and is shown by the chip itself. Details: match
+  Alt (Shift allowed) without Ctrl/Platform on `keystroke.key`, case-insensitive; Ctrl+Alt is
+  never a chip key (AltGr on Windows). An Alt+letter no chip uses keeps today's behavior
+  (closes the popup and goes to the shell), so only chip letters are taken. On a collision the
+  first press goes to the first chip with that letter in chip order, unless the selected chip
+  already has it, then to the next one (wrapping). "All" is the first chip (see the chip
+  order entry), so Alt+A always reaches "All" first and Arch on the second press. The
+  underline is always drawn (showing it only while Alt is held would need redraws on modifier
+  changes). The footer adds `alt` + "letter to switch shell" when chips are shown. Clicking a
+  chip also switches. Non-Latin layouts: clicking is the fallback (known limitation if the
+  key isn't reported as the Latin letter). Decided by: UX/UI agent
+
+## HISTORY popup when the tab's own shell has no commands yet
+- Date: 2026-10-28, step: history-per-shell, raised by: Step 0
+- Context: today Up opens the popup at any prompt, even with an empty history ("No matching
+  commands"). After the upgrade every saved entry has no shell, so every shell starts empty
+  and the old commands show only under "All".
+- Option A — Open on the tab's own chip, always show that chip, say why the list is empty.
+  Pros: same as today (Up always opens), the selected chip always means "this tab's shell",
+  Delete's scope is predictable, the user sees where new commands will go. Cons: right after
+  the upgrade the first view is empty until Alt+A.
+- Option B — Open on "All" when the own shell is empty. Pros: shows something useful at
+  once. Cons: the opening chip depends on data, so Delete may silently forget in every shell;
+  the user can't tell the per-shell split exists.
+- Option C — Don't open when the own shell is empty (Up goes to the shell). Pros: no empty
+  popup. Cons: Up behaves differently per tab, and the legacy commands become unreachable from
+  a new shell.
+- Decision: A, because the popup's state should depend on the tab, not on the data, and
+  Up must keep meaning one thing. Empty texts: no commands at all in the selected shell:
+  "No <label> commands yet", followed by "· Alt+A: all shells" when "All" has entries;
+  commands exist but none match the typed text: "No matching commands" (as today). When only
+  one chip would differ from "All" (just this tab's shell has entries and there are no
+  shell-less entries), the chips are hidden and the header stays "HISTORY", so single-shell
+  users see no change. Decided by: UX/UI agent
+
+## HISTORY popup chips: labels, order and narrow popups
+- Date: 2026-10-28, step: history-per-shell, raised by: Step 0
+- Context: the popup is the terminal width capped at 720 px, with a 28 px one-line header.
+  A Windows user may have All, PowerShell, Windows PowerShell, Git Bash, Ubuntu, Debian.
+- Option A — Icon + full menu name, "All" first then the new-tab menu order, unselected
+  labels truncate (ellipsis) when the row is too narrow. Pros: the same names and icons as
+  the new-tab menu, stable positions (muscle memory, predictable collision cycling), the
+  underlined first letter survives truncation, one row so the popup's height math is
+  unchanged, cheap (flex shrink + text ellipsis). Cons: at very narrow widths the names are
+  cut.
+- Option B — Icon only (name in a tooltip). Pros: always fits. Cons: no letter to underline,
+  so Alt+letter is undiscoverable; icons for WSL distros look alike.
+- Option C — Tab's shell first, or most recently used first. Pros: the likely chip is near
+  the left. Cons: order changes per tab and over time, so positions and Alt-cycling order
+  can't be learned; the own shell is already selected on open, so it gains little.
+- Decision: A, because it keeps the menu's vocabulary and a stable order while still fitting.
+  Order: "All", then shells in the new-tab menu (discovery) order, then shells with entries
+  but no discovered launcher, by label. The selected chip never truncates; unselected chips
+  shrink down to icon + first letter + ellipsis; past that the row clips at the right edge
+  (only in popups narrower than about 300 px, which is already too narrow for the footer).
+  "HISTORY" stays at the left of the header, chips after it. Selected chip: filled/accent
+  background plus bold label (state not by color alone). Decided by: UX/UI agent
+
+## HISTORY: which shell key a tab records under when it matches no discovered launcher
+- Date: 2026-10-28, step: history-per-shell, raised by: Step 0
+- Context: `LaunchSpec` has no launcher id; a tab can come from the CLI, from `tabs.json`
+  (program + args), or be the default shell (`program: None`). Only integrated shells record
+  history: bash, zsh, PowerShell (pwsh / powershell), Git Bash and bash in WSL, all of which
+  have known launcher ids.
+- Option A — Derive the key: first an exact match against a discovered launcher (program +
+  args), else a pure function of program + args: WSL (`wsl.exe -d X`) → `wsl:X`, Git for
+  Windows' bash → `git-bash`, otherwise the lowercased file stem (`bash`, `zsh`, `pwsh`,
+  `powershell`); `None` uses the resolved default shell the same way. Pros: a CLI-started or
+  restored bash shares history with the menu's Bash; works when the program is uninstalled;
+  pure and unit-testable in workspace-model (`windows: bool` style). Cons: a WSL tab started
+  without `-d` needs the default distro's name (fallback key `wsl`, label "WSL").
+- Option B — Record without a shell (visible under "All" only). Pros: no guessing. Cons: the
+  tab gets no own suggestions, against the step's goal; restored tabs would lose theirs.
+- Option C — Key by full program path. Pros: exact. Cons: the same shell at two paths splits
+  into two chips; paths are not the ids settings already use.
+- Decision: A, because every shell that records history maps to a known id this way, so
+  nothing ends up keyless. The key is computed once when the tab's session starts. A chip for
+  a key with no discovered launcher (program uninstalled, distro removed): label from the
+  known shell names (bash → Bash, pwsh → PowerShell...), else the distro name for `wsl:X`,
+  else the key itself; generic terminal icon. Decided by: UX/UI agent
+
+## HISTORY Delete under "All": scope and what the user sees
+- Date: 2026-10-28, step: history-per-shell, raised by: Step 0
+- Context: under a shell chip Delete forgets the command in that shell; the step says under
+  "All" it forgets it in every shell. Today deleting also clears matching saved
+  `last_command` values in every tab.
+- Option A — Every shell, footer says so: under "All" the footer hint reads "del to remove
+  from all shells". Pros: matches what the row means under "All" (the command, whatever the
+  shell), no extra step, the scope is visible before the key is pressed. Cons: one longer
+  hint.
+- Option B — Every shell, with a confirmation when it is in more than one. Pros: hard to
+  lose data by accident. Cons: a modal step in a keyboard popup; a lost history line is cheap
+  (it comes back on the next run), so a confirmation costs more than it saves.
+- Option C — Under "All", forget only in the shell of the newest use. Pros: smallest loss.
+  Cons: the row stays visible after Delete (another shell still has it), which looks broken.
+- Decision: A, because a row must disappear when deleted and the footer is where the popup
+  already explains its keys. "All" lists each command once (newest use, its folder). Saved
+  `last_command` values follow the same scope: tabs of the selected shell only, every tab
+  under "All". Decided by: UX/UI agent

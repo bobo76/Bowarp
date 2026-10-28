@@ -77,3 +77,27 @@ fn quoted_or_escaped_windows_paths_survive_agent_argument_parsing() {
         }
     }
 }
+
+#[test]
+fn history_shell_key_prefers_the_matching_launcher() {
+    let git_bash = git_bash_launcher(PathBuf::from(r"D:\Tools\PortableGit\bin\bash.exe"));
+    let ubuntu = wsl_launcher(Path::new(r"C:\Windows\System32\wsl.exe"), "Ubuntu");
+    let launchers = [git_bash.clone(), ubuntu.clone()];
+    let none = || None;
+    let key = |spec: &LaunchSpec| shell_key_with(&launchers, spec, none, true);
+    assert_eq!(key(&git_bash.spec(None).unwrap()), "git-bash");
+    assert_eq!(key(&ubuntu.spec(None).unwrap()), "wsl:Ubuntu");
+    // The same bash without Git Bash's arguments is not that launcher: no `Git` folder here.
+    let mut plain = git_bash.spec(None).unwrap();
+    plain.args.clear();
+    assert_eq!(key(&plain), "bash");
+    // A restored tab whose distro is no longer listed.
+    let mut debian = ubuntu.spec(None).unwrap();
+    debian.args = vec!["-d".into(), "Debian".into()];
+    assert_eq!(key(&debian), "wsl:Debian");
+    // No program: the default shell, by the same rules.
+    let spec = LaunchSpec::shell(None);
+    let pwsh = || Some(r"C:\Program Files\PowerShell\7\pwsh.exe".to_string());
+    assert_eq!(shell_key_with(&launchers, &spec, pwsh, true), "pwsh");
+    assert_eq!(shell_key_with(&launchers, &spec, none, false), "shell");
+}

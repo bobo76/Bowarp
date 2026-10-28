@@ -424,8 +424,9 @@ impl WorkspaceView {
             self.tabs_writer.scrub_last_commands(None);
         }
         if seen.1 != forgets_seen
-            && let Some(command) = cx.global::<history::History>().forgotten()
+            && let Some((command, _)) = cx.global::<history::History>().forgotten()
         {
+            // The saved tabs hold no shell key: the command goes from every one of them.
             self.tabs_writer
                 .scrub_last_commands(Some(command.to_owned()));
         }
@@ -508,12 +509,15 @@ impl WorkspaceView {
         } else {
             StatusReporting::OutputActivity
         };
+        let shell_key = launcher::shell_key(&self.launchers, spec);
         shell_integration::attach(&mut launch);
-        let view = TerminalView::spawn(session_id, &launch, reporting, cx).inspect_err(|_| {
-            if let Some(hooks) = &self.hooks {
-                hooks.remove_session(session_id);
-            }
-        })?;
+        let view = TerminalView::spawn(session_id, &launch, reporting, shell_key, cx).inspect_err(
+            |_| {
+                if let Some(hooks) = &self.hooks {
+                    hooks.remove_session(session_id);
+                }
+            },
+        )?;
         self.next_session_id += 1;
         let changed = cx.subscribe(&view, |workspace, _, _: &TabChanged, cx| {
             workspace.sync_explorer(cx);

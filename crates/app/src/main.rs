@@ -147,7 +147,7 @@ fn main() {
     scrub_inherited_agent_env();
     let requested = launch_spec_from_args();
     validate_requested_folder(requested.as_ref());
-    let launchers = launcher::discover().into();
+    let launchers: Rc<[launcher::Launcher]> = launcher::discover().into();
     let (hooks, hook_messages, hooks_warning) = start_hooks();
     // Only the first running instance reopens and saves the tabs; a later one opens just the
     // requested tab (or a shell), so it neither duplicates the sessions nor overwrites the save.
@@ -169,6 +169,7 @@ fn main() {
             workspace_view::init(cx);
             settings_page::init_keyboard(cx);
             history::init(cx);
+            cx.set_global(launcher::Launchers(launchers.clone()));
             let quit_hooks = hooks.clone();
             let closing_writer = tabs_writer.clone();
             cx.on_window_closed(move |cx, _| {

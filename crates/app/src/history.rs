@@ -1,5 +1,5 @@
-//! The command history shared by every shell tab: commands run with shell integration, with
-//! their folder and time, kept in `history.jsonl` in the config folder
+//! The command history of the shell tabs: commands run with shell integration, with their
+//! shell, folder and time, kept per shell in `history.jsonl` in the config folder
 //! (`workspace_model::CommandHistory`). Each instance loads the file at start and appends each
 //! command it records.
 
@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use gpui_kit::{App, Global};
 use term_core::ExecutedCommand;
 use workspace_model::{
-    CommandHistory, HistoryEntry, append_entry, clear_history_file, remove_command,
+    CommandHistory, HistoryEntry, HistoryScope, append_entry, clear_history_file, remove_command,
 };
 
 use crate::window_bounds::config_file;
@@ -21,7 +21,8 @@ pub struct History {
     commands: CommandHistory,
     /// `None` keeps the history in memory only.
     writer: Option<HistoryWriter>,
-    forgotten: Option<String>,
+    /// The command last forgotten, and in which shells.
+    forgotten: Option<(String, HistoryScope)>,
     /// Counts "Clear saved session commands" requests; each tab compares it with the count it
     /// has seen (see `TerminalView::new`).
     saved_cleared: u32,
@@ -46,8 +47,10 @@ impl History {
         &self.commands
     }
 
-    pub fn forgotten(&self) -> Option<&str> {
-        self.forgotten.as_deref()
+    pub fn forgotten(&self) -> Option<(&str, &HistoryScope)> {
+        self.forgotten
+            .as_ref()
+            .map(|(command, scope)| (command.as_str(), scope))
     }
 
     pub fn saved_cleared(&self) -> u32 {
@@ -62,7 +65,7 @@ impl History {
 /// A change to the history file, in the order it was made.
 enum Job {
     Append(HistoryEntry),
-    Remove(String),
+    Remove(String, HistoryScope),
     Clear(Sender<io::Result<()>>),
 }
 
@@ -143,8 +146,8 @@ fn apply(path: &Path, job: Job) {
                 );
             }
         }
-        Job::Remove(command) => {
-            if let Err(err) = remove_command(path, &command) {
+        Job::Remove(command, scope) => {
+            if let Err(err) = remove_command(path, &command, &scope) {
                 eprintln!(
                     "agent-workspace: failed to remove a command from {}: {err}",
                     path.display()
@@ -182,13 +185,13 @@ pub fn finish(cx: &mut App) {
     }
 }
 
-/// Record a command a shell ran. The file is written on the writer's thread; a failed save is
-/// only reported: the command stays in this run's history.
-pub fn record(command: ExecutedCommand, cx: &mut App) {
+/// Record a command the shell with launcher id `shell` ran. The file is written on the writer's
+/// thread; a failed save is only reported: the command stays in this run's history.
+pub fn record(command: ExecutedCommand, shell: &str, cx: &mut App) {
     let time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
-    let entry = HistoryEntry::new(command.command, command.folder, time);
+    let entry = HistoryEntry::new(command.command, command.folder, time).in_shell(shell);
     let history = cx.global_mut::<History>();
     history.forgotten = None;
     if !history.commands.add(entry.clone()) {
@@ -199,15 +202,16 @@ pub fn record(command: ExecutedCommand, cx: &mut App) {
     }
 }
 
-/// Forget `command`, in this run and in the history file (written on the writer's thread). A
-/// failed save is only reported: the command is gone from this run's history.
-pub fn forget(command: &str, cx: &mut App) {
+/// Forget `command` in the shells `scope` covers, in this run and in the history file (written
+/// on the writer's thread). A failed save is only reported: the command is gone from this run's
+/// history.
+pub fn forget(command: &str, scope: &HistoryScope, cx: &mut App) {
     let history = cx.global_mut::<History>();
-    history.forgotten = Some(command.to_owned());
+    history.forgotten = Some((command.to_owned(), scope.clone()));
     history.forgets += 1;
-    history.commands.remove(command);
+    history.commands.remove(command, scope);
     if let Some(writer) = &history.writer {
-        writer.queue(Job::Remove(command.to_owned()));
+        writer.queue(Job::Remove(command.to_owned(), scope.clone()));
     }
 }
 
@@ -291,6 +295,7 @@ mod tests {
                     command: "cargo test".into(),
                     folder: None,
                 },
+                "bash",
                 cx,
             )
         });

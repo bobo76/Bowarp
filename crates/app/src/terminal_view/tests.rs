@@ -36,7 +36,14 @@ fn unread_completions_are_acknowledged_and_replaced_for_both_agents(
         )
         .unwrap();
         let view = cx.new(|cx| {
-            TerminalView::new(session, &spec, StatusReporting::Hooks, Task::ready(()), cx)
+            TerminalView::new(
+                session,
+                &spec,
+                StatusReporting::Hooks,
+                "sh".into(),
+                Task::ready(()),
+                cx,
+            )
         });
         view.update(cx, |view, cx| {
             let mut at = 0;
@@ -150,8 +157,16 @@ fn repeated_hooks_titles_and_output_do_not_repeat_agent_notices(cx: &mut gpui_ki
         Arc::new(|_| {}),
     )
     .unwrap();
-    let view =
-        cx.new(|cx| TerminalView::new(session, &spec, StatusReporting::Hooks, Task::ready(()), cx));
+    let view = cx.new(|cx| {
+        TerminalView::new(
+            session,
+            &spec,
+            StatusReporting::Hooks,
+            "sh".into(),
+            Task::ready(()),
+            cx,
+        )
+    });
     let notices = Rc::new(RefCell::new(Vec::new()));
     let captured = notices.clone();
     let _events = cx.update(|cx| {
@@ -239,6 +254,7 @@ fn a_copilot_bell_keeps_the_pending_wait_reason(cx: &mut gpui_kit::TestAppContex
             session,
             &spec,
             StatusReporting::OutputActivity,
+            "sh".into(),
             Task::ready(()),
             cx,
         )
@@ -299,6 +315,7 @@ fn copilot_hooks_add_and_end_waiting_but_only_progress_controls_working_and_idle
             session,
             &spec,
             StatusReporting::OutputActivity,
+            "sh".into(),
             Task::ready(()),
             cx,
         )
@@ -532,6 +549,7 @@ fn a_quiet_claude_tab_without_hooks_shows_status_unavailable(cx: &mut gpui_kit::
                 session,
                 &spec,
                 StatusReporting::OutputActivity,
+                "sh".into(),
                 Task::ready(()),
                 cx,
             )

@@ -55,6 +55,18 @@ entry when the limitation is lifted.
   `history.jsonl` on the UI thread (like deleting one command), and a second instance only
   sees either clear after its next restart (history is loaded at start). Clearing saved
   session commands reaches only tabs open in this instance.
+- Command history per shell: commands saved before it have no shell and show only under the
+  HISTORY popup's "All" chip (never as an inline suggestion). Alt+letter switches chips by
+  the Latin letter the key reports: on non-Latin layouts (Cyrillic, Greek...) it may not
+  switch; click the chip instead. While the popup shows chips, Alt+ a chip's letter doesn't
+  reach the shell (readline's Alt+B / Alt+F when a chip starts with B or F). A tab's shell is
+  fixed when its session starts, from the launcher with the same program and arguments, else
+  from the program's name (`wsl -d X`, Git for Windows' bash): a shell started through a
+  wrapper script records under the script's name. With "Restore previous tabs" off,
+  deleting a command still removes it from every saved tab in `tabs.json`, whatever its
+  shell (the saved tabs don't record one). Starting an older version rewrites a long history
+  file without shells (all of it then shows only under "All") and keeps only its newest 2 000
+  commands.
 - Last-command saves go through a background writer: a crash can lose queued or in-flight
   updates, including a command just deleted from HISTORY.
 - Restore previous tabs off: `tabs.json` is kept unread and unwritten (the one exception:

@@ -154,14 +154,21 @@ confirmation) delete the stored history and each tab's saved last command; nothi
 | Up / Down, Page Up / Page Down | Move through the popup |
 | Typing, Backspace | Edit the command line; the popup lists the commands that still match |
 | Enter, Tab | Put the selected command on the prompt, replacing the typed text (not run) |
-| Delete | Remove the selected command from the history (and from `history.jsonl`) |
+| Delete | Remove the selected command from the selected shell's history (under "All": every shell's) and from `history.jsonl` |
+| Alt+letter | Switch the popup to the shell chip with that underlined letter (again: the next chip with it) |
 | Esc | Close the popup |
 
-Commands run in any bash, zsh or PowerShell tab are kept with their folder and time in
-`history.jsonl` in the config folder (latest use wins, newest 2 000). While you type, the newest
-command starting with the typed text shows dimmed after the cursor. The popup lists the commands
-containing the typed text (all of them on an empty prompt), newest at the bottom next to the
-prompt, each with its folder; click one to put it on the prompt. Commands starting with a space
+Commands run in any bash, zsh or PowerShell tab are kept per shell with their folder and time in
+`history.jsonl` in the config folder (latest use per shell wins, newest 2 000 per shell). The
+shell is the tab's launcher (Bash, PowerShell, Windows PowerShell, Git Bash, each WSL distro),
+so a PowerShell tab doesn't suggest bash commands. While you type, the newest command of the
+tab's shell starting with the typed text shows dimmed after the cursor. The popup lists the
+commands containing the typed text (all of them on an empty prompt), newest at the bottom next
+to the prompt, each with its folder; click one to put it on the prompt. It opens on the tab's
+own shell; when other shells have commands, its header shows a chip per shell plus "All"
+(each command once, at its newest use), and Alt + the chip's underlined letter or a click
+switches between them. Commands saved by earlier versions have no shell and show only under
+"All". Commands starting with a space
 are not kept, nor bash commands that bash keeps out of its own history (`HISTCONTROL`,
 `HISTIGNORE`). Up still goes to the program in full-screen programs (`less`, editors), while a
 command runs, in Claude Code and Copilot tabs, and in shells without integration (fish, cmd,
@@ -177,10 +184,11 @@ Commands beginning with `exit`, `logout`, `clear`, `cls`, `reset`, `ls`, `ll`, `
 `cd` or `history` do not replace the saved command. Private/unrecordable commands are never
 saved. Saving to `tabs.json` is queued immediately when a command starts, without a debounce
 delay; one background writer saves snapshots in order. A crash can lose an in-flight or queued
-update, including a deletion. Deleting a command from HISTORY also forgets it in every tab.
-Normal window close waits for pending saves and a final snapshot before releasing ownership
-of the saved tabs; guest instances never write them. On Unix, every write makes
-`tabs.json` owner-only (`0600`); on Windows it inherits the profile folder's permissions.
+update, including a deletion. Deleting a command from HISTORY also forgets it in the tabs of
+the selected shell (every tab under "All"). Normal window close waits for pending saves and a
+final snapshot before releasing ownership of the saved tabs; guest instances never write them.
+On Unix, every write makes `tabs.json` owner-only (`0600`); on Windows it inherits the profile
+folder's permissions.
 
 These tabs start with a small script that loads your own `~/.bashrc` / zsh startup files /
 PowerShell profile and then marks the prompt (OSC 133); the scripts live in

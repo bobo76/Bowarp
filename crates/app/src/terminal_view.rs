@@ -229,6 +229,9 @@ pub struct TerminalView {
     /// IME composition text not yet committed.
     pub(crate) marked_text: Option<String>,
     pub(crate) history_popup: Option<HistoryPopup>,
+    /// The shell's launcher id, which its commands are kept under in the history
+    /// (`launcher::shell_key`); set once when the session starts.
+    pub(crate) shell_key: String,
     pub(crate) last_command: workspace_model::LastCommand,
     last_command_supported: bool,
     /// How many "Clear saved session commands" requests this tab has handled.
@@ -258,6 +261,7 @@ impl TerminalView {
         id: u64,
         spec: &LaunchSpec,
         reporting: StatusReporting,
+        shell_key: String,
         cx: &mut App,
     ) -> io::Result<Entity<Self>> {
         let (sender, mut receiver) = mpsc::unbounded();
@@ -283,7 +287,7 @@ impl TerminalView {
                     }
                 }
             });
-            Self::new(session, spec, reporting, session_events, cx)
+            Self::new(session, spec, reporting, shell_key, session_events, cx)
         }))
     }
 
@@ -291,6 +295,7 @@ impl TerminalView {
         session: Session,
         spec: &LaunchSpec,
         reporting: StatusReporting,
+        shell_key: String,
         session_events: Task<()>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -336,6 +341,7 @@ impl TerminalView {
             geometry: None,
             marked_text: None,
             history_popup: None,
+            shell_key,
             last_command: workspace_model::LastCommand::default(),
             last_command_supported: spec.kind == SessionKind::Shell
                 && spec.mark_token.is_some()
@@ -370,6 +376,7 @@ impl TerminalView {
             session,
             spec,
             StatusReporting::OutputActivity,
+            launcher::shell_key(&[], spec),
             Task::ready(()),
             cx,
         )
@@ -739,16 +746,16 @@ impl TerminalView {
         {
             cx.emit(LastCommandChanged);
         }
-        history::record(command, cx);
+        history::record(command, &self.shell_key, cx);
     }
 
     /// Apply a forgotten command and a "clear saved session commands" request to this tab's
     /// saved last command. Returns whether it changed.
     fn sync_last_command_with_history(&mut self, cx: &Context<Self>) -> bool {
         let history = cx.global::<history::History>();
-        let forgotten = history
-            .forgotten()
-            .is_some_and(|command| self.last_command.forget(command));
+        let forgotten = history.forgotten().is_some_and(|(command, scope)| {
+            scope.covers(Some(&self.shell_key)) && self.last_command.forget(command)
+        });
         let cleared = history.saved_cleared() != self.saved_cleared_seen;
         self.saved_cleared_seen = history.saved_cleared();
         let cleared = cleared && self.last_command.clear();

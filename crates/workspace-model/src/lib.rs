@@ -26,6 +26,7 @@ pub mod file_view;
 mod git;
 mod history;
 mod history_features;
+mod history_shells;
 mod instance_lock;
 mod keymap;
 mod lap;
@@ -64,10 +65,13 @@ pub use file_pane_features::{
 };
 pub use git::{GitHead, ignored_names, lines_added};
 pub use history::{
-    CommandHistory, HistoryEntry, HistorySelection, append_entry, clear_history_file, entry_line,
-    is_recordable, remove_command,
+    CommandHistory, HistoryEntry, HistoryScope, HistorySelection, append_entry, clear_history_file,
+    entry_line, is_recordable, remove_command,
 };
 pub use history_features::{HistoryFeatures, HistoryKey};
+pub use history_shells::{
+    KnownShell, ShellChip, history_chips, shell_key, shell_name, switch_chip,
+};
 pub use instance_lock::{held_by_other, lock_pid, lock_text};
 pub use keymap::{
     HeldModifiers, KeybindingOverlay, Keymap, KeymapProblem, KeymapReason, Shortcut, action_label,

@@ -64,6 +64,7 @@ fn search_shortcuts_keep_input_out_of_the_program(cx: &mut TestAppContext) {
                 session,
                 &spec,
                 super::super::StatusReporting::OutputActivity,
+                "sh".into(),
                 Task::ready(()),
                 cx,
             )

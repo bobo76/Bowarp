@@ -7,29 +7,6 @@ an item only missing its manual check moves to "Fixed, not tested yet", which li
 still to do (Windows included), not what was already tested.
 
 ## Next steps
-- Command history per shell: today every shell tab shares one history, so a PowerShell tab
-  suggests bash commands and the other way round.
-  - Saved by shell: `HistoryEntry` gets a `shell` field, the tab's launcher id (`pwsh`,
-    `powershell`, `git-bash`, `zsh`, `wsl:Ubuntu`), so Git Bash and a WSL bash stay apart
-    (their paths differ). `#[serde(default)]`: entries saved before have no shell and show
-    only under "All". A command is kept once per shell (dedup on shell + command), and the
-    cap applies per shell, so a busy shell doesn't push the others out.
-  - Inline suggestion: from the tab's own shell only.
-  - HISTORY header: one chip per shell that has entries plus "All", using the launcher's
-    menu name and icon; the tab's shell is selected when the popup opens. The list shows the
-    selected chip's commands, still filtered by the typed text. Delete forgets the command
-    in the selected shell only ("All": in every shell).
-  - Switching: Tab (pick) and Left/Right (go to the shell, edit the line) are taken, and plain
-    letters are typed into the line as the filter, so a bare first letter can't switch.
-    Proposed: Alt+the chip's first letter (Alt+P PowerShell, Alt+G Git Bash, Alt+U Ubuntu,
-    Alt+A All), with the letter underlined on the chip. Two chips with the same letter
-    (PowerShell and Windows PowerShell): pressing it again moves to the next one. Ctrl+Alt is
-    left alone (AltGr on European layouts). Clicking a chip also switches. While the popup
-    is open, Alt+letter isn't sent to the shell (so readline's Alt+B / Alt+F word moves are
-    lost there). Alternatives: Ctrl+Left / Ctrl+Right to move through the chips (no letter
-    collisions, but slow with many shells), or Shift+Tab to cycle.
-  - Unit-test the JSON round trip (field missing, present), per-shell dedup and cap, the
-    suggestion per shell, and the chip key (letter collision, Ctrl+Alt ignored).
 
 Each step stands alone and is tested:
 
@@ -50,6 +27,19 @@ Each step stands alone and is tested:
 ## Fixed, not tested yet
 
 Built with automated coverage on Linux; the manual checks below are still to do.
+
+Command history per shell:
+
+- Windows: PowerShell, Windows PowerShell, Git Bash and two WSL distros (bash) each record
+  under their own chip with the menu's name and icon; a PowerShell tab doesn't suggest a Git
+  Bash command and the other way round; a restored tab and the Ctrl+Shift+T default shell
+  record under the same chip as the menu's entry; Alt+P / Alt+G / Alt+U switch, AltGr
+  (Ctrl+Alt) letters still type in the shell; a removed WSL distro with commands keeps
+  its chip, with a generic icon.
+- A German or French layout (Linux and Windows): Alt+letter switches; on a Cyrillic layout,
+  clicking a chip does.
+- Upgrade: with a `history.jsonl` written by the previous version, its commands show under
+  "All" only and the previous version still reads the new file.
 
 Copilot Waiting on permission prompts and questions:
 

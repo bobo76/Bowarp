@@ -5,6 +5,17 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.41
+
+- Keep command history per shell: each shell keeps its own newest 2 000 commands, and the
+  inline suggestion comes from the tab's own shell only, so a PowerShell tab no longer
+  suggests bash commands.
+- The HISTORY popup opens on the tab's shell, with a chip per shell plus "All"; switch with
+  Alt + the chip's underlined letter (press again for the next chip with that letter) or a
+  click. Delete forgets a command in the selected shell only, or in every shell under "All".
+- Commands saved before this version have no shell: they show under "All" only and are no
+  longer suggested inline.
+
 ## 0.2.40
 
 - Copilot CLI tabs show Waiting again while a permission prompt is open, and now also while

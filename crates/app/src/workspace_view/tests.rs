@@ -119,7 +119,9 @@ fn last_command_events_and_history_deletion_are_flushed_with_the_final_snapshot(
     save(&mut cx);
     assert!(snapshots.recv_timeout(Duration::from_secs(10)).is_ok());
 
-    cx.update(|_, cx| crate::history::forget("cargo test", cx));
+    cx.update(|_, cx| {
+        crate::history::forget("cargo test", &workspace_model::HistoryScope::All, cx)
+    });
     cx.run_until_parked();
     cx.update(|_, cx| {
         workspace.update(cx, |workspace, cx| {

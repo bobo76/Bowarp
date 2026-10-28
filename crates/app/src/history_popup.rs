@@ -1,19 +1,26 @@
 //! Command history at a shell prompt (shell integration only): the inline suggestion drawn
 //! dimmed after the cursor, accepted with Right or End, and the "HISTORY" popup above the
-//! prompt, opened with Up, listing past commands that contain the typed text.
+//! prompt, opened with Up, listing past commands that contain the typed text. Both come from
+//! the tab's own shell; the popup's chips (Alt+letter or a click) show another shell's commands
+//! or "All".
 
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{Anchor, SharedString};
 use gpui_kit::{
-    AnyElement, App, Context, InteractiveElement, IntoElement, Keystroke, MouseButton,
+    AnyElement, App, Context, FontWeight, InteractiveElement, IntoElement, Keystroke, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Styled, anchored, deferred, div, point, px,
 };
 use term_core::{PromptInput, SessionKind};
-use workspace_model::{HistoryEntry, HistoryKey, HistorySelection, display_path};
+use workspace_model::{
+    HeldModifiers, HistoryEntry, HistoryKey, HistoryScope, HistorySelection, ShellChip,
+    display_path, history_chips, shell_name, switch_chip,
+};
 
 use crate::history::{self, History};
+use crate::launcher;
 use crate::settings_file;
+use crate::sidebar::launcher_icon;
 use crate::terminal_element;
 use crate::terminal_view::TerminalView;
 
@@ -27,16 +34,31 @@ const FOOTER_HEIGHT: f32 = 32.;
 const MAX_WIDTH: f32 = 720.;
 const FOLDER_MAX_WIDTH: f32 = 220.;
 const PROMPT_GAP: f32 = 2.;
+/// The narrowest an unselected chip's name gets: room for the ellipsis.
+const CHIP_NAME_MIN_WIDTH: f32 = 10.;
+/// The narrowest an unselected chip gets, besides its name: padding and the underlined letter,
+/// plus the icon and its gap. Text alone would never let a chip shrink.
+const CHIP_MIN_WIDTH: f32 = 8. + 12.;
+const CHIP_ICON_WIDTH: f32 = 12. + 4.;
 
 /// The open popup.
-#[derive(Default)]
 pub(crate) struct HistoryPopup {
     selection: HistorySelection,
     /// The typed text the matches were last listed for; the selection resets when it changes.
     query: Option<String>,
+    /// The selected chip: the tab's own shell when the popup opens.
+    scope: HistoryScope,
 }
 
 impl HistoryPopup {
+    pub(crate) fn new(shell: &str) -> Self {
+        Self {
+            selection: HistorySelection::default(),
+            query: None,
+            scope: HistoryScope::Shell(shell.into()),
+        }
+    }
+
     fn visible_selection(&self, query: &str, total: usize, rows: usize) -> HistorySelection {
         let mut selection = if self.query.as_deref() == Some(query) {
             self.selection
@@ -46,6 +68,15 @@ impl HistoryPopup {
         selection.keep_in_view(total, rows);
         selection
     }
+}
+
+/// The popup's header and empty state, worked out before rendering.
+struct HistoryHeader {
+    chips: Vec<ShellChip>,
+    /// The commands listed.
+    scope: HistoryScope,
+    /// Why no command is listed, when none is.
+    empty_text: Option<String>,
 }
 
 struct HistoryRow {
@@ -91,6 +122,17 @@ enum PopupKey {
 enum Rows {
     One,
     Page,
+}
+
+fn held_modifiers(keystroke: &Keystroke) -> HeldModifiers {
+    let modifiers = &keystroke.modifiers;
+    HeldModifiers {
+        control: modifiers.control,
+        alt: modifiers.alt,
+        shift: modifiers.shift,
+        platform: modifiers.platform,
+        function: modifiers.function,
+    }
 }
 
 fn popup_key(keystroke: &Keystroke) -> PopupKey {
@@ -149,7 +191,7 @@ impl TerminalView {
         }
         match keystroke.key.as_str() {
             "up" if features.intercepts(HistoryKey::Up) && self.prompt_input().is_some() => {
-                self.history_popup = Some(HistoryPopup::default());
+                self.history_popup = Some(HistoryPopup::new(&self.shell_key));
                 self.refresh_history(cx);
                 cx.notify();
                 true
@@ -166,10 +208,24 @@ impl TerminalView {
             self.close_history_popup(cx);
             return false;
         };
+        let chips = self.history_chips(cx);
+        let chip = self.history_popup.as_ref().and_then(|popup| {
+            switch_chip(
+                &chips,
+                &popup.scope,
+                &keystroke.key,
+                held_modifiers(keystroke),
+            )
+        });
+        if let Some(chip) = chip {
+            self.select_history_chip(chips[chip].scope.clone(), cx);
+            return true;
+        }
+        let scope = self.history_scope(&chips);
         let total = cx
             .global::<History>()
             .commands()
-            .matching(&input.text)
+            .matching(&input.text, &scope)
             .len();
         let rows = self
             .popup_placement(&input)
@@ -190,17 +246,17 @@ impl TerminalView {
                 let index = popup.selection.index(total);
                 self.close_history_popup(cx);
                 if let Some(index) = index {
-                    self.put_history_command(&input, index, cx);
+                    self.put_history_command(&input, &scope, index, cx);
                 }
             }
             PopupKey::Forget => {
                 let command = popup.selection.index(total).and_then(|index| {
                     let history = cx.global::<History>().commands();
-                    let matches = history.matching(&input.text);
+                    let matches = history.matching(&input.text, &scope);
                     matches.get(index).map(|entry| entry.command.clone())
                 });
                 if let Some(command) = command {
-                    history::forget(&command, cx);
+                    history::forget(&command, &scope, cx);
                     self.refresh_history(cx);
                 }
             }
@@ -222,10 +278,50 @@ impl TerminalView {
         }
     }
 
-    /// Replace the command line with the `index`th (oldest first) command matching `input`.
-    fn put_history_command(&mut self, input: &PromptInput, index: usize, cx: &mut Context<Self>) {
+    /// The open popup's chips; none while only this tab's shell has commands.
+    fn history_chips(&self, cx: &App) -> Vec<ShellChip> {
+        let Some(popup) = &self.history_popup else {
+            return Vec::new();
+        };
         let history = cx.global::<History>().commands();
-        let Some(entry) = history.matching(&input.text).get(index).copied() else {
+        history_chips(
+            history,
+            &self.shell_key,
+            &popup.scope,
+            &launcher::menu_shells(cx),
+        )
+    }
+
+    /// The commands the popup lists: the selected chip's, the tab's shell's without chips.
+    fn history_scope(&self, chips: &[ShellChip]) -> HistoryScope {
+        match &self.history_popup {
+            Some(popup) if !chips.is_empty() => popup.scope.clone(),
+            _ => HistoryScope::Shell(self.shell_key.clone()),
+        }
+    }
+
+    /// Show `scope`'s commands, from the newest.
+    fn select_history_chip(&mut self, scope: HistoryScope, cx: &mut Context<Self>) {
+        let Some(popup) = self.history_popup.as_mut() else {
+            return;
+        };
+        popup.scope = scope;
+        popup.selection = HistorySelection::default();
+        self.refresh_history(cx);
+        cx.notify();
+    }
+
+    /// Replace the command line with the `index`th (oldest first) command of `scope` matching
+    /// `input`.
+    fn put_history_command(
+        &mut self,
+        input: &PromptInput,
+        scope: &HistoryScope,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let history = cx.global::<History>().commands();
+        let Some(entry) = history.matching(&input.text, scope).get(index).copied() else {
             return;
         };
         // Entries hold no control characters (`workspace_model::is_recordable`).
@@ -255,7 +351,9 @@ impl TerminalView {
             return Some(command.to_owned());
         }
         let history = cx.global::<History>().commands();
-        history.suggestion(&input.before_cursor).map(str::to_string)
+        history
+            .suggestion(&input.before_cursor, &self.shell_key)
+            .map(str::to_string)
     }
 
     pub(crate) fn history_suggestion(&self, cx: &App) -> Option<String> {
@@ -299,6 +397,7 @@ impl TerminalView {
         if input.is_none() {
             self.history_popup = None;
         }
+        let scope = self.history_scope(&self.history_chips(cx));
         if let (Some(popup), Some(input)) = (&mut self.history_popup, &input) {
             if popup.query.as_deref() != Some(input.text.as_str()) {
                 popup.query = Some(input.text.clone());
@@ -307,7 +406,7 @@ impl TerminalView {
             let total = cx
                 .global::<History>()
                 .commands()
-                .matching(&input.text)
+                .matching(&input.text, &scope)
                 .len();
             popup.selection.keep_in_view(total, rows);
         }
@@ -351,7 +450,10 @@ impl TerminalView {
         let input = self.prompt_input()?;
         let popup = self.history_popup.as_ref()?;
         let placement = self.popup_placement(&input)?;
-        let matches = cx.global::<History>().commands().matching(&input.text);
+        let chips = self.history_chips(cx);
+        let scope = self.history_scope(&chips);
+        let history = cx.global::<History>().commands();
+        let matches = history.matching(&input.text, &scope);
         let total = matches.len();
         // Resizing changes the visible range, not the stored navigation state.
         let selection = popup.visible_selection(&input.text, total, placement.rows);
@@ -360,7 +462,13 @@ impl TerminalView {
             .visible(total, placement.rows)
             .map(|index| (index, matches[index].clone()))
             .collect();
-        let panel = self.history_panel(visible, selected, placement.width, cx);
+        let empty_text = (total == 0).then(|| self.empty_history_text(&chips, &scope, cx));
+        let header = HistoryHeader {
+            chips,
+            scope,
+            empty_text,
+        };
+        let panel = self.history_panel(header, visible, selected, placement.width, cx);
         Some(
             deferred(
                 anchored()
@@ -374,8 +482,33 @@ impl TerminalView {
         )
     }
 
+    /// Why the list is empty: the selected shell has no commands yet (pointing at "All" when
+    /// it has some), or none matches the typed text.
+    fn empty_history_text(&self, chips: &[ShellChip], scope: &HistoryScope, cx: &App) -> String {
+        let history = cx.global::<History>().commands();
+        if history.count_in(scope) > 0 {
+            return "No matching commands".into();
+        }
+        let HistoryScope::Shell(key) = scope else {
+            return "No commands yet".into();
+        };
+        let label = chips.iter().find(|chip| chip.scope == *scope).map_or_else(
+            || shell_name(key, &launcher::menu_shells(cx)).0,
+            |chip| chip.label.clone(),
+        );
+        let all_letter = chips.first().and_then(ShellChip::letter);
+        match all_letter {
+            Some(letter) if !history.is_empty() => format!(
+                "No {label} commands yet · Alt+{}: all shells",
+                letter.to_uppercase()
+            ),
+            _ => format!("No {label} commands yet"),
+        }
+    }
+
     fn history_panel(
         &self,
+        header: HistoryHeader,
         visible: Vec<(usize, HistoryEntry)>,
         selected: Option<usize>,
         width: Pixels,
@@ -386,7 +519,20 @@ impl TerminalView {
         let (background, foreground) = (theme.popover, theme.popover_foreground);
         let home = std::env::home_dir();
         let family = terminal_element::font_family(cx);
-        let empty = visible.is_empty();
+        let HistoryHeader {
+            chips,
+            scope,
+            empty_text,
+        } = header;
+        let switches = !chips.is_empty();
+        let chips: Vec<AnyElement> = chips
+            .into_iter()
+            .enumerate()
+            .map(|(index, chip)| {
+                let selected = chip.scope == scope;
+                self.history_chip(index, chip, selected, cx)
+            })
+            .collect();
         let rows: Vec<AnyElement> = visible
             .into_iter()
             .map(|(index, entry)| {
@@ -428,11 +574,22 @@ impl TerminalView {
                     .items_center()
                     .border_b_1()
                     .border_color(border)
+                    .gap_2()
                     .text_xs()
                     .text_color(muted)
-                    .child("HISTORY"),
+                    .child(div().flex_none().child("HISTORY"))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .children(chips),
+                    ),
             )
-            .when(empty, |panel| {
+            .when_some(empty_text, |panel, text| {
                 panel.child(
                     div()
                         .h(px(ROW_HEIGHT))
@@ -441,32 +598,88 @@ impl TerminalView {
                         .items_center()
                         .text_sm()
                         .text_color(muted)
-                        .child("No matching commands"),
+                        .child(text),
                 )
             })
             .children(rows)
+            .child(history_footer(&scope, switches, cx))
+    }
+
+    /// A shell chip: icon, name with its Alt letter underlined. The selected one is filled and
+    /// keeps its full name; the others shrink to their letter and an ellipsis.
+    fn history_chip(
+        &self,
+        index: usize,
+        chip: ShellChip,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let mut name = chip.label.chars();
+        let letter: String = name.next().into_iter().collect();
+        let rest: String = name.collect();
+        let scope = chip.scope;
+        let min_width = CHIP_MIN_WIDTH
+            + if chip.icon.is_some() {
+                CHIP_ICON_WIDTH
+            } else {
+                0.
+            }
+            + if rest.is_empty() {
+                0.
+            } else {
+                CHIP_NAME_MIN_WIDTH
+            };
+        div()
+            .id(("history-chip", index))
+            .h(px(20.))
+            .px_1()
+            .flex()
+            .items_center()
+            .gap_1()
+            .rounded_sm()
+            .whitespace_nowrap()
+            .when(selected, |chip| {
+                chip.flex_none()
+                    .bg(theme.primary)
+                    .text_color(theme.primary_foreground)
+                    .font_weight(FontWeight::BOLD)
+            })
+            .when(!selected, |chip| {
+                chip.flex_shrink(1.)
+                    .min_w(px(min_width))
+                    .overflow_hidden()
+                    .hover(|chip| chip.bg(theme.secondary))
+                    .cursor_pointer()
+            })
+            .when_some(chip.icon, |chip, icon| {
+                chip.child(launcher_icon(icon).xsmall().flex_none())
+            })
             .child(
                 div()
-                    .h(px(FOOTER_HEIGHT))
-                    .px_3()
                     .flex()
-                    .items_center()
-                    .gap_1()
-                    .border_t_1()
-                    .border_color(border)
-                    .text_xs()
-                    .text_color(muted)
-                    .child(key_chip("↑", cx))
-                    .child(key_chip("↓", cx))
-                    .child(div().mr_2().child("to navigate"))
-                    .child(key_chip("enter", cx))
-                    .child(key_chip("tab", cx))
-                    .child(div().mr_2().child("to select"))
-                    .child(key_chip("del", cx))
-                    .child(div().mr_2().child("to remove"))
-                    .child(key_chip("esc", cx))
-                    .child("to dismiss"),
+                    .min_w_0()
+                    .child(div().flex_none().underline().child(letter))
+                    .when(!rest.is_empty(), |name| {
+                        name.child(
+                            div()
+                                .when(!selected, |rest| {
+                                    rest.flex_shrink(1.).min_w(px(CHIP_NAME_MIN_WIDTH))
+                                })
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .child(rest),
+                        )
+                    }),
             )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |view, _: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    view.select_history_chip(scope.clone(), cx);
+                }),
+            )
+            .into_any_element()
     }
 
     fn history_row(
@@ -543,11 +756,47 @@ impl TerminalView {
 
     /// A click on a row puts its command on the prompt.
     fn pick_history_row(&mut self, index: usize, cx: &mut Context<Self>) {
+        let scope = self.history_scope(&self.history_chips(cx));
         self.close_history_popup(cx);
         if let Some(input) = self.prompt_input() {
-            self.put_history_command(&input, index, cx);
+            self.put_history_command(&input, &scope, index, cx);
         }
     }
+}
+
+/// The keys: Delete's scope follows the selected chip; the Alt hint shows with the chips.
+fn history_footer(scope: &HistoryScope, switches: bool, cx: &App) -> impl IntoElement {
+    let theme = cx.theme();
+    let remove_hint = if *scope == HistoryScope::All {
+        "to remove from all shells"
+    } else {
+        "to remove"
+    };
+    div()
+        .h(px(FOOTER_HEIGHT))
+        .px_3()
+        .flex()
+        .items_center()
+        .gap_1()
+        .border_t_1()
+        .border_color(theme.border)
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(key_chip("↑", cx))
+        .child(key_chip("↓", cx))
+        .child(div().mr_2().child("to navigate"))
+        .child(key_chip("enter", cx))
+        .child(key_chip("tab", cx))
+        .child(div().mr_2().child("to select"))
+        .child(key_chip("del", cx))
+        .child(div().mr_2().child(remove_hint))
+        .child(key_chip("esc", cx))
+        .child(div().mr_2().child("to dismiss"))
+        .when(switches, |footer| {
+            footer
+                .child(key_chip("alt", cx))
+                .child("letter to switch shell")
+        })
 }
 
 fn key_chip(label: &'static str, cx: &App) -> impl IntoElement {
