@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Workspace Anatomy</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; the window mock and diagrams break out wider, each scrolls on its own. */
+:root {
+  --bg: #f5f6f4;
+  --surface: #ffffff;
+  --ink: #1b2120;
+  --muted: #5b6664;
+  --line: #d9dfdc;
+  --accent: #0f7f78;
+  --accent-soft: #dcefec;
+  --st-working: #4a90e2;
+  --st-attention: #e8912d;
+  --st-ready: #3fae6a;
+  --st-running: #2bb3a8;
+  --st-recent: #b8c0be;
+  --callout: #e8604c;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", "DejaVu Sans Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121615; --surface: #1a1f1e; --ink: #e3e8e6; --muted: #9aa6a3; --line: #2c3533;
+    --accent: #4cc3b8; --accent-soft: #17312e;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121615; --surface: #1a1f1e; --ink: #e3e8e6; --muted: #9aa6a3; --line: #2c3533;
+  --accent: #4cc3b8; --accent-soft: #17312e;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 15px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+}
+.wrap { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 56px; }
+.prose { max-width: 68ch; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: clamp(2rem, 5vw, 2.9rem); letter-spacing: -0.01em; }
+h2 { font-size: 1.6rem; }
+h3 { font-size: 1.05rem; }
+p { margin: 0; }
+code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+code { background: var(--accent-soft); color: var(--ink); padding: 1px 5px; border-radius: 4px; }
+.eyebrow { font: 500 0.74rem/1 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+section { display: flex; flex-direction: column; gap: 18px; }
+.lede { color: var(--muted); font-size: 1.06rem; }
+header { display: flex; flex-direction: column; gap: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font: 500 0.78rem/1 var(--font-mono); padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: var(--surface); }
+
+/* Screenshot with callouts placed in percent of the image */
+.shot { position: relative; min-width: 760px; border-radius: 8px; overflow: hidden;
+  box-shadow: 0 18px 40px -24px rgba(0,0,0,.55); }
+.shot img { display: block; width: 100%; height: auto; }
+.shot .co { position: absolute; transform: translate(-50%, -50%); width: 22px; height: 22px;
+  border-radius: 50%; background: var(--callout); color: #fff; font: 700 11px/22px var(--font-body);
+  text-align: center; box-shadow: 0 0 0 2px #fff, 0 2px 6px rgba(0,0,0,.4); }
+
+/* Legend for callouts */
+.legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px 28px; }
+.legend div { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: start; min-width: 0; }
+.legend .n { width: 22px; height: 22px; border-radius: 50%; background: var(--callout); color: #fff; font: 700 11px/22px var(--font-body); text-align: center; }
+.legend p { font-size: 0.92rem; }
+.legend strong { display: block; }
+.legend small { color: var(--muted); font-family: var(--font-mono); font-size: 0.76rem; }
+
+/* Tables */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font: 500 0.72rem/1.2 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface)); }
+td:first-child { white-space: nowrap; font-weight: 500; }
+
+.dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-right: 8px; }
+.ring { background: transparent; border: 2px solid var(--muted); }
+
+/* Architecture */
+.arch { min-width: 720px; }
+.arch svg { display: block; width: 100%; height: auto; }
+.arch text { font-family: var(--font-body); fill: var(--ink); }
+.arch .sub { font-family: var(--font-mono); fill: var(--muted); font-size: 11px; }
+.arch .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.arch .box.ui { stroke: var(--accent); stroke-width: 2; }
+.arch .ext { fill: var(--accent-soft); stroke: none; }
+.arch .edge { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.arch .lbl { font-size: 11px; fill: var(--muted); font-family: var(--font-mono); }
+
+/* Features */
+.features { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.feat { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.feat ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 0.92rem; display: flex; flex-direction: column; gap: 3px; }
+.feat .k { font: 500 0.72rem/1 var(--font-mono); color: var(--accent); }
+kbd { font: 500 0.78rem/1 var(--font-mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 2px 5px; background: var(--surface); white-space: nowrap; }
+footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--line); padding-top: 16px; }
+
+@media (max-width: 560px) {
+  body { padding-block: 24px 48px; }
+  .wrap { gap: 44px; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Bowarp · agent-workspace</span>
+    <h1>Agent Workspace anatomy</h1>
+    <p class="lede prose">A desktop terminal for running Claude Code, Copilot CLI and shells side by side in tabs, with each tab's agent status visible at a glance. This page names every part of the window, the code behind it, and what each part does.</p>
+    <div class="chips">
+      <span class="chip">Rust + GPUI</span>
+      <span class="chip">alacritty_terminal 0.26</span>
+      <span class="chip">Windows first, then Linux</span>
+      <span class="chip">No AI of its own</span>
+    </div>
+  </header>
+
+  <section>
+    <span class="eyebrow">The window</span>
+    <h2>Parts of the window</h2>
+    <p class="prose">Left to right: the sidebar with the tabs, the file explorer, the terminal, and the file viewer. The numbered dots match the list below the screenshot.</p>
+    <div class="scroll-x">
+      <div class="shot">
+        <img src="ui-reference/app-window.png" width="1290" height="603" alt="Agent Workspace window: sidebar with tabs, file explorer, a Claude Code terminal and README.md in the file viewer">
+        <span class="co" style="left:12.6%;top:6.1%">1</span>
+        <span class="co" style="left:14.7%;top:12.4%">2</span>
+        <span class="co" style="left:18.2%;top:18.7%">3</span>
+        <span class="co" style="left:15.5%;top:37.8%">4</span>
+        <span class="co" style="left:11.6%;top:75.8%">5</span>
+        <span class="co" style="left:11.6%;top:87.9%">6</span>
+        <span class="co" style="left:31.0%;top:12.4%">7</span>
+        <span class="co" style="left:32.4%;top:45.6%">8</span>
+        <span class="co" style="left:68.2%;top:16.6%">9</span>
+        <span class="co" style="left:83.7%;top:12.4%">10</span>
+      </div>
+    </div>
+
+    <div class="legend">
+      <div><span class="n">1</span><p><strong>Title bar</strong>Sidebar toggle, explorer toggle, About (<code>i</code>) and Settings (gear); window buttons on the right.<br><small>workspace_view.rs</small></p></div>
+      <div><span class="n">2</span><p><strong>Sidebar header</strong>"Search tabs..." (<kbd>Ctrl+Shift+S</kbd>) and the <code>+</code> new-tab menu. A warning button with a count shows here when other tabs need attention.<br><small>workspace_view.rs · sidebar</small></p></div>
+      <div><span class="n">3</span><p><strong>Pinned tab</strong>The pin marks a tab kept at the top and spared by "Close other tabs".<br><small>tab layout pins</small></p></div>
+      <div><span class="n">4</span><p><strong>Tab row</strong>Kind icon with its status badge (bottom right), name, and branch or folder below. Hovered or selected rows show <code>⋮</code> (tab menu) and <code>×</code>. Hover for the tab hover card.<br><small>TabMeta · sidebar</small></p></div>
+      <div><span class="n">5</span><p><strong>Group header</strong>Collapsed here: its color, name, tab count and status counts (2 idle).<br><small>workspace-model · tab layout</small></p></div>
+      <div><span class="n">6</span><p><strong>Settings row</strong>Added under the tabs while the settings page is open; close it with its <code>×</code>.<br><small>settings_page.rs</small></p></div>
+      <div><span class="n">7</span><p><strong>File explorer</strong>The selected tab's folder; follows <code>cd</code>. Header: parent folder button and <code>×</code>.<br><small>file_explorer.rs · file_tree</small></p></div>
+      <div><span class="n">8</span><p><strong>Dimmed entries</strong>Git-ignored entries and <code>.git</code> are dimmed (<code>pipeline</code>, <code>target</code>).<br><small>file explorer git ignore</small></p></div>
+      <div><span class="n">9</span><p><strong>Terminal</strong>The tab's live session, here Claude Code. Clickable links, search, history popup on <kbd>Up</kbd> in shell tabs.<br><small>terminal_view.rs · terminal_element.rs · term-core</small></p></div>
+      <div><span class="n">10</span><p><strong>File viewer</strong>The tab's open file with its folder. Rendered / Raw for Markdown, JSON and SVG, <code>⋮</code> menu (Save), <code>×</code> to close.<br><small>file viewer · workspace-model decoding</small></p></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Vocabulary</span>
+    <h2>What each thing is called</h2>
+    <p class="prose">The words used in the README, the backlog and the code. Use these names in issues and backlog items so everyone means the same thing.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Name</th><th>What it is</th><th>In code</th></tr></thead>
+        <tbody>
+          <tr><td>Tab</td><td>One session: a shell, Claude Code or Copilot CLI, with its own terminal, folder and open file.</td><td><code>TabMeta</code>, <code>TerminalView</code></td></tr>
+          <tr><td>Tab row</td><td>The tab's line in the sidebar.</td><td>sidebar in <code>workspace_view.rs</code></td></tr>
+          <tr><td>Tab menu</td><td>Right-click or <code>⋮</code>: duplicate, pin, rename, copy branch / title / folder, move, close, color, groups.</td><td><code>start_rename</code>, …</td></tr>
+          <tr><td>Tab hover card</td><td>Status, full folder, branch, program title, session kind, <code>+N</code> lines changed.</td><td>Appearance → Tab hover card</td></tr>
+          <tr><td>Group</td><td>Named, colored, collapsible set of tabs. Kept when empty.</td><td>workspace-model tab layout</td></tr>
+          <tr><td>Pinned tab</td><td>Stays at the top; spared by "Close other tabs".</td><td>tab layout pins</td></tr>
+          <tr><td>Launcher</td><td>An entry of the <code>+</code> menu, with a stable id: <code>bash</code>, <code>zsh</code>, <code>fish</code>, <code>pwsh</code>, <code>powershell</code>, <code>cmd</code>, <code>git-bash</code>, <code>wsl:&lt;distro&gt;</code>, <code>claude</code>, <code>copilot</code>.</td><td><code>launcher.rs</code></td></tr>
+          <tr><td>Session</td><td>The pty-backed child process feeding an alacritty <code>Term</code>.</td><td><code>term-core::Session</code></td></tr>
+          <tr><td>Shell integration</td><td>Small scripts that load your rc files and mark prompts with OSC 133 plus a per-session token.</td><td><code>shell_integration.rs</code>, <code>MarkedPty</code></td></tr>
+          <tr><td>Agent status</td><td>Working, Waiting, Idle and so on, from the agent's own hooks or OSC 9;4 progress.</td><td><code>AgentStatus</code>, <code>HookServer</code></td></tr>
+          <tr><td>Hook helper</td><td>Tiny binary next to the app that forwards hook JSON to the right tab.</td><td><code>agentws-hook</code></td></tr>
+          <tr><td>Settings page</td><td>Searchable settings in place of the terminal, plus a Settings row under the tabs.</td><td><code>settings_page.rs</code>, <code>settings.json</code></td></tr>
+          <tr><td>Config folder</td><td>Holds <code>settings.json</code>, <code>tabs.json</code>, <code>history.jsonl</code>, <code>shell-integration/</code>.</td><td><code>settings_file.rs</code>, <code>tabs_file.rs</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Status</span>
+    <h2>Reading the status badge</h2>
+    <p class="prose">The badge on a tab's icon is the same status used by the hover card, group totals and toasts. Ready for review means unread finished work, not that the work is correct.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Badge</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><span class="dot" style="background:var(--st-working)"></span>Working</td><td>The agent is on a turn. A Copilot tab also shows a turning ring before the title.</td></tr>
+          <tr><td><span class="dot" style="background:var(--st-attention)"></span>Needs attention</td><td>Waiting for permission, waiting for your reply, a bell, or a clipboard write to approve. A ▲ shows before the title.</td></tr>
+          <tr><td><span class="dot" style="background:var(--st-ready)"></span>Ready for review</td><td>Finished while you were on another tab, until you select it (shown with a check).</td></tr>
+          <tr><td><span class="dot" style="background:var(--st-ready);opacity:.6"></span>Idle</td><td>The agent waits for your next prompt.</td></tr>
+          <tr><td><span class="dot" style="background:var(--st-running)"></span>Running</td><td>A command typed at a bash, zsh or PowerShell prompt has run for over half a second. Pulses for 10 s.</td></tr>
+          <tr><td><span class="dot" style="background:var(--st-recent)"></span>Recent output</td><td>Output arrived lately, with no reliable agent status.</td></tr>
+          <tr><td><span class="dot ring"></span>Exited</td><td>The program ended with an error. An agent that exits with 0 becomes a shell tab instead.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Under the hood</span>
+    <h2>How the crates fit together</h2>
+    <p class="prose">Only <code>app</code> depends on GPUI. Pure logic lives in <code>workspace-model</code> with unit tests. Agent hooks travel through <code>agentws-hook</code> over a local socket or pipe.</p>
+    <div class="scroll-x">
+      <div class="arch">
+        <svg viewBox="0 0 900 300" role="img" aria-label="Crate diagram: app uses term-core, workspace-model and agent-status; agent CLIs call agentws-hook which sends to the app's HookServer">
+          <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="var(--muted)"/></marker></defs>
+          <rect class="box ui" x="330" y="20" width="240" height="78" rx="8"/>
+          <text x="450" y="50" text-anchor="middle" font-weight="600" font-size="16">app</text>
+          <text class="sub" x="450" y="72" text-anchor="middle">package agent-workspace · GPUI UI</text>
+
+          <rect class="box" x="40" y="180" width="230" height="78" rx="8"/>
+          <text x="155" y="210" text-anchor="middle" font-weight="600" font-size="15">term-core</text>
+          <text class="sub" x="155" y="232" text-anchor="middle">pty + alacritty Term, OSC 133</text>
+
+          <rect class="box" x="335" y="180" width="230" height="78" rx="8"/>
+          <text x="450" y="210" text-anchor="middle" font-weight="600" font-size="15">workspace-model</text>
+          <text class="sub" x="450" y="232" text-anchor="middle">pure logic, unit-tested</text>
+
+          <rect class="box" x="630" y="180" width="230" height="78" rx="8"/>
+          <text x="745" y="210" text-anchor="middle" font-weight="600" font-size="15">agent-status</text>
+          <text class="sub" x="745" y="232" text-anchor="middle">events → AgentStatus</text>
+
+          <rect class="ext" x="660" y="20" width="200" height="78" rx="8"/>
+          <text x="760" y="50" text-anchor="middle" font-weight="600" font-size="15">agentws-hook</text>
+          <text class="sub" x="760" y="72" text-anchor="middle">run by Claude / Copilot hooks</text>
+
+          <path class="edge" d="M390 98 L190 178" marker-end="url(#ar)"/>
+          <path class="edge" d="M450 98 L450 178" marker-end="url(#ar)"/>
+          <path class="edge" d="M510 98 L705 178" marker-end="url(#ar)"/>
+          <path class="edge" d="M660 59 L574 59" marker-end="url(#ar)"/>
+          <text class="lbl" x="617" y="50" text-anchor="middle">socket / pipe</text>
+          <text class="lbl" x="617" y="80" text-anchor="middle">→ HookServer</text>
+          <text class="lbl" x="40" y="290">Arrows: "uses" from app; hook events flow right to left into app.</text>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">What it does</span>
+    <h2>Major features</h2>
+    <div class="features">
+      <div class="feat"><span class="k">Tabs &amp; groups</span><h3>Organize many sessions</h3><ul><li>New tabs open below the selected one, in its folder</li><li>Groups, pins, colors, drag to reorder</li><li>Duplicate <kbd>Ctrl+Shift+D</kbd>, close <kbd>Ctrl+Shift+W</kbd></li><li>Busy tabs ask before closing</li></ul></div>
+      <div class="feat"><span class="k">Attention</span><h3>Know who needs you</h3><ul><li>Status badges from the agents' own hooks</li><li>Toasts for background agent tabs</li><li>Jump to the next waiting tab <kbd>Ctrl+Shift+A</kbd></li><li>Collapsed groups keep their counts</li></ul></div>
+      <div class="feat"><span class="k">Terminal</span><h3>A real terminal</h3><ul><li>Copy, paste, scrollback, mouse reporting</li><li>Search output <kbd>Ctrl+Shift+F</kbd></li><li>Clickable URLs and <code>path:line</code> links</li><li>Clipboard writes from programs ask first</li></ul></div>
+      <div class="feat"><span class="k">Command history</span><h3>Commands you ran, anywhere</h3><ul><li>Inline suggestion, accept with <kbd>Right</kbd></li><li>HISTORY popup on <kbd>Up</kbd>, with folders</li><li>Last command offered after a restart</li><li>bash, zsh and PowerShell</li></ul></div>
+      <div class="feat"><span class="k">Files</span><h3>Explorer and viewer</h3><ul><li>Tree follows the tab's folder, dims ignored files</li><li>New, rename, delete, open a tab there</li><li>Markdown, JSON, SVG rendered; images</li><li>Edit and save, reloads on disk changes</li></ul></div>
+      <div class="feat"><span class="k">Settings &amp; persistence</span><h3>Comes back as you left it</h3><ul><li>Window, tabs, groups and order restored</li><li>Settings page, applied live, search and reset</li><li>Hand-editable <code>settings.json</code>, shortcuts too</li><li>Light theme, font, opacity and blur</li></ul></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Keyboard</span>
+    <h2>Shortcuts to know first</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>Ctrl+Tab</kbd> / <kbd>Ctrl+Shift+Tab</kbd></td><td>Next / previous tab</td></tr>
+          <tr><td><kbd>Ctrl+1..9</kbd></td><td>Select tab 1 to 9</td></tr>
+          <tr><td><kbd>Ctrl+Shift+T</kbd></td><td>New tab with the default shell</td></tr>
+          <tr><td><kbd>Ctrl+Shift+S</kbd></td><td>Search tabs</td></tr>
+          <tr><td><kbd>Ctrl+Shift+B</kbd></td><td>Hide or show the sidebar</td></tr>
+          <tr><td><kbd>Ctrl+Shift+|</kbd></td><td>Hide or show the file explorer</td></tr>
+          <tr><td><kbd>Ctrl+Shift+A</kbd></td><td>Next tab needing attention</td></tr>
+          <tr><td><kbd>Ctrl+Shift+F</kbd></td><td>Search terminal output</td></tr>
+          <tr><td><kbd>F11</kbd></td><td>Full screen</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>Based on README.md, FEATURES.md and CLAUDE.md of the agent-workspace repository, branch m2-sidebar, 2026-10-28.</footer>
+</div>
+</body>
+</html>
