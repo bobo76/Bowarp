@@ -20,6 +20,8 @@ entry when the limitation is lifted.
   Code tabs fall back to output activity ("Status unavailable" when quiet) and a bell asks for
   attention as in a shell; a Copilot CLI permission prompt reads Working, not Needs attention,
   unless it rings the bell. The warning shows once per start, not again when an agent tab opens.
+- Copilot CLI Waiting ends on its next tool hook or when the turn ends: after a question is
+  answered, a reply with no tool call keeps the tab Waiting until the turn finishes.
 - Clipboard notice: every program clipboard write (OSC 52) now waits for Allow, including
   Copilot CLI's copy on Windows. One answer covers the held clipboard and primary-selection
   writes; a write held when the program exits is dropped. "Always for this tab" survives an

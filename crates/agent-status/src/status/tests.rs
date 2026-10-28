@@ -83,22 +83,59 @@ fn progress_after_exit_is_ignored() {
 }
 
 #[test]
-fn copilot_permission_waits_until_progress_resumes_or_finishes() {
-    for progress in [ProgressState::Indeterminate, ProgressState::Hidden] {
+fn copilot_waits_through_repeated_progress_until_a_tool_hook_or_the_turn_end() {
+    for end in [
+        HookEvent::ToolStarted,
+        HookEvent::ToolFinished,
+        HookEvent::InputRequested(WaitReason::Reply),
+    ] {
         let mut state = AgentState::default();
         state.apply_progress(ProgressState::Indeterminate, 1);
-        state.apply(PERMISSION, 2);
-        assert_eq!(state.status(), AgentStatus::NeedsAttention);
-        state.apply_progress(progress, 3);
+        state.apply_copilot_hook(PERMISSION, 2);
+        state.apply_progress(ProgressState::Indeterminate, 3);
         assert_eq!(
             state.status(),
-            if progress.is_shown() {
-                AgentStatus::Working
-            } else {
-                AgentStatus::Idle
-            }
+            AgentStatus::NeedsAttention,
+            "repeated progress"
         );
+        assert_eq!(state.wait_reason(), Some(WaitReason::Permission));
+        state.apply_copilot_hook(end, 4);
+        assert_eq!(state.status(), end.status(), "{end:?}");
     }
+
+    let mut state = AgentState::default();
+    state.apply_copilot_hook(PERMISSION, 1);
+    state.apply_progress(ProgressState::Hidden, 2);
+    assert_eq!(state.status(), AgentStatus::Idle);
+    assert_eq!(state.wait_reason(), None);
+}
+
+#[test]
+fn copilot_tool_and_stop_hooks_leave_progress_in_charge() {
+    let mut state = AgentState::default();
+    state.apply_progress(ProgressState::Indeterminate, 1);
+    for event in [
+        HookEvent::ToolStarted,
+        HookEvent::ToolFinished,
+        HookEvent::PromptSubmitted,
+        HookEvent::Stopped,
+    ] {
+        state.apply_copilot_hook(event, 2);
+        assert_eq!(state.status(), AgentStatus::Working, "{event:?}");
+    }
+    state.apply_copilot_hook(PERMISSION, 3);
+    state.apply_copilot_hook(HookEvent::Stopped, 4);
+    assert_eq!(
+        state.status(),
+        AgentStatus::NeedsAttention,
+        "Stopped is ignored"
+    );
+    state.apply_copilot_hook(HookEvent::ToolFinished, 2);
+    assert_eq!(
+        state.status(),
+        AgentStatus::NeedsAttention,
+        "an older tool hook cannot end a newer request"
+    );
 }
 
 #[test]
@@ -179,9 +216,11 @@ fn keeps_what_a_waiting_agent_asks_for_until_the_status_moves_on() {
 
     state.apply(reply, 4);
     state.apply_progress(ProgressState::Indeterminate, 5);
+    assert_eq!(state.wait_reason(), Some(WaitReason::Reply));
+    state.apply_progress(ProgressState::Hidden, 6);
     assert_eq!(state.wait_reason(), None);
 
-    state.apply(PERMISSION, 6);
+    state.apply(PERMISSION, 7);
     state.exit();
     assert_eq!(state.wait_reason(), None);
 }

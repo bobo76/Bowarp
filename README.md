@@ -221,20 +221,24 @@ group still shows its status); Activity animations (on) off makes the Running ba
 working Copilot tab's spinner static and starts no animation timers. Both apply live and are
 saved as `group_hover_cards` and `activity_animations` (missing or non-boolean means on).
 
-### Copilot permission status (CLI 1.0.103)
+### Copilot permission and question status (CLI 1.0.105)
 
-Copilot CLI integration is tested against **1.0.103** (`npm install -g
-@github/copilot@1.0.103`; `copilot --version` must report that version). Disable its automatic
+Copilot CLI integration is tested against **1.0.105** (`npm install -g
+@github/copilot@1.0.105`; `copilot --version` must report that version). Disable its automatic
 updates with `COPILOT_AUTO_UPDATE=false` when reproducing these checks.
 
 Each new Copilot tab mounts its own app-owned plugin with the supported
-`--plugin-dir <directory>` option. The plugin registers only `PermissionRequest`, using
-Copilot's PascalCase/snake_case payload format and direct `exec` command hooks.
-`agentws-hook` forwards the event to that tab's local status socket: **Waiting**.
-Working and Idle still come exclusively from terminal progress reports; the next progress
-report observed after the permission hook starts clears Waiting, even if its state repeats.
-Reports retain their I/O observation times so queued older progress cannot hide a newer
-permission request. Copilot emits permission hooks before its approval rules, so an
+`--plugin-dir <directory>` option. The plugin registers `PermissionRequest`, `Notification`,
+`PreToolUse`, `PostToolUse` and `PostToolUseFailure` as direct `exec` command hooks, and
+`agentws-hook` forwards them to that tab's local status socket. A permission request is
+**Waiting for permission**; a question (`ask_user`, reported as an `elicitation_dialog`
+notification) is **Waiting for your reply**. Copilot sends most events in the PascalCase/
+snake_case payload, but `PermissionRequest` in its camelCase one (`hookName`), which
+`agentws-hook` also reads. Working and Idle still come exclusively from terminal progress
+reports. Copilot keeps reporting progress every 5 s while it waits, so repeated progress
+leaves Waiting in place; the next tool hook (the user answered) or removed progress (the turn
+ended) clears it. Reports retain their I/O observation times so queued older progress cannot
+hide a newer request. Copilot emits permission hooks before its approval rules, so an
 automatically approved request can briefly report Waiting too.
 
 Bowarp never installs or writes hook configuration into the user's `~/.copilot` or repository.
@@ -245,18 +249,19 @@ authentication, hooks and plugins are retained. A missing helper,
 an unwritable runtime directory, disabled hooks or sandbox-blocked hook
 keeps the existing progress-only fallback (Working/Idle, no reliable Waiting).
 
-Verified API sources: installed CLI **1.0.103** `--help` lists `--plugin-dir`, and its native
-plugin loader accepts this manifest, `PermissionRequest` and `exec` hook with no warnings.
-See GitHub's [plugin reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference)
+Verified API sources: installed CLI **1.0.105** `--help` lists `--plugin-dir`, and its native
+plugin loader accepts this manifest and these `exec` hooks with no warnings; a live session
+logged each payload. See GitHub's [plugin reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference)
 (`hooks` component and read-only `--plugin-dir` mounts) and
 [hook reference](https://docs.github.com/en/copilot/reference/hooks-reference)
 (PascalCase payloads and direct executable hooks).
 
-Manual validation pending: README checks 6–9 on Windows and Ubuntu (Wayland and X11),
-including two simultaneous Copilot tabs, permission approval/denial, progress after Waiting,
-disabled hooks and unchanged user configuration. Automated tests cover plugin generation,
-argument ordering, tab routing, permission-to-Waiting and progress recovery; they do not
-exercise a live Copilot permission dialog.
+Manual validation pending: README checks 6–9 on Windows and Wayland, including two
+simultaneous Copilot tabs, permission denial, disabled hooks and unchanged user configuration.
+Checked on Ubuntu X11 with a live Copilot: a background tab's question and permission prompt
+stay Waiting, Ctrl+Shift+A reaches them, and answering returns the tab to Working. Automated
+tests cover plugin generation, payload parsing, argument ordering, tab routing,
+request-to-Waiting and progress recovery.
 
 ### Copilot mode extension
 

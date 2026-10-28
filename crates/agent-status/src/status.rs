@@ -29,7 +29,8 @@ impl WaitReason {
     }
 }
 
-/// A status-changing hook event (Copilot uses only `InputRequested`).
+/// A status-changing hook event (Copilot uses `InputRequested` and the tool events, see
+/// [`AgentState::apply_copilot_hook`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HookEvent {
     PromptSubmitted,
@@ -129,11 +130,31 @@ impl AgentState {
         self.last_event_at = at;
     }
 
+    /// Apply a Copilot CLI hook. Its progress reports Working and Idle, so hooks only add
+    /// Waiting, and a tool hook only ends it: the user answered and the turn moved on.
+    pub fn apply_copilot_hook(&mut self, event: HookEvent, at: u64) {
+        let applies = match event {
+            HookEvent::InputRequested(_) => true,
+            HookEvent::ToolStarted | HookEvent::ToolFinished => {
+                self.status == AgentStatus::NeedsAttention
+            }
+            HookEvent::PromptSubmitted | HookEvent::Stopped => false,
+        };
+        if applies {
+            self.apply(event, at);
+        }
+    }
+
     /// Apply Copilot's progress: it works while progress is shown, and is idle once removed.
-    /// A later progress report also clears Waiting; delayed older hooks cannot override it.
-    /// `at` is the I/O observation time, not the time a queued report is processed.
+    /// Copilot keeps reporting progress every 5 s while it waits for the user, so shown
+    /// progress leaves Waiting in place; removed progress (the turn ended) clears it. Delayed
+    /// older hooks cannot override a newer report. `at` is the I/O observation time, not the
+    /// time a queued report is processed.
     pub fn apply_progress(&mut self, progress: ProgressState, at: u64) {
         if self.status == AgentStatus::Exited || at < self.last_event_at {
+            return;
+        }
+        if self.status == AgentStatus::NeedsAttention && progress.is_shown() {
             return;
         }
         self.status = if progress.is_shown() {

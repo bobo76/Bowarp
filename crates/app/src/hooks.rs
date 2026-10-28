@@ -114,8 +114,8 @@ impl ClaudeHooks {
     }
 
     /// Attach status hooks to Claude Code or the mode bridge to Copilot. Only Claude Code
-    /// reports activity through hooks; Copilot adds only permission requests and keeps using
-    /// terminal progress for Working/Idle. The result selects Claude's hooks-only reporting.
+    /// reports activity through hooks; Copilot's hooks only add and end Waiting (permission
+    /// requests, questions) and it keeps using terminal progress for Working/Idle. The result selects Claude's hooks-only reporting.
     pub fn attach(&self, session: u64, spec: &mut LaunchSpec) -> bool {
         if spec.kind == SessionKind::Shell {
             return false;

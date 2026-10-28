@@ -14,6 +14,13 @@ Each step stands alone and is tested:
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Copilot Waiting on permission prompts and questions:
+
+- Windows, a real Copilot CLI in a background tab: a permission prompt and a question
+  (`ask_user`) each show the triangle, the toast and Ctrl+Shift+A, and stay Waiting past 5 s;
+  approving, denying (Esc) and answering go back to the spinner or Idle.
+- Linux: the permission prompt's toast, and denying a permission (Esc).
+
 Dimmed git-ignored entries in the file explorer:
 
 - Windows: open the explorer in a repository with ignored entries (`target/`, `*.log`): they
@@ -130,15 +137,6 @@ behavior"); items below name their switch where they need one.
     (every pane but the terminal renders alpha 255, light and dark). Ask for the platform,
     desktop/compositor, theme, opacity and blur values, and a screenshot, and recheck the
     report once the panels above are built.
-- Copilot permission prompts show no Waiting status (Windows, 0.2.34): a background Copilot
-  tab showing its own approval prompt keeps the spinner, with no triangle, no toast, and
-  Ctrl+Shift+A doesn't go to it. Not diagnosed: check that the `--plugin-dir` plugin
-  (`app/src/hooks.rs`) is written and loaded by this Copilot version, and that its
-  `PermissionRequest` hook runs `agentws-hook` and reaches the `HookServer` (log one event).
-- Copilot questions show no Waiting status: when Copilot asks the user a question, the tab
-  stays Working, since the plugin hooks only `PermissionRequest`. Find out whether Copilot
-  exposes a hook or event for its questions, then map it to Waiting ("Waiting for your
-  reply") like Claude's AskUserQuestion.
 - Clipboard Deny doesn't stop agent copies (Windows, Claude Code and Copilot CLI): the
   `clipboard_writes` guard filters only OSC 52, but both CLIs also write the system
   clipboard themselves, so the text is copied before the notice is answered. The app can't

@@ -271,7 +271,7 @@ fn a_copilot_bell_keeps_the_pending_wait_reason(cx: &mut gpui_kit::TestAppContex
 }
 
 #[gpui::test]
-fn copilot_permission_hooks_add_waiting_but_only_progress_controls_working_and_idle(
+fn copilot_hooks_add_and_end_waiting_but_only_progress_controls_working_and_idle(
     cx: &mut gpui_kit::TestAppContext,
 ) {
     use agent_status::HookEvent;
@@ -328,35 +328,33 @@ fn copilot_permission_hooks_add_waiting_but_only_progress_controls_working_and_i
             },
             cx,
         );
-        assert_eq!(view.agent.as_ref().unwrap().status(), AgentStatus::Working);
+        assert_eq!(
+            view.agent.as_ref().unwrap().status(),
+            AgentStatus::NeedsAttention,
+            "repeated progress keeps Waiting"
+        );
+        view.apply_hook_event(AgentEvent::Hook(HookEvent::ToolFinished), 3, cx);
+        assert_eq!(
+            view.agent.as_ref().unwrap().status(),
+            AgentStatus::Working,
+            "a tool hook ends Waiting"
+        );
         view.apply_hook_event(
-            AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Permission)),
-            3,
+            AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Reply)),
+            4,
             cx,
         );
         view.on_session_event(
             SessionEvent::ProgressChanged {
                 state: ProgressState::Hidden,
-                at: 2,
+                at: 3,
             },
             cx,
         );
         assert_eq!(
             view.agent.as_ref().unwrap().status(),
             AgentStatus::NeedsAttention,
-            "queued older progress cannot clear a newer permission request"
-        );
-        view.on_session_event(
-            SessionEvent::ProgressChanged {
-                state: ProgressState::Indeterminate,
-                at: 4,
-            },
-            cx,
-        );
-        assert_eq!(
-            view.agent.as_ref().unwrap().status(),
-            AgentStatus::Working,
-            "repeated progress clears Waiting"
+            "queued older progress cannot clear a newer question"
         );
         view.apply_progress(ProgressState::Hidden, 5, cx);
         assert_eq!(view.agent.as_ref().unwrap().status(), AgentStatus::Idle);

@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.40
+
+- Copilot CLI tabs show Waiting again while a permission prompt is open, and now also while
+  Copilot asks a question ("Waiting for your reply"), with the toast and Ctrl+Shift+A; the
+  status stays Waiting until the prompt is answered.
+
 ## 0.2.39
 
 - Dim the entries git ignores in the file explorer (`target/`, `.git`, `*.log`...), keeping

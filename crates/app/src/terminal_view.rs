@@ -600,15 +600,15 @@ impl TerminalView {
             AgentEvent::Hook(event) if self.kind() == SessionKind::ClaudeCode => {
                 self.update_agent(|agent| agent.apply(event, at), cx);
             }
-            AgentEvent::Hook(event @ agent_status::HookEvent::InputRequested(_))
-                if self.kind() == SessionKind::CopilotCli =>
-            {
+            AgentEvent::Hook(event) if self.kind() == SessionKind::CopilotCli => {
                 // Permission hooks can arrive before the first terminal progress report.
-                if self.agent.is_none() {
+                if self.agent.is_none()
+                    && matches!(event, agent_status::HookEvent::InputRequested(_))
+                {
                     self.agent = Some(AgentTracker::new(Instant::now()));
                     self.activity_task = None;
                 }
-                self.update_agent(|agent| agent.apply(event, at), cx);
+                self.update_agent(|agent| agent.apply_copilot_hook(event, at), cx);
             }
             AgentEvent::ModeChanged(mode)
                 if self.kind() == SessionKind::CopilotCli && self.mode.apply(mode, at) =>
