@@ -103,6 +103,13 @@ entry when the limitation is lifted.
   leave the terminal and viewer below their usual minimums), and saved in pixels
   (`file_explorer_width`) with the same rules as the viewer width: once when the drag ends,
   not on the settings page, not while the file is broken, other instances after a reload.
+- File explorer dimming of git-ignored entries: git is asked again for a folder only when it is
+  read again (expanded, or its entries change), and for every open folder when a `.gitignore`
+  in one of them changes; a change to `.git/info/exclude` or the global excludes file, or a
+  file starting or stopping being tracked
+  shows once the folder is collapsed and expanded again. Each check gives up after 5 s (nothing
+  dimmed in that folder). Inside a nested repository or submodule, git answers for that
+  repository. A name that isn't valid UTF-8 is sent to git as displayed and isn't dimmed.
 - File explorer and viewer switch (`file_panes`): turning it off closes every open file, so a
   tab's viewer starts empty after turning it on again (the explorer stays hidden until its
   button or Ctrl+Shift+| is used). `tabs.json` never held a tab's open file, and no file

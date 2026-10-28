@@ -10,13 +10,19 @@ still to do (Windows included), not what was already tested.
 
 Each step stands alone and is tested:
 
-1. Dim git-ignored entries in the file explorer (docs/ux-review.md #24): one
-   `git check-ignore --stdin` per expanded folder, off the UI thread, refreshed with the
-   folder watcher. Folder order unchanged; folders outside a repository show as today.
-
 ## Fixed, not tested yet
 
 Built with automated coverage on Linux; the manual checks below are still to do.
+
+Dimmed git-ignored entries in the file explorer:
+
+- Windows: open the explorer in a repository with ignored entries (`target/`, `*.log`): they
+  and `.git` dim with no console window flashing, also when a folder is expanded or a file
+  is added; a folder outside a repository and a machine without git dim nothing.
+- Light theme (any platform): dimmed names read as dimmed but legible, also on the selected
+  row's background.
+- A large ignored folder (`node_modules`, `target` with thousands of entries) expanded: the
+  tree shows at once and dims shortly after, without stalling the UI.
 
 Closing the last tab keeps the window:
 
@@ -276,6 +282,12 @@ behavior"); items below name their switch where they need one.
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
   the window; Delete already runs in the background.
+- File explorer drag and drop: drag a file or folder onto another folder (or a root) to move
+  it there, with the drop target highlighted while hovered; a name clash asks before
+  replacing, and a folder can't be dropped into itself or its children. Dropping onto the
+  terminal types the quoted path (`file_tree::quote_path`) instead. Files dropped from the
+  system file manager onto a folder are copied there. The tree and an open viewer follow the
+  moved file; moves run in the background like Delete.
 - Sidebar search: the filter/sort button from the
   [reference screenshot](docs/ui-reference/sidebar-hover-card.png).
 - Configurable tab background color: a color picked per tab from the tab menu (a small

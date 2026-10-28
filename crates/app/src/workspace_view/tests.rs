@@ -1039,6 +1039,82 @@ fn settings_page_hides_the_explorer_and_keeps_it_as_it_was(cx: &mut gpui_kit::Te
 }
 
 #[gpui::test]
+fn explorer_dims_what_git_ignores_until_it_hides(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("explorer-ignored", cx);
+    let initialized = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&h.folder)
+        .status()
+        .is_ok_and(|status| status.success());
+    if !initialized {
+        eprintln!("git not available, skipping");
+        return;
+    }
+    std::fs::write(h.folder.join(".gitignore"), "target/\n*.log\n").unwrap();
+    let debug = h.folder.join("target").join("debug");
+    std::fs::create_dir_all(&debug).unwrap();
+    std::fs::write(debug.join("app"), "").unwrap();
+    std::fs::write(h.folder.join("a.log"), "").unwrap();
+    // (dimmed row names, folders holding git state)
+    let dimmed = |h: &mut PanesHarness| {
+        h.cx.run_until_parked();
+        h.workspace.read_with(&h.cx, |workspace, cx| {
+            workspace.explorer.read(cx).ignored_for_test()
+        })
+    };
+    h.toggle_explorer();
+    assert_eq!(
+        dimmed(&mut h),
+        (vec![".git".into(), "target".into(), "a.log".into()], 1),
+        "git's answer for the root dims its ignored entries, not the sources"
+    );
+    let workspace = h.workspace.clone();
+    h.cx.update(|_, cx| {
+        let explorer = workspace.read(cx).explorer.clone();
+        assert!(explorer.update(cx, |explorer, cx| explorer.reveal(&debug, cx)));
+    });
+    assert_eq!(
+        dimmed(&mut h),
+        (
+            vec![
+                ".git".into(),
+                "target".into(),
+                "debug".into(),
+                "app".into(),
+                "a.log".into()
+            ],
+            3
+        ),
+        "what an ignored folder holds is dimmed"
+    );
+    // The watcher is unavailable in tests: report the in-place `.gitignore` edit by hand.
+    std::fs::write(h.folder.join(".gitignore"), "target/\n").unwrap();
+    let (root, gitignore) = (h.folder.clone(), h.folder.join(".gitignore"));
+    h.cx.update(|_, cx| {
+        let explorer = workspace.read(cx).explorer.clone();
+        explorer.update(cx, |explorer, cx| {
+            explorer.reread([root].into(), &[gitignore], cx)
+        });
+    });
+    assert_eq!(
+        dimmed(&mut h).0,
+        vec![
+            ".git".to_string(),
+            "target".into(),
+            "debug".into(),
+            "app".into()
+        ],
+        "a changed `.gitignore` asks git again, so `a.log` is no longer dimmed"
+    );
+    h.toggle_explorer();
+    assert_eq!(
+        dimmed(&mut h),
+        (Vec::new(), 0),
+        "hiding the explorer drops git's answers"
+    );
+}
+
+#[gpui::test]
 fn agent_status_off_warning_stays_once_beside_the_fallback_warning(
     cx: &mut gpui_kit::TestAppContext,
 ) {

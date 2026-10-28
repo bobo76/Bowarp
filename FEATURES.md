@@ -69,6 +69,7 @@ directly to model APIs.
 
 - Browse the selected session's folder in a collapsible file tree that follows the
   session's current folder and refreshes when files change. The tree's width is resizable.
+  Entries git ignores are dimmed, without changing the order.
 - Act on files and folders from the tree: create, rename, delete, open a shell or an agent
   session or `cd` there (or to the parent folder), and copy paths.
 - View and edit a clicked file beside the terminal: Markdown rendered or as source, JSON

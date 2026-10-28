@@ -5,6 +5,11 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.39
+
+- Dim the entries git ignores in the file explorer (`target/`, `.git`, `*.log`...), keeping
+  the folder order; folders outside a repository show as before. Saving a `.gitignore`
+  updates the dimming of the open folders.
 - The working Copilot tab's spinner turns once a second (was every two seconds); several
   working Copilot tabs now turn together on one timer instead of one each.
 

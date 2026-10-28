@@ -1,5 +1,6 @@
 //! The file explorer panel: the selected tab's folder as a tree. Folders are read when they
-//! are expanded and re-read when a watcher on the expanded folders reports a change.
+//! are expanded and re-read when a watcher on the expanded folders reports a change; after each
+//! read, git is asked off the UI thread which entries it ignores, and those are dimmed.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -16,14 +17,15 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, App, AppContext, ClipboardItem, Context, Entity, EventEmitter, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, Subscription, WeakEntity, Window, div, px, uniform_list,
+    Styled, Subscription, Task, WeakEntity, Window, div, px, uniform_list,
 };
-use notify::EventKind;
 use notify::event::ModifyKind;
+use notify::{Event, EventKind};
 use workspace_model::file_tree::{
     self, DirEntry, EntryKind, ExpandedFolders, FileKind, TreeRow, entry_folder, entry_name,
     parent_folder, relative_path, validate_name,
 };
+use workspace_model::ignored_names;
 
 use crate::assets::{
     FILE_ARCHIVE_ICON, FILE_CODE_ICON, FILE_DATA_ICON, FILE_IMAGE_ICON, FILES_ICON, FOLDER_UP_ICON,
@@ -90,9 +92,10 @@ struct NameEdit {
     _events: Subscription,
 }
 
-/// One row of the list: an entry, the new-file editor, or a folder's read error.
+/// One row of the list: an entry (dimmed when git ignores it), the new-file editor, or a
+/// folder's read error.
 enum ListRow {
-    Entry(TreeRow),
+    Entry { row: TreeRow, ignored: bool },
     NewFile { depth: usize },
     Error { depth: usize, message: String },
 }
@@ -105,6 +108,13 @@ pub struct FileExplorer {
     agents: Rc<[Launcher]>,
     expanded: ExpandedFolders,
     listings: HashMap<PathBuf, Listing>,
+    /// The names git ignores in each open folder, as of git's last answer; a folder outside a
+    /// repository (or whose check failed) has none.
+    ignored: HashMap<PathBuf, HashSet<String>>,
+    /// Folders read since git was last asked about them.
+    unchecked: HashSet<PathBuf>,
+    /// The `git check-ignore` running per folder: replacing or dropping a task cancels it.
+    ignore_checks: HashMap<PathBuf, Task<()>>,
     selected: Option<PathBuf>,
     editing: Option<NameEdit>,
     /// The entry menu that is open, if any.
@@ -120,13 +130,15 @@ impl EventEmitter<ExplorerEvent> for FileExplorer {}
 impl WatchesFolders for FileExplorer {
     const OWNER: &'static str = "file explorer";
 
-    /// Only entries appearing, going or being renamed change a listing; reading a folder opens
-    /// it, which would otherwise report a change and read it again.
-    fn ignores(kind: &EventKind) -> bool {
-        matches!(
-            kind,
-            EventKind::Access(_) | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_))
-        )
+    /// Only entries appearing, going or being renamed change a listing (reading a folder opens
+    /// it, which would otherwise report a change and read it again), and a `.gitignore` edited
+    /// in place changes what git ignores.
+    fn ignores(event: &Event) -> bool {
+        match event.kind {
+            EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(_)) => true,
+            EventKind::Modify(ModifyKind::Data(_)) => !file_tree::touches_gitignore(&event.paths),
+            _ => false,
+        }
     }
 
     /// Re-read the watched folders that changed.
@@ -135,16 +147,30 @@ impl WatchesFolders for FileExplorer {
         if folders.is_empty() {
             return;
         }
-        // The refresh below watches a removed or replaced folder again.
-        self.watches.forget_reported(&paths);
-        for folder in folders {
-            self.listings.insert(folder.clone(), read_folder(&folder));
-        }
-        self.refresh(cx);
+        self.reread(folders, &paths, cx);
     }
 }
 
 impl FileExplorer {
+    /// Read `folders` again after `changed` paths were reported in them.
+    pub(crate) fn reread(
+        &mut self,
+        folders: HashSet<PathBuf>,
+        changed: &[PathBuf],
+        cx: &mut Context<Self>,
+    ) {
+        // The refresh below watches a removed or replaced folder again.
+        self.watches.forget_reported(changed);
+        if file_tree::touches_gitignore(changed) {
+            // What git ignores may change in every folder under it: ask again for all.
+            self.unchecked.extend(self.listings.keys().cloned());
+        }
+        for folder in folders {
+            self.read_listing(folder);
+        }
+        self.refresh(cx);
+    }
+
     pub fn new(agents: Vec<Launcher>, window: &Window, cx: &mut Context<Self>) -> Self {
         Self {
             root: None,
@@ -152,6 +178,9 @@ impl FileExplorer {
             agents: agents.into(),
             expanded: ExpandedFolders::default(),
             listings: HashMap::new(),
+            ignored: HashMap::new(),
+            unchecked: HashSet::new(),
+            ignore_checks: HashMap::new(),
             selected: None,
             editing: None,
             menu: OpenMenu::default(),
@@ -164,10 +193,25 @@ impl FileExplorer {
     #[cfg(test)]
     pub(crate) fn expanded_for_test(&self) -> (Option<PathBuf>, Vec<PathBuf>) {
         let expanded = self.rows.iter().filter_map(|row| match row {
-            ListRow::Entry(row) if row.expanded => Some(row.path.clone()),
+            ListRow::Entry { row, .. } if row.expanded => Some(row.path.clone()),
             _ => None,
         });
         (self.root.clone(), expanded.collect())
+    }
+
+    /// The names of the dimmed rows, and the folders holding git's answers or checks.
+    #[cfg(test)]
+    pub(crate) fn ignored_for_test(&self) -> (Vec<String>, usize) {
+        let dimmed = self.rows.iter().filter_map(|row| match row {
+            ListRow::Entry { row, ignored: true } => Some(row.name.clone()),
+            _ => None,
+        });
+        let held: HashSet<&PathBuf> = self
+            .ignored
+            .keys()
+            .chain(self.ignore_checks.keys())
+            .collect();
+        (dimmed.collect(), held.len())
     }
 
     /// Whether a name editor or an entry menu is open, which a popup must not cover.
@@ -190,6 +234,9 @@ impl FileExplorer {
         }
         // Folders left unwatched may have changed meanwhile.
         self.listings.clear();
+        self.ignored.clear();
+        self.unchecked.clear();
+        self.ignore_checks.clear();
         self.refresh(cx);
     }
 
@@ -237,8 +284,7 @@ impl FileExplorer {
                 break rows;
             }
             for folder in unread {
-                let listing = read_folder(&folder);
-                self.listings.insert(folder, listing);
+                self.read_listing(folder);
             }
         };
         let open: HashSet<PathBuf> = rows
@@ -248,8 +294,67 @@ impl FileExplorer {
             .collect();
         // Unwatched folders may change: read them again when they are shown again.
         self.listings.retain(|folder, _| open.contains(folder));
+        self.ignored.retain(|folder, _| open.contains(folder));
+        self.ignore_checks.retain(|folder, _| open.contains(folder));
+        let unchecked = std::mem::take(&mut self.unchecked);
+        for folder in unchecked.into_iter().filter(|folder| open.contains(folder)) {
+            self.check_ignored(folder, cx);
+        }
         self.rows = self.list_rows(rows).into();
         self.watches.sync(open);
+        cx.notify();
+    }
+
+    /// Read `folder` (again), and ask git about it at the next refresh unless its entries are
+    /// unchanged (a `.gitignore` change asks again for every folder).
+    fn read_listing(&mut self, folder: PathBuf) {
+        let listing = read_folder(&folder);
+        if self.listings.get(&folder) == Some(&listing) {
+            return;
+        }
+        self.listings.insert(folder.clone(), listing);
+        self.unchecked.insert(folder);
+    }
+
+    /// Ask git off the UI thread which entries of `folder`'s listing it ignores, replacing
+    /// (cancelling) a check still running for an older listing.
+    fn check_ignored(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
+        let Some(Ok(entries)) = self.listings.get(&folder) else {
+            self.ignore_checks.remove(&folder);
+            return;
+        };
+        let (path, entries) = (folder.clone(), entries.clone());
+        let task = cx.spawn(async move |this, cx| {
+            let asked = path.clone();
+            let ignored = cx
+                .background_spawn(async move { ignored_names(&asked, &entries) })
+                .await;
+            let _ = this.update(cx, |explorer, cx| {
+                explorer.set_ignored(path, ignored.unwrap_or_default(), cx)
+            });
+        });
+        self.ignore_checks.insert(folder, task);
+    }
+
+    /// Git's answer for an open folder: redraw only when it changes what is dimmed.
+    fn set_ignored(&mut self, folder: PathBuf, ignored: HashSet<String>, cx: &mut Context<Self>) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+        if !self.listings.contains_key(&folder) {
+            return;
+        }
+        let known = self.ignored.get(&folder);
+        if known.map_or(ignored.is_empty(), |known| *known == ignored) {
+            return;
+        }
+        if ignored.is_empty() {
+            self.ignored.remove(&folder);
+        } else {
+            self.ignored.insert(folder, ignored);
+        }
+        let rows = self.tree_rows(&root);
+        self.rows = self.list_rows(rows).into();
         cx.notify();
     }
 
@@ -272,8 +377,9 @@ impl FileExplorer {
             }) => Some(folder.clone()),
             _ => None,
         };
+        let ignored = file_tree::ignored_rows(&rows, |folder| self.ignored.get(folder));
         let mut list = Vec::with_capacity(rows.len() + 1);
-        for row in rows {
+        for (row, ignored) in rows.into_iter().zip(ignored) {
             let depth = row.depth + 1;
             let error = row
                 .expanded
@@ -281,7 +387,7 @@ impl FileExplorer {
                 .flatten()
                 .and_then(|listing| listing.as_ref().err().cloned());
             let new_file = row.expanded && new_file_in.as_ref() == Some(&row.path);
-            list.push(ListRow::Entry(row));
+            list.push(ListRow::Entry { row, ignored });
             if new_file {
                 list.push(ListRow::NewFile { depth });
             }
@@ -388,8 +494,7 @@ impl FileExplorer {
         match result {
             Ok(Some(path)) => {
                 if let Some(folder) = path.parent() {
-                    self.listings
-                        .insert(folder.to_path_buf(), read_folder(folder));
+                    self.read_listing(folder.to_path_buf());
                 }
                 self.selected = Some(path);
             }
@@ -476,9 +581,7 @@ impl FileExplorer {
                 if let Some(folder) = path.parent()
                     && explorer.listings.contains_key(folder)
                 {
-                    explorer
-                        .listings
-                        .insert(folder.to_path_buf(), read_folder(folder));
+                    explorer.read_listing(folder.to_path_buf());
                 }
                 if explorer.selected.as_deref() == Some(path.as_path()) {
                     explorer.selected = None;
@@ -565,11 +668,17 @@ impl FileExplorer {
                 .child(Icon::new(IconName::File).small().text_color(muted))
                 .children(self.name_editor(cx))
                 .into_any_element(),
-            ListRow::Entry(row) => self.render_entry(index, row, cx),
+            ListRow::Entry { row, ignored } => self.render_entry(index, row, *ignored, cx),
         }
     }
 
-    fn render_entry(&self, index: usize, row: &TreeRow, cx: &mut Context<Self>) -> AnyElement {
+    fn render_entry(
+        &self,
+        index: usize,
+        row: &TreeRow,
+        ignored: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let clicked = row.clone();
         let selected = self.selected.as_ref() == Some(&row.path);
         let renaming = matches!(
@@ -584,6 +693,8 @@ impl FileExplorer {
             .id(("explorer-row", index))
             .when(selected, |row| row.bg(theme.sidebar_accent))
             .when(!selected, |row| row.hover(|style| style.bg(hovered)))
+            // Git-ignored entries are dimmed like the icons.
+            .when(ignored, |row| row.text_color(theme.muted_foreground))
             .on_click(cx.listener(move |explorer, _, _, cx| explorer.click(clicked.clone(), cx)))
             .child(chevron)
             .child(entry_icon(row, cx))
@@ -908,6 +1019,20 @@ fn entry_chevron(row: &TreeRow, cx: &App) -> AnyElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use notify::event::DataChange;
+
+    #[test]
+    fn in_place_writes_matter_only_for_a_gitignore() {
+        let write = |path: &str| {
+            Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any))).add_path(path.into())
+        };
+        assert!(!FileExplorer::ignores(&write("/repo/.gitignore")));
+        assert!(FileExplorer::ignores(&write("/repo/a.log")));
+        let created = Event::new(EventKind::Create(notify::event::CreateKind::File));
+        assert!(!FileExplorer::ignores(
+            &created.add_path("/repo/a.log".into())
+        ));
+    }
 
     #[test]
     fn rename_never_replaces_an_existing_entry() {

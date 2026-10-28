@@ -373,6 +373,10 @@ follows tab switches and `cd` (off Linux, in bash, zsh and PowerShell tabs only:
 reports the folder at each prompt). Folders come first, then files, sorted by name, dotfiles
 included. Click a folder to expand or collapse it (each root keeps its own expanded folders);
 click a file to open it in the file viewer. Expanded folders refresh when their content changes.
+In a git repository, entries git ignores (such as `target/` or `*.log` in `.gitignore`) and the
+`.git` folder are dimmed, as is everything inside an ignored folder; they dim a moment after
+the folder shows, once git answers. The order doesn't change, and nothing is dimmed outside a
+repository or when git isn't installed.
 
 The folder-with-an-arrow button in the explorer's header ("Parent folder (cd ..)") moves a
 shell tab to the folder above the tree's, and the tree follows. zsh and PowerShell change

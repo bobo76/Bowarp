@@ -112,6 +112,77 @@ fn a_collapsed_root_shows_only_itself() {
 }
 
 #[test]
+fn ignored_rows_follow_their_folder_and_ignored_parents() {
+    let root = Path::new("/r");
+    let expanded: HashSet<PathBuf> = ["/r", "/r/target", "/r/target/debug", "/r/src"]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    let listings: HashMap<PathBuf, Vec<DirEntry>> = HashMap::from([
+        (
+            PathBuf::from("/r"),
+            vec![
+                DirEntry::new("src", EntryKind::Folder),
+                DirEntry::new("target", EntryKind::Folder),
+                DirEntry::new("a.log", EntryKind::File),
+                DirEntry::new("main.rs", EntryKind::File),
+            ],
+        ),
+        (
+            PathBuf::from("/r/target"),
+            vec![DirEntry::new("debug", EntryKind::Folder)],
+        ),
+        (
+            PathBuf::from("/r/target/debug"),
+            vec![DirEntry::new("app", EntryKind::File)],
+        ),
+        (
+            PathBuf::from("/r/src"),
+            vec![DirEntry::new("a.log", EntryKind::File)],
+        ),
+    ]);
+    let rows = visible_rows(root, &expanded, |folder| {
+        listings.get(folder).map(Vec::as_slice)
+    });
+    // Only the root's names are known: `target` was never checked inside, `src` not yet.
+    let ignored: HashMap<PathBuf, HashSet<String>> = HashMap::from([(
+        PathBuf::from("/r"),
+        HashSet::from(["target".to_string(), "a.log".to_string(), "r".to_string()]),
+    )]);
+    let flags = ignored_rows(&rows, |folder| ignored.get(folder));
+    let shown: Vec<(&str, bool)> = rows
+        .iter()
+        .zip(flags)
+        .map(|(row, ignored)| (row.name.as_str(), ignored))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("r", false),
+            ("src", false),
+            ("a.log", false),
+            ("target", true),
+            ("debug", true),
+            ("app", true),
+            ("a.log", true),
+            ("main.rs", false),
+        ]
+    );
+}
+
+#[test]
+fn only_gitignore_changes_touch_gitignore() {
+    assert!(touches_gitignore(&[
+        PathBuf::from("/r/src/a.rs"),
+        PathBuf::from("/r/.gitignore"),
+    ]));
+    assert!(!touches_gitignore(&[
+        PathBuf::from("/r/.gitignore.bak"),
+        PathBuf::from("/r/.gitignore/x"),
+    ]));
+}
+
+#[test]
 fn entry_names_use_the_final_component_or_the_root() {
     assert_eq!(
         entry_name(Path::new("project").join("notes.md").as_path()),

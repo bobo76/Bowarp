@@ -756,3 +756,30 @@
   every `WORKING_SPIN_TICK` (250 ms, a quarter turn: one turn a second); every row draws the
   shared step. A tick is scheduled only by a frame that drew a turning spinner, so nothing
   runs while none is drawn. Decided by: user
+
+## Should an in-place edit of a `.gitignore` re-dim the file explorer live?
+- Date: 2026-10-27, step: explorer-dim-ignored, raised by: agent 1
+- Context: the explorer's watcher filter (`FileExplorer::ignores`, file_explorer.rs:135) drops
+  `Access` and `Modify(Data|Metadata)` so reading a folder can't loop; a `.gitignore` saved by
+  rename re-dims, one written in place (`echo x >> .gitignore`, in-place editors) needs a
+  collapse/expand. On Windows notify reports writes as `Modify(Any)`, which the filter lets
+  through, so there it already re-dims: the gap is Linux only.
+- Option A — keep as built: documented limitation. Pros: no code. Cons: dimming silently goes
+  stale after the most direct way to change it, and Linux and Windows behave differently.
+- Option B — let `Modify(Data)` through for paths named `.gitignore` only: make the filter see
+  the path (e.g. `ignores(&Event)` or `ignores(kind, path)` in `WatchesFolders`), and route the
+  batch through the existing `touches_gitignore` re-check of every open folder. Pros: live like
+  the rename case, same on both platforms, event-driven (no work when idle); git's own reads
+  are `Access`, so no loop; a burst of writes is coalesced by `CHANGE_BATCH` (100 ms) and a
+  newer check replaces (cancels) the running one per folder. Cons: a small trait change; a
+  `.gitignore` in a collapsed folder isn't watched, but it only affects rows that aren't shown.
+- Option C — also re-check every open folder on window focus / explorer show. Pros: catches
+  `.git/info/exclude`, global excludes and tracking changes too. Cons: runs git for every open
+  folder on each focus, mostly for nothing (against "no work when idle"), and still stale while
+  the window keeps focus (agents edit files while the user watches).
+- Decision: B, because it closes the common case with an event the watcher already receives,
+  at no idle cost, and makes Linux match Windows. Re-reading the `.gitignore`'s own folder
+  listing on that batch is acceptable (one cheap read); skipping it is optional. Changes to
+  `.git/info/exclude`, the global excludes file and tracked/untracked status stay a documented
+  limitation (rare, and watching them needs extra watches outside the tree or git config
+  lookups); collapse/expand stays the way to refresh them. Decided by: UX/UI agent

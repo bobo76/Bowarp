@@ -149,3 +149,94 @@ fn no_head_outside_a_repository() {
     let folder = TempDir::new();
     assert_eq!(GitHead::read(&folder.0), None);
 }
+
+fn entries(names: &[&str]) -> Vec<DirEntry> {
+    names
+        .iter()
+        .map(|name| DirEntry::new(*name, crate::file_tree::EntryKind::File))
+        .collect()
+}
+
+#[test]
+fn check_ignore_input_shields_names_from_pathspec_magic() {
+    assert_eq!(
+        check_ignore_input(&entries(&["a.log", ":(glob)*"])),
+        b"./a.log\0./:(glob)*\0"
+    );
+}
+
+#[test]
+fn ignored_names_come_from_the_output_and_git_dir() {
+    let listing = entries(&[".git", "a.log", "nl\nx.log", "src", "target"]);
+    let ignored = ignored_from_output(b"./a.log\0./nl\nx.log\0./target\0./unknown\0", &listing);
+    let expected: HashSet<String> = [".git", "a.log", "nl\nx.log", "target"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    assert_eq!(ignored, expected);
+    assert!(ignored_from_output(b"", &entries(&["src"])).is_empty());
+}
+
+#[test]
+fn ignored_names_ask_git_for_the_folder() {
+    let repo = TempDir::new();
+    if !git(&repo.0, &["init", "-q"]) {
+        eprintln!("git not available, skipping");
+        return;
+    }
+    write(&repo.0.join(".gitignore"), "target/\n*.log\n");
+    write(&repo.0.join("target/debug/app"), "");
+    write(&repo.0.join("src/main.rs"), "");
+    write(&repo.0.join("a.log"), "");
+    write(&repo.0.join("tracked.log"), "");
+    write(&repo.0.join(":(glob)*"), "");
+    assert!(git(&repo.0, &["add", "-f", "tracked.log"]));
+    let folder = |names: &[&str]| -> Vec<DirEntry> {
+        names
+            .iter()
+            .map(|name| {
+                let kind = if repo.0.join(name).is_dir() {
+                    crate::file_tree::EntryKind::Folder
+                } else {
+                    crate::file_tree::EntryKind::File
+                };
+                DirEntry::new(*name, kind)
+            })
+            .collect()
+    };
+    let root = folder(&[
+        ".git",
+        ".gitignore",
+        ":(glob)*",
+        "a.log",
+        "src",
+        "target",
+        "tracked.log",
+    ]);
+    let expected: HashSet<String> = [".git", "a.log", "target"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    assert_eq!(ignored_names(&repo.0, &root), Some(expected));
+    assert_eq!(
+        ignored_names(&repo.0.join("src"), &entries(&["main.rs"])),
+        Some(HashSet::new())
+    );
+    // Inside an ignored folder, git reports every entry.
+    assert_eq!(
+        ignored_names(&repo.0.join("target/debug"), &entries(&["app"])),
+        Some(HashSet::from(["app".to_string()]))
+    );
+    // Inside `.git` there is no work tree.
+    assert_eq!(
+        ignored_names(&repo.0.join(".git"), &entries(&["HEAD"])),
+        None
+    );
+}
+
+#[test]
+fn nothing_is_ignored_outside_a_repository() {
+    let folder = TempDir::new();
+    write(&folder.0.join("a.log"), "");
+    assert_eq!(ignored_names(&folder.0, &entries(&["a.log"])), None);
+}
