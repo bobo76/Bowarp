@@ -120,6 +120,25 @@ pub enum UiTheme {
     Light,
     #[default]
     Dark,
+    Sepia,
+}
+
+impl UiTheme {
+    /// The value as written in the settings file.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Dark => "dark",
+            Self::Sepia => "sepia",
+        }
+    }
+
+    /// The value written by [`UiTheme::as_str`]; anything else is `None`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::Dark, Self::Light, Self::Sepia]
+            .into_iter()
+            .find(|theme| theme.as_str() == name)
+    }
 }
 
 /// Optional pieces of a sidebar tab hover card. The name and shortcut are unconditional.

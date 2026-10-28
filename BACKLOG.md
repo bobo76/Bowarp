@@ -28,6 +28,20 @@ Each step stands alone and is tested:
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Softer light theme:
+
+- Windows (where the glare was reported): the light UI is comfortable for a long session;
+  sidebar, Settings, menus, hover cards, file viewer and toasts look warm grey, not white,
+  with readable muted and dimmed text and visible borders. If it is still too bright, decide
+  whether to offer light variants (docs/ux-decisions.md, "Light theme too white").
+- Status colors on the light sidebar (Working, Needs attention, Ready for review, Idle,
+  Running, Recent output), on a normal, hovered and selected row and in hover cards and
+  collapsed-group chips; dark theme unchanged.
+- Sepia: the same checks as Light (surfaces, muted and dimmed text, status colors on normal,
+  hovered and selected rows), plus buttons, switches and sliders in brown.
+- Theme dropdown: Dark / Light / Sepia apply live (also Light ↔ Sepia), survive a restart,
+  and a hand-edited `ui_theme` still applies.
+
 Command history per shell:
 
 - Windows: PowerShell, Windows PowerShell, Git Bash and two WSL distros (bash) each record
@@ -192,8 +206,6 @@ behavior"); items below name their switch where they need one.
   which keeps getting F2 for programs such as `mc` or `htop`), F2 opens the same name editor
   as the tab menu's Rename (`WorkspaceView::start_rename`). Show F2 next to Rename in the tab
   menu.
-- Light theme: soften the palette; the user found it too white and hard on the eyes
-  (Windows, 2026-10-23). Recheck comfort after.
 - `claude` / `copilot` typed at a shell prompt open an agent tab: instead of running in the
   shell tab, the command opens a new tab exactly like the `+` menu's "Claude Code" / "Copilot
   CLI" entry (`open_launcher` in `app/src/workspace_view.rs`, so hooks and status work), in the

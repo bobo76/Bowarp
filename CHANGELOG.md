@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- A softer light theme: warm grey surfaces instead of white, darker muted text, visible
+  borders, and status colors that stay readable on the light sidebar.
+- A Sepia theme: paper-toned surfaces with brown text and accents.
+- Settings > Appearance picks the theme from a Theme dropdown (Dark / Light / Sepia) instead
+  of a Light theme switch.
+
 ## 0.2.41
 
 - Keep command history per shell: each shell keeps its own newest 2 000 commands, and the

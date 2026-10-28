@@ -940,3 +940,13 @@ fn keybindings_are_kept_as_written_and_mistyped_gives_none() {
         assert!(settings.keybindings.entries().is_empty(), "{text}");
     }
 }
+
+#[test]
+fn ui_theme_names_round_trip_and_match_the_file() {
+    for theme in [UiTheme::Light, UiTheme::Dark, UiTheme::Sepia] {
+        assert_eq!(UiTheme::from_name(theme.as_str()), Some(theme));
+        let json = serde_json::to_string(&theme).unwrap();
+        assert_eq!(json, format!("\"{}\"", theme.as_str()));
+    }
+    assert_eq!(UiTheme::from_name("system"), None);
+}

@@ -154,7 +154,7 @@ impl WorkspaceView {
             .label(count.to_string())
             .ghost()
             .xsmall()
-            .text_color(sidebar::attention_color())
+            .text_color(sidebar::attention_color(cx))
             .tooltip(tooltip)
             .on_click(
                 cx.listener(|workspace, _, window, cx| workspace.jump_to_attention(window, cx)),

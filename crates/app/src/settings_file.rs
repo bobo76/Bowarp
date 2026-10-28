@@ -7,13 +7,14 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use gpui_kit::component::{ActiveTheme, Theme, ThemeMode};
+use gpui_kit::component::{ActiveTheme, Theme, ThemeMode, ThemeRegistry};
 use gpui_kit::{App, Global};
 use workspace_model::{
     FilePaneFeatures, HistoryFeatures, KeybindingOverlay, NotificationFeatures, Settings,
     SettingsFile, UiTheme, WindowOpacity, WorkspaceFeatures,
 };
 
+use crate::light_theme;
 use crate::window_bounds::config_file;
 
 pub struct AppSettings(SettingsFile);
@@ -31,19 +32,37 @@ pub fn init(cx: &mut App) {
             path.display()
         );
     }
+    install(file, cx);
+}
+
+/// Holds `file` as the settings global and keeps the theme in step with it.
+fn install(file: SettingsFile, cx: &mut App) {
     cx.set_global(AppSettings(file));
     apply_theme(cx);
     cx.observe_global::<AppSettings>(apply_theme).detach();
 }
 
+/// Switches to the chosen theme. Light and Sepia share gpui-kit's light mode, so choosing one
+/// installs its palette as the light theme first.
 fn apply_theme(cx: &mut App) {
-    let mode = match settings(cx).ui_theme {
-        UiTheme::Light => ThemeMode::Light,
-        UiTheme::Dark => ThemeMode::Dark,
+    let palette = match settings(cx).ui_theme {
+        UiTheme::Dark => None,
+        UiTheme::Light => Some(&light_theme::SOFT_LIGHT),
+        UiTheme::Sepia => Some(&light_theme::SEPIA),
     };
-    if cx.theme().mode != mode {
-        Theme::change(mode, None, cx);
+    let Some(palette) = palette else {
+        if !cx.theme().is_dark() {
+            Theme::change(ThemeMode::Dark, None, cx);
+        }
+        return;
+    };
+    if cx.theme().light_theme.name.as_ref() != palette.name {
+        let config = light_theme::config(ThemeRegistry::global(cx).default_light_theme(), palette);
+        Theme::global_mut(cx).light_theme = config.into();
+    } else if !cx.theme().is_dark() {
+        return;
     }
+    Theme::change(ThemeMode::Light, None, cx);
 }
 
 pub fn settings(cx: &App) -> &Settings {
@@ -197,8 +216,7 @@ mod tests {
     fn theme_changes_apply_live_without_restarting(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_kit::init(cx);
-            init(cx);
-            cx.set_global(AppSettings(SettingsFile::default()));
+            install(SettingsFile::default(), cx);
         });
         cx.run_until_parked();
         cx.update(|cx| {
@@ -208,6 +226,13 @@ mod tests {
         cx.run_until_parked();
         cx.update(|cx| {
             assert_eq!(cx.theme().mode, ThemeMode::Light);
+            assert_eq!(cx.theme().theme_name().as_ref(), "Agent Workspace Light");
+            update(cx, |settings| settings.ui_theme = UiTheme::Sepia);
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(cx.theme().mode, ThemeMode::Light);
+            assert_eq!(cx.theme().theme_name().as_ref(), "Agent Workspace Sepia");
             preview(cx, |settings| settings.ui_theme = UiTheme::Dark);
         });
         cx.run_until_parked();

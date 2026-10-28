@@ -126,19 +126,9 @@ pub fn render(
 /// The Appearance page: UI theme, terminal font, window background and hover cards.
 fn appearance_groups() -> Vec<SettingGroup> {
     vec![
-        SettingGroup::new().title("Theme").item(
-            switch_row(
-                "Light theme",
-                "Use the light UI instead of dark. Terminal colors stay unchanged.",
-                SettingsField::new(
-                    |settings| settings.ui_theme == UiTheme::Light,
-                    |settings, light| {
-                        settings.ui_theme = if light { UiTheme::Light } else { UiTheme::Dark };
-                    },
-                ),
-            )
-            .keywords(["appearance", "dark", "colors"]),
-        ),
+        SettingGroup::new()
+            .title("Theme")
+            .item(ui_theme_row().keywords(["appearance", "dark", "light", "sepia", "colors"])),
         SettingGroup::new().title("Font").items([
             text_row(
                 "Font family",
@@ -302,6 +292,25 @@ fn terminal_groups(launchers: Rc<[Launcher]>) -> Vec<SettingGroup> {
             .title("Clipboard")
             .item(clipboard_writes_row()),
     ]
+}
+
+/// The `ui_theme` setting: the dark or the light UI.
+fn ui_theme_row() -> SettingItem {
+    let options = [
+        (UiTheme::Dark, "Dark"),
+        (UiTheme::Light, "Light"),
+        (UiTheme::Sepia, "Sepia"),
+    ]
+    .map(|(theme, label)| DropdownOption::new(theme.as_str(), label));
+    dropdown_row(
+        "Theme",
+        "The colors of the sidebar, panes, menus and settings. Terminal colors stay unchanged.",
+        DropdownChoices::new(options, |value| format!("{value} (unknown)").into()),
+        SettingsField::new(
+            |settings| settings.ui_theme.as_str().to_owned(),
+            |settings, value| settings.ui_theme = UiTheme::from_name(&value).unwrap_or_default(),
+        ),
+    )
 }
 
 /// The `clipboard_writes` setting: what happens when a program writes the clipboard.

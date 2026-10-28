@@ -903,3 +903,43 @@
   already explains its keys. "All" lists each command once (newest use, its folder). Saved
   `last_command` values follow the same scope: tabs of the selected shell only, every tab
   under "All". Decided by: UX/UI agent
+
+## Light theme too white: soften one palette, or offer light variants?
+- Date: 2026-10-28, step: light-theme-soften, raised by: Step 0
+- Context: the light UI was gpui-kit's stock "Default Light": #FFFFFF background and popovers,
+  #FAFAFA sidebar, next to a terminal that stays dark #1E1E1E, so the eye swings between 16:1
+  extremes. Fixed status colors (`sidebar.rs`) were 1.5-2.0:1 on the light sidebar.
+  FEATURES.md "Optional Behavior" says the theme is a picker, not a switch.
+- Option A — One softened Light (warm grey, no surface above #F5F3EF, darker muted text,
+  visible borders, light-only status colors); the Appearance switch becomes a "Theme"
+  dropdown, values stay `"dark"`/`"light"`. Pros: fixes it for everyone, one palette to tune.
+  Cons: pure white is gone.
+- Option B — Variants picker (Light / Paper / Solarized light...). Pros: choice. Cons: each
+  variant needs its own status/hover/selected colors checked; test cost times the count.
+- Option C — User theme JSON files. Pros: unlimited choice. Cons: no UI, status colors not in
+  gpui-kit's schema, unvalidated palettes break legibility.
+- Decision: A, built as one data table (`light_theme.rs`, `SOFT_LIGHT`: a partial
+  `ThemeConfig` over stock light, primary/danger/success stay stock) so variants can follow
+  (Sepia did, below). Terminal colors stay dark. Status colors take the theme mode; the
+  Copilot spinner uses the active theme's Working color. Contrast: body text 13.1:1 on the
+  sidebar, 11.1:1 on the selected row; muted text at least 5.0:1; every status color but Quiet
+  at least 3.3:1 on the selected row (Quiet low on purpose; state is never color-only). Tab
+  colors are left for the configurable-tab-color item. Decided by: UX/UI agent (variants: user)
+
+## Sepia theme: palette and how it is offered
+- Date: 2026-10-28, step: sepia-theme, raised by: user request
+- Context: the user asked for a sepia theme after the softened Light. The Light decision above
+  built its palette as one table so variants could follow.
+- Decision: a third Theme dropdown choice, Sepia (`"ui_theme": "sepia"`), built like Light over
+  gpui-kit's stock light theme (`light_theme.rs`, `SEPIA`); terminal colors unchanged.
+  Palette: `background` #EFE4CC; `sidebar` #E8DBBF; title/status bars #E3D5B8; popover, list,
+  table, accordion, slider thumb #F6EEDC; selected row #D9C8A6; secondary/muted/accent/tab bar/
+  group box/skeleton #E0D2B4; hovers #D9C9A9; pressed #CDBB97; stripes #EBDFC6; borders
+  #C9B794; `input.border` #A8946F; `ring` #8C7656; switch off #C4B08C; foregrounds #3B2F22;
+  `muted.foreground` #5F4D3A; selection #D8C08E; `list.active` #8B5E3C26 / border #8B5E3C;
+  primary (buttons, switch on, slider bar) #5B4636, hover #4A3828, pressed #3B2F22, text
+  #F6EEDC. Status: Working #1F5AA6, NeedsAttention #8A4700, ReadyForReview/Idle #2D6A27,
+  Running #0A665A, Active #5A4A39, Quiet/Unavailable/Exited #938168. Contrast: body text 9.5:1
+  on the sidebar, 7.9:1 on the selected row; muted text 4.9:1 on the selected row; status
+  colors but Quiet at least 4.0:1 on the selected row (Quiet low on purpose, as in Light).
+  Decided by: main agent, on the user's request

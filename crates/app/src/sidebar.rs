@@ -19,6 +19,7 @@ use crate::assets::{
     AGENT_SPARK_ICON, BASH_ICON, COPILOT_ICON, DEBIAN_ICON, FISH_ICON, GIT_BRANCH_ICON, GIT_ICON,
     LINUX_ICON, PIN_ICON, POWERSHELL_ICON, PROMPT_ICON, UBUNTU_ICON, ZSH_ICON,
 };
+use crate::light_theme;
 use crate::shortcuts;
 use crate::workspace_view::{CloseTab, select_tab_action};
 
@@ -87,7 +88,16 @@ pub enum TabStatus {
 }
 
 impl TabStatus {
-    fn color(self) -> Hsla {
+    /// The status color for the current theme: the light-mode themes use darker tones, which
+    /// stay readable on their tinted sidebars.
+    fn color(self, cx: &App) -> Hsla {
+        let Some(palette) = light_theme::active_palette(cx) else {
+            return self.dark_color();
+        };
+        light_theme::hsla(palette.status[self.palette_slot()])
+    }
+
+    fn dark_color(self) -> Hsla {
         match self {
             Self::Working => rgb(0x4c9aff),
             Self::NeedsAttention => rgb(0xf5a524),
@@ -97,6 +107,18 @@ impl TabStatus {
             Self::Quiet | Self::Unavailable | Self::Exited => rgb(0x545d68),
         }
         .into()
+    }
+
+    /// Index into `light_theme::Palette::status`.
+    fn palette_slot(self) -> usize {
+        match self {
+            Self::Working => 0,
+            Self::NeedsAttention => 1,
+            Self::ReadyForReview | Self::Idle => 2,
+            Self::Running => 3,
+            Self::Active => 4,
+            Self::Quiet | Self::Unavailable | Self::Exited => 5,
+        }
     }
 
     pub fn label(self) -> &'static str {
@@ -130,8 +152,8 @@ impl TabStatus {
 }
 
 /// The color of the Needs attention badge, warning triangle and chip.
-pub fn attention_color() -> Hsla {
-    TabStatus::NeedsAttention.color()
+pub fn attention_color(cx: &App) -> Hsla {
+    TabStatus::NeedsAttention.color(cx)
 }
 
 pub fn kind_icon(kind: SessionKind) -> Icon {
@@ -345,11 +367,11 @@ pub fn working_spinner(
 }
 
 /// The working spinner: a ring with a gap, turned `step` quarter turns.
-fn spinner_icon(step: u8) -> impl IntoElement {
+fn spinner_icon(step: u8, cx: &App) -> impl IntoElement {
     let turn = f32::from(step) / f32::from(WORKING_SPIN_STEPS);
     Icon::new(IconName::LoaderCircle)
         .size(px(ATTENTION_ICON_SIZE))
-        .text_color(TabStatus::Working.color())
+        .text_color(TabStatus::Working.color(cx))
         .transform(Transformation::rotate(percentage(turn)))
 }
 
@@ -373,7 +395,9 @@ fn status_badge(
     pulse: RunningPulse,
     index: usize,
     background: &RowBackground,
+    cx: &App,
 ) -> Option<AnyElement> {
+    let color = status.color(cx);
     let ring = background.normal;
     let hovered = background.hovered;
     let badge = div()
@@ -393,7 +417,7 @@ fn status_badge(
             .items_center()
             .justify_center()
             .size(px(DONE_BADGE_SIZE))
-            .bg(status.color())
+            .bg(color)
             .child(
                 Icon::new(IconName::Check)
                     .size(px(CHECK_MARK_SIZE))
@@ -404,7 +428,7 @@ fn status_badge(
             .size(px(BADGE_SIZE))
             .bg(ring)
             .group_hover(background.row_group.clone(), |style| style.bg(hovered))
-            .child(running_dot(status.color(), pulse, index)),
+            .child(running_dot(color, pulse, index)),
         TabStatus::Exited => badge
             .size(px(BADGE_SIZE))
             .bg(ring)
@@ -414,9 +438,9 @@ fn status_badge(
                     .size_full()
                     .rounded_full()
                     .border_1()
-                    .border_color(status.color()),
+                    .border_color(color),
             ),
-        _ => badge.size(px(BADGE_SIZE)).bg(status.color()),
+        _ => badge.size(px(BADGE_SIZE)).bg(color),
     };
     Some(badge.into_any_element())
 }
@@ -434,7 +458,9 @@ fn session_icon(row: &TabRow, background: &RowBackground, cx: &App) -> impl Into
         .rounded_md()
         .bg(theme.secondary)
         .child(kind_icon(row.kind).size(px(SESSION_ICON_SIZE)))
-        .children(status_badge(row.status, row.pulse, row.index, background))
+        .children(status_badge(
+            row.status, row.pulse, row.index, background, cx,
+        ))
 }
 
 fn detail_line(detail: TabDetail, color: Hsla) -> impl IntoElement {
@@ -466,17 +492,17 @@ fn single_line(text: SharedString) -> impl IntoElement {
 
 /// The first line: working spinner or attention triangle, name and pin, or the name editor
 /// while renaming.
-fn name_line(row: &mut TabRow, muted: Hsla) -> impl IntoElement {
+fn name_line(row: &mut TabRow, muted: Hsla, cx: &App) -> impl IntoElement {
     let line = div().flex().items_center().gap_1().min_w_0().text_sm();
     if let Some(editor) = row.name_editor.take() {
         return line.child(editor);
     }
-    line.children(row.spinner.map(spinner_icon))
+    line.children(row.spinner.map(|step| spinner_icon(step, cx)))
         .when(row.status == TabStatus::NeedsAttention, |line| {
             line.child(
                 Icon::new(IconName::TriangleAlert)
                     .size(px(ATTENTION_ICON_SIZE))
-                    .text_color(TabStatus::NeedsAttention.color()),
+                    .text_color(attention_color(cx)),
             )
         })
         .child(single_line(row.name.clone()))
@@ -542,7 +568,7 @@ pub fn tab_row(
                 .flex_col()
                 .flex_1()
                 .min_w_0()
-                .child(name_line(&mut row, muted))
+                .child(name_line(&mut row, muted, cx))
                 .children(row.detail.take().map(|detail| detail_line(detail, muted))),
         )
         .child(
@@ -611,9 +637,10 @@ fn status_chip(
     status: TabStatus,
     working_for: Option<Duration>,
     running_label: Option<SharedString>,
+    cx: &App,
 ) -> impl IntoElement {
-    let color = status.color();
-    let mark = status_mark(status);
+    let color = status.color(cx);
+    let mark = status_mark(status, cx);
     div()
         .flex()
         .items_center()
@@ -658,7 +685,7 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
         )
         .children(
             card.status
-                .map(|status| status_chip(status, card.working_for, card.running_label)),
+                .map(|status| status_chip(status, card.working_for, card.running_label, cx)),
         )
         .children(card.mode.map(|mode| {
             div()
@@ -857,8 +884,8 @@ pub struct GroupRow {
     pub name_editor: Option<AnyElement>,
 }
 
-fn status_mark(status: TabStatus) -> AnyElement {
-    let color = status.color();
+fn status_mark(status: TabStatus, cx: &App) -> AnyElement {
+    let color = status.color(cx);
     match status {
         TabStatus::NeedsAttention => Icon::new(IconName::TriangleAlert)
             .size(px(DETAIL_ICON_SIZE))
@@ -891,15 +918,15 @@ fn row_colors(selected: bool, cx: &App) -> (Hsla, Hsla, Hsla) {
     )
 }
 
-fn summary_chip(status: TabStatus, count: usize) -> impl IntoElement {
-    let color = status.color();
+fn summary_chip(status: TabStatus, count: usize, cx: &App) -> impl IntoElement {
+    let color = status.color(cx);
     div()
         .flex()
         .items_center()
         .gap_0p5()
         .text_xs()
         .text_color(color)
-        .child(status_mark(status))
+        .child(status_mark(status, cx))
         .child(count.to_string())
 }
 
@@ -975,7 +1002,7 @@ pub fn group_header(
                 div().flex().items_center().gap_1p5().children(
                     row.summary
                         .chips()
-                        .map(|(status, count)| summary_chip(status, count)),
+                        .map(|(status, count)| summary_chip(status, count, cx)),
                 ),
             )
         })

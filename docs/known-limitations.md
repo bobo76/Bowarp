@@ -158,3 +158,5 @@ entry when the limitation is lifted.
   group, `+`, explorer entry menus) and for any dialog: a dropdown on the settings page or in
   the file viewer doesn't hold them. A card open when a hold ends stays hidden until the
   pointer leaves its row; keeping the pointer still, the card needs a move out and back.
+- Themes: an app version older than the Sepia theme reads `"ui_theme": "sepia"` as Dark (unknown
+  values fall back to the default). Terminal colors are the same dark palette in every theme.

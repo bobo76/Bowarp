@@ -462,9 +462,12 @@ when the file can't be read (the defaults apply until it is fixed or a change mo
 `settings.json.bak`) or a change couldn't be saved. The About page shows the version and the
 config folder.
 
-The Appearance page's Light theme switch changes the UI live and persists the choice
-(`"ui_theme": "light"` or `"dark"` in `settings.json`, default dark). Terminal colors are
-unchanged; terminal color schemes and following the OS theme are not included.
+The Appearance page's Theme dropdown (Dark / Light / Sepia) changes the UI live and persists
+the choice (`"ui_theme": "dark"`, `"light"` or `"sepia"` in `settings.json`, default dark).
+Light uses warm grey surfaces rather than white, Sepia paper-toned ones with brown accents;
+both use darker status colors that read on them.
+Terminal colors are unchanged; terminal color schemes and following the OS theme are not
+included.
 
 The Appearance page also sets the terminal font: its family (an installed font's name;
 empty, or a font that isn't installed, uses DejaVu Sans Mono, Cascadia Mono on Windows) and
@@ -675,7 +678,7 @@ Last passed: Ubuntu, Wayland, 2026-10-17 (checks 1–5; checks 6–9 were added 
 3. Configure a discovered startup shell whose executable cannot start, with a working
    automatic fallback. Start with no restored tabs: the fallback opens, and the persistent
    warning identifies the requested shell and original error, and says a fallback started.
-4. Switch Light theme on and off; check sidebar, Settings, menus, viewer and hover-card
+4. Switch the Theme between Dark, Light and Sepia; check sidebar, Settings, menus, viewer and hover-card
    contrast while the terminal palette stays unchanged. Restart to check persistence; also
    edit `ui_theme` in the settings file and save it in the viewer.
 5. Hover expanded, collapsed and empty groups, including while filtering tabs. Confirm total

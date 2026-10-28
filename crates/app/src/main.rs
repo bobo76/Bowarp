@@ -15,6 +15,7 @@ mod instance_lock;
 mod keymap;
 mod keys;
 mod launcher;
+mod light_theme;
 mod mouse;
 mod open_menu;
 mod processes;
