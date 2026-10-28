@@ -105,7 +105,7 @@ Prompt contents:
 - The log lines and the retro (`pipeline/retros/<slug>/ux-<n>.md`, `<n>` counting the UX/UI agent runs of this run), as in "Every agent prompt".
 - Don't commit; I commit `docs/ux-decisions.md` with the docs (see "After all agents"). If a decision makes a `docs/known-limitations.md` line wrong, name the line in the report; agent 3 updates it. Say "no need to see the UI live" when the question is about behaviour or timing, not layout.
 
-I adopt the recommendation and continue: append `<time> | <slug> | ux-agent | ux | <question> -> <decision>` to `pipeline/log.txt` per question, then pass the decisions on (to agent 1 from Step 0; to agent 3 from agent 1's report or `REVIEW.md`, as a fix to apply where it differs from what agent 1 built). Exception: when the agent says a question needs the user (it changes or contradicts `FEATURES.md`, or the options are equally good and the choice is a matter of product direction), I stop the loop like a non-UX design choice, show the user the entry from `docs/ux-decisions.md`, and record their pick in its `Decision:` line (`Decided by: user`).
+I adopt the recommendation and continue: append `<time> | <slug> | ux-agent | ux | <question> -> <decision>` to `pipeline/log.txt` per question, then pass the decisions on (to agent 1 from Step 0; to agent 3 from agent 1's report or `REVIEW.md`, as a fix to apply where it differs from what agent 1 built). Exception: when the agent says a question needs the user (it changes or contradicts `FEATURES.md`, or the options are equally good and the choice is a matter of product direction), I stop the loop like a non-UX design choice, show the user the options from the agent's report, and record their pick in its entry (`[user]`).
 
 ## Gate between agents
 Before launching the next agent, I check that:
@@ -113,7 +113,7 @@ Before launching the next agent, I check that:
 - the check (see "Pipeline files") is green; skip it when HEAD hasn't moved since the last gate (agent 2 with no fixes), because that commit was already checked;
 - the agent's retro exists in `pipeline/retros/<slug>/`;
 - `pipeline/log.txt` has the agent's `begin` and `end` lines.
-- after a UX/UI agent: `docs/ux-decisions.md` has one new entry per question, each with its options, pros/cons and a `Decision:` line, and the log has a `ux` line per question.
+- after a UX/UI agent: `docs/ux-decisions.md` has a short entry per question (see the rule at its top), and the log has a `ux` line per question.
 
 Then I append `<time> | <slug> | <agent> | usage | <tokens> tokens, <tool uses> tool uses, <duration>` to `pipeline/log.txt`, from the agent's completion notice, so the retros of later runs can compare costs.
 
