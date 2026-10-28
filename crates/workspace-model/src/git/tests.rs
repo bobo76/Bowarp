@@ -189,7 +189,11 @@ fn ignored_names_ask_git_for_the_folder() {
     write(&repo.0.join("src/main.rs"), "");
     write(&repo.0.join("a.log"), "");
     write(&repo.0.join("tracked.log"), "");
-    write(&repo.0.join(":(glob)*"), "");
+    // `:` and `*` are not allowed in Windows file names, so pathspec magic can't come from one.
+    let magic = (!cfg!(windows)).then_some(":(glob)*");
+    if let Some(name) = magic {
+        write(&repo.0.join(name), "");
+    }
     assert!(git(&repo.0, &["add", "-f", "tracked.log"]));
     let folder = |names: &[&str]| -> Vec<DirEntry> {
         names
@@ -204,15 +208,15 @@ fn ignored_names_ask_git_for_the_folder() {
             })
             .collect()
     };
-    let root = folder(&[
+    let names = [
         ".git",
         ".gitignore",
-        ":(glob)*",
         "a.log",
         "src",
         "target",
         "tracked.log",
-    ]);
+    ];
+    let root = folder(&[&names[..], magic.as_slice()].concat());
     let expected: HashSet<String> = [".git", "a.log", "target"]
         .into_iter()
         .map(String::from)
