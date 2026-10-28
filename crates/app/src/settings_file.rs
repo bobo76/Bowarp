@@ -14,6 +14,8 @@ use workspace_model::{
     SettingsFile, UiTheme, WindowOpacity, WorkspaceFeatures,
 };
 
+use term_core::Palette;
+
 use crate::light_theme;
 use crate::window_bounds::config_file;
 
@@ -116,6 +118,16 @@ pub fn notifications(cx: &App) -> NotificationFeatures {
 }
 
 /// The terminal background's opacity; 100 % while settings aren't loaded (unit tests).
+/// The terminal palette the "Terminal colors" setting picks for the current theme. Dark while
+/// settings aren't loaded (unit tests).
+pub fn terminal_palette(cx: &App) -> Palette {
+    cx.try_global::<AppSettings>()
+        .map_or_else(Palette::default, |settings| {
+            let settings = settings.0.settings();
+            Palette::for_theme(settings.terminal_colors.scheme(settings.ui_theme))
+        })
+}
+
 pub fn window_opacity(cx: &App) -> WindowOpacity {
     cx.try_global::<AppSettings>()
         .map_or_else(WindowOpacity::default, |settings| {

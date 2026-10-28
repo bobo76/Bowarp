@@ -32,8 +32,8 @@ use gpui_kit::{
     Styled, Subscription, Window, div, px,
 };
 use workspace_model::{
-    BlurControl, ClipboardPolicy, DependentState, FeatureSwitch, FontSize, Settings, UiTheme,
-    WindowBlur, WindowOpacity, blur_options, shown_blur,
+    BlurControl, ClipboardPolicy, DependentState, FeatureSwitch, FontSize, Settings,
+    TerminalColors, UiTheme, WindowBlur, WindowOpacity, blur_options, shown_blur,
 };
 
 use crate::about;
@@ -128,7 +128,8 @@ fn appearance_groups() -> Vec<SettingGroup> {
     vec![
         SettingGroup::new()
             .title("Theme")
-            .item(ui_theme_row().keywords(["appearance", "dark", "light", "sepia", "colors"])),
+            .item(ui_theme_row().keywords(["appearance", "dark", "light", "sepia", "colors"]))
+            .item(terminal_colors_row().keywords(["appearance", "terminal", "colors", "scheme"])),
         SettingGroup::new().title("Font").items([
             text_row(
                 "Font family",
@@ -304,11 +305,35 @@ fn ui_theme_row() -> SettingItem {
     .map(|(theme, label)| DropdownOption::new(theme.as_str(), label));
     dropdown_row(
         "Theme",
-        "The colors of the sidebar, panes, menus and settings. Terminal colors stay unchanged.",
+        "The colors of the sidebar, panes, menus and settings, and of the terminal unless \
+         Terminal colors says otherwise.",
         DropdownChoices::new(options, |value| format!("{value} (unknown)").into()),
         SettingsField::new(
             |settings| settings.ui_theme.as_str().to_owned(),
             |settings, value| settings.ui_theme = UiTheme::from_name(&value).unwrap_or_default(),
+        ),
+    )
+}
+
+/// The `terminal_colors` setting: the terminal's colors follow the theme or stay fixed.
+fn terminal_colors_row() -> SettingItem {
+    let options = [
+        (TerminalColors::MatchTheme, "Match theme"),
+        (TerminalColors::Dark, "Dark"),
+        (TerminalColors::Light, "Light"),
+        (TerminalColors::Sepia, "Sepia"),
+    ]
+    .map(|(colors, label)| DropdownOption::new(colors.as_str(), label));
+    dropdown_row(
+        "Terminal colors",
+        "The terminal's text and background colors, in every tab. Match theme uses the Theme's \
+         colors; programs that set their own colors keep them.",
+        DropdownChoices::new(options, |value| format!("{value} (unknown)").into()),
+        SettingsField::new(
+            |settings| settings.terminal_colors.as_str().to_owned(),
+            |settings, value| {
+                settings.terminal_colors = TerminalColors::from_name(&value).unwrap_or_default();
+            },
         ),
     )
 }

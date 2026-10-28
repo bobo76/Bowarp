@@ -466,8 +466,11 @@ The Appearance page's Theme dropdown (Dark / Light / Sepia) changes the UI live 
 the choice (`"ui_theme": "dark"`, `"light"` or `"sepia"` in `settings.json`, default dark).
 Light uses warm grey surfaces rather than white, Sepia paper-toned ones with brown accents;
 both use darker status colors that read on them.
-Terminal colors are unchanged; terminal color schemes and following the OS theme are not
-included.
+The Terminal colors dropdown below it sets the terminal's palette in every tab, live:
+Match theme (the default; `"terminal_colors": "match_theme"`) uses the Theme's, or Dark, Light
+or Sepia whatever the Theme. Colors a program sets itself (OSC 4/10/11) stay. Programs asking
+for the background color (OSC 11) get the current one, and new tabs get `COLORFGBG` (`15;0`
+dark, `0;15` light). Following the OS theme is not included.
 
 The Appearance page also sets the terminal font: its family (an installed font's name;
 empty, or a font that isn't installed, uses DejaVu Sans Mono, Cascadia Mono on Windows) and
@@ -678,9 +681,10 @@ Last passed: Ubuntu, Wayland, 2026-10-17 (checks 1–5; checks 6–9 were added 
 3. Configure a discovered startup shell whose executable cannot start, with a working
    automatic fallback. Start with no restored tabs: the fallback opens, and the persistent
    warning identifies the requested shell and original error, and says a fallback started.
-4. Switch the Theme between Dark, Light and Sepia; check sidebar, Settings, menus, viewer and hover-card
-   contrast while the terminal palette stays unchanged. Restart to check persistence; also
-   edit `ui_theme` in the settings file and save it in the viewer.
+4. Switch the Theme between Dark, Light and Sepia; check sidebar, Settings, menus, viewer and
+   hover-card contrast, and that the terminal follows (Terminal colors: Match theme). Set
+   Terminal colors to Dark with a Light theme: open tabs repaint at once. Restart to check
+   persistence; also edit `ui_theme` in the settings file and save it in the viewer.
 5. Hover expanded, collapsed and empty groups, including while filtering tabs. Confirm total
    tab count and Working/Waiting/Ready for review counts, and no group card during a tab drag.
 6. Run Claude Code and Copilot in background tabs through waiting and finished states.

@@ -27,9 +27,12 @@ use crate::window_state::write_atomic;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// The application UI theme; terminal colors are independent.
+    /// The application UI theme.
     #[serde(deserialize_with = "lenient")]
     pub ui_theme: UiTheme,
+    /// The terminal's colors: the UI theme's (the default) or a fixed scheme.
+    #[serde(deserialize_with = "lenient")]
+    pub terminal_colors: TerminalColors,
     /// The terminal's font family; empty (the default) for the built-in one. A family that
     /// isn't installed falls back to the built-in one too (the app checks).
     #[serde(deserialize_with = "lenient")]
@@ -138,6 +141,46 @@ impl UiTheme {
         [Self::Dark, Self::Light, Self::Sepia]
             .into_iter()
             .find(|theme| theme.as_str() == name)
+    }
+}
+
+/// The terminal's color scheme: the UI theme's, or one of the themes' schemes whatever the UI.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalColors {
+    #[default]
+    MatchTheme,
+    Dark,
+    Light,
+    Sepia,
+}
+
+impl TerminalColors {
+    /// The value as written in the settings file.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::MatchTheme => "match_theme",
+            Self::Dark => "dark",
+            Self::Light => "light",
+            Self::Sepia => "sepia",
+        }
+    }
+
+    /// The value written by [`TerminalColors::as_str`]; anything else is `None`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::MatchTheme, Self::Dark, Self::Light, Self::Sepia]
+            .into_iter()
+            .find(|colors| colors.as_str() == name)
+    }
+
+    /// The theme whose terminal colors apply while the UI uses `ui_theme`.
+    pub fn scheme(self, ui_theme: UiTheme) -> UiTheme {
+        match self {
+            Self::MatchTheme => ui_theme,
+            Self::Dark => UiTheme::Dark,
+            Self::Light => UiTheme::Light,
+            Self::Sepia => UiTheme::Sepia,
+        }
     }
 }
 

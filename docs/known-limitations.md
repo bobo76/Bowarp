@@ -159,4 +159,7 @@ entry when the limitation is lifted.
   the file viewer doesn't hold them. A card open when a hold ends stays hidden until the
   pointer leaves its row; keeping the pointer still, the card needs a move out and back.
 - Themes: an app version older than the Sepia theme reads `"ui_theme": "sepia"` as Dark (unknown
-  values fall back to the default). Terminal colors are the same dark palette in every theme.
+  values fall back to the default), and `"terminal_colors"` values it doesn't know as Match theme.
+- Terminal colors changed while a tab runs: `COLORFGBG` keeps the value the tab started with,
+  and programs that read the background color (OSC 11) only at start keep their first choice
+  until restarted. Agents' own themes (Claude Code's `/theme`) are not changed.

@@ -3,13 +3,16 @@
 User-visible changes are listed by release. Maintenance work and internal refactors are
 omitted unless they affect how the app is used.
 
-## Unreleased
+## 0.2.42
 
 - A softer light theme: warm grey surfaces instead of white, darker muted text, visible
   borders, and status colors that stay readable on the light sidebar.
 - A Sepia theme: paper-toned surfaces with brown text and accents.
 - Settings > Appearance picks the theme from a Theme dropdown (Dark / Light / Sepia) instead
   of a Light theme switch.
+- The terminal follows the theme: Light and Sepia get light terminal colors. A Terminal colors
+  setting keeps a fixed scheme instead (e.g. a dark terminal with the Light theme); changing it
+  repaints open tabs at once.
 
 ## 0.2.41
 

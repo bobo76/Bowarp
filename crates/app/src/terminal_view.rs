@@ -28,8 +28,8 @@ use gpui_kit::{
 use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::term::TermMode;
 use term_core::{
-    EventCallback, ExecutedCommand, LaunchSpec, Palette, Session, SessionEvent, SessionKind,
-    TermDimensions, TerminalSearch,
+    EventCallback, ExecutedCommand, LaunchSpec, Session, SessionEvent, SessionKind, TermDimensions,
+    TerminalSearch,
 };
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
@@ -268,11 +268,18 @@ impl TerminalView {
         let callback: EventCallback = Arc::new(move |event| {
             let _ = sender.unbounded_send(event);
         });
+        let palette = settings_file::terminal_palette(cx);
+        // Tells programs that read it at start whether the background is dark or light; it
+        // goes stale if the terminal colors change later (OSC 11 answers follow).
+        let mut colored_spec = spec.clone();
+        colored_spec
+            .env
+            .insert("COLORFGBG".into(), palette.colorfgbg().into());
         let session = Session::spawn(
             id,
-            spec,
+            &colored_spec,
             TermDimensions::new(INITIAL_TERMINAL_COLUMNS, INITIAL_TERMINAL_LINES),
-            Palette::default(),
+            palette,
             callback,
         )?;
 
@@ -308,8 +315,13 @@ impl TerminalView {
         })
         .detach();
         // Turning a history or last-command switch off closes the popup and drops suggestions
-        // at once.
+        // at once; other terminal colors repaint the terminal.
         cx.observe_global::<AppSettings>(|view, cx| {
+            let palette = settings_file::terminal_palette(cx);
+            if palette != view.session.palette() {
+                view.session.set_palette(palette);
+                cx.notify();
+            }
             let features = settings_file::workspace_features(cx);
             if features == view.workspace_features {
                 return;

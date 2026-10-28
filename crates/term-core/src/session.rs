@@ -104,7 +104,8 @@ impl Dimensions for TermDimensions {
 /// State shared between the [`Session`] handle and its I/O thread.
 struct Shared {
     callback: EventCallback,
-    palette: Palette,
+    /// Replaced when the user picks other terminal colors (`Session::set_palette`).
+    palette: Mutex<Palette>,
     sender: OnceLock<EventLoopSender>,
     size: Mutex<TermDimensions>,
     wakeup_pending: AtomicBool,
@@ -131,7 +132,7 @@ impl Shared {
         }));
         Self {
             callback,
-            palette,
+            palette: Mutex::new(palette),
             sender: OnceLock::new(),
             size: Mutex::new(size),
             wakeup_pending: AtomicBool::new(false),
@@ -205,7 +206,7 @@ impl EventListener for SessionListener {
             // Answered from the palette defaults: this runs under the terminal lock, so runtime
             // overrides in `Term::colors` cannot be read here.
             Event::ColorRequest(index, format) => {
-                let color = shared.palette.default_color(index);
+                let color = shared.palette.lock().unwrap().default_color(index);
                 shared.write(Cow::Owned(format(color).into_bytes()));
             }
             Event::ClipboardStore(clipboard, text) => {
@@ -298,8 +299,14 @@ impl Session {
         self.shared.prompt.folder()
     }
 
-    pub fn palette(&self) -> &Palette {
-        &self.shared.palette
+    pub fn palette(&self) -> Palette {
+        *self.shared.palette.lock().unwrap()
+    }
+
+    /// Paints the terminal with `palette` from the next frame on; colors a program set at
+    /// runtime (OSC 4/10/11) still win. A program asking for a color gets the new one.
+    pub fn set_palette(&self, palette: Palette) {
+        *self.shared.palette.lock().unwrap() = palette;
     }
 
     /// Lock the terminal for reading or modifying its state. Keep the lock short; the I/O

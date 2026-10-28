@@ -1,4 +1,5 @@
 use super::*;
+use term_core::Palette;
 
 #[test]
 fn only_a_hidden_finished_turn_is_ready_for_review() {

@@ -41,6 +41,10 @@ Softer light theme:
   hovered and selected rows), plus buttons, switches and sliders in brown.
 - Theme dropdown: Dark / Light / Sepia apply live (also Light ↔ Sepia), survive a restart,
   and a hand-edited `ui_theme` still applies.
+- Terminal colors (Linux and Windows): Match theme follows each Theme; a fixed scheme
+  repaints open tabs, alternate-screen programs (vim, htop) included; `ls --color`, git, dim
+  text, selection and search highlights read well on Light and Sepia. Claude Code and Copilot
+  CLI started in a light terminal pick readable colors (OSC 11); Windows conpty programs.
 
 Command history per shell:
 
