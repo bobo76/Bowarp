@@ -1,4 +1,5 @@
-//! Agent session status: Claude Code from hooks, Copilot CLI from progress plus permission hooks.
+//! Agent session status: Claude Code from hooks, Copilot CLI from progress plus
+//! hooks for its permission requests and questions.
 //! Copilot's optional extension also reports its interaction mode over the hook socket.
 //!
 //! Claude Code sessions are launched with settings that run `agentws-hook` on status-changing

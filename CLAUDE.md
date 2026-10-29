@@ -64,9 +64,10 @@ Cargo workspace, `crates/*`:
   non-zero defaults need a newtype). **New non-UI logic belongs here, not in `app`.**
 - **`agent-status`** — turns agent events into `AgentStatus`. Claude Code is launched with
   generated `--settings` whose hooks run `agentws-hook`; Copilot gets a per-tab `--plugin-dir`
-  plugin (PermissionRequest only) plus OSC 9;4 progress for Working/Idle. Events arrive over a
-  local socket/pipe at the app's `HookServer`. Env vars `AGENTWS_PIPE`, `AGENTWS_SESSION`,
-  `AGENTWS_HOOK` route them to the right tab.
+  plugin (Waiting from PermissionRequest and question notifications, ended by tool hooks) plus
+  OSC 9;4 progress for Working/Idle. Events arrive over a local socket/pipe at the app's
+  `HookServer`. Env vars `AGENTWS_PIPE`, `AGENTWS_SESSION`, `AGENTWS_HOOK` route them to the
+  right tab.
 - **`agentws-hook`** — tiny binary that forwards hook JSON to the owning session; always exits 0
   silently for Claude hooks. Tested by running the binary (`tests/round_trip.rs`).
 - **`app`** (package `agent-workspace`) — the GPUI UI (`gpui-kit`). `workspace_view.rs` is the

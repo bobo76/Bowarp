@@ -68,7 +68,7 @@ pub fn forward_hook(pipe_name: &str, session: u64, at: u64, input: &[u8]) -> io:
 fn hook_line(session: u64, at: u64, input: &[u8]) -> io::Result<String> {
     let payload: Value = serde_json::from_slice(input)?;
     let field = |name| payload.get(name).and_then(Value::as_str);
-    let event_name = field("hook_event_name")
+    let event_name = event_name(&payload)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing hook_event_name"))?;
     let mut line = format!("{session} {at} {event_name}");
     if let Some(kind) = field("notification_type") {
@@ -77,6 +77,18 @@ fn hook_line(session: u64, at: u64, input: &[u8]) -> io::Result<String> {
     }
     line.push('\n');
     Ok(line)
+}
+
+/// The hook's `hook_event_name`. Copilot CLI sends `PermissionRequest` camelCase instead, named
+/// by `hookName` (`permissionRequest`), so that name is turned PascalCase.
+fn event_name(payload: &Value) -> Option<String> {
+    let field = |name| payload.get(name).and_then(Value::as_str);
+    if let Some(name) = field("hook_event_name") {
+        return Some(name.to_string());
+    }
+    let mut chars = field("hookName")?.chars();
+    let first = chars.next()?;
+    Some(first.to_ascii_uppercase().to_string() + chars.as_str())
 }
 
 fn parse_line(line: &str) -> Option<HookMessage> {
@@ -256,6 +268,17 @@ mod tests {
             .unwrap(),
             "7 1000 Notification idle_prompt\n"
         );
+        assert_eq!(
+            hook_line(
+                7,
+                1000,
+                br#"{"hookName":"permissionRequest","sessionId":"abc","toolName":"bash"}"#
+            )
+            .unwrap(),
+            "7 1000 PermissionRequest\n",
+            "Copilot's camelCase payload"
+        );
+        assert!(hook_line(7, 1000, br#"{"hookName":""}"#).is_err());
         assert!(hook_line(7, 1000, br#"{"session_id":"abc"}"#).is_err());
         assert!(hook_line(7, 1000, b"not json").is_err());
     }

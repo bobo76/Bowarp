@@ -259,7 +259,7 @@ TerminalView caching, extended group card, group drag) are not repeated.
 
 ## Persistence and restore
 
-### 21. Closing the last tab (Needs the user)
+### 21. Closing the last tab
 - Problem: closing the last tab closes the window (`workspace_view.rs:921-923`) after saving a
   snapshot with no tabs (`close_window`, `workspace_view.rs:733-735`), so the next start has
   lost every group, empty group, color and pin.
@@ -270,7 +270,7 @@ TerminalView caching, extended group card, group drag) are not repeated.
 - Option B — Close the window but keep the previous snapshot when the last tab goes. Pros: no
   new UI. Cons: a restart restores tabs the user closed on purpose.
 - Option C — Today's behavior.
-- Recommendation: A, because the organization is the app's main value; needs the user.
+- Recommendation: A, because the organization is the app's main value; picked by the user.
 
 ### 22. Restored agent tabs: new session, started on demand (Needs the user)
 - Problem: a restored Claude tab named "PLAN.md remaining work" starts a fresh `claude` with no

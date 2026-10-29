@@ -3,7 +3,69 @@
 User-visible changes are listed by release. Maintenance work and internal refactors are
 omitted unless they affect how the app is used.
 
-## Unreleased
+## 0.2.42
+
+- A softer light theme: warm grey surfaces instead of white, darker muted text, visible
+  borders, and status colors that stay readable on the light sidebar.
+- A Sepia theme: paper-toned surfaces with brown text and accents.
+- Settings > Appearance picks the theme from a Theme dropdown (Dark / Light / Sepia) instead
+  of a Light theme switch.
+- The terminal follows the theme: Light and Sepia get light terminal colors. A Terminal colors
+  setting keeps a fixed scheme instead (e.g. a dark terminal with the Light theme); changing it
+  repaints open tabs at once.
+
+## 0.2.41
+
+- Keep command history per shell: each shell keeps its own newest 2 000 commands, and the
+  inline suggestion comes from the tab's own shell only, so a PowerShell tab no longer
+  suggests bash commands.
+- The HISTORY popup opens on the tab's shell, with a chip per shell plus "All"; switch with
+  Alt + the chip's underlined letter (press again for the next chip with that letter) or a
+  click. Delete forgets a command in the selected shell only, or in every shell under "All".
+- Commands saved before this version have no shell: they show under "All" only and are no
+  longer suggested inline.
+
+## 0.2.40
+
+- Copilot CLI tabs show Waiting again while a permission prompt is open, and now also while
+  Copilot asks a question ("Waiting for your reply"), with the toast and Ctrl+Shift+A; the
+  status stays Waiting until the prompt is answered.
+
+## 0.2.39
+
+- Dim the entries git ignores in the file explorer (`target/`, `.git`, `*.log`...), keeping
+  the folder order; folders outside a repository show as before. Saving a `.gitignore`
+  updates the dimming of the open folders.
+- The working Copilot tab's spinner turns once a second (was every two seconds); several
+  working Copilot tabs now turn together on one timer instead of one each.
+
+## 0.2.38
+
+- Keep the window open when the last tab closes: it shows "No open tabs" with a button per
+  shell and agent (the default shell first, focused), and the sidebar keeps every group.
+  Ctrl+Shift+T opens the new tab in the last closed tab's folder.
+- Keep the groups (names, colors, order) at the next start when no tab was open on quit; the
+  default shell opens as the first tab.
+- With no tab open, tab shortcuts (Ctrl+Shift+W, Ctrl+Tab, Ctrl+1..9) do nothing, the file
+  explorer is hidden until the next tab, and "Open settings file" is disabled.
+
+## 0.2.37
+
+- Say when agent status is off at start (for example "Agent status is off: agentws-hook not
+  found next to the app. Reinstall to fix."), in a warning that stays until closed. Quiet
+  Claude Code tabs then read "Status unavailable" instead of "No recent output".
+
+## 0.2.36
+
+- Open new tabs (the `+` menu, Ctrl+Shift+T, the explorer's "Open in new tab") right below
+  the selected tab, in its group, instead of at the end of the group or list. With a pinned
+  tab selected, a new or duplicated tab goes first after the pinned tabs.
+
+## 0.2.35
+
+- Hide the file explorer while the settings page shows; it comes back as it was (width,
+  expanded folders) when the page closes. The explorer button and Ctrl+| on the page leave
+  the page and show the explorer.
 
 ## 0.2.34
 

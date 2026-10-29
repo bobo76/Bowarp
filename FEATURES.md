@@ -21,8 +21,10 @@ directly to model APIs.
   with wrapping, and Escape to close.
 - Pass mouse wheel, clicks and motion to programs that ask for them (scrolling a Claude Code
   transcript), with a modifier to keep local selection.
-- Shell command history shared by all shell tabs (with folder and time): an inline
-  suggestion from history while typing and a history popup above the prompt (Up).
+- Shell command history kept per shell (with folder and time): an inline suggestion from
+  the tab's own shell while typing and a history popup above the prompt (Up) that opens on
+  the tab's shell, with a chip per shell plus "All" to switch (Alt + the chip's letter, or a
+  click); deleting a command forgets it in the selected shell only ("All": in every shell).
 - Open URLs and file paths printed in the output with Ctrl+click; a `path:line` opens in
   the file viewer at that line. www.google.ca
 - When an agent (Claude Code, Copilot CLI) quits normally (exit code 0), its tab goes on as a
@@ -42,6 +44,10 @@ directly to model APIs.
 - Organize terminal tabs into named, collapsible groups, such as projects or tasks.
 - Collapse a group without interrupting its sessions.
 - Create, rename, reorder (menu or drag and drop), duplicate, and move tabs between groups.
+  A new tab opens right below the selected one, in its group (first after the pinned tabs
+  when a pinned tab is selected).
+- Closing the last tab keeps the window and its groups, with buttons to open a new tab; the
+  groups are kept for the next start too.
 - Pin tabs to the top of the list.
 - Show each tab's git branch, or its current folder outside a repository, under its name.
 - Show a tab's details on hover: status, full folder, branch, program title, session
@@ -65,6 +71,7 @@ directly to model APIs.
 
 - Browse the selected session's folder in a collapsible file tree that follows the
   session's current folder and refreshes when files change. The tree's width is resizable.
+  Entries git ignores are dimmed, without changing the order.
 - Act on files and folders from the tree: create, rename, delete, open a shell or an agent
   session or `cd` there (or to the parent folder), and copy paths.
 - View and edit a clicked file beside the terminal: Markdown rendered or as source, JSON
@@ -97,6 +104,9 @@ directly to model APIs.
   "recent activity" rather than claiming the agent is thinking or working.
 - Do not treat a running process as proof that the agent is actively working,
   or terminal silence as proof that it is idle.
+- When agent status can't start (its helper missing next to the app, or its listener
+  failing), say so once per start in a warning that stays until dismissed, with the cause
+  and the fix, and show quiet agent tabs as "Status unavailable".
 
 ## Workspace Persistence
 
@@ -112,7 +122,8 @@ directly to model APIs.
   unknown or mistyped entries; a file that can't be read is set aside, never lost.
 - Edit preferences on a settings page opened from the title bar: searchable pages of
   settings applied as they change, a reset per setting, the file's errors shown, and a
-  button to open the settings file itself.
+  button to open the settings file itself. The page takes the place of the terminal, the file
+  explorer and the file viewer, which come back as they were when it closes.
 - Let the user switch optional behavior on or off (hover cards, activity animations),
   applied live; a setting that depends on another is shown disabled with the reason.
 - Let the user switch command history, the history popup and inline suggestions on or off,

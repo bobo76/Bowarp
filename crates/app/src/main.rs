@@ -15,6 +15,7 @@ mod instance_lock;
 mod keymap;
 mod keys;
 mod launcher;
+mod light_theme;
 mod mouse;
 mod open_menu;
 mod processes;
@@ -118,24 +119,26 @@ fn validate_requested_folder(requested: Option<&LaunchSpec>) {
 
 type HookMessages = mpsc::UnboundedReceiver<agent_status::HookMessage>;
 
-fn start_hooks() -> (Option<Rc<ClaudeHooks>>, HookMessages) {
+/// The hooks, their messages, and the warning to show when they could not start.
+fn start_hooks() -> (Option<Rc<ClaudeHooks>>, HookMessages, Option<String>) {
     let (hook_sender, hook_messages) = mpsc::unbounded();
-    let hooks = match ClaudeHooks::start(move |message| {
+    match ClaudeHooks::start(move |message| {
         let _ = hook_sender.unbounded_send(message);
     }) {
-        Ok(hooks) => Some(Rc::new(hooks)),
+        Ok(hooks) => (Some(Rc::new(hooks)), hook_messages, None),
         Err(err) => {
             eprintln!("agent-workspace: agent hooks and Copilot mode bridge disabled: {err}");
-            None
+            (None, hook_messages, Some(err.warning()))
         }
-    };
-    (hooks, hook_messages)
+    }
 }
 
 struct WorkspaceStartup {
     launchers: Rc<[launcher::Launcher]>,
     hooks: Option<Rc<ClaudeHooks>>,
     hook_messages: HookMessages,
+    /// Shown once at start when the hooks could not start.
+    hooks_warning: Option<String>,
     ownership: TabOwnership,
     tabs_writer: Rc<tabs_file::TabsWriter>,
     requested: Option<LaunchSpec>,
@@ -145,8 +148,8 @@ fn main() {
     scrub_inherited_agent_env();
     let requested = launch_spec_from_args();
     validate_requested_folder(requested.as_ref());
-    let launchers = launcher::discover().into();
-    let (hooks, hook_messages) = start_hooks();
+    let launchers: Rc<[launcher::Launcher]> = launcher::discover().into();
+    let (hooks, hook_messages, hooks_warning) = start_hooks();
     // Only the first running instance reopens and saves the tabs; a later one opens just the
     // requested tab (or a shell), so it neither duplicates the sessions nor overwrites the save.
     let lock = InstanceLock::acquire();
@@ -167,6 +170,7 @@ fn main() {
             workspace_view::init(cx);
             settings_page::init_keyboard(cx);
             history::init(cx);
+            cx.set_global(launcher::Launchers(launchers.clone()));
             let quit_hooks = hooks.clone();
             let closing_writer = tabs_writer.clone();
             cx.on_window_closed(move |cx, _| {
@@ -189,6 +193,7 @@ fn main() {
                     launchers,
                     hooks,
                     hook_messages,
+                    hooks_warning,
                     ownership,
                     tabs_writer,
                     requested,
@@ -238,6 +243,10 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
             )
         });
         workspace.update(cx, |workspace, cx| {
+            // Before the tabs, so it stacks above a fallback-shell warning.
+            if let Some(warning) = startup.hooks_warning {
+                workspace.warn_agent_status_off(warning, window, cx);
+            }
             restore_or_open_first_tab(workspace, initial, window, cx);
         });
         let closing = workspace.downgrade();

@@ -20,8 +20,8 @@ use crate::open_menu::OpenMenu;
 use crate::settings_file;
 use crate::shortcuts;
 use crate::sidebar::{
-    self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, SIDEBAR_WIDTH, TabDetail,
-    TabRow,
+    self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, RunningPulse, SIDEBAR_WIDTH,
+    TabDetail, TabRow,
 };
 use crate::tab_menu;
 use crate::workspace_view::{NewTab, NextAttention};
@@ -154,7 +154,7 @@ impl WorkspaceView {
             .label(count.to_string())
             .ghost()
             .xsmall()
-            .text_color(sidebar::attention_color())
+            .text_color(sidebar::attention_color(cx))
             .tooltip(tooltip)
             .on_click(
                 cx.listener(|workspace, _, window, cx| workspace.jump_to_attention(window, cx)),
@@ -233,7 +233,11 @@ impl WorkspaceView {
                 kind,
                 status,
                 sidebar::running_pulse(may_animate, true),
-            ),
+            )
+            .map(|motion| match motion {
+                RunningPulse::Animated => self.spinner_clock.drawn_step(),
+                RunningPulse::Still => 0,
+            }),
             selected: index == self.active && !self.settings.shows_page(),
             pinned: self.layout.is_pinned(id),
             color: self.tab_color(tab),

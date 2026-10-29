@@ -18,7 +18,7 @@ use term_core::alacritty_terminal::grid::Dimensions;
 use term_core::alacritty_terminal::term::cell::Flags;
 use term_core::alacritty_terminal::term::{RenderableContent, TermMode};
 use term_core::alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Rgb};
-use term_core::{Palette, TermDimensions, TerminalSearch, dim};
+use term_core::{Palette, TermDimensions, TerminalSearch};
 use unicode_width::UnicodeWidthChar;
 use workspace_model::{Platform, installed_font_family};
 
@@ -42,26 +42,6 @@ const FALLBACK_CELL_WIDTH_FACTOR: f32 = 0.6;
 const SCROLLBAR_ACTIVE_OPACITY: f32 = 0.6;
 const SCROLLBAR_IDLE_OPACITY: f32 = 0.35;
 const SCROLLBAR_TRACK_OPACITY: f32 = 0.08;
-const SELECTION_BACKGROUND: Rgb = Rgb {
-    r: 0x26,
-    g: 0x4f,
-    b: 0x78,
-};
-const SEARCH_BACKGROUND: Rgb = Rgb {
-    r: 0xe6,
-    g: 0xc0,
-    b: 0x70,
-};
-const ACTIVE_SEARCH_BACKGROUND: Rgb = Rgb {
-    r: 0xff,
-    g: 0x96,
-    b: 0x40,
-};
-const SEARCH_FOREGROUND: Rgb = Rgb {
-    r: 0x18,
-    g: 0x18,
-    b: 0x18,
-};
 
 pub struct TerminalElement {
     view: Entity<TerminalView>,
@@ -593,7 +573,7 @@ fn take_snapshot(
     };
     let snapshot = snapshot(
         term.renderable_content(),
-        view.session.palette(),
+        &view.session.palette(),
         focused,
         &view.search,
     );
@@ -745,6 +725,7 @@ fn snapshot(
             .selection
             .is_some_and(|selection| selection.contains(indexed.point));
         let (mut foreground, mut background) = cell_colors(
+            palette,
             cell.flags,
             palette.resolve(cell.fg, colors),
             palette.resolve(cell.bg, colors),
@@ -752,14 +733,14 @@ fn snapshot(
         );
         if !selected && let Some(active) = search.highlight(indexed.point) {
             background = if active {
-                ACTIVE_SEARCH_BACKGROUND
+                palette.active_search
             } else {
-                SEARCH_BACKGROUND
+                palette.search
             };
             foreground = if cell.flags.contains(Flags::HIDDEN) {
                 background
             } else {
-                SEARCH_FOREGROUND
+                palette.search_foreground
             };
         }
         if show_cursor && indexed.point == cursor_point {
@@ -786,9 +767,15 @@ fn cell_style(flags: Flags, foreground: Rgb) -> CellStyle {
 
 /// A cell's foreground and background after its DIM, INVERSE and HIDDEN attributes and the
 /// selection are applied.
-fn cell_colors(flags: Flags, foreground: Rgb, background: Rgb, selected: bool) -> (Rgb, Rgb) {
+fn cell_colors(
+    palette: &Palette,
+    flags: Flags,
+    foreground: Rgb,
+    background: Rgb,
+    selected: bool,
+) -> (Rgb, Rgb) {
     let foreground = if flags.contains(Flags::DIM) {
-        dim(foreground)
+        palette.dim(foreground)
     } else {
         foreground
     };
@@ -803,7 +790,7 @@ fn cell_colors(flags: Flags, foreground: Rgb, background: Rgb, selected: bool) -
         foreground
     };
     let background = if selected {
-        SELECTION_BACKGROUND
+        palette.selection
     } else {
         background
     };

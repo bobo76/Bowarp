@@ -36,7 +36,8 @@ sudo apt install build-essential pkg-config libvulkan-dev libwayland-dev libxkbc
 ```
 
 Build the whole workspace first: `agentws-hook` must sit next to the app binary, or agent
-status is disabled.
+status is disabled: the app then shows a warning that stays until closed ("Agent status is off:
+..." with the cause) and quiet Claude Code tabs read "Status unavailable".
 
 ```
 cargo build
@@ -57,15 +58,24 @@ the Linux build and tests on a Windows machine (Docker or WSL):
 
 The `+` button above the tab list opens a new tab with one of the supported shells (Bash, Zsh,
 Fish, PowerShell) found on `PATH` (the default shell first, see [Settings](#settings)), Claude
-Code or Copilot CLI; agents that are not installed are listed but disabled. New tabs start in the selected tab's folder.
+Code or Copilot CLI; agents that are not installed are listed but disabled. New tabs start in the
+selected tab's folder and open right below it (below a pinned tab: first after the pinned tabs);
+with no tab open, they start in the last closed tab's folder, at the end of the list. The tab
+named on the command line goes after the restored ones.
+
+Closing the last tab keeps the window and its groups: the terminal area shows "No open tabs"
+with a button per program of the `+` menu, in the same order (the default shell first; Tab and
+Shift+Tab move between them, Enter or Space opens one), and the file explorer hides until the
+next tab. Closing the window works as usual; at the next start the groups come back and the
+default shell opens as the first tab.
 
 | Keys | Action |
 |---|---|
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+1..9 | Select tab 1..9 |
-| Ctrl+Shift+T | New tab with the default shell, in the selected tab's folder |
+| Ctrl+Shift+T | New tab with the default shell, in the selected tab's folder (no tab: the last closed tab's, at the end) |
 | Ctrl+Shift+D | Duplicate the selected tab: same program, its folder (also in the tab menu) |
-| Ctrl+Shift+W | Close the selected tab (or the Settings row while it is selected) |
+| Ctrl+Shift+W | Close the selected tab (or the Settings row while it is selected); nothing with no tab |
 | Ctrl+Shift+B | Hide or show the sidebar (also the title bar button) |
 | Ctrl+Shift+S | Search tabs (shows the sidebar if hidden) |
 | Ctrl+Shift+\| | Hide or show the file explorer (also the title bar button; the key that types `\|`) |
@@ -144,14 +154,21 @@ confirmation) delete the stored history and each tab's saved last command; nothi
 | Up / Down, Page Up / Page Down | Move through the popup |
 | Typing, Backspace | Edit the command line; the popup lists the commands that still match |
 | Enter, Tab | Put the selected command on the prompt, replacing the typed text (not run) |
-| Delete | Remove the selected command from the history (and from `history.jsonl`) |
+| Delete | Remove the selected command from the selected shell's history (under "All": every shell's) and from `history.jsonl` |
+| Alt+letter | Switch the popup to the shell chip with that underlined letter (again: the next chip with it) |
 | Esc | Close the popup |
 
-Commands run in any bash, zsh or PowerShell tab are kept with their folder and time in
-`history.jsonl` in the config folder (latest use wins, newest 2 000). While you type, the newest
-command starting with the typed text shows dimmed after the cursor. The popup lists the commands
-containing the typed text (all of them on an empty prompt), newest at the bottom next to the
-prompt, each with its folder; click one to put it on the prompt. Commands starting with a space
+Commands run in any bash, zsh or PowerShell tab are kept per shell with their folder and time in
+`history.jsonl` in the config folder (latest use per shell wins, newest 2 000 per shell). The
+shell is the tab's launcher (Bash, PowerShell, Windows PowerShell, Git Bash, each WSL distro),
+so a PowerShell tab doesn't suggest bash commands. While you type, the newest command of the
+tab's shell starting with the typed text shows dimmed after the cursor. The popup lists the
+commands containing the typed text (all of them on an empty prompt), newest at the bottom next
+to the prompt, each with its folder; click one to put it on the prompt. It opens on the tab's
+own shell; when other shells have commands, its header shows a chip per shell plus "All"
+(each command once, at its newest use), and Alt + the chip's underlined letter or a click
+switches between them. Commands saved by earlier versions have no shell and show only under
+"All". Commands starting with a space
 are not kept, nor bash commands that bash keeps out of its own history (`HISTCONTROL`,
 `HISTIGNORE`). Up still goes to the program in full-screen programs (`less`, editors), while a
 command runs, in Claude Code and Copilot tabs, and in shells without integration (fish, cmd,
@@ -167,10 +184,11 @@ Commands beginning with `exit`, `logout`, `clear`, `cls`, `reset`, `ls`, `ll`, `
 `cd` or `history` do not replace the saved command. Private/unrecordable commands are never
 saved. Saving to `tabs.json` is queued immediately when a command starts, without a debounce
 delay; one background writer saves snapshots in order. A crash can lose an in-flight or queued
-update, including a deletion. Deleting a command from HISTORY also forgets it in every tab.
-Normal window close waits for pending saves and a final snapshot before releasing ownership
-of the saved tabs; guest instances never write them. On Unix, every write makes
-`tabs.json` owner-only (`0600`); on Windows it inherits the profile folder's permissions.
+update, including a deletion. Deleting a command from HISTORY also forgets it in the tabs of
+the selected shell (every tab under "All"). Normal window close waits for pending saves and a
+final snapshot before releasing ownership of the saved tabs; guest instances never write them.
+On Unix, every write makes `tabs.json` owner-only (`0600`); on Windows it inherits the profile
+folder's permissions.
 
 These tabs start with a small script that loads your own `~/.bashrc` / zsh startup files /
 PowerShell profile and then marks the prompt (OSC 133); the scripts live in
@@ -211,20 +229,24 @@ group still shows its status); Activity animations (on) off makes the Running ba
 working Copilot tab's spinner static and starts no animation timers. Both apply live and are
 saved as `group_hover_cards` and `activity_animations` (missing or non-boolean means on).
 
-### Copilot permission status (CLI 1.0.103)
+### Copilot permission and question status (CLI 1.0.105)
 
-Copilot CLI integration is tested against **1.0.103** (`npm install -g
-@github/copilot@1.0.103`; `copilot --version` must report that version). Disable its automatic
+Copilot CLI integration is tested against **1.0.105** (`npm install -g
+@github/copilot@1.0.105`; `copilot --version` must report that version). Disable its automatic
 updates with `COPILOT_AUTO_UPDATE=false` when reproducing these checks.
 
 Each new Copilot tab mounts its own app-owned plugin with the supported
-`--plugin-dir <directory>` option. The plugin registers only `PermissionRequest`, using
-Copilot's PascalCase/snake_case payload format and direct `exec` command hooks.
-`agentws-hook` forwards the event to that tab's local status socket: **Waiting**.
-Working and Idle still come exclusively from terminal progress reports; the next progress
-report observed after the permission hook starts clears Waiting, even if its state repeats.
-Reports retain their I/O observation times so queued older progress cannot hide a newer
-permission request. Copilot emits permission hooks before its approval rules, so an
+`--plugin-dir <directory>` option. The plugin registers `PermissionRequest`, `Notification`,
+`PreToolUse`, `PostToolUse` and `PostToolUseFailure` as direct `exec` command hooks, and
+`agentws-hook` forwards them to that tab's local status socket. A permission request is
+**Waiting for permission**; a question (`ask_user`, reported as an `elicitation_dialog`
+notification) is **Waiting for your reply**. Copilot sends most events in the PascalCase/
+snake_case payload, but `PermissionRequest` in its camelCase one (`hookName`), which
+`agentws-hook` also reads. Working and Idle still come exclusively from terminal progress
+reports. Copilot keeps reporting progress every 5 s while it waits, so repeated progress
+leaves Waiting in place; the next tool hook (the user answered) or removed progress (the turn
+ended) clears it. Reports retain their I/O observation times so queued older progress cannot
+hide a newer request. Copilot emits permission hooks before its approval rules, so an
 automatically approved request can briefly report Waiting too.
 
 Bowarp never installs or writes hook configuration into the user's `~/.copilot` or repository.
@@ -235,18 +257,19 @@ authentication, hooks and plugins are retained. A missing helper,
 an unwritable runtime directory, disabled hooks or sandbox-blocked hook
 keeps the existing progress-only fallback (Working/Idle, no reliable Waiting).
 
-Verified API sources: installed CLI **1.0.103** `--help` lists `--plugin-dir`, and its native
-plugin loader accepts this manifest, `PermissionRequest` and `exec` hook with no warnings.
-See GitHub's [plugin reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference)
+Verified API sources: installed CLI **1.0.105** `--help` lists `--plugin-dir`, and its native
+plugin loader accepts this manifest and these `exec` hooks with no warnings; a live session
+logged each payload. See GitHub's [plugin reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference)
 (`hooks` component and read-only `--plugin-dir` mounts) and
 [hook reference](https://docs.github.com/en/copilot/reference/hooks-reference)
 (PascalCase payloads and direct executable hooks).
 
-Manual validation pending: README checks 6–9 on Windows and Ubuntu (Wayland and X11),
-including two simultaneous Copilot tabs, permission approval/denial, progress after Waiting,
-disabled hooks and unchanged user configuration. Automated tests cover plugin generation,
-argument ordering, tab routing, permission-to-Waiting and progress recovery; they do not
-exercise a live Copilot permission dialog.
+Manual validation pending: README checks 6–9 on Windows and Wayland, including two
+simultaneous Copilot tabs, permission denial, disabled hooks and unchanged user configuration.
+Checked on Ubuntu X11 with a live Copilot: a background tab's question and permission prompt
+stay Waiting, Ctrl+Shift+A reaches them, and answering returns the tab to Working. Automated
+tests cover plugin generation, payload parsing, argument ordering, tab routing,
+request-to-Waiting and progress recovery.
 
 ### Copilot mode extension
 
@@ -285,6 +308,7 @@ Run the extension's tests with `node --test .\crates\app\copilot-extension\bridg
 | teal, pulsing for the first 10 s | Running: a command typed at the prompt of a bash, zsh or PowerShell tab has run for half a second; the card shows it and how long it has run (`Running for 2:14`, ticking while the card is open; no pulse on a software-rendered GPU) |
 | light grey | Recent output (shell or Copilot) |
 | none | No recent output |
+| none | Status unavailable (agent status off): a quiet Claude Code tab while the status hooks could not start |
 | hollow ring | Exited |
 
 Ready for review marks an unread Working-to-Idle transition, not confirmation that the
@@ -340,8 +364,8 @@ that is Ready for review. A tab in a collapsed group is revealed.
 
 Click a group header to collapse or expand it; a collapsed group shows how many of its tabs
 need attention, are working, run a command, or are ready for review. Selecting a tab in a collapsed group
-(Ctrl+1..9, Ctrl+Tab) expands it. New tabs join the selected tab's group. A tab without its own
-color shows its group's color. Groups stay when their last tab leaves.
+(Ctrl+1..9, Ctrl+Tab) expands it. New tabs open right below the selected tab, in its group. A tab
+without its own color shows its group's color. Groups stay when their last tab leaves.
 
 Hover any group header for its tab count and Working, Waiting and Ready for review totals, including
 zero totals for an empty group. Counts cover the whole group even while searching. The card
@@ -362,6 +386,10 @@ follows tab switches and `cd` (off Linux, in bash, zsh and PowerShell tabs only:
 reports the folder at each prompt). Folders come first, then files, sorted by name, dotfiles
 included. Click a folder to expand or collapse it (each root keeps its own expanded folders);
 click a file to open it in the file viewer. Expanded folders refresh when their content changes.
+In a git repository, entries git ignores (such as `target/` or `*.log` in `.gitignore`) and the
+`.git` folder are dimmed, as is everything inside an ignored folder; they dim a moment after
+the folder shows, once git answers. The order doesn't change, and nothing is dimmed outside a
+repository or when git isn't installed.
 
 The folder-with-an-arrow button in the explorer's header ("Parent folder (cd ..)") moves a
 shell tab to the folder above the tree's, and the tree follows. zsh and PowerShell change
@@ -415,9 +443,11 @@ unless it has unsaved edits, which are kept.
 ## Settings
 
 The gear button in the title bar (after the `i` button) opens the settings page in place of the
-terminal and the file viewer and adds a Settings row under the tabs (the viewer keeps its file
-and unsaved edits and comes back with the tab); select a tab to go back, select the row to
-return, and close the row with its × or Ctrl+Shift+W. The row isn't reopened at the next start.
+terminal, the file viewer and the file explorer and adds a Settings row under the tabs (the
+viewer keeps its file and unsaved edits, the explorer its width and expanded folders; both come
+back with the tab); select a tab to go back, select the row to return, and close the row with
+its × or Ctrl+Shift+W. The explorer button or Ctrl+Shift+| on the page goes back to the tab with
+the explorer shown. The row isn't reopened at the next start.
 Clicking the gear again while the page or one of its controls has focus closes the page and
 removes its row, returning focus to the terminal. If another pane has focus, the first click
 focuses Settings instead.
@@ -425,15 +455,22 @@ focuses Settings instead.
 The search box filters the rows by title, description and keywords. A change saves to
 `settings.json` in the config folder at once; "Reset to default" under a changed row (or the
 page's reset button) restores the default. "Open settings file" goes back to the selected tab
-and shows `settings.json` in its file viewer, creating it first if it doesn't exist; opening a
+and shows `settings.json` in its file viewer, creating it first if it doesn't exist (with no tab
+open it is disabled: there is no viewer to show it in); opening a
 file from the explorer while the page shows also goes back to the tab. A banner on the page says
 when the file can't be read (the defaults apply until it is fixed or a change moves it to
 `settings.json.bak`) or a change couldn't be saved. The About page shows the version and the
 config folder.
 
-The Appearance page's Light theme switch changes the UI live and persists the choice
-(`"ui_theme": "light"` or `"dark"` in `settings.json`, default dark). Terminal colors are
-unchanged; terminal color schemes and following the OS theme are not included.
+The Appearance page's Theme dropdown (Dark / Light / Sepia) changes the UI live and persists
+the choice (`"ui_theme": "dark"`, `"light"` or `"sepia"` in `settings.json`, default dark).
+Light uses warm grey surfaces rather than white, Sepia paper-toned ones with brown accents;
+both use darker status colors that read on them.
+The Terminal colors dropdown below it sets the terminal's palette in every tab, live:
+Match theme (the default; `"terminal_colors": "match_theme"`) uses the Theme's, or Dark, Light
+or Sepia whatever the Theme. Colors a program sets itself (OSC 4/10/11) stay. Programs asking
+for the background color (OSC 11) get the current one, and new tabs get `COLORFGBG` (`15;0`
+dark, `0;15` light). Following the OS theme is not included.
 
 The Appearance page also sets the terminal font: its family (an installed font's name;
 empty, or a font that isn't installed, uses DejaVu Sans Mono, Cascadia Mono on Windows) and
@@ -644,9 +681,10 @@ Last passed: Ubuntu, Wayland, 2026-10-17 (checks 1–5; checks 6–9 were added 
 3. Configure a discovered startup shell whose executable cannot start, with a working
    automatic fallback. Start with no restored tabs: the fallback opens, and the persistent
    warning identifies the requested shell and original error, and says a fallback started.
-4. Switch Light theme on and off; check sidebar, Settings, menus, viewer and hover-card
-   contrast while the terminal palette stays unchanged. Restart to check persistence; also
-   edit `ui_theme` in the settings file and save it in the viewer.
+4. Switch the Theme between Dark, Light and Sepia; check sidebar, Settings, menus, viewer and
+   hover-card contrast, and that the terminal follows (Terminal colors: Match theme). Set
+   Terminal colors to Dark with a Light theme: open tabs repaint at once. Restart to check
+   persistence; also edit `ui_theme` in the settings file and save it in the viewer.
 5. Hover expanded, collapsed and empty groups, including while filtering tabs. Confirm total
    tab count and Working/Waiting/Ready for review counts, and no group card during a tab drag.
 6. Run Claude Code and Copilot in background tabs through waiting and finished states.

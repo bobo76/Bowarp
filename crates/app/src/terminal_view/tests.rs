@@ -1,4 +1,5 @@
 use super::*;
+use term_core::Palette;
 
 #[test]
 fn only_a_hidden_finished_turn_is_ready_for_review() {
@@ -36,7 +37,14 @@ fn unread_completions_are_acknowledged_and_replaced_for_both_agents(
         )
         .unwrap();
         let view = cx.new(|cx| {
-            TerminalView::new(session, &spec, StatusReporting::Hooks, Task::ready(()), cx)
+            TerminalView::new(
+                session,
+                &spec,
+                StatusReporting::Hooks,
+                "sh".into(),
+                Task::ready(()),
+                cx,
+            )
         });
         view.update(cx, |view, cx| {
             let mut at = 0;
@@ -150,8 +158,16 @@ fn repeated_hooks_titles_and_output_do_not_repeat_agent_notices(cx: &mut gpui_ki
         Arc::new(|_| {}),
     )
     .unwrap();
-    let view =
-        cx.new(|cx| TerminalView::new(session, &spec, StatusReporting::Hooks, Task::ready(()), cx));
+    let view = cx.new(|cx| {
+        TerminalView::new(
+            session,
+            &spec,
+            StatusReporting::Hooks,
+            "sh".into(),
+            Task::ready(()),
+            cx,
+        )
+    });
     let notices = Rc::new(RefCell::new(Vec::new()));
     let captured = notices.clone();
     let _events = cx.update(|cx| {
@@ -239,6 +255,7 @@ fn a_copilot_bell_keeps_the_pending_wait_reason(cx: &mut gpui_kit::TestAppContex
             session,
             &spec,
             StatusReporting::OutputActivity,
+            "sh".into(),
             Task::ready(()),
             cx,
         )
@@ -271,7 +288,7 @@ fn a_copilot_bell_keeps_the_pending_wait_reason(cx: &mut gpui_kit::TestAppContex
 }
 
 #[gpui::test]
-fn copilot_permission_hooks_add_waiting_but_only_progress_controls_working_and_idle(
+fn copilot_hooks_add_and_end_waiting_but_only_progress_controls_working_and_idle(
     cx: &mut gpui_kit::TestAppContext,
 ) {
     use agent_status::HookEvent;
@@ -299,6 +316,7 @@ fn copilot_permission_hooks_add_waiting_but_only_progress_controls_working_and_i
             session,
             &spec,
             StatusReporting::OutputActivity,
+            "sh".into(),
             Task::ready(()),
             cx,
         )
@@ -328,35 +346,33 @@ fn copilot_permission_hooks_add_waiting_but_only_progress_controls_working_and_i
             },
             cx,
         );
-        assert_eq!(view.agent.as_ref().unwrap().status(), AgentStatus::Working);
+        assert_eq!(
+            view.agent.as_ref().unwrap().status(),
+            AgentStatus::NeedsAttention,
+            "repeated progress keeps Waiting"
+        );
+        view.apply_hook_event(AgentEvent::Hook(HookEvent::ToolFinished), 3, cx);
+        assert_eq!(
+            view.agent.as_ref().unwrap().status(),
+            AgentStatus::Working,
+            "a tool hook ends Waiting"
+        );
         view.apply_hook_event(
-            AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Permission)),
-            3,
+            AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Reply)),
+            4,
             cx,
         );
         view.on_session_event(
             SessionEvent::ProgressChanged {
                 state: ProgressState::Hidden,
-                at: 2,
+                at: 3,
             },
             cx,
         );
         assert_eq!(
             view.agent.as_ref().unwrap().status(),
             AgentStatus::NeedsAttention,
-            "queued older progress cannot clear a newer permission request"
-        );
-        view.on_session_event(
-            SessionEvent::ProgressChanged {
-                state: ProgressState::Indeterminate,
-                at: 4,
-            },
-            cx,
-        );
-        assert_eq!(
-            view.agent.as_ref().unwrap().status(),
-            AgentStatus::Working,
-            "repeated progress clears Waiting"
+            "queued older progress cannot clear a newer question"
         );
         view.apply_progress(ProgressState::Hidden, 5, cx);
         assert_eq!(view.agent.as_ref().unwrap().status(), AgentStatus::Idle);
@@ -502,4 +518,52 @@ fn clipboard_writes_wait_for_an_answer(cx: &mut gpui_kit::TestAppContext) {
         clipboard_text(cx).as_deref(),
         Some("allowed by the setting")
     );
+}
+
+#[gpui::test]
+fn a_quiet_claude_tab_without_hooks_shows_status_unavailable(cx: &mut gpui_kit::TestAppContext) {
+    #[cfg(windows)]
+    let (program, args) = ("cmd", vec!["/C", "exit 0"]);
+    #[cfg(not(windows))]
+    let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+    for (kind, quiet) in [
+        (SessionKind::ClaudeCode, TabStatus::Unavailable),
+        (SessionKind::CopilotCli, TabStatus::Quiet),
+        (SessionKind::Shell, TabStatus::Quiet),
+    ] {
+        let spec = LaunchSpec::new(
+            kind,
+            Some(program.into()),
+            args.iter().copied().map(String::from).collect(),
+            None,
+        );
+        let session = Session::spawn(
+            4,
+            &spec,
+            TermDimensions::new(80, 24),
+            Palette::default(),
+            Arc::new(|_| {}),
+        )
+        .unwrap();
+        let view = cx.new(|cx| {
+            TerminalView::new(
+                session,
+                &spec,
+                StatusReporting::OutputActivity,
+                "sh".into(),
+                Task::ready(()),
+                cx,
+            )
+        });
+        view.update(cx, |view, cx| {
+            assert_eq!(view.tab_status(), quiet, "{kind:?}");
+            view.hide();
+            view.on_session_event(SessionEvent::Bell, cx);
+            assert_eq!(
+                view.tab_status(),
+                TabStatus::NeedsAttention,
+                "{kind:?}: without hooks a bell asks for the user"
+            );
+        });
+    }
 }

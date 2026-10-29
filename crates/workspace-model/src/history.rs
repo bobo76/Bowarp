@@ -1,13 +1,15 @@
 //! Commands run in the app's shell tabs, for the prompt's inline suggestion and the history
-//! popup. Each entry keeps the folder it ran in and when. A command is kept once, at its latest
-//! use, and only the newest [`CommandHistory::DEFAULT_CAP`] are kept.
+//! popup. Each entry keeps the shell it ran in (the tab's launcher id, see
+//! [`crate::shell_key`]), the folder and when. A command is kept once per shell, at its latest
+//! use, and only the newest [`CommandHistory::DEFAULT_CAP`] of each shell are kept, so a busy
+//! shell doesn't push the others out.
 //!
 //! Saved as JSON lines (`history.jsonl` in the config folder): each run appends one line, so
 //! saving costs no rewrite and two instances can append to the same file. Loading replays the
 //! lines, oldest first, and the file is rewritten compacted once it holds many more lines than
 //! entries ([`CommandHistory::needs_compaction`]).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::ops::Range;
@@ -26,14 +28,50 @@ pub struct HistoryEntry {
     /// Seconds since the Unix epoch.
     #[serde(default)]
     pub time: u64,
+    /// The launcher id of the shell it ran in (`bash`, `pwsh`, `git-bash`, `wsl:Ubuntu`);
+    /// `None` for commands saved before history was kept per shell: they show only under
+    /// "All".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
 }
 
 impl HistoryEntry {
+    /// Whether this is `command` run in a shell `scope` covers.
+    fn is(&self, command: &str, scope: &HistoryScope) -> bool {
+        self.command == command && scope.covers(self.shell.as_deref())
+    }
+
     pub fn new(command: impl Into<String>, dir: Option<PathBuf>, time: u64) -> Self {
         Self {
             command: command.into(),
             dir: dir.filter(|dir| dir.to_str().is_some()),
             time,
+            shell: None,
+        }
+    }
+
+    /// The same command, run in the shell with launcher id `shell`.
+    pub fn in_shell(mut self, shell: impl Into<String>) -> Self {
+        self.shell = Some(shell.into());
+        self
+    }
+}
+
+/// Which commands a history list covers: one shell's, or every shell's ("All", which also
+/// holds the commands saved without a shell).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HistoryScope {
+    All,
+    /// A shell's launcher id.
+    Shell(String),
+}
+
+impl HistoryScope {
+    /// Whether a command run in `shell` belongs to this scope.
+    pub fn covers(&self, shell: Option<&str>) -> bool {
+        match self {
+            Self::All => true,
+            Self::Shell(key) => shell == Some(key.as_str()),
         }
     }
 }
@@ -47,10 +85,13 @@ pub fn is_recordable(command: &str) -> bool {
         && !command.chars().any(char::is_control)
 }
 
-/// The commands, oldest first, each command at most once.
+/// The commands, oldest first, each command at most once per shell.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandHistory {
     entries: Vec<HistoryEntry>,
+    /// How many entries each shell has (`None`: saved without a shell); no zero counts.
+    counts: BTreeMap<Option<String>, usize>,
+    /// Entries kept per shell.
     cap: usize,
 }
 
@@ -66,6 +107,7 @@ impl CommandHistory {
     pub fn new(cap: usize) -> Self {
         Self {
             entries: Vec::new(),
+            counts: BTreeMap::new(),
             cap: cap.max(1),
         }
     }
@@ -77,23 +119,29 @@ impl CommandHistory {
             .lines()
             .filter(|line| !line.trim().is_empty())
             .collect();
+        let cap = cap.max(1);
         let mut seen = HashSet::new();
+        let mut counts: BTreeMap<Option<String>, usize> = BTreeMap::new();
         let mut newest_first = Vec::new();
         for line in lines.iter().rev() {
-            if newest_first.len() >= cap.max(1) {
-                break;
-            }
             let Ok(entry) = serde_json::from_str::<HistoryEntry>(line) else {
                 continue;
             };
-            if is_recordable(&entry.command) && seen.insert(entry.command.clone()) {
+            let count = counts.entry(entry.shell.clone()).or_default();
+            if *count >= cap || !is_recordable(&entry.command) {
+                continue;
+            }
+            if seen.insert((entry.shell.clone(), entry.command.clone())) {
+                *count += 1;
                 newest_first.push(entry);
             }
         }
         newest_first.reverse();
+        counts.retain(|_, count| *count > 0);
         let history = Self {
             entries: newest_first,
-            cap: cap.max(1),
+            counts,
+            cap,
         };
         (history, lines.len())
     }
@@ -104,37 +152,72 @@ impl CommandHistory {
     }
 
     /// Whether a file of `lines` lines holding this history should be rewritten: it has grown
-    /// past half again the cap.
+    /// past half the cap beyond its entries (or beyond the cap, while fewer).
     pub fn needs_compaction(&self, lines: usize) -> bool {
-        lines > self.cap + self.cap / 2
+        lines > self.len().max(self.cap) + self.cap / 2
     }
 
-    /// Record `entry` as the latest use of its command, dropping its earlier use and the
-    /// oldest entry beyond the cap. Returns false (nothing recorded) when the command is not
-    /// recordable.
+    /// Record `entry` as the latest use of its command in its shell, dropping its earlier use
+    /// there and that shell's oldest entry beyond the cap. Returns false (nothing recorded)
+    /// when the command is not recordable.
     pub fn add(&mut self, entry: HistoryEntry) -> bool {
         if !is_recordable(&entry.command) {
             return false;
         }
-        self.entries.retain(|old| old.command != entry.command);
+        let before = self.entries.len();
+        self.entries
+            .retain(|old| old.shell != entry.shell || old.command != entry.command);
+        let shell = entry.shell.clone();
+        let count = self.counts.entry(shell.clone()).or_default();
+        *count = *count + 1 - (before - self.entries.len());
+        let over_cap = *count > self.cap;
         self.entries.push(entry);
-        if self.entries.len() > self.cap {
-            let excess = self.entries.len() - self.cap;
-            self.entries.drain(..excess);
+        if over_cap && let Some(oldest) = self.entries.iter().position(|old| old.shell == shell) {
+            self.entries.remove(oldest);
+            self.counts.entry(shell).and_modify(|count| *count -= 1);
         }
         true
     }
 
-    /// Forget `command`. Returns whether it was in the history.
-    pub fn remove(&mut self, command: &str) -> bool {
+    /// Forget `command` in the shells `scope` covers. Returns whether it was there.
+    pub fn remove(&mut self, command: &str, scope: &HistoryScope) -> bool {
         let before = self.entries.len();
-        self.entries.retain(|entry| entry.command != command);
-        self.entries.len() != before
+        self.entries.retain(|entry| !entry.is(command, scope));
+        if self.entries.len() == before {
+            return false;
+        }
+        self.recount();
+        true
+    }
+
+    fn recount(&mut self) {
+        self.counts.clear();
+        for entry in &self.entries {
+            *self.counts.entry(entry.shell.clone()).or_default() += 1;
+        }
     }
 
     /// Forget every command.
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.counts.clear();
+    }
+
+    /// The shells that have commands, by launcher id; `None` for commands saved without one.
+    pub fn shells(&self) -> impl Iterator<Item = Option<&str>> {
+        self.counts.keys().map(Option::as_deref)
+    }
+
+    /// How many entries `scope` holds (under "All": counting a command once per shell).
+    pub fn count_in(&self, scope: &HistoryScope) -> usize {
+        match scope {
+            HistoryScope::All => self.entries.len(),
+            HistoryScope::Shell(key) => self
+                .counts
+                .iter()
+                .find_map(|(shell, count)| (shell.as_deref() == Some(key)).then_some(*count))
+                .unwrap_or(0),
+        }
     }
 
     /// Oldest first.
@@ -150,14 +233,17 @@ impl CommandHistory {
         self.entries.is_empty()
     }
 
-    /// What the most recent command starting with `typed` adds to it, for the inline
-    /// suggestion. Case-sensitive, since accepting it types the rest after what is there.
-    /// `None` for an empty `typed` or when no longer command starts with it.
-    pub fn suggestion(&self, typed: &str) -> Option<&str> {
+    /// What the most recent command run in `shell` (a launcher id) starting with `typed` adds
+    /// to it, for the inline suggestion. Case-sensitive, since accepting it types the rest after
+    /// what is there. `None` for an empty `typed` or when no longer command starts with it.
+    pub fn suggestion(&self, typed: &str, shell: &str) -> Option<&str> {
         if typed.is_empty() {
             return None;
         }
         self.entries.iter().rev().find_map(|entry| {
+            if entry.shell.as_deref() != Some(shell) {
+                return None;
+            }
             entry
                 .command
                 .strip_prefix(typed)
@@ -165,34 +251,30 @@ impl CommandHistory {
         })
     }
 
-    /// The entries containing `query` (ignoring case), oldest first; all of them for a blank
-    /// query.
-    pub fn matching(&self, query: &str) -> Vec<&HistoryEntry> {
+    /// The entries of `scope` containing `query` (ignoring case), oldest first; all of them
+    /// for a blank query. Under "All" a command run in several shells is listed once, at its
+    /// newest use.
+    pub fn matching(&self, query: &str, scope: &HistoryScope) -> Vec<&HistoryEntry> {
         let query = query.trim();
-        if query.is_empty() {
-            return self.entries.iter().collect();
-        }
         // Called on every frame while the popup is open: no allocation per entry for the usual
-        // ASCII query.
-        if query.is_ascii() {
-            let query = query.as_bytes();
-            return self
-                .entries
-                .iter()
-                .filter(|entry| {
-                    entry
-                        .command
-                        .as_bytes()
-                        .windows(query.len())
-                        .any(|window| window.eq_ignore_ascii_case(query))
-                })
-                .collect();
-        }
-        let query = query.to_lowercase();
-        self.entries
+        // ASCII query, except "All"'s once-per-command set when several shells have commands.
+        let lowercase = (!query.is_ascii()).then(|| query.to_lowercase());
+        let contains = |command: &str| match &lowercase {
+            _ if query.is_empty() => true,
+            None => command
+                .as_bytes()
+                .windows(query.len())
+                .any(|window| window.eq_ignore_ascii_case(query.as_bytes())),
+            Some(query) => command.to_lowercase().contains(query),
+        };
+        let found = self
+            .entries
             .iter()
-            .filter(|entry| entry.command.to_lowercase().contains(&query))
-            .collect()
+            .filter(|entry| scope.covers(entry.shell.as_deref()) && contains(&entry.command));
+        if *scope != HistoryScope::All || self.counts.len() < 2 {
+            return found.collect();
+        }
+        newest_use_per_command(found, self.entries.len())
     }
 
     /// Load the history saved at `path`, rewriting the file compacted when it has grown too
@@ -333,9 +415,9 @@ pub fn clear_history_file(path: &Path) -> io::Result<()> {
     }
 }
 
-/// Drop every line of the history file at `path` that holds `command`, keeping the other lines
-/// as they are (damaged ones too). A missing file is fine.
-pub fn remove_command(path: &Path, command: &str) -> io::Result<()> {
+/// Drop every line of the history file at `path` that holds `command` run in a shell `scope`
+/// covers, keeping the other lines as they are (damaged ones too). A missing file is fine.
+pub fn remove_command(path: &Path, command: &str, scope: &HistoryScope) -> io::Result<()> {
     let _lock = lock_history(path)?;
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
@@ -344,7 +426,7 @@ pub fn remove_command(path: &Path, command: &str) -> io::Result<()> {
     };
     let kept: Vec<&[u8]> = bytes
         .split(|&byte| byte == b'\n')
-        .filter(|line| !line.is_empty() && !holds_command(line, command))
+        .filter(|line| !line.is_empty() && !holds_command(line, command, scope))
         .collect();
     let text = kept.iter().fold(Vec::new(), |mut text, line| {
         text.extend_from_slice(line);
@@ -354,8 +436,22 @@ pub fn remove_command(path: &Path, command: &str) -> io::Result<()> {
     compact_locked(path, &text)
 }
 
-fn holds_command(line: &[u8], command: &str) -> bool {
-    serde_json::from_slice::<HistoryEntry>(line).is_ok_and(|entry| entry.command == command)
+/// `found` (oldest first) with each command kept once, at its newest use.
+fn newest_use_per_command<'a>(
+    found: impl DoubleEndedIterator<Item = &'a HistoryEntry>,
+    capacity: usize,
+) -> Vec<&'a HistoryEntry> {
+    let mut seen = HashSet::with_capacity(capacity);
+    let mut newest_first: Vec<&HistoryEntry> = found
+        .rev()
+        .filter(|entry| seen.insert(entry.command.as_str()))
+        .collect();
+    newest_first.reverse();
+    newest_first
+}
+
+fn holds_command(line: &[u8], command: &str, scope: &HistoryScope) -> bool {
+    serde_json::from_slice::<HistoryEntry>(line).is_ok_and(|entry| entry.is(command, scope))
 }
 
 /// Append `entry` to the history file at `path`, creating it and its folder.

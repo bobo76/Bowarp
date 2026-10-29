@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use term_core::alacritty_terminal::index::{Column, Line, Point, Side};
 use term_core::alacritty_terminal::selection::SelectionType;
 use term_core::alacritty_terminal::term::ClipboardType;
+use term_core::alacritty_terminal::vte::ansi::Rgb;
 use term_core::{LaunchSpec, Palette, Session, SessionEvent, SessionKind, TermDimensions};
 use workspace_model::ProgressState;
 
@@ -212,6 +213,26 @@ fn background_color_query_is_answered() {
     wait_for_exit(&rx);
 
     assert_eq!(session.visible_text()[0], "E]11;rgb:1e1e/1e1e/1e1eB");
+}
+
+#[test]
+fn background_color_query_follows_a_palette_change() {
+    // The query waits so the new palette is set before it arrives.
+    let script = "sleep 0.5; stty raw -echo; printf '\\033]11;?\\007'; \
+                  dd bs=1 count=24 2>/dev/null | tr '\\033\\007' 'EB'";
+    let (session, rx) = spawn_sh(script, TermDimensions::new(80, 24));
+    session.set_palette(Palette {
+        background: Rgb {
+            r: 0xef,
+            g: 0xe4,
+            b: 0xcc,
+        },
+        ..Palette::default()
+    });
+    wait_for_exit(&rx);
+
+    assert_eq!(session.palette().background.r, 0xef);
+    assert_eq!(session.visible_text()[0], "E]11;rgb:efef/e4e4/ccccB");
 }
 
 #[test]

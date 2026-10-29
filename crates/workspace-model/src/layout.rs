@@ -196,16 +196,14 @@ impl Layout {
         tabs
     }
 
-    /// Add a new tab at the end of `group`, else ungrouped at the end of the list.
-    pub fn add(&mut self, id: TabId, group: Option<GroupId>) {
-        match group.and_then(|group| self.group_mut(group)) {
-            Some(group) => group.tabs.push(id),
-            None => self.items.push(Item::Tab(id)),
-        }
+    /// Add a new tab ungrouped at the end of the list.
+    pub fn add(&mut self, id: TabId) {
+        self.items.push(Item::Tab(id));
     }
 
     /// Add a new tab right below `after`, in its group or among the ungrouped tabs. Below a
-    /// pinned or unknown tab it goes ungrouped at the end of the list, like `add`.
+    /// pinned tab it goes ungrouped right after the pinned tabs; below an unknown tab,
+    /// ungrouped at the end of the list, like `add`.
     pub fn add_after(&mut self, id: TabId, after: TabId) {
         match self.place(after) {
             Some(Place::Loose(index)) => self.items.insert(index + 1, Item::Tab(id)),
@@ -214,7 +212,8 @@ impl Layout {
                     group.tabs.insert(index + 1, id);
                 }
             }
-            Some(Place::Pinned(_)) | None => self.items.push(Item::Tab(id)),
+            Some(Place::Pinned(_)) => self.items.insert(0, Item::Tab(id)),
+            None => self.items.push(Item::Tab(id)),
         }
     }
 

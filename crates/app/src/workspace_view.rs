@@ -1,7 +1,9 @@
 mod busy_close;
 mod divider_drag;
+mod empty_state;
 mod settings_pane;
 mod sidebar_rows;
+mod spinner_clock;
 mod tab_card;
 mod tab_search;
 
@@ -35,6 +37,7 @@ use workspace_model::{
 
 use self::divider_drag::DividerDrag;
 use self::settings_pane::SettingsPane;
+use self::spinner_clock::SpinnerClock;
 use self::tab_card::TabCards;
 use self::tab_search::TabSearch;
 use crate::about;
@@ -47,7 +50,7 @@ use crate::keymap;
 use crate::launcher::{self, Launcher, launch_name};
 use crate::open_menu::OpenMenu;
 use crate::settings_file;
-use crate::settings_page;
+use crate::settings_page::{self, SettingsFileButton};
 use crate::shell_integration;
 use crate::shortcuts::{
     self, ATTENTION_KEY, CLOSE_TAB_KEY, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY, SEARCH_KEY,
@@ -211,9 +214,9 @@ impl Render for ExplorerDivider {
 /// Where `open_tab_in` puts a new tab.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NewTabPlace {
-    /// At the end of the group (`None`: of the top level).
-    EndOf(Option<GroupId>),
-    /// Right below this tab (duplicates).
+    /// Ungrouped at the end of the list.
+    End,
+    /// Right below this tab (see `Layout::add_after`).
     After(TabId),
 }
 
@@ -242,9 +245,11 @@ pub struct WorkspaceView {
     /// The platform presents the window's frames (not minimized): sidebar animations run only
     /// then, in case a platform still draws a hidden window.
     window_visible: bool,
+    spinner_clock: SpinnerClock,
     explorer: Entity<FileExplorer>,
     /// The "close busy tabs?" question is open (it is never asked twice at once).
     close_question_open: bool,
+    /// The explorer is on (remembered while the settings page hides it: `explorer_shown`).
     explorer_visible: bool,
     /// Whether the file explorer and viewer panes work: the "File explorer and viewer" switch
     /// as last applied (it stays on while unsaved edits wait for an answer).
@@ -258,6 +263,15 @@ pub struct WorkspaceView {
     /// The same for the explorer's width, in pixels (`explorer_width`).
     explorer_drag: DividerDrag<ExplorerWidth>,
     renaming: Option<Rename>,
+    /// The keyboard's place while no tab is open (the empty state), kept for the window's
+    /// life; Tab moves on to its buttons.
+    empty_focus: FocusHandle,
+    /// The empty state gives the keyboard to its default button once drawn (set by
+    /// `focus_empty_state`, cleared by that draw or by selecting a tab).
+    focus_empty_default: bool,
+    /// The folder of the tab whose closing left no tab: where the next new tab starts (memory
+    /// only). Cleared when a tab opens.
+    last_closed_folder: Option<PathBuf>,
     /// The sidebar menu (tab, group, `+`) that is open, if any.
     menu: OpenMenu,
     search: TabSearch,
@@ -298,6 +312,26 @@ impl WorkspaceView {
         // Startup runs before the notification layer's root exists.
         cx.defer_in(window, move |_, window, cx| {
             window.push_notification(Notification::warning(message).autohide(false), cx);
+        });
+    }
+
+    /// The status hooks could not start: say so until dismissed. A fixed id, so it never
+    /// stacks twice.
+    pub fn warn_agent_status_off(
+        &self,
+        message: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        struct AgentStatusOff;
+        // Startup runs before the notification layer's root exists.
+        cx.defer_in(window, move |_, window, cx| {
+            window.push_notification(
+                Notification::warning(message)
+                    .id::<AgentStatusOff>()
+                    .autohide(false),
+                cx,
+            );
         });
     }
 
@@ -345,6 +379,7 @@ impl WorkspaceView {
             sidebar_visible: true,
             pulse_running: sidebar::pulse_allowed(window),
             window_visible: window.is_visible(),
+            spinner_clock: SpinnerClock::default(),
             explorer,
             close_question_open: false,
             explorer_visible: false,
@@ -353,6 +388,9 @@ impl WorkspaceView {
             viewer_drag: DividerDrag::new(Self::save_viewer_fraction),
             explorer_drag: DividerDrag::new(Self::save_explorer_width),
             renaming: None,
+            empty_focus: cx.focus_handle(),
+            focus_empty_default: false,
+            last_closed_folder: None,
             menu: OpenMenu::default(),
             search: TabSearch::new(window, cx),
             cards: TabCards::default(),
@@ -386,22 +424,28 @@ impl WorkspaceView {
             self.tabs_writer.scrub_last_commands(None);
         }
         if seen.1 != forgets_seen
-            && let Some(command) = cx.global::<history::History>().forgotten()
+            && let Some((command, _)) = cx.global::<history::History>().forgotten()
         {
+            // The saved tabs hold no shell key: the command goes from every one of them.
             self.tabs_writer
                 .scrub_last_commands(Some(command.to_owned()));
         }
     }
 
-    /// Start `spec` in a new tab and select it. The tab joins the selected tab's group.
+    /// Start `spec` in a new tab right below the selected one and select it.
     pub fn open_tab(
         &mut self,
         spec: LaunchSpec,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> io::Result<()> {
-        let group = self.active_group();
-        self.open_tab_in(spec, NewTabPlace::EndOf(group), window, cx)
+        self.open_tab_in(spec, self.below_selected(), window, cx)
+    }
+
+    /// Right below the selected tab, else at the end of the (empty) list.
+    fn below_selected(&self) -> NewTabPlace {
+        self.active_tab()
+            .map_or(NewTabPlace::End, |tab| NewTabPlace::After(tab.id))
     }
 
     /// Start `spec` in a new tab at `place` and select it.
@@ -413,8 +457,9 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) -> io::Result<()> {
         let id = self.spawn_tab(spec, TabMeta::default(), window, cx)?;
+        self.last_closed_folder = None;
         match place {
-            NewTabPlace::EndOf(group) => self.layout.add(id, group),
+            NewTabPlace::End => self.layout.add(id),
             NewTabPlace::After(tab) => self.layout.add_after(id, tab),
         }
         self.sync_order(cx);
@@ -464,12 +509,15 @@ impl WorkspaceView {
         } else {
             StatusReporting::OutputActivity
         };
+        let shell_key = launcher::shell_key(&self.launchers, spec);
         shell_integration::attach(&mut launch);
-        let view = TerminalView::spawn(session_id, &launch, reporting, cx).inspect_err(|_| {
-            if let Some(hooks) = &self.hooks {
-                hooks.remove_session(session_id);
-            }
-        })?;
+        let view = TerminalView::spawn(session_id, &launch, reporting, shell_key, cx).inspect_err(
+            |_| {
+                if let Some(hooks) = &self.hooks {
+                    hooks.remove_session(session_id);
+                }
+            },
+        )?;
         self.next_session_id += 1;
         let changed = cx.subscribe(&view, |workspace, _, _: &TabChanged, cx| {
             workspace.sync_explorer(cx);
@@ -672,8 +720,9 @@ impl WorkspaceView {
     }
 
     /// Reopen the tabs saved when the window last closed, each in its last folder, with the
-    /// same layout and selection. A tab that fails to start is left out and reported. Returns
-    /// whether any tab opened.
+    /// same layout and selection. A tab that fails to start is left out and reported. The
+    /// groups come back even when no tab does (none saved, or none started). Returns whether
+    /// any tab opened.
     pub fn restore(
         &mut self,
         state: TabsState,
@@ -706,11 +755,11 @@ impl WorkspaceView {
                 window.push_notification(Notification::error(message), cx);
             });
         }
+        self.layout = Layout::restore(layout);
+        self.sync_order(cx);
         if self.tabs.is_empty() {
             return false;
         }
-        self.layout = Layout::restore(layout);
-        self.sync_order(cx);
         let selected = selected.or_else(|| self.tabs.first().map(|tab| tab.id));
         for tab in self.tabs.iter().filter(|tab| Some(tab.id) != selected) {
             tab.view.update(cx, |view, _| view.hide());
@@ -746,21 +795,21 @@ impl WorkspaceView {
         self.tabs_writer.finish();
     }
 
-    /// Close the window from inside the app (closing the last tab, or the title bar button on
-    /// Linux), saving the tabs and the window bounds first.
+    /// Close the window from inside the app (the title bar button on Linux), saving the tabs
+    /// and the window bounds first.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_tabs_and_flush(cx);
         window_bounds::close(window);
     }
 
+    /// Open a tab right below the selected one, or show why it failed.
     pub fn open_tab_or_notify(
         &mut self,
         spec: LaunchSpec,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let group = self.active_group();
-        self.open_tab_in_or_notify(spec, NewTabPlace::EndOf(group), window, cx);
+        self.open_tab_in_or_notify(spec, self.below_selected(), window, cx);
     }
 
     /// Open the tab named on the command line after the restored ones: at the end of the top
@@ -771,7 +820,7 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_tab_in_or_notify(spec, NewTabPlace::EndOf(None), window, cx);
+        self.open_tab_in_or_notify(spec, NewTabPlace::End, window, cx);
     }
 
     fn open_tab_in_or_notify(
@@ -791,8 +840,14 @@ impl WorkspaceView {
         }
     }
 
-    /// Folder for new tabs: the selected tab's current one, else the app's working directory.
+    /// Folder for new tabs: the selected tab's current one; with no tab, the last closed
+    /// tab's; else the app's working directory.
     fn new_tab_folder(&self, cx: &App) -> Option<PathBuf> {
+        if self.tabs.is_empty()
+            && let Some(folder) = &self.last_closed_folder
+        {
+            return Some(folder.clone());
+        }
         self.tab_folder(self.active, cx)
     }
 
@@ -865,6 +920,7 @@ impl WorkspaceView {
             return;
         };
         let (id, view) = (tab.id, tab.view.clone());
+        self.focus_empty_default = false;
         self.settings.hide_page();
         self.layout.reveal(id);
         self.clear_search_hiding(id, window, cx);
@@ -879,7 +935,7 @@ impl WorkspaceView {
     }
 
     /// Close a tab, ending its process, once the user agrees to drop the unsaved edits of its
-    /// file viewer, if any. Closing the last tab closes the window. Busy tabs were asked about
+    /// file viewer, if any. Closing the last tab leaves the empty state. Busy tabs were asked about
     /// already (`close_tab`).
     fn close_tab_checking_edits(
         &mut self,
@@ -937,7 +993,12 @@ impl WorkspaceView {
         self.layout.remove(tab.id);
         self.cards.forget(tab.id);
         if self.tabs.is_empty() {
-            self.close_window(window, cx);
+            // The window stays with its groups and shows the empty state (or the settings
+            // page, still open); the next new tab starts where this one was.
+            self.last_closed_folder = tab.view.read(cx).current_folder();
+            self.active = 0;
+            self.focus_active(window, cx);
+            cx.notify();
             return;
         }
         if index < self.active || self.active == self.tabs.len() {
@@ -956,12 +1017,6 @@ impl WorkspaceView {
 
     fn active_tab(&self) -> Option<&Tab> {
         self.tabs.get(self.active)
-    }
-
-    fn active_group(&self) -> Option<GroupId> {
-        self.active_tab()
-            .and_then(|tab| self.layout.group_of(tab.id))
-            .map(|group| group.id)
     }
 
     fn tab_index(&self, id: u64) -> Option<usize> {
@@ -1199,7 +1254,7 @@ impl WorkspaceView {
     }
 
     /// Give the keyboard back to the selected terminal once the editor is gone.
-    fn end_rename(&self, window: &mut Window, cx: &mut Context<Self>) {
+    fn end_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_active(window, cx);
         cx.notify();
     }
@@ -1279,6 +1334,38 @@ impl WorkspaceView {
         cx.notify();
     }
 
+    /// Whether the explorer is on screen: the settings page and the empty state (no tab) hide
+    /// it (and its divider) without turning it off, so it comes back as it was (width,
+    /// folder, expanded folders).
+    fn explorer_shown(&self) -> bool {
+        self.explorer_visible && !self.settings.shows_page() && !self.tabs.is_empty()
+    }
+
+    /// The explorer button and shortcut: hide or show the explorer; while the settings page
+    /// shows, go back to the selected tab with the explorer shown. With no tab, only the
+    /// remembered state changes (it shows with the next tab).
+    fn press_explorer_toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings.shows_page() && !self.tabs.is_empty() {
+            self.show_explorer(window, cx);
+            return;
+        }
+        self.toggle_explorer(cx);
+    }
+
+    /// Turn the explorer on in sight (the button or shortcut on the settings page, "Reveal
+    /// folder"): leaves the settings page first (the Settings row stays).
+    fn show_explorer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !settings_file::file_panes(cx).allows(PaneEntry::ToggleExplorer) {
+            return;
+        }
+        if self.settings.shows_page() {
+            self.activate(self.active, window, cx);
+        }
+        if !self.explorer_visible {
+            self.toggle_explorer(cx);
+        }
+    }
+
     fn toggle_explorer(&mut self, cx: &mut Context<Self>) {
         if !settings_file::file_panes(cx).allows(PaneEntry::ToggleExplorer) {
             return;
@@ -1296,27 +1383,25 @@ impl WorkspaceView {
     }
 
     /// Point the explorer at the selected tab's folder, as of its last tab change (switch,
-    /// title change, end of an output burst: around `cd`), while it shows.
+    /// title change, end of an output burst: around `cd`), while it shows. With no tab it
+    /// keeps its folder, hidden, until the next tab.
     fn sync_explorer(&mut self, cx: &mut Context<Self>) {
         if !self.explorer_visible {
             return;
         }
-        let (root, cd) = match self.active_tab() {
-            Some(tab) => {
-                let view = tab.view.read(cx);
-                let root = view
-                    .location()
-                    .map(|location| location.folder.clone())
-                    .or_else(|| view.current_folder());
-                // Typing `cd` into a running program would feed it keys.
-                let cd = if view.kind() == SessionKind::Shell && view.at_prompt() {
-                    CdAvailability::Available
-                } else {
-                    CdAvailability::Unavailable
-                };
-                (root, cd)
-            }
-            None => (None, CdAvailability::Unavailable),
+        let Some(tab) = self.active_tab() else {
+            return;
+        };
+        let view = tab.view.read(cx);
+        let root = view
+            .location()
+            .map(|location| location.folder.clone())
+            .or_else(|| view.current_folder());
+        // Typing `cd` into a running program would feed it keys.
+        let cd = if view.kind() == SessionKind::Shell && view.at_prompt() {
+            CdAvailability::Available
+        } else {
+            CdAvailability::Unavailable
         };
         self.explorer
             .update(cx, |explorer, cx| explorer.set_root(root, cd, cx));
@@ -1558,9 +1643,7 @@ impl WorkspaceView {
             }
             ViewerEvent::Saved(_) => {}
             ViewerEvent::RevealFolder(folder) => {
-                if !self.explorer_visible {
-                    self.toggle_explorer(cx);
-                }
+                self.show_explorer(window, cx);
                 let shown = self
                     .explorer
                     .update(cx, |explorer, cx| explorer.reveal(folder, cx));
@@ -1582,7 +1665,7 @@ impl WorkspaceView {
 
     /// The width the sidebar and the explorer take from the row of panes.
     fn fixed_panes_width(&self, cx: &App) -> f32 {
-        let explorer = if self.explorer_visible {
+        let explorer = if self.explorer_shown() {
             self.explorer_width(cx)
         } else {
             0.
@@ -1711,13 +1794,18 @@ impl WorkspaceView {
             )
     }
 
-    /// Give the keyboard to the selected tab's terminal, or to the settings page while it shows.
-    fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Give the keyboard to the selected tab's terminal, or to the settings page while it
+    /// shows, or to the empty state while no tab is open.
+    fn focus_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.settings.shows_page() {
             window.focus(self.settings.focus(), cx);
-        } else if let Some(tab) = self.active_tab() {
-            window.focus(&tab.view.focus_handle(cx), cx);
+            return;
         }
+        let Some(tab) = self.active_tab() else {
+            self.focus_empty_state(window, cx);
+            return;
+        };
+        window.focus(&tab.view.focus_handle(cx), cx);
     }
 
     fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1743,7 +1831,7 @@ impl WorkspaceView {
     }
 
     fn explorer_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let label = if self.explorer_visible {
+        let label = if self.explorer_shown() {
             "Hide explorer"
         } else {
             "Show explorer"
@@ -1752,9 +1840,11 @@ impl WorkspaceView {
             .icon(Icon::empty().path(FILES_ICON))
             .ghost()
             .small()
-            .selected(self.explorer_visible)
+            .selected(self.explorer_shown())
             .tooltip(shortcuts::with_shortcut(label, &ToggleExplorer, cx))
-            .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_explorer(cx)))
+            .on_click(
+                cx.listener(|workspace, _, window, cx| workspace.press_explorer_toggle(window, cx)),
+            )
     }
 }
 
@@ -1769,7 +1859,7 @@ impl Focusable for WorkspaceView {
         }
         match self.active_tab() {
             Some(tab) => tab.view.focus_handle(cx),
-            None => cx.focus_handle(),
+            None => self.empty_focus.clone(),
         }
     }
 }
@@ -1782,6 +1872,13 @@ impl Render for WorkspaceView {
             .active_tab()
             .filter(|_| !self.settings.shows_page())
             .map(|tab| tab.view.clone());
+        let empty_state = (self.tabs.is_empty() && !self.settings.shows_page())
+            .then(|| self.render_empty_state(window, cx));
+        let file_button = if self.tabs.is_empty() && settings_file::file_panes(cx).panes_enabled() {
+            SettingsFileButton::NeedsTab
+        } else {
+            SettingsFileButton::Opens
+        };
         let file_panes = settings_file::file_panes(cx);
         let viewer = self.active_viewer(cx);
         let viewer_width = pane_width::viewer_width(
@@ -1789,6 +1886,11 @@ impl Render for WorkspaceView {
             f32::from(window.viewport_size().width),
             self.fixed_panes_width(cx),
         );
+        self.spinner_clock.begin_frame();
+        let sidebar = self
+            .sidebar_visible
+            .then(|| self.render_sidebar(cx).into_any_element());
+        self.spinner_clock.end_frame(cx);
         div()
             .size_full()
             .flex()
@@ -1820,8 +1922,8 @@ impl Render for WorkspaceView {
                 workspace.toggle_sidebar(cx);
                 cx.stop_propagation();
             }))
-            .capture_action(cx.listener(|workspace, _: &ToggleExplorer, _, cx| {
-                workspace.toggle_explorer(cx);
+            .capture_action(cx.listener(|workspace, _: &ToggleExplorer, window, cx| {
+                workspace.press_explorer_toggle(window, cx);
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &SearchTabs, window, cx| {
@@ -1913,10 +2015,8 @@ impl Render for WorkspaceView {
                             workspace.drag_explorer_edge(event, cx);
                         },
                     ))
-                    .when(self.sidebar_visible, |content| {
-                        content.child(self.render_sidebar(cx))
-                    })
-                    .when(self.explorer_visible, |content| {
+                    .children(sidebar)
+                    .when(self.explorer_shown(), |content| {
                         content.child(self.explorer_panel(cx))
                     })
                     .child(
@@ -1927,10 +2027,12 @@ impl Render for WorkspaceView {
                             // Only a terminal is see-through (window opacity below 100 %).
                             .when(active.is_none(), |area| area.bg(cx.theme().background))
                             .children(active)
+                            .children(empty_state)
                             .when(self.settings.shows_page(), |area| {
                                 area.track_focus(self.settings.focus()).child(
                                     settings_page::render(
                                         self.launchers.clone(),
+                                        file_button,
                                         cx.listener(|workspace, _, window, cx| {
                                             workspace.open_settings_file(window, cx)
                                         }),

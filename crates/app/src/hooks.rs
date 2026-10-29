@@ -1,3 +1,4 @@
+use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 #[cfg(unix)]
@@ -17,6 +18,51 @@ const HOOK_PROGRAM: &str = "agentws-hook";
 /// Ends the name of an instance's Claude settings file, after `agentws-<pid>`.
 const CLAUDE_SETTINGS_SUFFIX: &str = "-claude-settings.json";
 
+/// Why the status hooks could not start.
+#[derive(Debug)]
+pub enum HooksError {
+    /// The hook program is not installed next to the app executable (its expected path).
+    HookProgramMissing(PathBuf),
+    /// The socket or named pipe the hooks report to could not be opened.
+    Server(io::Error),
+    /// The Claude Code settings file could not be written.
+    SettingsWrite { path: PathBuf, error: io::Error },
+    /// Anything else, e.g. the app's own path could not be read.
+    Other(io::Error),
+}
+
+impl HooksError {
+    /// The warning the user sees: the cause and, where there is one, the fix.
+    pub fn warning(&self) -> String {
+        let cause = match self {
+            Self::HookProgramMissing(path) => {
+                let name = path
+                    .file_name()
+                    .map_or(HOOK_PROGRAM.into(), |name| name.to_string_lossy());
+                format!("{name} not found next to the app. Reinstall to fix.")
+            }
+            Self::Server(error) => {
+                format!("could not start the status listener ({error}). Restart the app to retry.")
+            }
+            Self::SettingsWrite { path, error } => {
+                format!("could not write {} ({error}).", path.display())
+            }
+            Self::Other(error) => format!("{error}."),
+        };
+        format!("Agent status is off: {cause}")
+    }
+}
+
+impl fmt::Display for HooksError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HookProgramMissing(path) => write!(f, "{} not found", path.display()),
+            Self::Server(error) | Self::Other(error) => error.fmt(f),
+            Self::SettingsWrite { path, error } => write!(f, "{}: {error}", path.display()),
+        }
+    }
+}
+
 /// Receives Claude Code status hooks, Copilot permission hooks and extension mode reports.
 pub struct ClaudeHooks {
     server: HookServer,
@@ -27,17 +73,18 @@ pub struct ClaudeHooks {
 
 impl ClaudeHooks {
     /// Start the hook server and write the settings. `on_message` runs on a server thread.
-    pub fn start(on_message: impl Fn(HookMessage) + Send + Sync + 'static) -> io::Result<Self> {
-        let hook_program = std::env::current_exe()?
+    pub fn start(
+        on_message: impl Fn(HookMessage) + Send + Sync + 'static,
+    ) -> Result<Self, HooksError> {
+        let hook_program = std::env::current_exe()
+            .map_err(HooksError::Other)?
             .with_file_name(HOOK_PROGRAM)
             .with_extension(std::env::consts::EXE_EXTENSION);
         if !hook_program.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("{} not found", hook_program.display()),
-            ));
+            return Err(HooksError::HookProgramMissing(hook_program));
         }
-        let server = HookServer::start(default_pipe_name(), on_message)?;
+        let server =
+            HookServer::start(default_pipe_name(), on_message).map_err(HooksError::Server)?;
         let settings_dir = settings_dir();
         if let Err(error) = sweep_stale_files(&settings_dir, processes::is_running) {
             log::warn!("could not sweep stale hook settings and Copilot plugins: {error}");
@@ -47,7 +94,13 @@ impl ClaudeHooks {
             "agentws-{}{CLAUDE_SETTINGS_SUFFIX}",
             std::process::id()
         ));
-        write_private(&settings_path, claude_settings(&hook_program)?.as_bytes())?;
+        let settings = claude_settings(&hook_program).map_err(HooksError::Other)?;
+        if let Err(error) = write_private(&settings_path, settings.as_bytes()) {
+            return Err(HooksError::SettingsWrite {
+                path: settings_path,
+                error,
+            });
+        }
         Ok(Self {
             server,
             settings_path,
@@ -61,8 +114,8 @@ impl ClaudeHooks {
     }
 
     /// Attach status hooks to Claude Code or the mode bridge to Copilot. Only Claude Code
-    /// reports activity through hooks; Copilot adds only permission requests and keeps using
-    /// terminal progress for Working/Idle. The result selects Claude's hooks-only reporting.
+    /// reports activity through hooks; Copilot's hooks only add and end Waiting (permission
+    /// requests, questions) and it keeps using terminal progress for Working/Idle. The result selects Claude's hooks-only reporting.
     pub fn attach(&self, session: u64, spec: &mut LaunchSpec) -> bool {
         if spec.kind == SessionKind::Shell {
             return false;

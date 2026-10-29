@@ -44,17 +44,11 @@ that runs Claude Code, Copilot CLI and shells side by side in tabs, on Windows a
 4. **Cover edge cases**: empty, error and loading states, narrow window, many tabs.
 5. **Recommend one** with a one-line reason. Say when the choice needs the user instead
    (it changes or contradicts `FEATURES.md`, or it is a matter of product direction).
-6. **Record it**: append one entry per question to `docs/ux-decisions.md` (create it with a
-   `# UX/UI decisions` title if missing; never rewrite earlier entries):
-
-   ```
-   ## <question in one line>
-   - Date: <YYYY-MM-DD>, step: <slug>, raised by: <Step 0 | agent 1 | REVIEW.md #n>
-   - Context: <one or two lines>
-   - Option A — <name>: <what it is>. Pros: <...>. Cons: <...>.
-   - Option B — ...
-   - Decision: <option>, because <reason>. Decided by: UX/UI agent
-   ```
+6. **Record it** in `docs/ux-decisions.md`, following the rule at its top: one short bullet
+   per decision under the matching section (the choice, why, the main rejected alternative
+   only if it explains the choice, `[UX agent]`), no values or code details copied from the
+   code. Update an earlier entry the decision changes instead of appending a new one; never
+   change a `[user]` decision. Options with pros and cons go in your report, not the file.
 
 ## Rules
 

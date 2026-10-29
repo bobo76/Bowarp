@@ -4,6 +4,7 @@ use term_core::alacritty_terminal::index::{Column, Point as GridPoint, Side};
 use term_core::alacritty_terminal::selection::{Selection, SelectionType};
 use term_core::alacritty_terminal::term::{Config, Term};
 use term_core::alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+use term_core::dim;
 
 fn searchable_term(text: &str) -> (Term<VoidListener>, TerminalSearch) {
     let mut term = Term::new(Config::default(), &TermDimensions::new(30, 3), VoidListener);
@@ -26,7 +27,10 @@ fn search_paints_all_matches_and_distinguishes_the_active_match() {
         .collect();
     assert_eq!(
         colors,
-        [(0, 3, ACTIVE_SEARCH_BACKGROUND), (4, 3, SEARCH_BACKGROUND)]
+        [
+            (0, 3, Palette::default().active_search),
+            (4, 3, Palette::default().search)
+        ]
     );
     search.step(workspace_model::layout::Direction::Down);
     search.refresh(&mut term);
@@ -38,7 +42,10 @@ fn search_paints_all_matches_and_distinguishes_the_active_match() {
         .collect();
     assert_eq!(
         colors,
-        [(0, 3, SEARCH_BACKGROUND), (4, 3, ACTIVE_SEARCH_BACKGROUND)]
+        [
+            (0, 3, Palette::default().search),
+            (4, 3, Palette::default().active_search)
+        ]
     );
     let painted = snapshot(
         term.renderable_content(),
@@ -65,8 +72,8 @@ fn selection_takes_precedence_over_search_highlights() {
         false,
         &search,
     );
-    assert_eq!(painted.backgrounds.0[0].color, SELECTION_BACKGROUND);
-    assert_eq!(painted.backgrounds.0[1].color, SEARCH_BACKGROUND);
+    assert_eq!(painted.backgrounds.0[0].color, Palette::default().selection);
+    assert_eq!(painted.backgrounds.0[1].color, Palette::default().search);
 }
 
 #[test]
@@ -80,7 +87,7 @@ fn search_does_not_reveal_hidden_text() {
     );
     let matched = &painted.batches[0];
     assert_eq!(matched.text.trim_end(), "one");
-    assert_eq!(matched.style.foreground, ACTIVE_SEARCH_BACKGROUND);
+    assert_eq!(matched.style.foreground, Palette::default().active_search);
 }
 
 const RED: Rgb = Rgb {
@@ -167,27 +174,48 @@ fn background_gap_or_new_line_starts_a_new_rect() {
 
 #[test]
 fn plain_cell_keeps_its_colors() {
-    assert_eq!(cell_colors(Flags::empty(), RED, BLUE, false), (RED, BLUE));
+    assert_eq!(
+        cell_colors(&Palette::default(), Flags::empty(), RED, BLUE, false),
+        (RED, BLUE)
+    );
 }
 
 #[test]
 fn dim_darkens_the_foreground() {
-    assert_eq!(cell_colors(Flags::DIM, RED, BLUE, false), (dim(RED), BLUE));
+    assert_eq!(
+        cell_colors(&Palette::default(), Flags::DIM, RED, BLUE, false),
+        (dim(RED), BLUE)
+    );
 }
 
 #[test]
 fn inverse_swaps_after_dim() {
     assert_eq!(
-        cell_colors(Flags::DIM | Flags::INVERSE, RED, BLUE, false),
+        cell_colors(
+            &Palette::default(),
+            Flags::DIM | Flags::INVERSE,
+            RED,
+            BLUE,
+            false
+        ),
         (BLUE, dim(RED))
     );
 }
 
 #[test]
 fn hidden_text_takes_the_background_color() {
-    assert_eq!(cell_colors(Flags::HIDDEN, RED, BLUE, false), (BLUE, BLUE));
     assert_eq!(
-        cell_colors(Flags::HIDDEN | Flags::INVERSE, RED, BLUE, false),
+        cell_colors(&Palette::default(), Flags::HIDDEN, RED, BLUE, false),
+        (BLUE, BLUE)
+    );
+    assert_eq!(
+        cell_colors(
+            &Palette::default(),
+            Flags::HIDDEN | Flags::INVERSE,
+            RED,
+            BLUE,
+            false
+        ),
         (RED, RED)
     );
 }
@@ -195,8 +223,8 @@ fn hidden_text_takes_the_background_color() {
 #[test]
 fn selection_replaces_the_background() {
     assert_eq!(
-        cell_colors(Flags::INVERSE, RED, BLUE, true),
-        (BLUE, SELECTION_BACKGROUND)
+        cell_colors(&Palette::default(), Flags::INVERSE, RED, BLUE, true),
+        (BLUE, Palette::default().selection)
     );
 }
 

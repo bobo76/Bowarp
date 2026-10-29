@@ -28,8 +28,8 @@ use gpui_kit::{
 use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::term::TermMode;
 use term_core::{
-    EventCallback, ExecutedCommand, LaunchSpec, Palette, Session, SessionEvent, SessionKind,
-    TermDimensions, TerminalSearch,
+    EventCallback, ExecutedCommand, LaunchSpec, Session, SessionEvent, SessionKind, TermDimensions,
+    TerminalSearch,
 };
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
@@ -229,6 +229,9 @@ pub struct TerminalView {
     /// IME composition text not yet committed.
     pub(crate) marked_text: Option<String>,
     pub(crate) history_popup: Option<HistoryPopup>,
+    /// The shell's launcher id, which its commands are kept under in the history
+    /// (`launcher::shell_key`); set once when the session starts.
+    pub(crate) shell_key: String,
     pub(crate) last_command: workspace_model::LastCommand,
     last_command_supported: bool,
     /// How many "Clear saved session commands" requests this tab has handled.
@@ -258,17 +261,25 @@ impl TerminalView {
         id: u64,
         spec: &LaunchSpec,
         reporting: StatusReporting,
+        shell_key: String,
         cx: &mut App,
     ) -> io::Result<Entity<Self>> {
         let (sender, mut receiver) = mpsc::unbounded();
         let callback: EventCallback = Arc::new(move |event| {
             let _ = sender.unbounded_send(event);
         });
+        let palette = settings_file::terminal_palette(cx);
+        // Tells programs that read it at start whether the background is dark or light; it
+        // goes stale if the terminal colors change later (OSC 11 answers follow).
+        let mut colored_spec = spec.clone();
+        colored_spec
+            .env
+            .insert("COLORFGBG".into(), palette.colorfgbg().into());
         let session = Session::spawn(
             id,
-            spec,
+            &colored_spec,
             TermDimensions::new(INITIAL_TERMINAL_COLUMNS, INITIAL_TERMINAL_LINES),
-            Palette::default(),
+            palette,
             callback,
         )?;
 
@@ -283,7 +294,7 @@ impl TerminalView {
                     }
                 }
             });
-            Self::new(session, spec, reporting, session_events, cx)
+            Self::new(session, spec, reporting, shell_key, session_events, cx)
         }))
     }
 
@@ -291,6 +302,7 @@ impl TerminalView {
         session: Session,
         spec: &LaunchSpec,
         reporting: StatusReporting,
+        shell_key: String,
         session_events: Task<()>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -303,8 +315,13 @@ impl TerminalView {
         })
         .detach();
         // Turning a history or last-command switch off closes the popup and drops suggestions
-        // at once.
+        // at once; other terminal colors repaint the terminal.
         cx.observe_global::<AppSettings>(|view, cx| {
+            let palette = settings_file::terminal_palette(cx);
+            if palette != view.session.palette() {
+                view.session.set_palette(palette);
+                cx.notify();
+            }
             let features = settings_file::workspace_features(cx);
             if features == view.workspace_features {
                 return;
@@ -336,6 +353,7 @@ impl TerminalView {
             geometry: None,
             marked_text: None,
             history_popup: None,
+            shell_key,
             last_command: workspace_model::LastCommand::default(),
             last_command_supported: spec.kind == SessionKind::Shell
                 && spec.mark_token.is_some()
@@ -370,6 +388,7 @@ impl TerminalView {
             session,
             spec,
             StatusReporting::OutputActivity,
+            launcher::shell_key(&[], spec),
             Task::ready(()),
             cx,
         )
@@ -487,6 +506,10 @@ impl TerminalView {
                 TabStatus::Running
             }
             ProcessState::Running if self.activity_task.is_some() => TabStatus::Active,
+            // With hooks a Claude tab always has an agent: none means they are off.
+            ProcessState::Running if self.kind() == SessionKind::ClaudeCode => {
+                TabStatus::Unavailable
+            }
             ProcessState::Running => TabStatus::Quiet,
         }
     }
@@ -596,15 +619,15 @@ impl TerminalView {
             AgentEvent::Hook(event) if self.kind() == SessionKind::ClaudeCode => {
                 self.update_agent(|agent| agent.apply(event, at), cx);
             }
-            AgentEvent::Hook(event @ agent_status::HookEvent::InputRequested(_))
-                if self.kind() == SessionKind::CopilotCli =>
-            {
+            AgentEvent::Hook(event) if self.kind() == SessionKind::CopilotCli => {
                 // Permission hooks can arrive before the first terminal progress report.
-                if self.agent.is_none() {
+                if self.agent.is_none()
+                    && matches!(event, agent_status::HookEvent::InputRequested(_))
+                {
                     self.agent = Some(AgentTracker::new(Instant::now()));
                     self.activity_task = None;
                 }
-                self.update_agent(|agent| agent.apply(event, at), cx);
+                self.update_agent(|agent| agent.apply_copilot_hook(event, at), cx);
             }
             AgentEvent::ModeChanged(mode)
                 if self.kind() == SessionKind::CopilotCli && self.mode.apply(mode, at) =>
@@ -735,16 +758,16 @@ impl TerminalView {
         {
             cx.emit(LastCommandChanged);
         }
-        history::record(command, cx);
+        history::record(command, &self.shell_key, cx);
     }
 
     /// Apply a forgotten command and a "clear saved session commands" request to this tab's
     /// saved last command. Returns whether it changed.
     fn sync_last_command_with_history(&mut self, cx: &Context<Self>) -> bool {
         let history = cx.global::<history::History>();
-        let forgotten = history
-            .forgotten()
-            .is_some_and(|command| self.last_command.forget(command));
+        let forgotten = history.forgotten().is_some_and(|(command, scope)| {
+            scope.covers(Some(&self.shell_key)) && self.last_command.forget(command)
+        });
         let cleared = history.saved_cleared() != self.saved_cleared_seen;
         self.saved_cleared_seen = history.saved_cleared();
         let cleared = cleared && self.last_command.clear();

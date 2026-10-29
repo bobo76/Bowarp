@@ -196,6 +196,39 @@ fn push_children<'a>(
     }
 }
 
+/// Which of `rows` (as [`visible_rows`] gives them) git ignores: an entry whose name is in its
+/// folder's ignored names (`ignored_in`, `None` when not known), and everything under an
+/// ignored folder. The root never is.
+pub fn ignored_rows<'a>(
+    rows: &[TreeRow],
+    ignored_in: impl Fn(&Path) -> Option<&'a HashSet<String>>,
+) -> Vec<bool> {
+    // Whether the row at each depth of the current branch is ignored.
+    let mut branch: Vec<bool> = Vec::new();
+    rows.iter()
+        .map(|row| {
+            branch.truncate(row.depth);
+            let ignored = row.depth > 0
+                && (branch.last() == Some(&true)
+                    || row
+                        .path
+                        .parent()
+                        .and_then(&ignored_in)
+                        .is_some_and(|names| names.contains(&row.name)));
+            branch.push(ignored);
+            ignored
+        })
+        .collect()
+}
+
+/// Whether a batch of changed `paths` touches a `.gitignore`, which can change what git
+/// ignores in every folder under it.
+pub fn touches_gitignore(paths: &[PathBuf]) -> bool {
+    paths
+        .iter()
+        .any(|path| path.file_name().is_some_and(|name| name == ".gitignore"))
+}
+
 /// `path` relative to `root` (`.` for the root itself), or the whole path when it is not
 /// under `root`.
 pub fn relative_path(root: &Path, path: &Path) -> String {

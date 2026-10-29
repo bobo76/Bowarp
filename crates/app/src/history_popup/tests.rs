@@ -84,7 +84,7 @@ fn restored_command_is_one_shot_and_never_accepted_by_tab_or_enter(
         view.close_history_popup(cx);
         view.restore_last_command(Some("git push".into()), cx);
     });
-    cx.update(|cx| history::forget("git push", cx));
+    cx.update(|cx| history::forget("git push", &HistoryScope::All, cx));
     cx.run_until_parked();
     view.read_with(cx, |view, _| assert_eq!(view.last_command(), None));
     view.update(cx, |view, cx| {
@@ -147,6 +147,7 @@ fn history_switches_apply_live_pass_keys_through_and_keep_data(cx: &mut gpui_kit
                 command: "cargo test".into(),
                 folder: None,
             },
+            "sh",
             cx,
         );
     });
@@ -289,7 +290,7 @@ fn history_switches_apply_live_pass_keys_through_and_keep_data(cx: &mut gpui_kit
             0,
             "{restore} {remember_on}: no LastCommandChanged"
         );
-        cx.update(|cx| crate::history::forget("brand new command", cx));
+        cx.update(|cx| crate::history::forget("brand new command", &HistoryScope::All, cx));
         cx.run_until_parked();
     }
     remember(cx, true, true);
@@ -297,7 +298,7 @@ fn history_switches_apply_live_pass_keys_through_and_keep_data(cx: &mut gpui_kit
         view.dispatch_test_event(executed("brand new command"), cx);
         assert_eq!(view.last_command(), Some("brand new command"));
     });
-    cx.update(|cx| crate::history::forget("brand new command", cx));
+    cx.update(|cx| crate::history::forget("brand new command", &HistoryScope::All, cx));
     cx.run_until_parked();
     set(cx, true, true, false);
 
@@ -350,6 +351,7 @@ fn rendering_new_prompt_text_resets_only_the_presented_selection() {
             hidden_below: 4,
         },
         query: Some("old".into()),
+        scope: HistoryScope::All,
     };
     assert_eq!(
         popup.visible_selection("new", 12, 3),
@@ -373,6 +375,7 @@ fn resizing_keeps_the_selection_visible_without_mutating_navigation() {
             hidden_below: 4,
         },
         query: Some("same".into()),
+        scope: HistoryScope::All,
     };
     assert_eq!(
         popup.visible_selection("same", 12, 1),
@@ -455,6 +458,7 @@ fn prompt_events_and_history_changes_reconcile_the_open_popup(cx: &mut gpui_kit:
                     command: command.into(),
                     folder: None,
                 },
+                "sh",
                 cx,
             );
         }
@@ -536,7 +540,7 @@ fn prompt_events_and_history_changes_reconcile_the_open_popup(cx: &mut gpui_kit:
         0
     );
     cx.simulate_keystrokes("up");
-    cx.update(|_, cx| history::forget("git status", cx));
+    cx.update(|_, cx| history::forget("git status", &HistoryScope::All, cx));
     draw(&mut cx, &view, &events);
     assert_eq!(
         view.read_with(&cx, |view, _| {
@@ -546,11 +550,159 @@ fn prompt_events_and_history_changes_reconcile_the_open_popup(cx: &mut gpui_kit:
     );
     cx.simulate_keystrokes("delete");
     draw(&mut cx, &view, &events);
-    cx.update(|_, cx| assert!(cx.global::<History>().commands().matching("git").is_empty()));
+    cx.update(|_, cx| {
+        assert!(
+            cx.global::<History>()
+                .commands()
+                .matching("git", &HistoryScope::All)
+                .is_empty()
+        )
+    });
     cx.simulate_keystrokes("escape");
     draw(&mut cx, &view, &events);
     view.read_with(&cx, |view, cx| {
         assert!(view.history_popup.is_none());
         assert!(view.history_suggestion(cx).is_none());
     });
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn popup_lists_and_forgets_per_shell_and_alt_letter_switches_chips(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use std::sync::{Arc, mpsc};
+    use std::time::{Duration, Instant};
+
+    use gpui_kit::AppContext;
+    use term_core::{ExecutedCommand, LaunchSpec, Palette, Session, TermDimensions};
+
+    cx.update(|cx| {
+        crate::settings_file::init_in_memory(cx);
+        history::init_in_memory(cx);
+        for (command, shell) in [
+            ("git status", "sh"),
+            ("git log", "zsh"),
+            ("Get-Item", "pwsh"),
+            ("git stash", "zsh"),
+        ] {
+            let command = ExecutedCommand {
+                command: command.into(),
+                folder: None,
+            };
+            history::record(command, shell, cx);
+        }
+    });
+    let mut spec = LaunchSpec::new(
+        SessionKind::Shell,
+        Some("/bin/sh".into()),
+        vec![
+            "-c".into(),
+            r"printf '\033]133;A;aw=tok\007$ \033]133;B;aw=tok\007git'; read line".into(),
+        ],
+        None,
+    );
+    spec.mark_token = Some("tok".into());
+    let (sender, events) = mpsc::channel();
+    let session = Session::spawn(
+        1,
+        &spec,
+        TermDimensions::new(80, 24),
+        Palette::default(),
+        Arc::new(move |event| {
+            let _ = sender.send(event);
+        }),
+    )
+    .unwrap();
+    let view = cx.new(|cx| TerminalView::from_test_session(session, &spec, cx));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !view.read_with(cx, |view, _| {
+        view.prompt_input().is_some_and(|input| input.text == "git")
+    }) {
+        view.update(cx, |view, cx| {
+            for event in events.try_iter() {
+                view.dispatch_test_event(event, cx);
+            }
+        });
+        assert!(Instant::now() < deadline, "prompt did not arrive");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let press = |cx: &mut gpui_kit::TestAppContext, key: &str| {
+        view.update(cx, |view, cx| {
+            view.handle_history_key(&Keystroke::parse(key).unwrap(), cx)
+        })
+    };
+    let listed = |cx: &mut gpui_kit::TestAppContext| {
+        view.read_with(cx, |view, cx| {
+            let chips = view.history_chips(cx);
+            let scope = view.history_scope(&chips);
+            let history = cx.global::<History>().commands();
+            let commands: Vec<String> = history
+                .matching("git", &scope)
+                .iter()
+                .map(|entry| entry.command.clone())
+                .collect();
+            (scope, commands)
+        })
+    };
+    let shell = |key: &str| HistoryScope::Shell(key.into());
+
+    view.read_with(cx, |view, cx| {
+        assert_eq!(view.shell_key, "sh");
+        // The inline suggestion comes from this tab's shell only.
+        assert_eq!(view.history_suggestion(cx), Some(" status".into()));
+    });
+    assert!(press(cx, "up"));
+    view.read_with(cx, |view, cx| {
+        let labels: Vec<String> = view
+            .history_chips(cx)
+            .into_iter()
+            .map(|chip| chip.label)
+            .collect();
+        assert_eq!(labels, ["All", "PowerShell", "sh", "Zsh"]);
+    });
+    assert_eq!(listed(cx), (shell("sh"), vec!["git status".into()]));
+    assert!(press(cx, "alt-z"));
+    assert_eq!(
+        listed(cx),
+        (shell("zsh"), vec!["git log".into(), "git stash".into()])
+    );
+    // Shift is allowed; Ctrl+Alt (AltGr) and unused letters go to the shell.
+    assert!(press(cx, "alt-shift-a"));
+    assert_eq!(listed(cx).0, HistoryScope::All);
+    assert!(!press(cx, "ctrl-alt-z"));
+    assert!(view.read_with(cx, |view, _| view.history_popup.is_none()));
+    assert!(press(cx, "up"));
+    assert!(!press(cx, "alt-b"));
+    assert!(view.read_with(cx, |view, _| view.history_popup.is_none()));
+
+    // Delete under a shell forgets there only, and the saved last command follows suit.
+    view.update(cx, |view, cx| {
+        view.restore_last_command(Some("git stash".into()), cx)
+    });
+    assert!(press(cx, "up"));
+    assert!(press(cx, "alt-z"));
+    assert!(press(cx, "delete"));
+    cx.run_until_parked();
+    assert_eq!(listed(cx), (shell("zsh"), vec!["git log".into()]));
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.last_command(), Some("git stash"))
+    });
+    view.update(cx, |view, cx| {
+        view.restore_last_command(Some("git status".into()), cx)
+    });
+    cx.update(|cx| history::forget("git status", &shell("sh"), cx));
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| assert_eq!(view.last_command(), None));
+    // The own chip stays, empty; the rest shows under "All".
+    view.read_with(cx, |view, cx| {
+        let chips = view.history_chips(cx);
+        assert_eq!(
+            view.empty_history_text(&chips, &shell("sh"), cx),
+            "No sh commands yet · Alt+A: all shells"
+        );
+    });
+    assert!(press(cx, "alt-a"));
+    assert!(press(cx, "delete"));
+    assert_eq!(listed(cx), (HistoryScope::All, vec![]));
 }

@@ -70,7 +70,7 @@ fn settings_toggle_focuses_then_closes_and_restores_the_terminal(cx: &mut TestAp
                 viewer: None,
                 _view_events: events,
             });
-            workspace.layout.add(1, None);
+            workspace.layout.add(1);
             workspace.activate(0, window, cx);
             workspace.toggle_settings(window, cx);
         });

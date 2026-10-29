@@ -24,10 +24,7 @@ fn search_shortcuts_keep_input_out_of_the_program(cx: &mut TestAppContext) {
         super::super::init(cx);
     });
     #[cfg(windows)]
-    let (program, args) = (
-        "powershell",
-        vec!["-NoProfile", "-NonInteractive", "-Command", "exit 0"],
-    );
+    let (program, args) = ("cmd", vec!["/C", "exit 0"]);
     #[cfg(not(windows))]
     let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
     let spec = LaunchSpec::new(
@@ -64,6 +61,7 @@ fn search_shortcuts_keep_input_out_of_the_program(cx: &mut TestAppContext) {
                 session,
                 &spec,
                 super::super::StatusReporting::OutputActivity,
+                "sh".into(),
                 Task::ready(()),
                 cx,
             )

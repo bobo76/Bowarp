@@ -26,6 +26,7 @@ pub mod file_view;
 mod git;
 mod history;
 mod history_features;
+mod history_shells;
 mod instance_lock;
 mod keymap;
 mod lap;
@@ -62,12 +63,15 @@ pub use close_warning::{
 pub use file_pane_features::{
     FileLinkAction, FilePaneFeatures, PaneChange, PaneEntry, pane_change,
 };
-pub use git::{GitHead, lines_added};
+pub use git::{GitHead, ignored_names, lines_added};
 pub use history::{
-    CommandHistory, HistoryEntry, HistorySelection, append_entry, clear_history_file, entry_line,
-    is_recordable, remove_command,
+    CommandHistory, HistoryEntry, HistoryScope, HistorySelection, append_entry, clear_history_file,
+    entry_line, is_recordable, remove_command,
 };
 pub use history_features::{HistoryFeatures, HistoryKey};
+pub use history_shells::{
+    KnownShell, ShellChip, history_chips, shell_key, shell_name, switch_chip,
+};
 pub use instance_lock::{held_by_other, lock_pid, lock_text};
 pub use keymap::{
     HeldModifiers, KeybindingOverlay, Keymap, KeymapProblem, KeymapReason, Shortcut, action_label,
@@ -91,7 +95,7 @@ pub use running::{
 pub use search::{SearchedTab, TabQuery, step_match};
 pub use settings::{
     DependentState, FeatureSwitch, FontSize, Settings, SettingsFile, SettingsLoad, TabCardField,
-    TabCardFields, UiTheme, installed_font_family, settings_backup_path,
+    TabCardFields, TerminalColors, UiTheme, installed_font_family, settings_backup_path,
 };
 pub use tab::{TabColor, TabMeta};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};

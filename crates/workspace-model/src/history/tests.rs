@@ -2,7 +2,13 @@ use super::*;
 use crate::git::tests::TempDir;
 
 fn entry(command: &str, time: u64) -> HistoryEntry {
-    HistoryEntry::new(command, Some("/tmp".into()), time)
+    HistoryEntry::new(command, Some("/tmp".into()), time).in_shell("bash")
+}
+
+const ALL: HistoryScope = HistoryScope::All;
+
+fn shell(key: &str) -> HistoryScope {
+    HistoryScope::Shell(key.into())
 }
 
 fn commands(history: &CommandHistory) -> Vec<&str> {
@@ -18,7 +24,7 @@ fn latest_use_wins() {
     let mut history = CommandHistory::new(10);
     history.add(entry("ls", 1));
     history.add(entry("cd src", 2));
-    history.add(HistoryEntry::new("ls", Some("/home".into()), 3));
+    history.add(HistoryEntry::new("ls", Some("/home".into()), 3).in_shell("bash"));
     assert_eq!(commands(&history), ["cd src", "ls"]);
     assert_eq!(history.entries()[1].dir, Some("/home".into()));
     assert_eq!(history.entries()[1].time, 3);
@@ -49,13 +55,14 @@ fn suggestion_is_the_rest_of_the_newest_prefix_match() {
     history.add(entry("clear", 1));
     history.add(entry("cargo test", 2));
     history.add(entry("cargo build", 3));
-    assert_eq!(history.suggestion("c"), Some("argo build"));
-    assert_eq!(history.suggestion("cl"), Some("ear"));
-    assert_eq!(history.suggestion("cargo t"), Some("est"));
-    assert_eq!(history.suggestion("clear"), None);
-    assert_eq!(history.suggestion("Cl"), None);
-    assert_eq!(history.suggestion(""), None);
-    assert_eq!(history.suggestion("x"), None);
+    let suggest = |typed| history.suggestion(typed, "bash");
+    assert_eq!(suggest("c"), Some("argo build"));
+    assert_eq!(suggest("cl"), Some("ear"));
+    assert_eq!(suggest("cargo t"), Some("est"));
+    assert_eq!(suggest("clear"), None);
+    assert_eq!(suggest("Cl"), None);
+    assert_eq!(suggest(""), None);
+    assert_eq!(suggest("x"), None);
 }
 
 #[test]
@@ -66,17 +73,17 @@ fn matching_is_a_case_insensitive_substring_oldest_first() {
     history.add(entry("cd VI_opl", 3));
     history.add(entry("cd vi_afp/", 4));
     let found: Vec<&str> = history
-        .matching(" vi ")
+        .matching(" vi ", &ALL)
         .iter()
         .map(|entry| entry.command.as_str())
         .collect();
     assert_eq!(found, ["cd vi", "cd VI_opl", "cd vi_afp/"]);
-    assert_eq!(history.matching("").len(), 4);
-    assert!(history.matching("zzz").is_empty());
+    assert_eq!(history.matching("", &ALL).len(), 4);
+    assert!(history.matching("zzz", &ALL).is_empty());
     history.add(entry("echo \u{c9}t\u{c9}", 5));
-    assert_eq!(history.matching("\u{e9}t\u{e9}").len(), 1);
-    assert_eq!(history.matching("O T").len(), 0);
-    assert_eq!(history.matching("ECHO").len(), 1);
+    assert_eq!(history.matching("\u{e9}t\u{e9}", &ALL).len(), 1);
+    assert_eq!(history.matching("O T", &ALL).len(), 0);
+    assert_eq!(history.matching("ECHO", &shell("bash")).len(), 1);
 }
 
 #[test]
@@ -184,14 +191,14 @@ fn removed_commands_leave_the_history_and_the_file() {
     let mut history = CommandHistory::new(10);
     history.add(entry("ls", 1));
     history.add(entry("cd src", 2));
-    assert!(history.remove("ls"));
-    assert!(!history.remove("ls"));
+    assert!(history.remove("ls", &ALL));
+    assert!(!history.remove("ls", &ALL));
     assert_eq!(commands(&history), ["cd src"]);
 
     let dir = std::env::temp_dir().join(format!("agentws-remove-{}", std::process::id()));
     let path = dir.join("history.jsonl");
     let _ = fs::remove_dir_all(&dir);
-    remove_command(&path, "ls").unwrap();
+    remove_command(&path, "ls", &ALL).unwrap();
     // Earlier uses of the command are in the file too; a damaged line stays.
     for (time, command) in [(1, "ls"), (2, "cd src"), (3, "ls")] {
         append_entry(&path, &entry(command, time)).unwrap();
@@ -201,7 +208,7 @@ fn removed_commands_leave_the_history_and_the_file() {
         [fs::read(&path).unwrap(), b"{\"cmd\":\"pw\n".to_vec()].concat(),
     )
     .unwrap();
-    remove_command(&path, "ls").unwrap();
+    remove_command(&path, "ls", &ALL).unwrap();
     let text = fs::read_to_string(&path).unwrap();
     assert_eq!(text.lines().count(), 2, "{text}");
     assert!(text.contains("cd src") && text.contains("pw") && !text.contains("\"ls\""));
@@ -296,7 +303,7 @@ fn concurrent_append_delete_and_compaction_preserve_other_commands() {
                     )
                     .unwrap();
                     append_entry(path, &entry("remove me", index)).unwrap();
-                    remove_command(path, "remove me").unwrap();
+                    remove_command(path, "remove me", &ALL).unwrap();
                     CommandHistory::load(path, 100);
                 }
             });
@@ -328,4 +335,148 @@ fn clearing_empties_memory_and_the_file_and_tolerates_a_missing_file() {
     assert!(CommandHistory::load(&path, 10).is_empty());
     append_entry(&path, &entry("after", 3)).unwrap();
     assert_eq!(commands(&CommandHistory::load(&path, 10)), ["after"]);
+}
+
+#[test]
+fn entries_saved_before_shells_load_without_one_and_round_trip() {
+    let text = concat!(
+        "{\"cmd\":\"ls\",\"time\":1}\n",
+        "{\"cmd\":\"dir\",\"time\":2,\"shell\":\"pwsh\"}\n",
+    );
+    let (history, _) = CommandHistory::from_jsonl(text, 10);
+    assert_eq!(history.entries()[0].shell, None);
+    assert_eq!(history.entries()[1].shell.as_deref(), Some("pwsh"));
+    assert_eq!(history.shells().collect::<Vec<_>>(), [None, Some("pwsh")]);
+    // No shell writes no field: the line reads the same in an older version.
+    assert_eq!(history.to_jsonl(), text);
+    assert_eq!(
+        entry_line(&HistoryEntry::new("ls", None, 1).in_shell("wsl:Ubuntu")).unwrap(),
+        "{\"cmd\":\"ls\",\"time\":1,\"shell\":\"wsl:Ubuntu\"}\n"
+    );
+    // Commands without a shell show only under "All" and are never suggested.
+    assert!(
+        history
+            .matching("", &shell("pwsh"))
+            .iter()
+            .all(|e| e.command == "dir")
+    );
+    assert_eq!(history.matching("", &ALL).len(), 2);
+    assert_eq!(history.suggestion("l", "pwsh"), None);
+}
+
+#[test]
+fn commands_are_kept_once_per_shell_and_capped_per_shell() {
+    let run = |command: &str, key: &str, time| HistoryEntry::new(command, None, time).in_shell(key);
+    let mut history = CommandHistory::new(2);
+    history.add(run("ls", "bash", 1));
+    history.add(run("ls", "pwsh", 2));
+    history.add(run("ls", "bash", 3));
+    assert_eq!(commands(&history), ["ls", "ls"]);
+    assert_eq!(history.count_in(&shell("bash")), 1);
+    // A busy shell drops its own oldest commands, not the other shell's.
+    for (time, command) in ["a", "b", "c"].into_iter().enumerate() {
+        history.add(run(command, "bash", 10 + time as u64));
+    }
+    assert_eq!(commands(&history), ["ls", "b", "c"]);
+    assert_eq!(history.count_in(&shell("pwsh")), 1);
+    assert_eq!(history.count_in(&shell("bash")), 2);
+    assert_eq!(history.count_in(&shell("zsh")), 0);
+    assert_eq!(history.count_in(&ALL), 3);
+
+    let (reloaded, _) = CommandHistory::from_jsonl(&history.to_jsonl(), 2);
+    assert_eq!(reloaded, history);
+
+    // The file keeps the same rules: once per shell, the newest of each shell up to the cap.
+    let text = concat!(
+        "{\"cmd\":\"x\",\"shell\":\"pwsh\"}\n",
+        "{\"cmd\":\"a\",\"shell\":\"bash\"}\n",
+        "{\"cmd\":\"b\",\"shell\":\"bash\"}\n",
+        "{\"cmd\":\"a\",\"shell\":\"pwsh\"}\n",
+        "{\"cmd\":\"c\",\"shell\":\"bash\"}\n",
+        "{\"cmd\":\"b\",\"shell\":\"bash\"}\n",
+    );
+    let (loaded, _) = CommandHistory::from_jsonl(text, 2);
+    let pairs: Vec<(&str, Option<&str>)> = loaded
+        .entries()
+        .iter()
+        .map(|entry| (entry.command.as_str(), entry.shell.as_deref()))
+        .collect();
+    assert_eq!(
+        pairs,
+        [
+            ("x", Some("pwsh")),
+            ("a", Some("pwsh")),
+            ("c", Some("bash")),
+            ("b", Some("bash"))
+        ]
+    );
+    // Compaction counts what is kept, not one shell's cap.
+    assert!(!loaded.needs_compaction(5));
+    assert!(loaded.needs_compaction(6));
+}
+
+#[test]
+fn suggestions_come_from_the_own_shell_and_all_lists_a_command_once() {
+    let run = |command: &str, key: &str, time| {
+        HistoryEntry::new(command, Some(format!("/{key}").into()), time).in_shell(key)
+    };
+    let mut history = CommandHistory::new(10);
+    history.add(run("git status", "bash", 1));
+    history.add(run("Get-ChildItem", "pwsh", 2));
+    history.add(run("git stash", "pwsh", 3));
+    history.add(run("git status", "pwsh", 4));
+    assert_eq!(history.suggestion("g", "bash"), Some("it status"));
+    assert_eq!(history.suggestion("G", "bash"), None);
+    assert_eq!(history.suggestion("G", "pwsh"), Some("et-ChildItem"));
+    assert_eq!(history.suggestion("git st", "pwsh"), Some("atus"));
+    assert_eq!(history.suggestion("git", "zsh"), None);
+
+    let listed = |scope: &HistoryScope| -> Vec<(String, String)> {
+        history
+            .matching("git", scope)
+            .iter()
+            .map(|entry| {
+                let dir = entry.dir.as_deref().unwrap().display().to_string();
+                (entry.command.clone(), dir)
+            })
+            .collect()
+    };
+    let pair = |command: &str, dir: &str| (command.to_string(), dir.to_string());
+    assert_eq!(listed(&shell("bash")), [pair("git status", "/bash")]);
+    // "All": the newest use and its folder.
+    assert_eq!(
+        listed(&ALL),
+        [pair("git stash", "/pwsh"), pair("git status", "/pwsh")]
+    );
+}
+
+#[test]
+fn removing_in_a_shell_keeps_the_others() {
+    let run = |command: &str, key: &str, time| HistoryEntry::new(command, None, time).in_shell(key);
+    let mut history = CommandHistory::new(10);
+    history.add(run("ls", "bash", 1));
+    history.add(run("ls", "pwsh", 2));
+    history.add(HistoryEntry::new("ls", None, 0));
+    assert!(history.remove("ls", &shell("bash")));
+    assert!(!history.remove("ls", &shell("bash")));
+    let (reloaded, _) = CommandHistory::from_jsonl(&history.to_jsonl(), 10);
+    assert_eq!(reloaded, history);
+    assert_eq!(history.shells().collect::<Vec<_>>(), [None, Some("pwsh")]);
+    assert!(history.remove("ls", &ALL));
+    assert!(history.is_empty() && history.shells().next().is_none());
+
+    let root = TempDir::new();
+    let path = root.0.join("history.jsonl");
+    for entry in [
+        run("ls", "bash", 1),
+        run("ls", "pwsh", 2),
+        HistoryEntry::new("ls", None, 3),
+    ] {
+        append_entry(&path, &entry).unwrap();
+    }
+    remove_command(&path, "ls", &shell("pwsh")).unwrap();
+    let left = CommandHistory::load(&path, 10);
+    assert_eq!(left.shells().collect::<Vec<_>>(), [None, Some("bash")]);
+    remove_command(&path, "ls", &ALL).unwrap();
+    assert!(CommandHistory::load(&path, 10).is_empty());
 }

@@ -940,3 +940,41 @@ fn keybindings_are_kept_as_written_and_mistyped_gives_none() {
         assert!(settings.keybindings.entries().is_empty(), "{text}");
     }
 }
+
+#[test]
+fn ui_theme_names_round_trip_and_match_the_file() {
+    for theme in [UiTheme::Light, UiTheme::Dark, UiTheme::Sepia] {
+        assert_eq!(UiTheme::from_name(theme.as_str()), Some(theme));
+        let json = serde_json::to_string(&theme).unwrap();
+        assert_eq!(json, format!("\"{}\"", theme.as_str()));
+    }
+    assert_eq!(UiTheme::from_name("system"), None);
+}
+
+#[test]
+fn terminal_colors_default_to_the_ui_theme_and_round_trip() {
+    for text in [
+        "{}",
+        r#"{"terminal_colors": "neon"}"#,
+        r#"{"terminal_colors": 3}"#,
+    ] {
+        let settings = Settings::from_json(text).unwrap();
+        assert_eq!(settings.terminal_colors, TerminalColors::MatchTheme);
+    }
+    for theme in [UiTheme::Dark, UiTheme::Light, UiTheme::Sepia] {
+        assert_eq!(TerminalColors::MatchTheme.scheme(theme), theme);
+        assert_eq!(TerminalColors::Dark.scheme(theme), UiTheme::Dark);
+        assert_eq!(TerminalColors::Light.scheme(theme), UiTheme::Light);
+        assert_eq!(TerminalColors::Sepia.scheme(theme), UiTheme::Sepia);
+    }
+    for colors in [
+        TerminalColors::MatchTheme,
+        TerminalColors::Dark,
+        TerminalColors::Light,
+        TerminalColors::Sepia,
+    ] {
+        assert_eq!(TerminalColors::from_name(colors.as_str()), Some(colors));
+        let json = serde_json::to_string(&colors).unwrap();
+        assert_eq!(json, format!("\"{}\"", colors.as_str()));
+    }
+}

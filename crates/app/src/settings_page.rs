@@ -23,15 +23,17 @@ use gpui_kit::component::setting::{
 };
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::switch::Switch;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Side, Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     Anchor, AnyElement, App, AppContext, Axis, ClickEvent, ClipboardItem, Div, Entity, Focusable,
-    IntoElement, ParentElement, SharedString, Styled, Subscription, Window, div, px,
+    InteractiveElement, IntoElement, ParentElement, SharedString, StatefulInteractiveElement,
+    Styled, Subscription, Window, div, px,
 };
 use workspace_model::{
-    BlurControl, ClipboardPolicy, DependentState, FeatureSwitch, FontSize, Settings, UiTheme,
-    WindowBlur, WindowOpacity, blur_options, shown_blur,
+    BlurControl, ClipboardPolicy, DependentState, FeatureSwitch, FontSize, Settings,
+    TerminalColors, UiTheme, WindowBlur, WindowOpacity, blur_options, shown_blur,
 };
 
 use crate::about;
@@ -48,13 +50,24 @@ mod keyboard;
 
 pub use keyboard::{KeyRecorder, init as init_keyboard};
 
-/// The settings page: the error banners, the pages, and the "Open settings file" button.
+/// What the page's "Open settings file" button can do right now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsFileButton {
+    Opens,
+    /// The file would open in the file viewer, and no tab is open to hold it.
+    NeedsTab,
+}
+
+/// The settings page: the error banners, the pages, and the "Open settings file" button, which
+/// is disabled for [`SettingsFileButton::NeedsTab`].
 pub fn render(
     launchers: Rc<[Launcher]>,
+    file_button: SettingsFileButton,
     on_open_file: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     cx: &App,
 ) -> impl IntoElement {
     let theme = cx.theme();
+    let needs_tab = file_button == SettingsFileButton::NeedsTab;
     div()
         .size_full()
         .flex()
@@ -81,14 +94,31 @@ pub fn render(
                 .border_t_1()
                 .border_color(theme.border)
                 .child(
-                    Button::new("open-settings-file")
-                        .icon(Icon::empty().path(CODE_ICON))
-                        .label("Open settings file")
-                        .outline()
-                        .small()
+                    // A disabled button shows no tooltip of its own: the box around it does.
+                    div()
+                        .id("open-settings-file-box")
                         .w(px(234.))
-                        .tooltip("Show settings.json in the file viewer (or the system's app)")
-                        .on_click(on_open_file),
+                        .when(needs_tab, |button_box| {
+                            button_box.tooltip(|window, cx| {
+                                Tooltip::new("Open a tab to view the file").build(window, cx)
+                            })
+                        })
+                        .child(
+                            Button::new("open-settings-file")
+                                .icon(Icon::empty().path(CODE_ICON))
+                                .label("Open settings file")
+                                .outline()
+                                .small()
+                                .w_full()
+                                .disabled(needs_tab)
+                                .when(!needs_tab, |button| {
+                                    button.tooltip(
+                                        "Show settings.json in the file viewer (or the system's \
+                                         app)",
+                                    )
+                                })
+                                .on_click(on_open_file),
+                        ),
                 ),
         )
 }
@@ -96,19 +126,10 @@ pub fn render(
 /// The Appearance page: UI theme, terminal font, window background and hover cards.
 fn appearance_groups() -> Vec<SettingGroup> {
     vec![
-        SettingGroup::new().title("Theme").item(
-            switch_row(
-                "Light theme",
-                "Use the light UI instead of dark. Terminal colors stay unchanged.",
-                SettingsField::new(
-                    |settings| settings.ui_theme == UiTheme::Light,
-                    |settings, light| {
-                        settings.ui_theme = if light { UiTheme::Light } else { UiTheme::Dark };
-                    },
-                ),
-            )
-            .keywords(["appearance", "dark", "colors"]),
-        ),
+        SettingGroup::new()
+            .title("Theme")
+            .item(ui_theme_row().keywords(["appearance", "dark", "light", "sepia", "colors"]))
+            .item(terminal_colors_row().keywords(["appearance", "terminal", "colors", "scheme"])),
         SettingGroup::new().title("Font").items([
             text_row(
                 "Font family",
@@ -272,6 +293,49 @@ fn terminal_groups(launchers: Rc<[Launcher]>) -> Vec<SettingGroup> {
             .title("Clipboard")
             .item(clipboard_writes_row()),
     ]
+}
+
+/// The `ui_theme` setting: the dark or the light UI.
+fn ui_theme_row() -> SettingItem {
+    let options = [
+        (UiTheme::Dark, "Dark"),
+        (UiTheme::Light, "Light"),
+        (UiTheme::Sepia, "Sepia"),
+    ]
+    .map(|(theme, label)| DropdownOption::new(theme.as_str(), label));
+    dropdown_row(
+        "Theme",
+        "The colors of the sidebar, panes, menus and settings, and of the terminal unless \
+         Terminal colors says otherwise.",
+        DropdownChoices::new(options, |value| format!("{value} (unknown)").into()),
+        SettingsField::new(
+            |settings| settings.ui_theme.as_str().to_owned(),
+            |settings, value| settings.ui_theme = UiTheme::from_name(&value).unwrap_or_default(),
+        ),
+    )
+}
+
+/// The `terminal_colors` setting: the terminal's colors follow the theme or stay fixed.
+fn terminal_colors_row() -> SettingItem {
+    let options = [
+        (TerminalColors::MatchTheme, "Match theme"),
+        (TerminalColors::Dark, "Dark"),
+        (TerminalColors::Light, "Light"),
+        (TerminalColors::Sepia, "Sepia"),
+    ]
+    .map(|(colors, label)| DropdownOption::new(colors.as_str(), label));
+    dropdown_row(
+        "Terminal colors",
+        "The terminal's text and background colors, in every tab. Match theme uses the Theme's \
+         colors; programs that set their own colors keep them.",
+        DropdownChoices::new(options, |value| format!("{value} (unknown)").into()),
+        SettingsField::new(
+            |settings| settings.terminal_colors.as_str().to_owned(),
+            |settings, value| {
+                settings.terminal_colors = TerminalColors::from_name(&value).unwrap_or_default();
+            },
+        ),
+    )
 }
 
 /// The `clipboard_writes` setting: what happens when a program writes the clipboard.

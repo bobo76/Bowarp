@@ -1,14 +1,19 @@
+use std::collections::HashSet;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::file_tree::DirEntry;
+
 /// Length of the abbreviated commit id shown for a detached HEAD.
 const SHORT_COMMIT_LEN: usize = 7;
 /// How long [`lines_added`] waits for its `git` processes in all.
 const GIT_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long [`ignored_names`] waits for `git check-ignore`.
+const CHECK_IGNORE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How often a running `git` is checked for exit.
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// Untracked files larger than this are not read, and count as nothing.
@@ -112,9 +117,69 @@ pub fn lines_added(dir: &Path) -> Option<u64> {
     Some(numstat_added(&tracked) + untracked_lines(dir, &untracked))
 }
 
+/// The names among `entries` (a folder's listing) that git ignores in `folder`
+/// (`git check-ignore`), the repository's `.git` included. Tracked files are not ignored. Runs a
+/// `git` process, so call it off the UI thread; gives up after [`CHECK_IGNORE_TIMEOUT`]. `None`
+/// when git is missing, fails or is too slow, or `folder` is not in a work tree.
+pub fn ignored_names(folder: &Path, entries: &[DirEntry]) -> Option<HashSet<String>> {
+    if entries.is_empty() {
+        return Some(HashSet::new());
+    }
+    let deadline = Instant::now() + CHECK_IGNORE_TIMEOUT;
+    let input = check_ignore_input(entries);
+    let (status, output) = git_output(
+        folder,
+        &["check-ignore", "--stdin", "-z"],
+        Some(input),
+        deadline,
+    )?;
+    // 0: some are ignored, 1: none are; 128 (not in a work tree, ...) is a failure.
+    matches!(status.code(), Some(0 | 1)).then(|| ignored_from_output(&output, entries))
+}
+
+/// `git check-ignore --stdin -z` input: each name as `./<name>`, so a name starting with `:` is
+/// not read as pathspec magic (which fails the whole run).
+fn check_ignore_input(entries: &[DirEntry]) -> Vec<u8> {
+    let mut input = Vec::new();
+    for entry in entries {
+        input.extend_from_slice(b"./");
+        input.extend_from_slice(entry.name.as_bytes());
+        input.push(0);
+    }
+    input
+}
+
+/// The ignored names in `git check-ignore -z` output (the paths given that are ignored), plus
+/// `.git`, which git never reports, when the listing has it.
+fn ignored_from_output(output: &[u8], entries: &[DirEntry]) -> HashSet<String> {
+    let reported: HashSet<&[u8]> = output
+        .split(|&byte| byte == 0)
+        .filter_map(|path| path.strip_prefix(b"./"))
+        .collect();
+    entries
+        .iter()
+        .filter(|entry| entry.name == ".git" || reported.contains(entry.name.as_bytes()))
+        .map(|entry| entry.name.clone())
+        .collect()
+}
+
 /// The stdout of `git <args>` run in `dir`, or `None` when it fails or is still running at
 /// `deadline` (it is then killed).
 fn run_git(dir: &Path, args: &[&str], deadline: Instant) -> Option<String> {
+    let (status, output) = git_output(dir, args, None, deadline)?;
+    status
+        .success()
+        .then(|| String::from_utf8_lossy(&output).into_owned())
+}
+
+/// The exit status and stdout of `git <args>` run in `dir` with `input` on its stdin, or `None`
+/// when it cannot start or is still running at `deadline` (it is then killed).
+fn git_output(
+    dir: &Path,
+    args: &[&str],
+    input: Option<Vec<u8>>,
+    deadline: Instant,
+) -> Option<(ExitStatus, Vec<u8>)> {
     let mut command = Command::new("git");
     command
         // Hovering a tab must not run commands a repository's config names (`core.fsmonitor`).
@@ -123,7 +188,11 @@ fn run_git(dir: &Path, args: &[&str], deadline: Instant) -> Option<String> {
         .args(["-c", "core.fsmonitor=false", "--no-optional-locks"])
         .args(args)
         .current_dir(dir)
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     for name in REPO_ENV {
@@ -137,6 +206,13 @@ fn run_git(dir: &Path, args: &[&str], deadline: Instant) -> Option<String> {
     }
     let mut child = command.spawn().ok()?;
     let mut stdout = child.stdout.take()?;
+    // Write on a thread, so a git that stops reading cannot outlast the deadline; dropping
+    // stdin at the end tells git the input is complete. A write error (git exited) ends it.
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        });
+    }
     // Read while waiting, so a large output cannot fill the pipe and stall git.
     let reader = thread::spawn(move || {
         let mut output = Vec::new();
@@ -148,9 +224,7 @@ fn run_git(dir: &Path, args: &[&str], deadline: Instant) -> Option<String> {
         return None;
     };
     let output = reader.join().ok()?.ok()?;
-    status
-        .success()
-        .then(|| String::from_utf8_lossy(&output).into_owned())
+    Some((status, output))
 }
 
 /// The child's exit status, or `None` when it has not exited by `deadline`.

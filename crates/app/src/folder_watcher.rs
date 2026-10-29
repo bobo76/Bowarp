@@ -9,7 +9,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use futures::channel::mpsc::{self, UnboundedReceiver};
 use gpui_kit::{Context, Task, Window};
-use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 
 /// Changes arriving within this time are applied together.
 const CHANGE_BATCH: Duration = Duration::from_millis(100);
@@ -19,8 +19,8 @@ pub trait WatchesFolders: Sized + 'static {
     /// Names the view in log messages.
     const OWNER: &'static str;
 
-    /// Whether events of this kind are of no interest to the view.
-    fn ignores(kind: &EventKind) -> bool;
+    /// Whether this event is of no interest to the view.
+    fn ignores(event: &Event) -> bool;
 
     /// The watched paths that changed, a batch at a time.
     fn on_folder_changes(
@@ -53,7 +53,7 @@ impl FolderWatcher {
             let Ok(event) = result else {
                 return;
             };
-            if V::ignores(&event.kind) {
+            if V::ignores(&event) {
                 return;
             }
             for path in event.paths {
@@ -205,7 +205,7 @@ mod tests {
     impl WatchesFolders for TestOwner {
         const OWNER: &'static str = "test owner";
 
-        fn ignores(_: &EventKind) -> bool {
+        fn ignores(_: &Event) -> bool {
             false
         }
 

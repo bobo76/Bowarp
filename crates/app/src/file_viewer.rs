@@ -24,7 +24,7 @@ use gpui_kit::{
     img, px,
 };
 use image::{ImageError, ImageReader};
-use notify::EventKind;
+use notify::{Event, EventKind};
 use workspace_model::display_path;
 use workspace_model::file_tree::entry_name;
 use workspace_model::file_view::{self, JsonError, ViewKind};
@@ -104,8 +104,8 @@ impl EventEmitter<ViewerEvent> for FileViewer {}
 impl WatchesFolders for FileViewer {
     const OWNER: &'static str = "file viewer";
 
-    fn ignores(kind: &EventKind) -> bool {
-        matches!(kind, EventKind::Access(_))
+    fn ignores(event: &Event) -> bool {
+        matches!(event.kind, EventKind::Access(_))
     }
 
     /// Reload the file when it changed on disk.

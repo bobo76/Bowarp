@@ -1,11 +1,14 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use gpui_kit::{App, Global};
 
 use term_core::{LaunchSpec, SessionKind};
 #[cfg(any(windows, test))]
 use workspace_model::distro_icon;
 use workspace_model::file_tree::ShellSyntax;
-use workspace_model::{LauncherIcon, Platform, Settings, shell_icon};
+use workspace_model::{KnownShell, LauncherIcon, Platform, Settings, shell_icon};
 
 /// A program the new-tab menu offers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -262,22 +265,76 @@ fn default_shell_index(launchers: &[Launcher], default_shell: &Path) -> Option<u
         .position(|launcher| launcher.program.as_deref().and_then(Path::file_stem) == Some(name))
 }
 
-/// How the program `spec` starts parses typed paths. With no program, that is the user's
-/// shell (`$SHELL`), or PowerShell on Windows (alacritty's default).
-pub fn shell_syntax(spec: &LaunchSpec) -> ShellSyntax {
-    let default = || {
-        if cfg!(windows) {
-            Some("powershell".to_string())
-        } else {
-            std::env::var("SHELL").ok()
-        }
+/// The launchers found at start, for views that name shells (the history popup's chips).
+pub struct Launchers(pub Rc<[Launcher]>);
+
+impl Global for Launchers {}
+
+/// The shells of the new-tab menu, in its order, for the history popup's chips; none before
+/// [`Launchers`] is set (tests).
+pub fn menu_shells(cx: &App) -> Vec<KnownShell<'_>> {
+    let Some(Launchers(launchers)) = cx.try_global::<Launchers>() else {
+        return Vec::new();
     };
+    let setting = crate::settings_file::settings(cx).default_shell();
+    let (default, shells, _) = menu_sections(launchers, setting);
+    default
+        .into_iter()
+        .chain(shells)
+        .filter(|launcher| launcher.kind == SessionKind::Shell)
+        .map(|launcher| KnownShell {
+            id: &launcher.id,
+            label: &launcher.label,
+            icon: launcher.icon,
+        })
+        .collect()
+}
+
+/// The shell a session started without a program runs: the user's shell (`$SHELL`), or
+/// PowerShell on Windows (alacritty's default).
+fn default_program() -> Option<String> {
+    if cfg!(windows) {
+        Some("powershell".to_string())
+    } else {
+        std::env::var("SHELL").ok()
+    }
+}
+
+/// How the program `spec` starts parses typed paths (see [`default_program`] without one).
+pub fn shell_syntax(spec: &LaunchSpec) -> ShellSyntax {
     spec.program
         .clone()
-        .or_else(default)
+        .or_else(default_program)
         .map_or(ShellSyntax::Posix, |program| {
             ShellSyntax::of_program(&program)
         })
+}
+
+/// The key a session's commands are kept under in the history: the id of the launcher that
+/// runs the same program and arguments, else one derived from them
+/// (`workspace_model::shell_key`). Without a program, that of the default shell.
+pub fn shell_key(launchers: &[Launcher], spec: &LaunchSpec) -> String {
+    shell_key_with(launchers, spec, default_program, cfg!(windows))
+}
+
+fn shell_key_with(
+    launchers: &[Launcher],
+    spec: &LaunchSpec,
+    default: impl FnOnce() -> Option<String>,
+    windows: bool,
+) -> String {
+    let program = spec.program.clone().or_else(default);
+    let launcher = program.as_deref().and_then(|program| {
+        launchers.iter().find(|launcher| {
+            launcher.kind == SessionKind::Shell
+                && launcher.program.as_deref() == Some(Path::new(program))
+                && launcher.args == spec.args
+        })
+    });
+    match launcher {
+        Some(launcher) => launcher.id.clone(),
+        None => workspace_model::shell_key(program.as_deref(), &spec.args, windows),
+    }
 }
 
 /// Name shown for a session until its program sets a title.

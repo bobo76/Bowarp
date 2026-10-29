@@ -156,3 +156,44 @@ fn unavailable_copilot_plugin_keeps_progress_and_the_mode_bridge() {
     assert_eq!(copilot.args, ["--yolo"]);
     assert_eq!(copilot.env[HOOK_ENV], "agentws-hook");
 }
+
+#[test]
+fn start_failures_explain_the_cause_and_the_fix() {
+    let missing = HooksError::HookProgramMissing(PathBuf::from("/opt/bowarp/agentws-hook"));
+    assert_eq!(
+        missing.warning(),
+        "Agent status is off: agentws-hook not found next to the app. Reinstall to fix."
+    );
+    let missing_exe = HooksError::HookProgramMissing(PathBuf::from("/opt/bowarp/agentws-hook.exe"));
+    assert_eq!(
+        missing_exe.warning(),
+        "Agent status is off: agentws-hook.exe not found next to the app. Reinstall to fix.",
+        "the real file name, no folder"
+    );
+    let denied = || io::Error::from(io::ErrorKind::PermissionDenied);
+    assert_eq!(
+        HooksError::Server(denied()).warning(),
+        format!(
+            "Agent status is off: could not start the status listener ({}). Restart the app to \
+             retry.",
+            denied()
+        )
+    );
+    let path = PathBuf::from("/run/user/1000/agentws-7-claude-settings.json");
+    assert_eq!(
+        HooksError::SettingsWrite {
+            path: path.clone(),
+            error: denied(),
+        }
+        .warning(),
+        format!(
+            "Agent status is off: could not write {} ({}).",
+            path.display(),
+            denied()
+        )
+    );
+    assert_eq!(
+        HooksError::Other(io::Error::other("no current exe")).warning(),
+        "Agent status is off: no current exe."
+    );
+}

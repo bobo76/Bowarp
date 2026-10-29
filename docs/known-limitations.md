@@ -14,8 +14,14 @@ entry when the limitation is lifted.
   permission / Waiting for your reply, Ready for review, Agent finished on a clean exit); a
   toast already shown stays until it hides. A background agent that exits with a nonzero or
   unknown code still toasts, as do user-action feedback (save, delete, clear history, start
-  failures) and the persistent fallback-shell warning. Agent toasts are keyed per tab, so a
-  new one replaces the tab's earlier one.
+  failures) and the persistent fallback-shell and agent-status-off warnings. Agent toasts are
+  keyed per tab, so a new one replaces the tab's earlier one.
+- Agent status off (`agentws-hook` missing or the status listener could not start): Claude
+  Code tabs fall back to output activity ("Status unavailable" when quiet) and a bell asks for
+  attention as in a shell; a Copilot CLI permission prompt reads Working, not Needs attention,
+  unless it rings the bell. The warning shows once per start, not again when an agent tab opens.
+- Copilot CLI Waiting ends on its next tool hook or when the turn ends: after a question is
+  answered, a reply with no tool call keeps the tab Waiting until the turn finishes.
 - Clipboard notice: every program clipboard write (OSC 52) now waits for Allow, including
   Copilot CLI's copy on Windows. One answer covers the held clipboard and primary-selection
   writes; a write held when the program exits is dropped. "Always for this tab" survives an
@@ -25,6 +31,9 @@ entry when the limitation is lifted.
 - File viewer images: still WebP files share animated GIF/WebP's 2 MB limit (other images
   50 MB), and images over 16384 pixels on a side are refused rather than scaled down.
 - An OSC 8 link spanning several lines: only its row is underlined.
+- With no tab open (the empty state), the file explorer is hidden and can't be used to pick a
+  folder first; the next tab starts in the last closed tab's folder, which is kept in memory
+  only: after a restart with no tab saved, the first tab starts in the app's working folder.
 - An agent tab going on as a shell starts in the agent's last known folder: on Linux its
   `/proc` folder as of its last title change or hook event, elsewhere the folder it started in.
 - Window opacity: on X11 without a compositor the window can't be see-through, and the
@@ -46,6 +55,20 @@ entry when the limitation is lifted.
   `history.jsonl` on the UI thread (like deleting one command), and a second instance only
   sees either clear after its next restart (history is loaded at start). Clearing saved
   session commands reaches only tabs open in this instance.
+- Command history per shell: commands saved before it have no shell and show only under the
+  HISTORY popup's "All" chip (never as an inline suggestion). Alt+letter switches chips by
+  the Latin letter the key reports: on non-Latin layouts (Cyrillic, Greek...) it may not
+  switch; click the chip instead. While the popup shows chips, Alt+ a chip's letter doesn't
+  reach the shell (readline's Alt+B / Alt+F when a chip starts with B or F). A tab's shell is
+  fixed when its session starts, from the launcher with the same program and arguments, else
+  from the program's name (`wsl -d X`, Git for Windows' bash): a shell started through a
+  wrapper script records under the script's name. With "Restore previous tabs" off,
+  deleting a command still removes it from every saved tab in `tabs.json`, whatever its
+  shell (the saved tabs don't record one). Starting an older version rewrites a long history
+  file without shells (all of it then shows only under "All") and keeps only its newest 2 000
+  commands.
+- Last-command saves go through a background writer: a crash can lose queued or in-flight
+  updates, including a command just deleted from HISTORY.
 - Restore previous tabs off: `tabs.json` is kept unread and unwritten (the one exception:
   "Clear saved session commands" and forgetting a command remove just the matching
   `last_command` values from it, on the tabs writer thread), so the next
@@ -94,6 +117,13 @@ entry when the limitation is lifted.
   leave the terminal and viewer below their usual minimums), and saved in pixels
   (`file_explorer_width`) with the same rules as the viewer width: once when the drag ends,
   not on the settings page, not while the file is broken, other instances after a reload.
+- File explorer dimming of git-ignored entries: git is asked again for a folder only when it is
+  read again (expanded, or its entries change), and for every open folder when a `.gitignore`
+  in one of them changes; a change to `.git/info/exclude` or the global excludes file, or a
+  file starting or stopping being tracked
+  shows once the folder is collapsed and expanded again. Each check gives up after 5 s (nothing
+  dimmed in that folder). Inside a nested repository or submodule, git answers for that
+  repository. A name that isn't valid UTF-8 is sent to git as displayed and isn't dimmed.
 - File explorer and viewer switch (`file_panes`): turning it off closes every open file, so a
   tab's viewer starts empty after turning it on again (the explorer stays hidden until its
   button or Ctrl+Shift+| is used). `tabs.json` never held a tab's open file, and no file
@@ -128,3 +158,8 @@ entry when the limitation is lifted.
   group, `+`, explorer entry menus) and for any dialog: a dropdown on the settings page or in
   the file viewer doesn't hold them. A card open when a hold ends stays hidden until the
   pointer leaves its row; keeping the pointer still, the card needs a move out and back.
+- Themes: an app version older than the Sepia theme reads `"ui_theme": "sepia"` as Dark (unknown
+  values fall back to the default), and `"terminal_colors"` values it doesn't know as Match theme.
+- Terminal colors changed while a tab runs: `COLORFGBG` keeps the value the tab started with,
+  and programs that read the background color (OSC 11) only at start keep their first choice
+  until restarted. Agents' own themes (Claude Code's `/theme`) are not changed.
