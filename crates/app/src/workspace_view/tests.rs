@@ -444,6 +444,7 @@ fn panel_opacity_leaves_file_viewer_and_settings_opaque(cx: &mut gpui_kit::TestA
 }
 
 #[gpui::test]
+#[cfg_attr(not(debug_assertions), ignore = "debug_bounds needs debug_assertions")]
 fn explorer_opacity_fill_does_not_take_space_from_a_long_listing(
     cx: &mut gpui_kit::TestAppContext,
 ) {
