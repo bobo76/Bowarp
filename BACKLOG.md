@@ -28,6 +28,13 @@ Each step stands alone and is tested:
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Copilot Autopilot permission hooks:
+
+- Capture one real Autopilot `PermissionRequest` payload and the following tool hooks. Check
+  that Autopilot stays Working without a Waiting triangle, toast or attention shortcut target,
+  while a real question still waits. Check mode changes with the optional extension, and
+  `--mode autopilot` / `--autopilot` launches without it; `--yolo` alone is not Autopilot.
+
 Softer light theme:
 
 - Windows (where the glare was reported): the light UI is comfortable for a long session;

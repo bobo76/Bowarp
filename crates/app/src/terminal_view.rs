@@ -343,7 +343,11 @@ impl TerminalView {
             location: spec.cwd.clone().map(Location::read),
             shell: launcher::shell_syntax(spec),
             agent: (reporting == StatusReporting::Hooks).then(|| AgentTracker::new(Instant::now())),
-            mode: AgentModeState::default(),
+            mode: if spec.kind == SessionKind::CopilotCli {
+                AgentModeState::from_args(&spec.args)
+            } else {
+                AgentModeState::default()
+            },
             finished_unseen: false,
             bell_unseen: false,
             clipboard: ClipboardGuard::default(),
@@ -620,6 +624,9 @@ impl TerminalView {
                 self.update_agent(|agent| agent.apply(event, at), cx);
             }
             AgentEvent::Hook(event) if self.kind() == SessionKind::CopilotCli => {
+                let Some(event) = event.for_copilot_mode(self.mode.mode()) else {
+                    return;
+                };
                 // Permission hooks can arrive before the first terminal progress report.
                 if self.agent.is_none()
                     && matches!(event, agent_status::HookEvent::InputRequested(_))

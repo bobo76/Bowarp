@@ -22,6 +22,10 @@ entry when the limitation is lifted.
   unless it rings the bell. The warning shows once per start, not again when an agent tab opens.
 - Copilot CLI Waiting ends on its next tool hook or when the turn ends: after a question is
   answered, a reply with no tool call keeps the tab Waiting until the turn finishes.
+- Copilot Autopilot permission hooks do not show Waiting when the mode is known. The optional
+  extension reports live mode changes; without it, only the launch mode (`--mode` or
+  `--autopilot`) is known. Switching modes inside the CLI without the extension can therefore
+  leave the app's mode stale. `--yolo` grants permissions; it does not select Autopilot.
 - Clipboard protection covers terminal OSC 52 writes only. Native system clipboard writes
   by programs such as Claude Code and Copilot CLI (especially on Windows) bypass the terminal:
   Ask cannot hold them and Deny cannot block them. One answer covers held OSC 52 clipboard
