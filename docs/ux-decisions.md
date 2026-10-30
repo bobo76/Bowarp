@@ -42,8 +42,10 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   setting rule); "Not available" wins when both apply. Its "Reset to default" still shows, as
   on other dependent rows. [UX agent]
 - Switching live on Windows must apply live: the app clears the previous backdrop itself
-  (`window_background.rs`). If that fails, fall back to the caption "Mica stays until the app
-  restarts" plus a known limitation. [UX agent]
+  (`window_background.rs`). Mica extends the DWM frame across the client area; leaving it
+  resets that extension. A failed DWM call shows a persistent warning with a restart action
+  in its text. Only add "Mica stays until the app restarts" as a caption and known limitation
+  if live Windows checks establish that behavior. [UX agent]
 
 ## Sidebar and tab status
 

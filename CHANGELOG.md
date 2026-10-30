@@ -12,6 +12,8 @@ omitted unless they affect how the app is used.
   before the optional extension's first report.
 - Window opacity now also applies to the sidebar and file explorer, including selected and
   hovered rows, while the file viewer, Settings, title bar and overlays stay opaque.
+- Extend the Windows Mica backdrop into the client area and reset the frame extension when
+  leaving Mica. A failed DWM call now shows a persistent warning instead of failing silently.
 
 ## 0.2.42
 

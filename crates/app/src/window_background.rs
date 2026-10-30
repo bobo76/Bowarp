@@ -90,45 +90,78 @@ struct Applied {
 
 /// Windows only: GPUI never undoes Mica (a DWM system backdrop) or the accent policy of the
 /// other backdrops when it applies another one, so do that first.
-fn prepare_switch(window: &mut Window, switch: WindowsSwitch) {
+fn prepare_switch(window: &mut Window, switch: WindowsSwitch) -> Result<(), String> {
     #[cfg(windows)]
     {
         if switch.opaque_first {
             window.set_background_appearance(WindowBackgroundAppearance::Opaque);
         }
         if switch.clear_mica {
-            clear_mica(window);
+            clear_mica(window)?;
+            set_mica_frame(window, false)?;
         }
     }
     #[cfg(not(windows))]
     let _ = (window, switch);
+    Ok(())
 }
 
 #[cfg(windows)]
-fn clear_mica(window: &Window) {
+fn native_handle(window: &Window) -> Result<windows_sys::Win32::Foundation::HWND, String> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use windows_sys::Win32::Foundation::HWND;
+    let handle = HasWindowHandle::window_handle(window).map_err(|error| error.to_string())?;
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return Err("The window has no Windows handle".into());
+    };
+    Ok(handle.hwnd.get() as windows_sys::Win32::Foundation::HWND)
+}
+
+#[cfg(windows)]
+fn clear_mica(window: &Window) -> Result<(), String> {
     use windows_sys::Win32::Graphics::Dwm::{
         DWMSBT_NONE, DWMWA_SYSTEMBACKDROP_TYPE, DwmSetWindowAttribute,
     };
 
-    let Ok(handle) = HasWindowHandle::window_handle(window) else {
-        return;
-    };
-    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-        return;
-    };
+    let hwnd = native_handle(window)?;
     let none = DWMSBT_NONE;
     // SAFETY: `hwnd` is this window's live handle (we hold `&Window`); the attribute value
-    // is a readable `i32` of the size passed. The HRESULT is ignored: a failure leaves Mica.
-    unsafe {
+    // is a readable `i32` of the size passed.
+    let result = unsafe {
         DwmSetWindowAttribute(
-            handle.hwnd.get() as HWND,
+            hwnd,
             DWMWA_SYSTEMBACKDROP_TYPE as u32,
             (&raw const none).cast(),
             size_of_val(&none) as u32,
-        );
+        )
+    };
+    if result < 0 {
+        return Err(format!("Could not clear Mica (DWM {result:#010x})"));
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn set_mica_frame(window: &Window, enabled: bool) -> Result<(), String> {
+    use windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
+    use windows_sys::Win32::UI::Controls::MARGINS;
+
+    let hwnd = native_handle(window)?;
+    // Negative margins extend glass over the whole client area; zeros undo the extension.
+    let extent = if enabled { -1 } else { 0 };
+    let margins = MARGINS {
+        cxLeftWidth: extent,
+        cxRightWidth: extent,
+        cyTopHeight: extent,
+        cyBottomHeight: extent,
+    };
+    // SAFETY: the live window handle and initialized margins remain valid for the call.
+    let result = unsafe { DwmExtendFrameIntoClientArea(hwnd, &margins) };
+    if result < 0 {
+        return Err(format!(
+            "Could not update the Mica frame (DWM {result:#010x})"
+        ));
+    }
+    Ok(())
 }
 
 fn apply(window: AnyWindowHandle, applied: &Applied, cx: &mut App) {
@@ -141,8 +174,13 @@ fn apply(window: AnyWindowHandle, applied: &Applied, cx: &mut App) {
         prepare_switch(
             window,
             backdrop.windows_switch(applied.backdrop.get(), applied.mica.get()),
-        );
+        )?;
         window.set_background_appearance(appearance(backdrop));
+        #[cfg(windows)]
+        if backdrop == Backdrop::Mica {
+            applied.mica.set(true);
+            set_mica_frame(window, true)?;
+        }
         if let Ok(root) = root.downcast::<Root>() {
             root.update(cx, |root, cx| {
                 // None gives the theme background back (gpui-component's root default).
@@ -152,12 +190,31 @@ fn apply(window: AnyWindowHandle, applied: &Applied, cx: &mut App) {
                 cx.notify();
             });
         }
+        Ok::<(), String>(())
     });
-    if result.is_ok() {
-        applied.backdrop.set(Some(backdrop));
-        applied
-            .mica
-            .set(applied.mica.get() || backdrop == Backdrop::Mica);
+    match result {
+        Ok(Ok(())) => {
+            applied.backdrop.set(Some(backdrop));
+            applied
+                .mica
+                .set(applied.mica.get() || backdrop == Backdrop::Mica);
+        }
+        Ok(Err(message)) => {
+            use gpui_kit::component::WindowExt;
+            use gpui_kit::component::notification::Notification;
+
+            applied.backdrop.set(None);
+            log::error!("Window background: {message}");
+            let _ = window.update(cx, |_, window, cx| {
+                window.push_notification(
+                    Notification::warning(format!("{message}. Restart the app to retry."))
+                        .id::<Applied>()
+                        .autohide(false),
+                    cx,
+                );
+            });
+        }
+        Err(_) => {}
     }
 }
 
