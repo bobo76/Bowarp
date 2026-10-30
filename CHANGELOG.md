@@ -5,6 +5,8 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.43
+
 - Clarify that clipboard Ask / Allow / Deny controls terminal OSC 52 writes, not native
   clipboard access by programs such as Claude Code and Copilot CLI.
 - Known Copilot Autopilot sessions ignore automatically approved permission hooks instead of
