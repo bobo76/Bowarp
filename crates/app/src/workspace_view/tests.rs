@@ -448,6 +448,36 @@ fn saving_over_a_file_changed_on_disk_asks_first(cx: &mut gpui_kit::TestAppConte
 fn file_panes_switch_off_after_discarding_every_edit(cx: &mut gpui_kit::TestAppContext) {
     let mut h = PanesHarness::new("panes-discard", cx);
     let viewer = h.open_dirty_viewer();
+    let editor_point = h.cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        gpui_kit::point(
+            window.viewport_size().width - px(100.),
+            window.viewport_size().height - px(100.),
+        )
+    });
+    h.cx.simulate_mouse_down(
+        editor_point,
+        MouseButton::Left,
+        gpui_kit::Modifiers::default(),
+    );
+    h.cx.simulate_mouse_up(
+        editor_point,
+        MouseButton::Left,
+        gpui_kit::Modifiers::default(),
+    );
+    let workspace = h.workspace.clone();
+    let terminal_focused = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            workspace.read(cx).tabs[0]
+                .view
+                .focus_handle(cx)
+                .is_focused(window)
+        })
+    };
+    assert!(
+        !terminal_focused(&mut h),
+        "the viewer starts with the keyboard"
+    );
 
     h.set_panes(false);
     assert!(h.pending());
@@ -458,6 +488,11 @@ fn file_panes_switch_off_after_discarding_every_edit(cx: &mut gpui_kit::TestAppC
     assert!(!on && !explorer && none.is_none());
     assert!(!h.switch_on() && !h.pending());
     assert!(viewer.upgrade().is_none(), "the viewer must be dropped");
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        terminal_focused(&mut h),
+        "Discard must return the keyboard to the terminal"
+    );
 }
 
 #[gpui::test]

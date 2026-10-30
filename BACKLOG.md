@@ -190,9 +190,6 @@ behavior"); items below name their switch where they need one.
   extending the frame from `app/src/window_background.rs` (beside `clear_mica`), then check
   whether Mica stays after leaving it (if so, add the caption "Mica stays until the app
   restarts", docs/ux-decisions.md).
-- File panes off with an unsaved file, Discard: `drop_file_panes` calls `focus_active` while
-  the Discard dialog is closing, and the dialog may give focus back to the dropped viewer.
-  Check: edit a file, turn the switch off, Discard; the terminal must take keys.
 - Renamed Claude tabs should also get the working spinner: a custom name hides
   Claude Code's animated title glyph, so a renamed Claude tab shows no working animation
   today (the spinner is Copilot only).
