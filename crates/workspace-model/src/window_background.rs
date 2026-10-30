@@ -1,7 +1,7 @@
 //! The window's background settings: how opaque the terminal's background is
 //! (`window_opacity`, a percent) and whether the desktop behind it is blurred (`window_blur`).
-//! Only the terminal's default background and its padding take the opacity; the rest of the
-//! window stays opaque. Blur shows only through that translucent background, so it needs an
+//! The terminal's default background, sidebar and explorer take the opacity; other panes and
+//! overlays stay opaque. Blur shows only through translucent backgrounds, so it needs an
 //! opacity below 100 %, and it works only where the platform blurs: Windows (acrylic, and Mica
 //! from Windows 11 22H2) and KDE Plasma on Wayland. Elsewhere the opacity still applies.
 

@@ -201,14 +201,14 @@ const OPACITY_SLIDER: SliderRange = SliderRange {
     unit: "%",
 };
 
-/// The window background: the terminal's opacity and what shows through it.
+/// The window background: panel opacity and what shows through it.
 fn window_group() -> SettingGroup {
     SettingGroup::new().title("Window").items([
         slider_row(
             "Opacity",
-            "Applies to terminal tabs: how opaque the terminal's background is. Below 100 % \
-             the desktop shows through it; text, colored cells and the rest of the window stay \
-             opaque.",
+            "Below 100 % the desktop shows through the terminal's default background, sidebar \
+             and file explorer. Text, colored terminal cells, the file viewer, Settings, title \
+             bar and overlays stay opaque.",
             OPACITY_SLIDER,
             SettingsField::new(
                 |settings| f32::from(settings.window_opacity.percent()),

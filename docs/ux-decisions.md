@@ -19,11 +19,11 @@
 ## Opacity and blur
 
 ### Opacity: what turns translucent below 100 %?
-Only the terminal's default background and padding (Alacritty/Kitty/WezTerm default); cell
-backgrounds, selection, cursor, overlays and all app chrome stay opaque, so every element
-must paint an explicit opaque background. At 100 % with no blur the window stays `Opaque`.
+The terminal's default background and padding, sidebar and file explorer, including their
+selected and hovered rows, share the opacity setting. Cell backgrounds, selection, cursor,
+file viewer, Settings, title bar and overlays stay opaque. At 100 % the appearance is unchanged.
 Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs unreadable).
-Extending it to the sidebar/explorer is a BACKLOG item. [UX agent]
+[user: extend opacity to the sidebar and explorer]
 
 - **Slider**: 30-100 %, step 5, integer percent in the file, live while dragged like font
   size; no preview on the Settings page. [UX agent]

@@ -655,6 +655,10 @@ impl FileExplorer {
         match &self.rows[index] {
             ListRow::Error { depth, message } => div()
                 .h(px(ROW_HEIGHT))
+                .bg(crate::window_background::panel_background(
+                    theme.sidebar,
+                    cx,
+                ))
                 .flex()
                 .items_center()
                 .pl(row_indent(*depth) + px(INDENT + 4.))
@@ -689,9 +693,11 @@ impl FileExplorer {
         let menu = self.entry_menu(row.clone(), cx);
         let chevron = entry_chevron(row, cx);
         let theme = cx.theme();
+        let selected_background =
+            crate::window_background::panel_background(theme.sidebar_accent, cx);
         self.row_shell(row.depth, cx)
             .id(("explorer-row", index))
-            .when(selected, |row| row.bg(theme.sidebar_accent))
+            .when(selected, |row| row.bg(selected_background))
             .when(!selected, |row| row.hover(|style| style.bg(hovered)))
             // Git-ignored entries are dimmed like the icons.
             .when(ignored, |row| row.text_color(theme.muted_foreground))
@@ -719,6 +725,10 @@ impl FileExplorer {
 
     fn row_shell(&self, depth: usize, cx: &App) -> gpui_kit::Div {
         div()
+            .bg(crate::window_background::panel_background(
+                cx.theme().sidebar,
+                cx,
+            ))
             .w_full()
             .h(px(ROW_HEIGHT))
             .flex()
@@ -750,6 +760,10 @@ impl FileExplorer {
             .items_center()
             .justify_between()
             .h(px(crate::ui_dimensions::HEADER_HEIGHT))
+            .bg(crate::window_background::panel_background(
+                theme.sidebar,
+                cx,
+            ))
             .pl_2()
             .pr_1()
             .child(
@@ -807,11 +821,16 @@ impl FileExplorer {
 impl Render for FileExplorer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (background, border, muted) =
-            (theme.sidebar, theme.sidebar_border, theme.muted_foreground);
+        let (background, border, muted) = (
+            crate::window_background::panel_background(theme.sidebar, cx),
+            theme.sidebar_border,
+            theme.muted_foreground,
+        );
         let body = if self.root.is_none() {
             div()
                 .p_3()
+                .bg(background)
+                .flex_1()
                 .text_sm()
                 .text_color(muted)
                 .child("No folder")
@@ -826,19 +845,23 @@ impl Render for FileExplorer {
                         .collect::<Vec<_>>()
                 }),
             )
-            .flex_1()
+            .debug_selector(|| "explorer-rows".into())
+            .h(px(self.rows.len() as f32 * ROW_HEIGHT))
+            .flex_shrink_1()
             .into_any_element()
         };
         div()
             .id("file-explorer")
+            .debug_selector(|| "file-explorer".into())
             .flex()
             .flex_col()
             .size_full()
-            .bg(background)
             .border_r_1()
             .border_color(border)
             .child(self.render_header(cx))
             .child(body)
+            // Paint vacant space separately so row opacity never stacks over a panel fill.
+            .child(div().flex_1().bg(background))
     }
 }
 

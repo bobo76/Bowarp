@@ -382,6 +382,97 @@ fn in_app_notifications_switch_gates_agent_toasts_live(cx: &mut gpui_kit::TestAp
 }
 
 #[gpui::test]
+fn panel_opacity_leaves_file_viewer_and_settings_opaque(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::ActiveTheme;
+    use workspace_model::{UiTheme, WindowOpacity};
+
+    let mut h = PanesHarness::new("panel-opacity", cx);
+    h.toggle_explorer();
+    h.open_file();
+    for theme in [UiTheme::Dark, UiTheme::Light, UiTheme::Sepia] {
+        for percent in [50., 100.] {
+            h.cx.update(|_, cx| {
+                settings_file::preview(cx, |settings| {
+                    settings.ui_theme = theme;
+                    settings.window_opacity = WindowOpacity::new(percent);
+                });
+            });
+            h.cx.run_until_parked();
+            h.cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                let expected = crate::window_background::panel_background(cx.theme().sidebar, cx);
+                let accent =
+                    crate::window_background::panel_background(cx.theme().sidebar_accent, cx);
+                let quads = window.painted_quads();
+                let backgrounds: Vec<_> = quads
+                    .iter()
+                    .filter(|quad| quad.bounds.size.width.0 > 100.)
+                    .filter_map(|quad| quad.background.as_solid())
+                    .collect();
+                assert!(
+                    backgrounds.contains(&expected),
+                    "{theme:?}, {percent}: panel"
+                );
+                assert!(
+                    backgrounds.contains(&accent),
+                    "{theme:?}, {percent}: selected row"
+                );
+                assert!(
+                    backgrounds.contains(&cx.theme().background),
+                    "viewer stays opaque"
+                );
+            });
+        }
+    }
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        settings_file::preview(cx, |settings| {
+            settings.window_opacity = WindowOpacity::new(50.);
+        });
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_settings(window, cx);
+        });
+    });
+    h.cx.run_until_parked();
+    h.cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        assert!(window.painted_quads().iter().any(|quad| {
+            quad.bounds.size.width.0 > 100.
+                && quad.background.as_solid() == Some(cx.theme().background)
+        }));
+    });
+}
+
+#[gpui::test]
+fn explorer_opacity_fill_does_not_take_space_from_a_long_listing(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut h = PanesHarness::new("explorer-opacity-height", cx);
+    for index in 0..80 {
+        std::fs::write(h.folder.join(format!("file-{index}.txt")), "").unwrap();
+    }
+    h.toggle_explorer();
+    let folder = h.folder.clone();
+    let explorer = h
+        .workspace
+        .read_with(&h.cx, |workspace, _| workspace.explorer.clone());
+    h.cx.update(|_, cx| {
+        explorer.update(cx, |explorer, cx| {
+            explorer.reread(std::collections::HashSet::from([folder]), &[], cx);
+        });
+    });
+    h.cx.run_until_parked();
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    let panel = h.cx.debug_bounds("file-explorer").unwrap();
+    let rows = h.cx.debug_bounds("explorer-rows").unwrap();
+    assert_eq!(
+        rows.size.height,
+        panel.size.height - px(crate::ui_dimensions::HEADER_HEIGHT),
+        "a long folder must use all space below the header"
+    );
+}
+
+#[gpui::test]
 fn file_panes_switch_refuses_off_with_unsaved_edits(cx: &mut gpui_kit::TestAppContext) {
     let mut h = PanesHarness::new("panes-refuse", cx);
     let viewer = h.open_dirty_viewer();

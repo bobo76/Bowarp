@@ -1,8 +1,8 @@
 //! The window background from the `window_opacity` and `window_blur` settings (see
 //! `workspace_model::Backdrop`). Below 100 % the window asks the platform for a see-through
 //! (or blurred) background and the root view stops painting the theme background over it, so
-//! the terminal's translucent background shows the desktop; every other pane paints its own
-//! opaque background. At 100 % the window stays opaque, as before.
+//! the terminal, sidebar and explorer backgrounds show the desktop. Other panes and overlays
+//! paint opaque backgrounds. At 100 % the window stays opaque, as before.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -165,6 +165,10 @@ fn apply(window: AnyWindowHandle, applied: &Applied, cx: &mut App) {
 /// while settings aren't loaded: unit tests).
 pub fn terminal_alpha(cx: &App) -> f32 {
     settings_file::window_opacity(cx).alpha()
+}
+
+pub fn panel_background(color: gpui_kit::Hsla, cx: &App) -> gpui_kit::Hsla {
+    color.opacity(terminal_alpha(cx))
 }
 
 #[cfg(test)]

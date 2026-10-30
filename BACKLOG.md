@@ -35,6 +35,14 @@ Copilot Autopilot permission hooks:
   while a real question still waits. Check mode changes with the optional extension, and
   `--mode autopilot` / `--autopilot` launches without it; `--yolo` alone is not Autopilot.
 
+Sidebar and explorer opacity:
+
+- On a composited Windows/Linux desktop, check Dark, Light and Sepia at 100 % and below:
+  normal, selected and hovered sidebar/explorer rows stay readable; the file viewer,
+  Settings, title bar, menus, cards, dialogs and toasts stay opaque. Check long explorer lists.
+- Recheck the reported opacity leak on the affected desktop with its platform/compositor,
+  theme, opacity, blur and a screenshot; distinguish the newly translucent panels from a leak.
+
 Softer light theme:
 
 - Windows (where the glare was reported): the light UI is comfortable for a long session;
@@ -177,18 +185,6 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Window opacity on the sidebar and file explorer too (today only the terminal takes it,
-  docs/ux-decisions.md "Opacity: what turns translucent below 100 %?", option A): the sidebar
-  and explorer panel backgrounds take the same alpha as the terminal
-  (`window_background::terminal_alpha`), including their selected and hovered row colors,
-  which must stay visible over a light desktop. Menus, hover cards, dialogs, toasts, the file
-  viewer, the settings page and the title bar stay opaque. At 100 % nothing changes. Update
-  the ux-decisions entry and FEATURES.md ("Opacity applies to the terminal's default
-  background only"); check with Xvfb that only those two panels drop below alpha 255.
-  - Reported 2026-10-25: opacity leaking outside the terminal, not reproducible under Xvfb
-    (every pane but the terminal renders alpha 255, light and dark). Ask for the platform,
-    desktop/compositor, theme, opacity and blur values, and a screenshot, and recheck the
-    report once the panels above are built.
 - Mica doesn't show (Windows 11 build 26100, 0.2.34): with Blur set to Mica and opacity below
   100 % the terminal looks opaque, with no caption, live or after a restart. Likely cause,
   unverified: GPUI's `MicaBackdrop` only sets `DWMWA_SYSTEMBACKDROP_TYPE` and never calls

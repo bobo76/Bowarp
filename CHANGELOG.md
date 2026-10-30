@@ -10,6 +10,8 @@ omitted unless they affect how the app is used.
 - Known Copilot Autopilot sessions ignore automatically approved permission hooks instead of
   showing false Waiting notices; real questions still need attention. Launch mode is available
   before the optional extension's first report.
+- Window opacity now also applies to the sidebar and file explorer, including selected and
+  hovered rows, while the file viewer, Settings, title bar and overlays stay opaque.
 
 ## 0.2.42
 
