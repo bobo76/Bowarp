@@ -3,6 +3,11 @@
 User-visible changes are listed by release. Maintenance work and internal refactors are
 omitted unless they affect how the app is used.
 
+## Unreleased
+
+- Clarify that clipboard Ask / Allow / Deny controls terminal OSC 52 writes, not native
+  clipboard access by programs such as Claude Code and Copilot CLI.
+
 ## 0.2.42
 
 - A softer light theme: warm grey surfaces instead of white, darker muted text, visible

@@ -338,7 +338,7 @@ fn terminal_colors_row() -> SettingItem {
     )
 }
 
-/// The `clipboard_writes` setting: what happens when a program writes the clipboard.
+/// The `clipboard_writes` setting: terminal OSC 52 writes, not native clipboard access.
 fn clipboard_writes_row() -> SettingItem {
     let options = [
         (ClipboardPolicy::Ask, "Ask"),
@@ -348,10 +348,11 @@ fn clipboard_writes_row() -> SettingItem {
     .map(|(policy, label)| DropdownOption::new(policy.as_str(), label));
     dropdown_row(
         "Clipboard writes from programs",
-        "When a program copies text to the clipboard (OSC 52, e.g. Claude Code, Copilot CLI, \
-         tmux, vim). Ask: a notice above the terminal waits for Allow, Deny or \
+        "Controls terminal clipboard writes (OSC 52, e.g. tmux or vim). Ask: a notice above \
+         the terminal waits for Allow, Deny or \
          \"Always for this tab\". Allow or Deny applies to every tab without asking, and Deny \
-         also overrides \"Always for this tab\".",
+         also overrides \"Always for this tab\". Native clipboard writes by programs such as \
+         Claude Code and Copilot CLI are outside this control and cannot be blocked.",
         DropdownChoices::new(options, |value| format!("{value} (unknown)").into()),
         SettingsField::new(
             |settings| settings.clipboard_writes.as_str().to_owned(),

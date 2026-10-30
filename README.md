@@ -102,13 +102,16 @@ selection is also copied to the primary selection, and middle-click pastes it. A
 scrolls 2 lines on Linux, and X11 touchpad scrolling is slowed the same way (Windows uses the
 system's lines-per-notch setting).
 
-When a program writes the clipboard or the primary selection (OSC 52, e.g. Copilot CLI's
-copy on Windows, tmux, vim), a notice above the terminal shows the text's size and a preview,
+When a program writes the clipboard or the primary selection through the terminal (OSC 52,
+e.g. tmux or vim), a notice above the terminal shows the text's size and a preview,
 and the write waits: Allow applies it, Deny drops it, and "Always for this tab" applies it and
 every later one until the tab closes. A newer write replaces the waiting one; a background tab
 with a waiting write shows Needs attention. Settings → Terminal → Clipboard → **Clipboard
 writes from programs** (`clipboard_writes`: `ask`, `allow` or `deny`) can instead allow or deny
-every write in every tab without asking; Deny also overrides "Always for this tab".
+every OSC 52 write in every tab without asking; Deny also overrides "Always for this tab".
+Programs such as Claude Code and Copilot CLI can also write the system clipboard directly,
+especially on Windows. Those native writes bypass the terminal and cannot be blocked by this
+setting, even with Deny selected.
 
 Terminal search matches literal text, ignoring case, across the current screen and retained
 scrollback, including soft-wrapped lines. All visible matches are highlighted, with the active

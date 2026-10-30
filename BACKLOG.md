@@ -182,11 +182,6 @@ behavior"); items below name their switch where they need one.
     (every pane but the terminal renders alpha 255, light and dark). Ask for the platform,
     desktop/compositor, theme, opacity and blur values, and a screenshot, and recheck the
     report once the panels above are built.
-- Clipboard Deny doesn't stop agent copies (Windows, Claude Code and Copilot CLI): the
-  `clipboard_writes` guard filters only OSC 52, but both CLIs also write the system
-  clipboard themselves, so the text is copied before the notice is answered. The app can't
-  block a native write: decide whether Deny should say it covers terminal (OSC 52) copies
-  only (Settings caption and docs/known-limitations.md), or remove the setting for agent tabs.
 - Mica doesn't show (Windows 11 build 26100, 0.2.34): with Blur set to Mica and opacity below
   100 % the terminal looks opaque, with no caption, live or after a restart. Likely cause,
   unverified: GPUI's `MicaBackdrop` only sets `DWMWA_SYSTEMBACKDROP_TYPE` and never calls

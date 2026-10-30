@@ -22,10 +22,12 @@ entry when the limitation is lifted.
   unless it rings the bell. The warning shows once per start, not again when an agent tab opens.
 - Copilot CLI Waiting ends on its next tool hook or when the turn ends: after a question is
   answered, a reply with no tool call keeps the tab Waiting until the turn finishes.
-- Clipboard notice: every program clipboard write (OSC 52) now waits for Allow, including
-  Copilot CLI's copy on Windows. One answer covers the held clipboard and primary-selection
-  writes; a write held when the program exits is dropped. "Always for this tab" survives an
-  agent tab going on as a shell. No toast: a background tab only shows Needs attention.
+- Clipboard protection covers terminal OSC 52 writes only. Native system clipboard writes
+  by programs such as Claude Code and Copilot CLI (especially on Windows) bypass the terminal:
+  Ask cannot hold them and Deny cannot block them. One answer covers held OSC 52 clipboard
+  and primary-selection writes; a write held when the program exits is dropped.
+  "Always for this tab" survives an agent tab going on as a shell. No toast: a background tab
+  only shows Needs attention.
 - Not supported in the file viewer: AVIF images (GPUI's decoder lacks it: "The image could
   not be read."), a `#heading` in a document link (the file opens at the top).
 - File viewer images: still WebP files share animated GIF/WebP's 2 MB limit (other images
