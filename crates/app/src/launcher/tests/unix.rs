@@ -343,7 +343,10 @@ fn finds_default_shell_by_name() {
 
 #[test]
 fn default_names() {
-    let claude = LaunchSpec::claude_code(None);
+    let claude = LaunchSpec::agent(
+        workspace_model::AgentId::from_cli_selector("claude").unwrap(),
+        None,
+    );
     assert_eq!(default_name(&claude), "Claude Code");
     let bash = LaunchSpec::new(
         SessionKind::Shell,

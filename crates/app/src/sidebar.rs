@@ -12,12 +12,11 @@ use gpui_kit::{
     IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
     Transformation, Window, div, percentage, pulsating_between, px, rgb,
 };
-use term_core::SessionKind;
-use workspace_model::{Attention, LauncherIcon, TabColor, format_clock, format_lap};
+use workspace_model::{Attention, LauncherIcon, SessionKind, TabColor, format_clock, format_lap};
 
 use crate::assets::{
-    AGENT_SPARK_ICON, BASH_ICON, COPILOT_ICON, DEBIAN_ICON, FISH_ICON, GIT_BRANCH_ICON, GIT_ICON,
-    LINUX_ICON, PIN_ICON, POWERSHELL_ICON, PROMPT_ICON, UBUNTU_ICON, ZSH_ICON,
+    BASH_ICON, DEBIAN_ICON, FISH_ICON, GIT_BRANCH_ICON, GIT_ICON, LINUX_ICON, PIN_ICON,
+    POWERSHELL_ICON, PROMPT_ICON, UBUNTU_ICON, ZSH_ICON,
 };
 use crate::light_theme;
 use crate::shortcuts;
@@ -49,7 +48,6 @@ const COLOR_STRIPE_WIDTH: f32 = 3.;
 const COLOR_STRIPE_OFFSET: f32 = 2.;
 const DROP_LINE_HEIGHT: f32 = 2.;
 const SECTION_HEADING_HEIGHT: f32 = 24.;
-const CLAUDE_ORANGE: u32 = 0xd97757;
 /// Added lines in the hover card, as in a diff.
 const ADDED_GREEN: u32 = 0x3fb950;
 /// One breath of the Running badge, between these opacities. It repaints at most
@@ -157,20 +155,26 @@ pub fn attention_color(cx: &App) -> Hsla {
 }
 
 pub fn kind_icon(kind: SessionKind) -> Icon {
-    match kind {
-        SessionKind::Shell => Icon::new(IconName::SquareTerminal),
-        SessionKind::ClaudeCode => Icon::empty()
-            .path(AGENT_SPARK_ICON)
-            .text_color(rgb(CLAUDE_ORANGE)),
-        SessionKind::CopilotCli => Icon::empty().path(COPILOT_ICON),
+    let Some(agent) = kind.agent() else {
+        return Icon::new(IconName::SquareTerminal);
+    };
+    let icon = Icon::empty().path(agent.definition().icon_asset);
+    match agent.definition().tint_rgb {
+        Some(tint) => icon.text_color(rgb(tint)),
+        None => icon,
     }
 }
 
 /// Icon of a new-tab menu entry.
 pub fn launcher_icon(icon: LauncherIcon) -> Icon {
     let path = match icon {
-        LauncherIcon::Claude => return kind_icon(SessionKind::ClaudeCode),
-        LauncherIcon::Copilot => return kind_icon(SessionKind::CopilotCli),
+        LauncherIcon::Agent(agent) => {
+            let icon = Icon::empty().path(agent.definition().icon_asset);
+            return match agent.definition().tint_rgb {
+                Some(tint) => icon.text_color(rgb(tint)),
+                None => icon,
+            };
+        }
         LauncherIcon::Shell | LauncherIcon::CommandPrompt => PROMPT_ICON,
         LauncherIcon::PowerShell => POWERSHELL_ICON,
         LauncherIcon::GitBash => GIT_ICON,
@@ -365,7 +369,7 @@ pub fn working_spinner(
     status: TabStatus,
     motion: RunningPulse,
 ) -> Option<RunningPulse> {
-    (kind == SessionKind::CopilotCli && status == TabStatus::Working).then_some(motion)
+    (kind.has_working_spinner() && status == TabStatus::Working).then_some(motion)
 }
 
 /// The working spinner: a ring with a gap, turned `step` quarter turns.

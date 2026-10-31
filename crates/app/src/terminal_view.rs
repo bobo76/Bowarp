@@ -60,8 +60,8 @@ const KEY_CONTEXT: &str = "Terminal";
 /// How long after its last output a session without status hooks still counts as active.
 const ACTIVITY_WINDOW: Duration = Duration::from_secs(2);
 
-/// Keys bound by the window root (focus traversal, copy) that terminal programs need: Tab for
-/// completion, Shift+Tab for Claude Code's mode cycling, Ctrl+C for interrupt.
+/// Keys bound by the window root (focus traversal, copy) that terminal programs need:
+/// Tab for completion, Shift+Tab for mode cycling, Ctrl+C for interrupt.
 const PASSTHROUGH_KEYS: &[&str] = &["tab", "shift-tab", "ctrl-c"];
 
 actions!(
@@ -210,8 +210,8 @@ pub struct TerminalView {
     location: Option<Location>,
     /// How the program parses typed paths.
     pub(crate) shell: ShellSyntax,
-    /// Status from Claude Code hooks, or from Copilot CLI's progress reports once it sent
-    /// one; `None` for sessions without either.
+    /// Agent status from hooks or progress reports once the provider sends its first one;
+    /// `None` for sessions without either.
     agent: Option<AgentTracker>,
     mode: AgentModeState,
     /// The agent finished a turn while the tab was hidden; cleared when it is shown.
@@ -343,11 +343,13 @@ impl TerminalView {
             location: spec.cwd.clone().map(Location::read),
             shell: launcher::shell_syntax(spec),
             agent: (reporting == StatusReporting::Hooks).then(|| AgentTracker::new(Instant::now())),
-            mode: if spec.kind == SessionKind::CopilotCli {
-                AgentModeState::from_args(&spec.args)
-            } else {
-                AgentModeState::default()
-            },
+            mode: spec
+                .kind
+                .agent()
+                .filter(|_| spec.kind.has_mode_reporting())
+                .map_or_else(AgentModeState::default, |agent| {
+                    AgentModeState::from_agent_args(agent, &spec.args)
+                }),
             finished_unseen: false,
             bell_unseen: false,
             clipboard: ClipboardGuard::default(),
@@ -510,8 +512,7 @@ impl TerminalView {
                 TabStatus::Running
             }
             ProcessState::Running if self.activity_task.is_some() => TabStatus::Active,
-            // With hooks a Claude tab always has an agent: none means they are off.
-            ProcessState::Running if self.kind() == SessionKind::ClaudeCode => {
+            ProcessState::Running if self.kind().unavailable_without_hooks() => {
                 TabStatus::Unavailable
             }
             ProcessState::Running => TabStatus::Quiet,
@@ -619,36 +620,64 @@ impl TerminalView {
         if self.process != ProcessState::Running {
             return;
         }
+        let Some(agent_id) = self.kind().agent() else {
+            return;
+        };
         match event {
-            AgentEvent::Hook(event) if self.kind() == SessionKind::ClaudeCode => {
-                self.update_agent(|agent| agent.apply(event, at), cx);
-            }
-            AgentEvent::Hook(event) if self.kind() == SessionKind::CopilotCli => {
-                let Some(event) = event.for_copilot_mode(self.mode.mode()) else {
-                    return;
-                };
-                // Permission hooks can arrive before the first terminal progress report.
-                if self.agent.is_none()
-                    && matches!(event, agent_status::HookEvent::InputRequested(_))
+            AgentEvent::Hook(event) => self.apply_status_hook(agent_id, event, at, cx),
+            AgentEvent::RawReport { event_name, detail } => {
+                if agent_id.mode_event_name() == Some(event_name.as_str()) {
+                    if self.kind().has_mode_reporting()
+                        && let Some(mode) = detail
+                            .as_deref()
+                            .and_then(|value| agent_id.parse_mode(value))
+                        && self.mode.apply(mode, at)
+                    {
+                        cx.emit(TabChanged);
+                    }
+                } else if let Some(event) =
+                    agent_status::HookEvent::from_agent(agent_id, &event_name, detail.as_deref())
                 {
-                    self.agent = Some(AgentTracker::new(Instant::now()));
-                    self.activity_task = None;
+                    self.apply_status_hook(agent_id, event, at, cx);
                 }
-                self.update_agent(|agent| agent.apply_copilot_hook(event, at), cx);
             }
             AgentEvent::ModeChanged(mode)
-                if self.kind() == SessionKind::CopilotCli && self.mode.apply(mode, at) =>
+                if self.kind().has_mode_reporting() && self.mode.apply(mode, at) =>
             {
                 cx.emit(TabChanged);
             }
-            _ => {}
+            AgentEvent::ModeChanged(_) => {}
         }
     }
 
-    /// Apply a progress report from Copilot CLI. Its first one switches the tab from output
-    /// activity to agent status, so a Copilot that never reports progress keeps the former.
+    fn apply_status_hook(
+        &mut self,
+        agent_id: workspace_model::AgentId,
+        event: agent_status::HookEvent,
+        at: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let definition = agent_id.definition();
+        let Some(event) =
+            event.for_mode(self.mode.mode(), definition.autopilot_approves_permissions)
+        else {
+            return;
+        };
+        if self.agent.is_none()
+            && self.kind().has_attention_hooks()
+            && matches!(event, agent_status::HookEvent::InputRequested(_))
+        {
+            self.agent = Some(AgentTracker::new(Instant::now()));
+            self.activity_task = None;
+        }
+        let policy = definition.activity;
+        self.update_agent(|agent| agent.apply_hook(event, at, policy), cx);
+    }
+
+    /// Apply a progress report. Its first one switches the tab from output activity to agent
+    /// status; a provider that never reports progress keeps the former.
     fn apply_progress(&mut self, state: ProgressState, at: u64, cx: &mut Context<Self>) {
-        if self.kind() != SessionKind::CopilotCli {
+        if !self.kind().has_progress_status() {
             return;
         }
         let adopted = self.agent.is_none();
@@ -737,12 +766,12 @@ impl TerminalView {
     }
 
     fn on_bell(&mut self, cx: &mut Context<Self>) -> bool {
-        let hooked = self.agent.is_some() && self.kind() == SessionKind::ClaudeCode;
+        let hooked = self.agent.is_some() && self.kind().hooks_precede_bell();
         if self.visible || self.bell_unseen || hooked {
             return false;
         }
         self.bell_unseen = true;
-        if self.kind() != SessionKind::Shell {
+        if !self.kind().is_shell() {
             // A bell replaces the tab's toast: keep the reason a pending request gave.
             let wait_reason = self.agent.as_ref().and_then(AgentTracker::wait_reason);
             cx.emit(AgentNotice::NeedsAttention(wait_reason));
@@ -799,10 +828,7 @@ impl TerminalView {
     }
 
     fn on_exited(&mut self, code: Option<i32>, cx: &mut Context<Self>) {
-        if self.kind() != SessionKind::Shell
-            && !self.visible
-            && (code != Some(0) || !self.finished_unseen)
-        {
+        if !self.kind().is_shell() && !self.visible && (code != Some(0) || !self.finished_unseen) {
             cx.emit(AgentNotice::Exited(code));
         }
         self.process = ProcessState::Exited(code);
@@ -814,7 +840,7 @@ impl TerminalView {
         }
         cx.emit(TabChanged);
         // A failed agent keeps its last screen, so its error can be read.
-        if self.kind() != SessionKind::Shell && code == Some(0) {
+        if self.kind().has_shell_fallback() && code == Some(0) {
             cx.emit(AgentExited);
         }
     }

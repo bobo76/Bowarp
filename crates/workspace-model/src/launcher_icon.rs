@@ -1,3 +1,5 @@
+use crate::AgentId;
+
 /// Icon the new-tab menu shows next to a launcher.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LauncherIcon {
@@ -14,8 +16,14 @@ pub enum LauncherIcon {
     Debian,
     /// Any other WSL distro.
     Linux,
-    Claude,
-    Copilot,
+    Agent(AgentId),
+}
+
+impl LauncherIcon {
+    #[allow(non_upper_case_globals)]
+    pub const Claude: Self = Self::Agent(crate::agents::CLAUDE);
+    #[allow(non_upper_case_globals)]
+    pub const Copilot: Self = Self::Agent(crate::agents::COPILOT);
 }
 
 /// Icon for a shell run as `program`: a file name or a path (`/` or `\` separated), with or

@@ -8,7 +8,7 @@ use term_core::{LaunchSpec, SessionKind};
 #[cfg(any(windows, test))]
 use workspace_model::distro_icon;
 use workspace_model::file_tree::ShellSyntax;
-use workspace_model::{KnownShell, LauncherIcon, Platform, Settings, shell_icon};
+use workspace_model::{KnownShell, LauncherIcon, Platform, Settings, agents, shell_icon};
 
 /// A program the new-tab menu offers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,12 +55,11 @@ impl Launcher {
         let Some(mut spec) = self.spec(cwd) else {
             return Ok(None);
         };
-        let arguments = match self.kind {
-            SessionKind::ClaudeCode => &settings.claude_args,
-            SessionKind::CopilotCli => &settings.copilot_args,
-            SessionKind::Shell => return Ok(Some(spec)),
+        let Some(agent) = self.kind.agent() else {
+            return Ok(Some(spec));
         };
-        spec.args.extend(shell_words::split(arguments)?);
+        spec.args
+            .extend(shell_words::split(settings.agent_arguments(agent))?);
         Ok(Some(spec))
     }
 }
@@ -90,22 +89,6 @@ pub(crate) const WSL_DISTRO_FLAG: &str = "-d";
 #[cfg(any(windows, test))]
 const GIT_BASH_ARGS: &[&str] = &["-i", "-l"];
 
-/// Agent CLIs: (program, label, kind, icon). The program name is the [`Launcher::id`].
-const AGENTS: &[(&str, &str, SessionKind, LauncherIcon)] = &[
-    (
-        "claude",
-        "Claude Code",
-        SessionKind::ClaudeCode,
-        LauncherIcon::Claude,
-    ),
-    (
-        "copilot",
-        "Copilot CLI",
-        SessionKind::CopilotCli,
-        LauncherIcon::Copilot,
-    ),
-];
-
 /// Installed shells, the default shell first, followed by the agent CLIs (listed even when
 /// missing, so the menu shows what could be launched).
 pub fn discover() -> Vec<Launcher> {
@@ -133,13 +116,13 @@ pub fn discover() -> Vec<Launcher> {
     {
         launchers[..=index].rotate_right(1);
     }
-    launchers.extend(AGENTS.iter().map(|&(name, label, kind, icon)| Launcher {
-        id: name.into(),
-        label: label.into(),
-        kind,
-        program: find_program(name, &path),
+    launchers.extend(agents().map(|agent| Launcher {
+        id: agent.cli_selector().into(),
+        label: agent.label().into(),
+        kind: SessionKind::Agent(agent),
+        program: find_program(agent.executable(), &path),
         args: Vec::new(),
-        icon,
+        icon: LauncherIcon::Agent(agent),
     }));
     launchers
 }
@@ -189,7 +172,7 @@ fn startup_shell_on(
 pub fn installed_shells(launchers: &[Launcher]) -> impl Iterator<Item = &Launcher> + Clone {
     launchers
         .iter()
-        .filter(|launcher| launcher.kind == SessionKind::Shell && launcher.program.is_some())
+        .filter(|launcher| launcher.kind.is_shell() && launcher.program.is_some())
 }
 
 /// The installed shell the `default_shell` setting `value` names: by [`Launcher::id`] (as the
@@ -254,7 +237,7 @@ pub fn menu_sections<'a>(
     let (shells, agents) = launchers
         .iter()
         .filter(|&launcher| default.is_none_or(|default| !std::ptr::eq(launcher, default)))
-        .partition(|launcher| launcher.kind == SessionKind::Shell);
+        .partition(|launcher| launcher.kind.is_shell());
     (default, shells, agents)
 }
 
@@ -339,8 +322,8 @@ fn shell_key_with(
 
 /// Name shown for a session until its program sets a title.
 pub fn default_name(spec: &LaunchSpec) -> String {
-    if let Some(&(_, label, ..)) = AGENTS.iter().find(|&&(_, _, kind, _)| kind == spec.kind) {
-        return label.into();
+    if let Some(agent) = spec.kind.agent() {
+        return agent.label().to_owned();
     }
     if let Some(distro) = wsl_distro(spec) {
         return distro.into();

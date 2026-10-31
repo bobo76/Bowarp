@@ -1,7 +1,9 @@
 //! Hook IPC: `agentws-hook` opens one local socket connection per hook event (a Unix socket on
 //! Linux, a named pipe on Windows) and sends a single line:
 //! `<session id> <hook start time in µs since the Unix epoch> <hook_event_name> [notification_type]`.
-//! Copilot mode reports use `CopilotMode` with the interaction mode as `notification_type`.
+//! Provider-neutral transport preserves the event and detail for the destination session to
+//! interpret. Copilot mode reports use `CopilotMode` with the interaction mode as
+//! `notification_type`.
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::sync::Arc;
@@ -13,15 +15,17 @@ use interprocess::local_socket::prelude::*;
 use interprocess::local_socket::{GenericNamespaced, ListenerOptions, Stream};
 use serde_json::Value;
 
+use workspace_model::AgentId;
+
 use crate::{AgentMode, status::HookEvent};
 
 /// Environment variable holding the session id a hook reports for.
 pub const SESSION_ENV: &str = "AGENTWS_SESSION";
 /// Environment variable holding the socket name of the app's [`HookServer`].
 pub const PIPE_ENV: &str = "AGENTWS_PIPE";
-/// Path to the hook helper used by the Copilot extension to reach the local socket.
-pub const HOOK_ENV: &str = "AGENTWS_HOOK";
-
+/// Environment variable holding the registered agent id for provider protocol decoding.
+pub const AGENT_ENV: &str = "AGENTWS_AGENT";
+/// Environment variable holding the registered agent id for provider protocol decoding.
 /// Longest line a hook may send; anything longer is not a hook message.
 const MAX_LINE: u64 = 512;
 /// How long a connection may take to send its line; a hook sends it right after connecting.
@@ -30,14 +34,18 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// misbehaving peer keeps one open; past this, new connections are dropped.
 const MAX_READERS: usize = 16;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentEvent {
     Hook(HookEvent),
     ModeChanged(AgentMode),
+    RawReport {
+        event_name: String,
+        detail: Option<String>,
+    },
 }
 
 /// A status or mode event for one session.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookMessage {
     pub session: u64,
     /// When the hook started, in microseconds since the Unix epoch.
@@ -57,18 +65,25 @@ pub fn default_pipe_name() -> String {
 }
 
 /// Forward a hook's JSON input (its stdin) to the server listening on `pipe_name`.
-pub fn forward_hook(pipe_name: &str, session: u64, at: u64, input: &[u8]) -> io::Result<()> {
-    let line = hook_line(session, at, input)?;
+pub fn forward_hook(
+    agent: AgentId,
+    pipe_name: &str,
+    session: u64,
+    at: u64,
+    input: &[u8],
+) -> io::Result<()> {
+    let line = hook_line(agent, session, at, input)?;
     let mut stream = Stream::connect(pipe_name.to_ns_name::<GenericNamespaced>()?)?;
     stream.write_all(line.as_bytes())?;
     stream.flush()
 }
 
 /// The wire line for a hook's JSON input, newline included.
-fn hook_line(session: u64, at: u64, input: &[u8]) -> io::Result<String> {
+fn hook_line(agent: AgentId, session: u64, at: u64, input: &[u8]) -> io::Result<String> {
     let payload: Value = serde_json::from_slice(input)?;
     let field = |name| payload.get(name).and_then(Value::as_str);
-    let event_name = event_name(&payload)
+    let event_name = agent
+        .event_name(field("hook_event_name"), field("hookName"))
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing hook_event_name"))?;
     let mut line = format!("{session} {at} {event_name}");
     if let Some(kind) = field("notification_type") {
@@ -79,30 +94,20 @@ fn hook_line(session: u64, at: u64, input: &[u8]) -> io::Result<String> {
     Ok(line)
 }
 
-/// The hook's `hook_event_name`. Copilot CLI sends `PermissionRequest` camelCase instead, named
-/// by `hookName` (`permissionRequest`), so that name is turned PascalCase.
-fn event_name(payload: &Value) -> Option<String> {
-    let field = |name| payload.get(name).and_then(Value::as_str);
-    if let Some(name) = field("hook_event_name") {
-        return Some(name.to_string());
-    }
-    let mut chars = field("hookName")?.chars();
-    let first = chars.next()?;
-    Some(first.to_ascii_uppercase().to_string() + chars.as_str())
-}
-
 fn parse_line(line: &str) -> Option<HookMessage> {
     let mut fields = line.split_whitespace();
     let session = fields.next()?.parse().ok()?;
     let at = fields.next()?.parse().ok()?;
     let event_name = fields.next()?;
-    let detail = fields.next();
-    let event = if event_name == "CopilotMode" {
-        AgentEvent::ModeChanged(AgentMode::parse(detail?)?)
-    } else {
-        AgentEvent::Hook(HookEvent::from_hook(event_name, detail)?)
-    };
-    Some(HookMessage { session, at, event })
+    let detail = fields.next().map(str::to_owned);
+    Some(HookMessage {
+        session,
+        at,
+        event: AgentEvent::RawReport {
+            event_name: event_name.to_owned(),
+            detail,
+        },
+    })
 }
 
 /// Whether the peer runs as the same user as this process. On Linux the socket is in the
@@ -155,7 +160,7 @@ fn read_message(stream: Stream) -> Option<HookMessage> {
     parse_line(&line)
 }
 
-/// Receives hook events from `agentws-hook` processes.
+/// Receives raw agent reports from `agentws-hook` processes.
 ///
 /// The listener thread runs for the rest of the process; there is one server per app.
 pub struct HookServer {
@@ -217,7 +222,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::WaitReason;
+    use workspace_model::agents::{CLAUDE, COPILOT};
 
     #[test]
     fn parses_lines() {
@@ -226,28 +231,36 @@ mod tests {
             Some(HookMessage {
                 session: 7,
                 at: 1000,
-                event: AgentEvent::Hook(HookEvent::ToolStarted)
+                event: AgentEvent::RawReport {
+                    event_name: "PreToolUse".into(),
+                    detail: None
+                }
             })
         );
         assert_eq!(
             parse_line("7 1000 Notification permission_prompt\n").map(|m| m.event),
-            Some(AgentEvent::Hook(HookEvent::InputRequested(
-                WaitReason::Permission
-            )))
+            Some(AgentEvent::RawReport {
+                event_name: "Notification".into(),
+                detail: Some("permission_prompt".into())
+            })
         );
         assert_eq!(
             parse_line("7 1000 Notification elicitation_dialog\n").map(|m| m.event),
-            Some(AgentEvent::Hook(HookEvent::InputRequested(
-                WaitReason::Reply
-            )))
+            Some(AgentEvent::RawReport {
+                event_name: "Notification".into(),
+                detail: Some("elicitation_dialog".into())
+            })
         );
         assert_eq!(
             parse_line("7 1000 CopilotMode autopilot\n").map(|m| m.event),
-            Some(AgentEvent::ModeChanged(AgentMode::Autopilot))
+            Some(AgentEvent::RawReport {
+                event_name: "CopilotMode".into(),
+                detail: Some("autopilot".into())
+            })
         );
-        assert_eq!(parse_line("7 1000 CopilotMode unknown\n"), None);
-        assert_eq!(parse_line("7 1000 CopilotMode\n"), None);
-        assert_eq!(parse_line("7 1000 SessionStart\n"), None);
+        assert!(parse_line("7 1000 CopilotMode unknown\n").is_some());
+        assert!(parse_line("7 1000 CopilotMode\n").is_some());
+        assert!(parse_line("7 1000 SessionStart\n").is_some());
         assert_eq!(parse_line("x 1000 Stop\n"), None);
         assert_eq!(parse_line("7 Stop\n"), None);
         assert_eq!(parse_line(""), None);
@@ -256,11 +269,12 @@ mod tests {
     #[test]
     fn builds_hook_lines() {
         assert_eq!(
-            hook_line(7, 1000, br#"{"hook_event_name":"Stop"}"#).unwrap(),
+            hook_line(CLAUDE, 7, 1000, br#"{"hook_event_name":"Stop"}"#).unwrap(),
             "7 1000 Stop\n"
         );
         assert_eq!(
             hook_line(
+                CLAUDE,
                 7,
                 1000,
                 br#"{"hook_event_name":"Notification","notification_type":"idle_prompt"}"#
@@ -270,6 +284,7 @@ mod tests {
         );
         assert_eq!(
             hook_line(
+                COPILOT,
                 7,
                 1000,
                 br#"{"hookName":"permissionRequest","sessionId":"abc","toolName":"bash"}"#
@@ -278,9 +293,9 @@ mod tests {
             "7 1000 PermissionRequest\n",
             "Copilot's camelCase payload"
         );
-        assert!(hook_line(7, 1000, br#"{"hookName":""}"#).is_err());
-        assert!(hook_line(7, 1000, br#"{"session_id":"abc"}"#).is_err());
-        assert!(hook_line(7, 1000, b"not json").is_err());
+        assert!(hook_line(COPILOT, 7, 1000, br#"{"hookName":""}"#).is_err());
+        assert!(hook_line(CLAUDE, 7, 1000, br#"{"session_id":"abc"}"#).is_err());
+        assert!(hook_line(CLAUDE, 7, 1000, b"not json").is_err());
     }
 
     #[test]
@@ -293,7 +308,7 @@ mod tests {
         .expect("start server");
 
         let input = br#"{"session_id":"abc","hook_event_name":"Notification","notification_type":"idle_prompt","message":"waiting"}"#;
-        forward_hook(&pipe_name, 3, 42, input).expect("forward");
+        forward_hook(CLAUDE, &pipe_name, 3, 42, input).expect("forward");
 
         let message = receiver
             .recv_timeout(Duration::from_secs(5))
@@ -303,7 +318,10 @@ mod tests {
             HookMessage {
                 session: 3,
                 at: 42,
-                event: AgentEvent::Hook(HookEvent::Stopped)
+                event: AgentEvent::RawReport {
+                    event_name: "Notification".into(),
+                    detail: Some("idle_prompt".into())
+                }
             }
         );
     }
@@ -323,6 +341,6 @@ mod tests {
     #[test]
     fn forward_fails_without_server() {
         let input = br#"{"hook_event_name":"Stop"}"#;
-        assert!(forward_hook("agentws-test-no-server.sock", 1, 1, input).is_err());
+        assert!(forward_hook(CLAUDE, "agentws-test-no-server.sock", 1, 1, input).is_err());
     }
 }

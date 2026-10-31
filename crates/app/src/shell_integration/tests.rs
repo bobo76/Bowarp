@@ -74,7 +74,10 @@ fn wsl_gets_the_script_for_a_distro_or_the_default_one() {
 
 #[test]
 fn other_launches_are_left_alone() {
-    let mut claude = LaunchSpec::claude_code(None);
+    let mut claude = LaunchSpec::agent(
+        workspace_model::AgentId::from_cli_selector("claude").unwrap(),
+        None,
+    );
     assert!(!attach(&mut claude));
     assert!(claude.args.is_empty() && claude.env.is_empty());
     let mut bash_script = LaunchSpec::new(

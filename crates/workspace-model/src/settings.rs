@@ -14,6 +14,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
+use crate::AgentId;
 use crate::clipboard_guard::ClipboardPolicy;
 use crate::keymap::KeybindingOverlay;
 use crate::pane_width::{ExplorerWidth, ViewerFraction};
@@ -264,6 +265,26 @@ impl Settings {
     /// The default shell the user set, trimmed; `None` for the automatic one.
     pub fn default_shell(&self) -> Option<&str> {
         Some(self.default_shell.trim()).filter(|shell| !shell.is_empty())
+    }
+
+    pub fn agent_arguments(&self, agent: AgentId) -> &str {
+        let key = agent.argument_setting().key;
+        match key {
+            "claude_args" => &self.claude_args,
+            "copilot_args" => &self.copilot_args,
+            _ => self.extra.get(key).and_then(Value::as_str).unwrap_or(""),
+        }
+    }
+
+    pub fn set_agent_arguments(&mut self, agent: AgentId, value: String) {
+        let key = agent.argument_setting().key;
+        match key {
+            "claude_args" => self.claude_args = value,
+            "copilot_args" => self.copilot_args = value,
+            _ => {
+                self.extra.insert(key.into(), Value::String(value));
+            }
+        }
     }
 
     pub fn from_json(text: &str) -> serde_json::Result<Self> {

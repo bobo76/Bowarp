@@ -2,14 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use alacritty_terminal::tty::Shell;
-
-/// What a session runs, used for its icon and for deciding how status is detected.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum SessionKind {
-    Shell,
-    ClaudeCode,
-    CopilotCli,
-}
+use workspace_model::{AgentId, SessionKind};
 
 /// Everything needed to start a session's child process.
 #[derive(Clone, Debug)]
@@ -31,19 +24,10 @@ impl LaunchSpec {
         Self::new(SessionKind::Shell, None, Vec::new(), cwd)
     }
 
-    pub fn claude_code(cwd: Option<PathBuf>) -> Self {
+    pub fn agent(agent: AgentId, cwd: Option<PathBuf>) -> Self {
         Self::new(
-            SessionKind::ClaudeCode,
-            Some("claude".into()),
-            Vec::new(),
-            cwd,
-        )
-    }
-
-    pub fn copilot_cli(cwd: Option<PathBuf>) -> Self {
-        Self::new(
-            SessionKind::CopilotCli,
-            Some("copilot".into()),
+            SessionKind::Agent(agent),
+            Some(agent.executable().into()),
             Vec::new(),
             cwd,
         )

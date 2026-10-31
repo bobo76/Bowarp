@@ -4,8 +4,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use agent_status::{
-    AgentEvent, AgentMode, HookEvent, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, WaitReason,
-    now_micros,
+    AGENT_ENV, AgentEvent, AgentId, AgentMode, HookEvent, HookMessage, HookServer, PIPE_ENV,
+    SESSION_ENV, WaitReason, now_micros,
 };
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -27,8 +27,10 @@ fn run_hook(env: &[(&str, &str)], input: &str) -> Output {
 fn run_hook_with_args(env: &[(&str, &str)], input: &str, args: &[&str]) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_agentws-hook"))
         .args(args)
+        .env_remove(AGENT_ENV)
         .env_remove(PIPE_ENV)
         .env_remove(SESSION_ENV)
+        .env(AGENT_ENV, "claude")
         .envs(env.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -42,6 +44,19 @@ fn run_hook_with_args(env: &[(&str, &str)], input: &str, args: &[&str]) -> Outpu
         .write_all(input.as_bytes())
         .unwrap();
     child.wait_with_output().expect("hook output")
+}
+
+fn decoded_event(message: &HookMessage, agent_id: &str) -> Option<AgentEvent> {
+    let AgentEvent::RawReport { event_name, detail } = &message.event else {
+        return Some(message.event.clone());
+    };
+    let agent = AgentId::from_cli_selector(agent_id)?;
+    if agent.mode_event_name() == Some(event_name.as_str()) {
+        return agent
+            .parse_mode(detail.as_deref()?)
+            .map(AgentEvent::ModeChanged);
+    }
+    HookEvent::from_agent(agent, event_name, detail.as_deref()).map(AgentEvent::Hook)
 }
 
 fn assert_silent_success(output: &Output) {
@@ -61,7 +76,10 @@ fn forwards_event_to_server() {
 
     let message = receiver.recv_timeout(TIMEOUT).expect("message");
     assert_eq!(message.session, 12);
-    assert_eq!(message.event, AgentEvent::Hook(HookEvent::ToolStarted));
+    assert_eq!(
+        decoded_event(&message, "claude"),
+        Some(AgentEvent::Hook(HookEvent::ToolStarted))
+    );
     assert!(message.at >= before && message.at <= now_micros());
 }
 
@@ -69,14 +87,21 @@ fn forwards_event_to_server() {
 fn forwards_copilot_mode_to_server() {
     let (server, receiver) = start_server();
     let output = run_hook_with_args(
-        &[(PIPE_ENV, server.pipe_name()), (SESSION_ENV, "12")],
+        &[
+            (AGENT_ENV, "copilot"),
+            (PIPE_ENV, server.pipe_name()),
+            (SESSION_ENV, "12"),
+        ],
         r#"{"hook_event_name":"CopilotMode","notification_type":"autopilot"}"#,
         &["--report-errors"],
     );
     assert_silent_success(&output);
     let message = receiver.recv_timeout(TIMEOUT).expect("mode message");
     assert_eq!(message.session, 12);
-    assert_eq!(message.event, AgentEvent::ModeChanged(AgentMode::Autopilot));
+    assert_eq!(
+        decoded_event(&message, "copilot"),
+        Some(AgentEvent::ModeChanged(AgentMode::Autopilot))
+    );
 }
 
 #[test]
@@ -84,7 +109,11 @@ fn copilot_permission_request_is_silent_and_isolated_to_its_tab() {
     let (server, receiver) = start_server();
     for session in ["12", "13"] {
         let output = run_hook(
-            &[(PIPE_ENV, server.pipe_name()), (SESSION_ENV, session)],
+            &[
+                (AGENT_ENV, "copilot"),
+                (PIPE_ENV, server.pipe_name()),
+                (SESSION_ENV, session),
+            ],
             r#"{"hook_event_name":"PermissionRequest","session_id":"copilot-session","tool_name":"shell","tool_input":{"command":"git status"}}"#,
         );
         assert_silent_success(&output);
@@ -92,8 +121,10 @@ fn copilot_permission_request_is_silent_and_isolated_to_its_tab() {
         let message = receiver.recv_timeout(TIMEOUT).expect("permission message");
         assert_eq!(message.session.to_string(), session);
         assert_eq!(
-            message.event,
-            AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Permission))
+            decoded_event(&message, "copilot"),
+            Some(AgentEvent::Hook(HookEvent::InputRequested(
+                WaitReason::Permission
+            )))
         );
     }
 }

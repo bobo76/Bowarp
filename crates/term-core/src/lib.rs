@@ -14,8 +14,9 @@ mod search;
 mod session;
 
 pub use alacritty_terminal;
-pub use launch::{LaunchSpec, SessionKind};
+pub use launch::LaunchSpec;
 pub use palette::{Palette, dim};
 pub use prompt::{ExecutedCommand, PromptEvent, PromptInput};
 pub use search::TerminalSearch;
 pub use session::{EventCallback, Session, SessionEvent, SessionListener, TermDimensions};
+pub use workspace_model::SessionKind;

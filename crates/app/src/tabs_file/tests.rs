@@ -202,8 +202,14 @@ fn saved_tab_round_trip_keeps_the_launch() {
     };
     for spec in [
         LaunchSpec::shell(Some("/".into())),
-        LaunchSpec::claude_code(None),
-        LaunchSpec::copilot_cli(None),
+        LaunchSpec::agent(
+            workspace_model::AgentId::from_cli_selector("claude").unwrap(),
+            None,
+        ),
+        LaunchSpec::agent(
+            workspace_model::AgentId::from_cli_selector("copilot").unwrap(),
+            None,
+        ),
         LaunchSpec::new(
             SessionKind::Shell,
             Some("wsl.exe".into()),

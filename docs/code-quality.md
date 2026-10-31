@@ -80,6 +80,15 @@ must be reachable through public modules or a `pub use` export; `pub fn` inside 
 module alone does not expose it outside the crate. Do not make private functions public
 solely for testing.
 
+## Agent integrations
+
+Agent definitions live in `crates\workspace-model\src\agents\`, one file per provider, and
+are registered in `agents.rs`. Keep provider identity, launch metadata, capabilities, hook
+artifacts, and protocol adapters in that definition. Shared launch, status, settings, and UI
+code should consume the registry or capability/policy APIs rather than branching on provider
+names. Add behavior coverage through a test-only provider when changing shared capability
+consumers; tests must not make that provider available in production.
+
 This repository already has integration tests in `crates\term-core\tests\session.rs` and
 `crates\agentws-hook\tests\round_trip.rs`. The latter tests a binary by running it rather
 than importing its private functions.

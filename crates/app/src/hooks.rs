@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -6,18 +7,15 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use agent_status::{
-    HOOK_ENV, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, claude_settings, copilot_hooks,
-    default_pipe_name,
+    AGENT_ENV, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, default_pipe_name, hook_artifact,
 };
-use term_core::{LaunchSpec, SessionKind};
+use term_core::LaunchSpec;
+use workspace_model::{AgentId, HookArtifactKind, agents};
 
 use crate::processes;
 
 /// Hook binary installed next to the app executable.
 const HOOK_PROGRAM: &str = "agentws-hook";
-/// Ends the name of an instance's Claude settings file, after `agentws-<pid>`.
-const CLAUDE_SETTINGS_SUFFIX: &str = "-claude-settings.json";
-
 /// Why the status hooks could not start.
 #[derive(Debug)]
 pub enum HooksError {
@@ -25,7 +23,7 @@ pub enum HooksError {
     HookProgramMissing(PathBuf),
     /// The socket or named pipe the hooks report to could not be opened.
     Server(io::Error),
-    /// The Claude Code settings file could not be written.
+    /// An agent's hook artifact could not be written.
     SettingsWrite { path: PathBuf, error: io::Error },
     /// Anything else, e.g. the app's own path could not be read.
     Other(io::Error),
@@ -63,15 +61,34 @@ impl fmt::Display for HooksError {
     }
 }
 
-/// Receives Claude Code status hooks, Copilot permission hooks and extension mode reports.
-pub struct ClaudeHooks {
+/// Receives status and mode reports from registered agent integrations.
+pub struct AgentHooks {
     server: HookServer,
-    settings_path: PathBuf,
     hook_program: PathBuf,
-    copilot_plugins_dir: PathBuf,
+    artifacts: HashMap<AgentId, PathBuf>,
 }
 
-impl ClaudeHooks {
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HookAttachment {
+    pub reporting: HookReporting,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HookReporting {
+    #[default]
+    None,
+    FullActivity,
+    Supplemental,
+}
+
+impl HookAttachment {
+    pub fn reports_full_activity(&self) -> bool {
+        self.reporting == HookReporting::FullActivity
+    }
+}
+
+impl AgentHooks {
     /// Start the hook server and write the settings. `on_message` runs on a server thread.
     pub fn start(
         on_message: impl Fn(HookMessage) + Send + Sync + 'static,
@@ -89,120 +106,193 @@ impl ClaudeHooks {
         if let Err(error) = sweep_stale_files(&settings_dir, processes::is_running) {
             log::warn!("could not sweep stale hook settings and Copilot plugins: {error}");
         }
-        // A file rather than inline JSON: the Windows command line would need JSON quoting.
-        let settings_path = settings_dir.join(format!(
-            "agentws-{}{CLAUDE_SETTINGS_SUFFIX}",
-            std::process::id()
-        ));
-        let settings = claude_settings(&hook_program).map_err(HooksError::Other)?;
-        if let Err(error) = write_private(&settings_path, settings.as_bytes()) {
-            return Err(HooksError::SettingsWrite {
-                path: settings_path,
-                error,
-            });
+        let mut artifacts = HashMap::new();
+        for agent in agents() {
+            let artifact_path = artifact_path(&settings_dir, agent);
+            if agent.hook_artifact_kind() == HookArtifactKind::SettingsFile {
+                let contents = hook_artifact(agent, &hook_program).map_err(HooksError::Other)?;
+                if let Err(error) = write_private(&artifact_path, contents.as_bytes()) {
+                    return Err(HooksError::SettingsWrite {
+                        path: artifact_path,
+                        error,
+                    });
+                }
+            }
+            artifacts.insert(agent, artifact_path);
         }
         Ok(Self {
             server,
-            settings_path,
             hook_program,
-            copilot_plugins_dir: settings_dir.join(format!(
-                "agentws-{}-{}-copilot",
-                std::process::id(),
-                agent_status::now_micros()
-            )),
+            artifacts,
         })
     }
 
-    /// Attach status hooks to Claude Code or the mode bridge to Copilot. Only Claude Code
-    /// reports activity through hooks; Copilot's hooks only add and end Waiting (permission
-    /// requests, questions) and it keeps using terminal progress for Working/Idle. The result selects Claude's hooks-only reporting.
-    pub fn attach(&self, session: u64, spec: &mut LaunchSpec) -> bool {
-        if spec.kind == SessionKind::Shell {
-            return false;
-        }
+    /// Attach the provider's declared reporting artifact without changing user arguments.
+    pub fn attach(&self, session: u64, spec: &mut LaunchSpec) -> HookAttachment {
+        let Some(agent) = spec.kind.agent() else {
+            return HookAttachment::default();
+        };
+        let definition = agent.definition();
         spec.env.insert(SESSION_ENV.into(), session.to_string());
         spec.env
+            .insert(AGENT_ENV.into(), agent.cli_selector().into());
+        spec.env
             .insert(PIPE_ENV.into(), self.server.pipe_name().into());
-        if spec.kind == SessionKind::CopilotCli {
+        if let Some(name) = definition.hook_program_env {
             spec.env.insert(
-                HOOK_ENV.into(),
+                name.into(),
                 self.hook_program.to_string_lossy().into_owned(),
             );
-            match self.copilot_plugin(session) {
+        }
+        match agent.hook_artifact_kind() {
+            HookArtifactKind::SettingsFile => {
+                let path = &self.artifacts[&agent];
+                spec.args.splice(
+                    0..0,
+                    [
+                        definition.hook_launch_flag.into(),
+                        path.to_string_lossy().into_owned(),
+                    ],
+                );
+                HookAttachment {
+                    reporting: HookReporting::FullActivity,
+                    diagnostics: Vec::new(),
+                }
+            }
+            HookArtifactKind::PluginDirectory => match self.plugin(agent, session) {
                 Ok(plugin) => {
                     spec.args.splice(
                         0..0,
-                        ["--plugin-dir".into(), plugin.to_string_lossy().into_owned()],
+                        [
+                            definition.hook_launch_flag.into(),
+                            plugin.to_string_lossy().into_owned(),
+                        ],
                     );
+                    HookAttachment {
+                        reporting: HookReporting::Supplemental,
+                        diagnostics: Vec::new(),
+                    }
                 }
                 Err(error) => {
                     self.remove_session(session);
-                    eprintln!("Copilot permission hooks unavailable; using progress: {error}");
+                    let diagnostic = format!(
+                        "{} hooks unavailable; using progress: {error}",
+                        definition.label
+                    );
+                    HookAttachment {
+                        reporting: HookReporting::None,
+                        diagnostics: vec![diagnostic],
+                    }
                 }
-            }
-            return false;
+            },
         }
-        let settings = self.settings_path.to_string_lossy().into_owned();
-        spec.args.splice(0..0, ["--settings".to_string(), settings]);
-        true
     }
 
-    fn copilot_plugin(&self, session: u64) -> io::Result<PathBuf> {
-        create_private_dir(&self.copilot_plugins_dir)?;
-        let plugin = self.copilot_plugins_dir.join(session.to_string());
+    fn plugin(&self, agent: AgentId, session: u64) -> io::Result<PathBuf> {
+        let plugin_root = &self.artifacts[&agent];
+        create_private_dir(plugin_root)?;
+        let plugin = plugin_root.join(session.to_string());
         create_private_dir(&plugin)?;
-        write_private(
-            &plugin.join("plugin.json"),
-            br#"{"name":"bowarp-attention","version":"1.0.0","hooks":"hooks.json"}"#,
-        )?;
+        let plugin_manifest = format!(
+            "{{\"name\":\"{}\",\"version\":\"1.0.0\",\"hooks\":\"hooks.json\"}}",
+            agent.definition().plugin_name
+        );
+        write_private(&plugin.join("plugin.json"), plugin_manifest.as_bytes())?;
         write_private(
             &plugin.join("hooks.json"),
-            copilot_hooks(&self.hook_program)?.as_bytes(),
+            hook_artifact(agent, &self.hook_program)?.as_bytes(),
         )?;
         Ok(plugin)
     }
 
     /// Remove a session's plugin after its process exits or its tab closes.
     pub fn remove_session(&self, session: u64) {
-        remove_plugins(&self.copilot_plugins_dir.join(session.to_string()));
+        for (agent, path) in &self.artifacts {
+            if agent.hook_artifact_kind() == HookArtifactKind::PluginDirectory {
+                remove_artifact(&path.join(session.to_string()));
+            }
+        }
     }
 
     /// Delete the app-owned settings and plugins when all sessions are shutting down.
     pub fn remove_settings(&self) {
-        let _ = fs::remove_file(&self.settings_path);
-        remove_plugins(&self.copilot_plugins_dir);
+        for (agent, path) in &self.artifacts {
+            match agent.hook_artifact_kind() {
+                HookArtifactKind::PluginDirectory => remove_artifact(path),
+                HookArtifactKind::SettingsFile => {
+                    if let Err(error) = fs::remove_file(path)
+                        && error.kind() != io::ErrorKind::NotFound
+                    {
+                        log::warn!("could not remove agent hook settings: {error}");
+                    }
+                }
+            }
+        }
     }
 }
 
-fn remove_plugins(path: &Path) {
+fn artifact_path(dir: &Path, agent: AgentId) -> PathBuf {
+    let definition = agent.definition();
+    let name = match agent.hook_artifact_kind() {
+        HookArtifactKind::SettingsFile => {
+            format!(
+                "agentws-{}{suffix}",
+                std::process::id(),
+                suffix = definition.resource_suffix
+            )
+        }
+        HookArtifactKind::PluginDirectory => format!(
+            "agentws-{}-{}{suffix}",
+            std::process::id(),
+            agent_status::now_micros(),
+            suffix = definition.resource_suffix
+        ),
+    };
+    dir.join(name)
+}
+
+fn remove_artifact(path: &Path) {
     if let Err(error) = fs::remove_dir_all(path)
         && error.kind() != io::ErrorKind::NotFound
     {
-        log::warn!("could not remove Copilot plugin: {error}");
+        log::warn!("could not remove agent hook artifact: {error}");
     }
 }
 
-/// What an app instance leaves in the settings folder, by its pid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OwnedEntry {
-    /// `agentws-<pid>-<µs>-copilot`, a folder.
-    CopilotPlugins(u32),
-    /// `agentws-<pid>-claude-settings.json`, a file.
-    ClaudeSettings(u32),
+struct OwnedEntry {
+    pid: u32,
+    kind: HookArtifactKind,
 }
 
 fn owned_entry(name: &str) -> Option<OwnedEntry> {
     let name = name.strip_prefix("agentws-")?;
     let valid_pid = |pid: &str| pid.parse::<u32>().ok().filter(|pid| *pid != 0);
-    if let Some(pid) = name.strip_suffix(CLAUDE_SETTINGS_SUFFIX) {
-        return valid_pid(pid).map(OwnedEntry::ClaudeSettings);
-    }
-    let (pid, timestamp) = name.strip_suffix("-copilot")?.split_once('-')?;
-    timestamp.parse::<u64>().ok()?;
-    valid_pid(pid).map(OwnedEntry::CopilotPlugins)
+    agents().find_map(|agent| {
+        let definition = agent.definition();
+        match agent.hook_artifact_kind() {
+            HookArtifactKind::SettingsFile => name
+                .strip_suffix(definition.resource_suffix)
+                .and_then(valid_pid)
+                .map(|pid| OwnedEntry {
+                    pid,
+                    kind: HookArtifactKind::SettingsFile,
+                }),
+            HookArtifactKind::PluginDirectory => {
+                let (pid, timestamp) = name
+                    .strip_suffix(definition.resource_suffix)?
+                    .split_once('-')?;
+                timestamp.parse::<u64>().ok()?;
+                valid_pid(pid).map(|pid| OwnedEntry {
+                    pid,
+                    kind: HookArtifactKind::PluginDirectory,
+                })
+            }
+        }
+    })
 }
 
-/// Remove the hook settings and Copilot plugins of instances that are gone (crashed).
+/// Remove the hook artifacts of instances that are gone (crashed).
 fn sweep_stale_files(dir: &Path, is_running: impl Fn(u32) -> bool) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
@@ -210,11 +300,11 @@ fn sweep_stale_files(dir: &Path, is_running: impl Fn(u32) -> bool) -> io::Result
             continue;
         };
         let file_type = entry.file_type()?;
-        let (pid, expected_type) = match owned {
-            OwnedEntry::CopilotPlugins(pid) => (pid, file_type.is_dir()),
-            OwnedEntry::ClaudeSettings(pid) => (pid, file_type.is_file()),
+        let expected_type = match owned.kind {
+            HookArtifactKind::PluginDirectory => file_type.is_dir(),
+            HookArtifactKind::SettingsFile => file_type.is_file(),
         };
-        if !expected_type || is_running(pid) {
+        if !expected_type || is_running(owned.pid) {
             continue;
         }
         #[cfg(unix)]
@@ -225,11 +315,11 @@ fn sweep_stale_files(dir: &Path, is_running: impl Fn(u32) -> bool) -> io::Result
                 continue;
             }
         }
-        match owned {
-            OwnedEntry::CopilotPlugins(_) => remove_plugins(&entry.path()),
-            OwnedEntry::ClaudeSettings(_) => {
+        match owned.kind {
+            HookArtifactKind::PluginDirectory => remove_artifact(&entry.path()),
+            HookArtifactKind::SettingsFile => {
                 if let Err(error) = fs::remove_file(entry.path()) {
-                    log::warn!("could not remove stale Claude settings: {error}");
+                    log::warn!("could not remove stale agent settings: {error}");
                 }
             }
         }

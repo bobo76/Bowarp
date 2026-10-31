@@ -560,26 +560,15 @@ fn clear_action_row(
 
 fn agent_arguments_group(launchers: &[Launcher]) -> SettingGroup {
     let mut group = SettingGroup::new().title("Agent launch arguments");
-    for (id, label, placeholder, field) in [
-        (
-            "claude",
-            "Claude Code arguments",
-            "--model opus",
-            SettingsField::new(
-                |settings| settings.claude_args.clone(),
-                |settings, value| settings.claude_args = value,
-            ),
-        ),
-        (
-            "copilot",
-            "Copilot CLI arguments",
-            "--yolo",
-            SettingsField::new(
-                |settings| settings.copilot_args.clone(),
-                |settings, value| settings.copilot_args = value,
-            ),
-        ),
-    ] {
+    for agent in workspace_model::agents() {
+        let setting = agent.argument_setting();
+        let id = agent.cli_selector();
+        let label = setting.caption;
+        let placeholder = setting.placeholder;
+        let field = SettingsField::new(
+            move |settings| settings.agent_arguments(agent).to_owned(),
+            move |settings, value| settings.set_agent_arguments(agent, value),
+        );
         let path = launchers
             .iter()
             .find(|launcher| launcher.id == id)

@@ -50,8 +50,8 @@ fn unread_completions_are_acknowledged_and_replaced_for_both_agents(
             let mut at = 0;
             let mut report = |view: &mut TerminalView, working, cx: &mut Context<TerminalView>| {
                 at += 1;
-                match kind {
-                    SessionKind::ClaudeCode => view.apply_hook_event(
+                if kind.has_activity_hooks() {
+                    view.apply_hook_event(
                         AgentEvent::Hook(if working {
                             HookEvent::PromptSubmitted
                         } else {
@@ -59,8 +59,9 @@ fn unread_completions_are_acknowledged_and_replaced_for_both_agents(
                         }),
                         at,
                         cx,
-                    ),
-                    SessionKind::CopilotCli => view.apply_progress(
+                    )
+                } else if kind.has_progress_status() {
+                    view.apply_progress(
                         if working {
                             ProgressState::Indeterminate
                         } else {
@@ -68,8 +69,9 @@ fn unread_completions_are_acknowledged_and_replaced_for_both_agents(
                         },
                         at,
                         cx,
-                    ),
-                    SessionKind::Shell => unreachable!(),
+                    )
+                } else {
+                    unreachable!()
                 }
             };
             report(view, true, cx);
@@ -448,13 +450,13 @@ fn copilot_autopilot_permissions_do_not_adopt_status_or_emit_attention(
     view.update(cx, |view, cx| {
         view.hide();
         let permission = AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Permission));
-        view.apply_hook_event(permission, 1, cx);
+        view.apply_hook_event(permission.clone(), 1, cx);
         assert!(
             view.agent.is_none(),
             "an automatic approval must not adopt Idle status"
         );
         view.apply_progress(ProgressState::Indeterminate, 2, cx);
-        view.apply_hook_event(permission, 3, cx);
+        view.apply_hook_event(permission.clone(), 3, cx);
         assert_eq!(view.tab_status(), TabStatus::Working);
         view.apply_hook_event(
             AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Reply)),
