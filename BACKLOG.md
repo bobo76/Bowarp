@@ -10,20 +10,10 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
-Sidebar tab list keyboard focus:
+Down enters the tab list during a search:
 
-- On Windows: Down / Tab from "Search tabs..." enters the list, Up/Down/Home/End select and
-  scroll, Enter / Escape return to the terminal and typing reaches it. In the Light theme and
-  with a tab or group color, check the selected row's focus ring is clearly visible.
-
-F2 renames the selected tab from the tab list:
-
-- On Windows: F2 in the tab list opens the name editor; Enter and Escape give the keyboard
-  back to the list (Up/Down move the selection), a click on the terminal keeps the name and
-  the terminal keeps the keyboard; F2 in the terminal still reaches the program (`mc`,
-  `htop`); the tab menu shows F2 next to "Rename tab". On a desktop with a window manager:
-  switching to another window while renaming from the list keeps the name, and coming back
-  the list has the keyboard.
+- Linux and Windows: type a search, press Down: the ring shows on the match and F2 renames
+  it; Up in the field still steps through the matches.
 
 Wine test runner:
 
@@ -106,17 +96,6 @@ Clipboard writes setting:
 Copilot working spinner:
 
 - Linux: minimize/restore through a real window manager.
-
-Renamed Claude working spinner:
-
-- With a real Claude Code on a hardware GPU (Linux and Windows): rename a tab and give it a
-  prompt; the row shows the turning ring while it works, gone at Stop or a question. Without
-  a custom name only Claude's own title glyph animates (no ring).
-
-Tab menu "Reset name":
-
-- With a real Claude Code and Copilot CLI (Linux and Windows): rename a tab, then "Reset name"
-  shows the agent's current AI-generated title and follows its later changes.
 
 Feature switches (0.2.20-0.2.24):
 
