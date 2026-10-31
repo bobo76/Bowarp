@@ -5,6 +5,7 @@ mod settings_pane;
 mod sidebar_rows;
 mod spinner_clock;
 mod tab_card;
+mod tab_list;
 mod tab_search;
 
 use std::io;
@@ -39,6 +40,7 @@ use self::divider_drag::DividerDrag;
 use self::settings_pane::SettingsPane;
 use self::spinner_clock::SpinnerClock;
 use self::tab_card::TabCards;
+use self::tab_list::TabList;
 use self::tab_search::TabSearch;
 use crate::about;
 use crate::assets::FILES_ICON;
@@ -99,6 +101,7 @@ actions!(
 /// Registers the workspace shortcuts (see `default_bindings`).
 pub fn init(cx: &mut App) {
     keymap::add_defaults(cx, default_bindings());
+    tab_list::init(cx);
     // A global listener, so F11 also works while a dialog or notification has the keyboard
     // (they are not inside the workspace view) or nothing does.
     cx.on_action(|_: &ToggleFullScreen, cx| {
@@ -275,6 +278,8 @@ pub struct WorkspaceView {
     /// The sidebar menu (tab, group, `+`) that is open, if any.
     menu: OpenMenu,
     search: TabSearch,
+    /// The sidebar's tab list as a keyboard stop.
+    tab_list: TabList,
     cards: TabCards,
     /// Where the tab being dragged would land, from the last drag move over the sidebar.
     drop_hint: Option<DropTarget>,
@@ -393,6 +398,7 @@ impl WorkspaceView {
             last_closed_folder: None,
             menu: OpenMenu::default(),
             search: TabSearch::new(window, cx),
+            tab_list: TabList::new(cx),
             cards: TabCards::default(),
             drop_hint: None,
             home: std::env::home_dir(),
@@ -926,11 +932,22 @@ impl WorkspaceView {
         self.open_tab_in_or_notify(spec, NewTabPlace::After(id), window, cx);
     }
 
-    /// Select a tab, expanding its group if it is collapsed and ending a search that hides it.
+    /// Select a tab and give its terminal the keyboard (see `select_tab`).
     fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(tab) = self.tabs.get(index) else {
-            return;
-        };
+        if let Some(view) = self.select_tab(index, window, cx) {
+            window.focus(&view.focus_handle(cx), cx);
+        }
+    }
+
+    /// Select a tab, expanding its group if it is collapsed and ending a search that hides it,
+    /// without moving the keyboard. Returns the tab's view; `None` when there is no such tab.
+    fn select_tab(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<TerminalView>> {
+        let tab = self.tabs.get(index)?;
         let (id, view) = (tab.id, tab.view.clone());
         self.focus_empty_default = false;
         self.settings.hide_page();
@@ -941,9 +958,9 @@ impl WorkspaceView {
         }
         self.active = index;
         view.update(cx, |view, cx| view.show(cx));
-        window.focus(&view.focus_handle(cx), cx);
         self.sync_explorer(cx);
         cx.notify();
+        Some(view)
     }
 
     /// Close a tab, ending its process, once the user agrees to drop the unsaved edits of its
@@ -1351,8 +1368,12 @@ impl WorkspaceView {
         });
     }
 
-    fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+    fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_visible = !self.sidebar_visible;
+        // A hidden list can't keep the keyboard: no key would reach anything.
+        if !self.sidebar_visible && self.tab_list.focus.is_focused(window) {
+            self.focus_active(window, cx);
+        }
         cx.notify();
     }
 
@@ -1849,7 +1870,7 @@ impl WorkspaceView {
             .ghost()
             .small()
             .tooltip(shortcuts::with_shortcut(label, &ToggleSidebar, cx))
-            .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_sidebar(cx)))
+            .on_click(cx.listener(|workspace, _, window, cx| workspace.toggle_sidebar(window, cx)))
     }
 
     fn explorer_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1911,7 +1932,7 @@ impl Render for WorkspaceView {
         self.spinner_clock.begin_frame();
         let sidebar = self
             .sidebar_visible
-            .then(|| self.render_sidebar(cx).into_any_element());
+            .then(|| self.render_sidebar(window, cx).into_any_element());
         self.spinner_clock.end_frame(cx);
         div()
             .size_full()
@@ -1940,8 +1961,8 @@ impl Render for WorkspaceView {
                 workspace.close_active(window, cx);
                 cx.stop_propagation();
             }))
-            .capture_action(cx.listener(|workspace, _: &ToggleSidebar, _, cx| {
-                workspace.toggle_sidebar(cx);
+            .capture_action(cx.listener(|workspace, _: &ToggleSidebar, window, cx| {
+                workspace.toggle_sidebar(window, cx);
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &ToggleExplorer, window, cx| {

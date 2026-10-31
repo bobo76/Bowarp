@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.51
+
+- Move the keyboard into the sidebar tab list: Tab (or Down with an empty query) in "Search
+  tabs..." enters it, Up / Down / Home / End select tabs, Enter, Escape or Tab return to the
+  terminal and clear the search, Shift+Tab goes back to the field. A focus ring marks the row.
+
 ## 0.2.50
 
 - Add "Reset name" to the tab menu of a renamed tab: the tab shows the program's title again

@@ -224,6 +224,8 @@ pub struct TabRow {
     /// see [`working_spinner`].
     pub spinner: Option<u8>,
     pub selected: bool,
+    /// The selected row while the tab list has the keyboard: drawn with a focus ring.
+    pub focused: bool,
     pub pinned: bool,
     /// The tab's own color, else its group's.
     pub color: Option<TabColor>,
@@ -606,7 +608,16 @@ pub fn tab_row(
                         .on_click(on_close),
                 ),
         )
+        .when(row.focused, |tab| {
+            // Last, so it draws over the row's content; it takes no mouse events.
+            tab.child(focus_ring(theme.ring))
+        })
         .context_menu(move |popup, window, cx| context_menu(popup, window, cx))
+}
+
+/// The ring a row shows while the tab list has the keyboard on it.
+fn focus_ring(color: Hsla) -> Div {
+    div().absolute().inset_0().border_2().border_color(color)
 }
 
 /// The Ctrl+number shortcut that selects the tab at `index`, if it has one.
@@ -742,6 +753,7 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
 /// the settings page shows, with a close button on hover or while selected.
 pub fn settings_row(
     selected: bool,
+    focused: bool,
     on_select: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     cx: &App,
@@ -802,7 +814,8 @@ pub fn settings_row(
                         .tooltip(shortcuts::with_shortcut("Close", &CloseTab, cx))
                         .on_click(on_close),
                 ),
-        );
+        )
+        .when(focused, |row| row.child(focus_ring(theme.ring)));
     div().flex().flex_col().child(heading).child(row)
 }
 

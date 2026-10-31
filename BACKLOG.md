@@ -10,6 +10,12 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Sidebar tab list keyboard focus:
+
+- On Windows: Down / Tab from "Search tabs..." enters the list, Up/Down/Home/End select and
+  scroll, Enter / Escape return to the terminal and typing reaches it. In the Light theme and
+  with a tab or group color, check the selected row's focus ring is clearly visible.
+
 Wine test runner:
 
 - Linux with Wine: run `scripts/test-windows.sh`; the app tests finish serially with only
@@ -162,10 +168,21 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- F2 renames the focused tab: when a sidebar tab row has keyboard focus (not the terminal,
-  which keeps getting F2 for programs such as `mc` or `htop`), F2 opens the same name editor
-  as the tab menu's Rename (`WorkspaceView::start_rename`). Show F2 next to Rename in the tab
-  menu.
+- F2 renames the selected tab from the tab list: add a rebindable "Rename tab" action
+  (default F2), bound only while the tab list has keyboard focus so the terminal keeps getting
+  F2 for programs such as `mc` or `htop`. It opens the same name editor as the tab menu's
+  Rename (`WorkspaceView::start_rename`). A rename started from the list gives the keyboard
+  back to the list when it ends. The tab menu shows the action's key next to "Rename tab"
+  (`shortcuts::menu_label_with_hint`, like Duplicate). With the ring on the Settings row
+  (Settings page shown), F2 does nothing: it must not rename the hidden active tab.
+- Idle redraw after tab search (likely bug): once the "Search tabs..." field has had the
+  keyboard, the idle window keeps redrawing (about 22 CPU ticks/s in Xvfb, even after going
+  back to the terminal; a fresh start idles at 0-2). Find what keeps notifying (cursor blink of
+  the unfocused input?) and stop it.
+- Hiding the sidebar (Ctrl+Shift+B) while the search field or a tab name editor has the
+  keyboard leaves focus on an element no longer drawn (only the tab list itself hands the
+  keyboard back, `toggle_sidebar` checks `is_focused`): check the whole sidebar
+  (`contains_focused` plus the search input's focus handle) and focus the terminal.
 - `claude` / `copilot` typed at a shell prompt open an agent tab: instead of running in the
   shell tab, the command opens a new tab exactly like the `+` menu's "Claude Code" / "Copilot
   CLI" entry (`open_launcher` in `app/src/workspace_view.rs`, so hooks and status work), in the
