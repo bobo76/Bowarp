@@ -6,27 +6,39 @@ the git history and [CHANGELOG.md](CHANGELOG.md). Remove an item once it is buil
 an item only missing its manual check moves to "Fixed, not tested yet", which lists the checks
 still to do (Windows included), not what was already tested.
 
-## Next steps
-
-Each step stands alone and is tested:
-
-- Wine test run (`scripts/test-windows.sh`) fails the `app` tests, Wine's ConPTY only:
-  - `duplicate_shortcut_does_not_send_eof_to_the_original_terminal` always fails: the
-    Ctrl+Shift+D `dispatch_keystroke` draws the window, which resizes the duplicate tab while
-    its slower-starting `cmd` still runs; Wine's `ResizePseudoConsole` returns `E_NOTIMPL`,
-    alacritty asserts (`conpty.rs:306`), the PTY reader dies and `wait_for_exit` times out.
-    Fine on real Windows.
-  - Run in parallel, one other test that spawns a child (varies:
-    `cards_are_held_while_a_name_editor_a_menu_or_a_dialog_is_open`,
-    `search_shortcuts_keep_input_out_of_the_program`) times out waiting for it to exit; each
-    passes alone and with `--test-threads=1`. Exact Wine cause unknown.
-  - Fix in the script, not the tests: run the `app` test exe with `--test-threads=1` (about
-    +8 s) and `--skip duplicate_shortcut_does_not_send_eof`, with a comment saying why; record
-    both causes in docs/windows-testing.md (next to "Wine has incomplete ConPTY").
-
 ## Fixed, not tested yet
 
 Built with automated coverage on Linux; the manual checks below are still to do.
+
+Wine test runner:
+
+- Linux with Wine: run `scripts/test-windows.sh`; the app tests finish serially with only
+  `duplicate_shortcut_does_not_send_eof_to_the_original_terminal` skipped. Other crates run
+  normally. On real Windows, that test still runs without the Wine workaround.
+
+Copilot Autopilot permission hooks:
+
+- Capture one real Autopilot `PermissionRequest` payload and the following tool hooks. Check
+  that Autopilot stays Working without a Waiting triangle, toast or attention shortcut target,
+  while a real question still waits. Check mode changes with the optional extension, and
+  `--mode autopilot` / `--autopilot` launches without it; `--yolo` alone is not Autopilot.
+
+Sidebar and explorer opacity:
+
+- On a composited Windows/Linux desktop, check Dark, Light and Sepia at 100 % and below:
+  normal, selected and hovered sidebar/explorer rows stay readable; the file viewer,
+  Settings, title bar, menus, cards, dialogs and toasts stay opaque. Check long explorer lists.
+- Recheck the reported opacity leak on the affected desktop with its platform/compositor,
+  theme, opacity, blur and a screenshot; distinguish the newly translucent panels from a leak.
+
+Windows Mica client area:
+
+- Build on Windows with the MSVC tools, then on Windows 11 build 26100 check Mica below
+  100 % at startup and when selected live: the client area must show the material. Switch
+  Mica -> None / Acrylic / 100 % and back, including a restart; the previous material must
+  disappear. Check the persistent warning if a DWM operation fails.
+- Check Windows 10's Acrylic fallback. Add a restart-only Mica caption/known limitation only
+  if the live Windows check actually shows it cannot be removed.
 
 Softer light theme:
 
@@ -59,30 +71,9 @@ Command history per shell:
 - Upgrade: with a `history.jsonl` written by the previous version, its commands show under
   "All" only and the previous version still reads the new file.
 
-Copilot Waiting on permission prompts and questions:
-
-- Windows, a real Copilot CLI in a background tab: a permission prompt and a question
-  (`ask_user`) each show the triangle, the toast and Ctrl+Shift+A, and stay Waiting past 5 s;
-  approving, denying (Esc) and answering go back to the spinner or Idle.
-- Linux: the permission prompt's toast, and denying a permission (Esc).
-
 Dimmed git-ignored entries in the file explorer:
 
-- Windows: open the explorer in a repository with ignored entries (`target/`, `*.log`): they
-  and `.git` dim with no console window flashing, also when a folder is expanded or a file
-  is added; a folder outside a repository and a machine without git dim nothing.
-- Light theme (any platform): dimmed names read as dimmed but legible, also on the selected
-  row's background.
-- A large ignored folder (`node_modules`, `target` with thousands of entries) expanded: the
-  tree shows at once and dims shortly after, without stalling the UI.
-
-Closing the last tab keeps the window:
-
-- Windows: close the last tab (Ctrl+Shift+W, the tab menu, a busy tab's question, "Close tabs
-  in group"): the window stays with its groups and the empty state, the default button has a
-  visible focus ring, Tab / Shift+Tab / Enter / Space work; quit, restart: groups and a shell.
-- With a screen reader or high contrast: the empty state's buttons and the disabled "Open
-  settings file" tooltip ("Open a tab to view the file") on the settings page.
+- A machine without git (Windows): nothing dims, with no console window flashing.
 
 Agent status off shows in the UI:
 
@@ -92,17 +83,6 @@ Agent status off shows in the UI:
   not start the status listener (...). Restart the app to retry."; with a broken default shell
   too, both warnings show, agent status first.
 
-New tabs open below the selected tab:
-
-- The explorer's "Open in new tab" and "Open in new tab with" put the tab right below the
-  selected one (in its group; below a pinned tab, first after the pinned tabs); Windows: the
-  `+` menu, Ctrl+Shift+T and the explorer entries.
-
-Settings page hides the file explorer:
-
-- Windows: open the page with the explorer shown and a folder expanded, come back with the tab
-  (same width, folder still expanded); the explorer button and Ctrl+Shift+| on the page.
-
 Clipboard writes setting:
 
 - Linux: Settings → Terminal → Clipboard Ask / Allow / Deny (Windows: see the Deny bug in
@@ -110,8 +90,7 @@ Clipboard writes setting:
 
 Copilot working spinner:
 
-- On a permission prompt the ring stops and the triangle replaces it (blocked by the Copilot
-  permission bug in the Backlog). Linux: minimize/restore through a real window manager.
+- Linux: minimize/restore through a real window manager.
 
 Feature switches (0.2.20-0.2.24):
 
@@ -161,7 +140,9 @@ Earlier features (0.2.17-0.2.19), Windows and Linux unless noted:
   in WSL.
 - Agent launch arguments: quoted arguments, empty fields, malformed quotes, Claude
   `--permission-mode plan`/`--model opus` and Copilot `--mode plan`/`--yolo`; after changing
-  the settings, duplicated and restored tabs keep the old arguments.
+  the settings, duplicated and restored tabs keep the old arguments. On Windows, edits
+  survive leaving the field, Enter, closing/reopening Settings and restart; clearing and
+  resetting work, new tabs use the saved arguments, and Font family keeps its edits too.
 
 Packaged apps on Windows and Linux: a smoke test and the About dialog's version and commit.
 
@@ -170,34 +151,6 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Window opacity on the sidebar and file explorer too (today only the terminal takes it,
-  docs/ux-decisions.md "Opacity: what turns translucent below 100 %?", option A): the sidebar
-  and explorer panel backgrounds take the same alpha as the terminal
-  (`window_background::terminal_alpha`), including their selected and hovered row colors,
-  which must stay visible over a light desktop. Menus, hover cards, dialogs, toasts, the file
-  viewer, the settings page and the title bar stay opaque. At 100 % nothing changes. Update
-  the ux-decisions entry and FEATURES.md ("Opacity applies to the terminal's default
-  background only"); check with Xvfb that only those two panels drop below alpha 255.
-  - Reported 2026-10-25: opacity leaking outside the terminal, not reproducible under Xvfb
-    (every pane but the terminal renders alpha 255, light and dark). Ask for the platform,
-    desktop/compositor, theme, opacity and blur values, and a screenshot, and recheck the
-    report once the panels above are built.
-- Clipboard Deny doesn't stop agent copies (Windows, Claude Code and Copilot CLI): the
-  `clipboard_writes` guard filters only OSC 52, but both CLIs also write the system
-  clipboard themselves, so the text is copied before the notice is answered. The app can't
-  block a native write: decide whether Deny should say it covers terminal (OSC 52) copies
-  only (Settings caption and docs/known-limitations.md), or remove the setting for agent tabs.
-- Mica doesn't show (Windows 11 build 26100, 0.2.34): with Blur set to Mica and opacity below
-  100 % the terminal looks opaque, with no caption, live or after a restart. Likely cause,
-  unverified: GPUI's `MicaBackdrop` only sets `DWMWA_SYSTEMBACKDROP_TYPE` and never calls
-  `DwmExtendFrameIntoClientArea` with -1 margins, so Mica covers only the non-client area,
-  and the app first applies `Opaque` (`opaque_first`), which turns the accent off. Try
-  extending the frame from `app/src/window_background.rs` (beside `clear_mica`), then check
-  whether Mica stays after leaving it (if so, add the caption "Mica stays until the app
-  restarts", docs/ux-decisions.md).
-- File panes off with an unsaved file, Discard: `drop_file_panes` calls `focus_active` while
-  the Discard dialog is closing, and the dialog may give focus back to the dropped viewer.
-  Check: edit a file, turn the switch off, Discard; the terminal must take keys.
 - Renamed Claude tabs should also get the working spinner: a custom name hides
   Claude Code's animated title glyph, so a renamed Claude tab shows no working animation
   today (the spinner is Copilot only).
@@ -216,7 +169,7 @@ behavior"); items below name their switch where they need one.
   shell's current folder, and selects it; the shell tab stays at its prompt. Steps:
   - The shell integration scripts (bash, zsh, PowerShell) define `claude` and `copilot`
     functions that print a new tokened mark, e.g. `ESC ] 133;N;aw=<token>;agent=claude;
-    args=<hex>;cwd=<hex> BEL`, and return 0 without starting the program. `Osc133Scanner`
+args=<hex>;cwd=<hex> BEL`, and return 0 without starting the program. `Osc133Scanner`
     accepts it, `PromptTracker` reports it as a new `PromptEvent`, and `TerminalView` asks
     `WorkspaceView` to open the agent's launcher with the folder and the arguments
     (`claude --resume` opens a tab running `claude --resume`).
@@ -236,8 +189,8 @@ behavior"); items below name their switch where they need one.
   - Under a day: as today (seconds kept).
   - A day or more: drop the seconds, add days ("1d 3h 12m").
   - A month or more (30 days): add months, drop the hours and minutes ("2mo 5d").
-  One shared formatter in `workspace-model`, unit-tested at the boundaries (59 s, 1 d, 29 d 23 h,
-  30 d), used by the row, the hover card and the group hover card.
+    One shared formatter in `workspace-model`, unit-tested at the boundaries (59 s, 1 d, 29 d 23 h,
+    30 d), used by the row, the hover card and the group hover card.
 - Long command finished in a shell tab: when a command that ran longer than a threshold
   (default 10 s, in the settings file) ends while its tab isn't selected, the tab is marked
   done, or failed when the OSC 133 `D` exit code isn't 0, until it is viewed. Needs shell
@@ -286,12 +239,12 @@ behavior"); items below name their switch where they need one.
      folder and duration (`C` to `D`). Draw a thin separator above each prompt line and the
      folder and duration ("~/.config/stock-watcher (0.02s)") right-aligned on it, dimmed; a
      failed exit code tints the separator. A resize that reflows lines drops the blocks.
-  Switches (Terminal page, both on when built, independent): "Prompt at the bottom" (off:
-  today's top-anchored layout; with the history popup off, no docked panel is built) and
-  "Command separators and details" (off: no separators, folder or duration labels, and no
-  command-block metadata recorded).
-  Not planned from the screenshot: the separate input box with the folder chip (the prompt is
-  the shell's own, in the grid) and the panel's "Configure" button.
+     Switches (Terminal page, both on when built, independent): "Prompt at the bottom" (off:
+     today's top-anchored layout; with the history popup off, no docked panel is built) and
+     "Command separators and details" (off: no separators, folder or duration labels, and no
+     command-block metadata recorded).
+     Not planned from the screenshot: the separate input box with the folder chip (the prompt is
+     the shell's own, in the grid) and the panel's "Configure" button.
 - Zoom with Ctrl+scroll, like Windows Terminal: Ctrl+wheel up / down over the terminal makes
   the font bigger / smaller one point per notch (clamped, e.g. 6-48 pt), also Ctrl+= / Ctrl+-
   and Ctrl+0 to reset. Build on the existing terminal font-size setting, re-measuring cells
@@ -355,6 +308,19 @@ behavior"); items below name their switch where they need one.
   of every tab started from that entry (restored tabs included). "Automatic" keeps the
   current detection (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`),
   e.g. for a wrapper script that `shell_icon` only sees as `Shell`.
+- More agents: OpenCode, OpenAI Codex CLI and Gemini CLI (plus Antigravity's CLI if it ships
+  as its own program), each integrated like Claude Code / Copilot CLI today. One agent per
+  step, each tested; add them to FEATURES.md when picked.
+  - Launcher: found on `PATH` (`launcher.rs`) with a stable id (`opencode`, `codex`,
+    `gemini`), an icon in `LauncherIcon`, a `+` menu entry, a launch arguments setting, and
+    restored from `tabs.json`.
+  - Agent status: find each CLI's hook or event mechanism and map it to Working / Waiting /
+    Ready for review through `agentws-hook` and the `HookServer`, set per tab (like Copilot's
+    `--plugin-dir`), never written into the user's own config. To check against the installed
+    versions: OpenCode plugins (session idle, permission events), Codex's `notify` program
+    (turn complete only; look for newer hooks), Gemini CLI hooks. Where events are missing,
+    fall back to OSC 9;4 progress or the title, like Copilot, and list the gaps in
+    docs/known-limitations.md.
 
 ### Git
 

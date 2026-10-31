@@ -311,10 +311,12 @@ pub fn drop_slot(row: impl IntoElement, marker: Option<DropMarker>, cx: &App) ->
 }
 
 /// A hovered row's background: weaker than the selected row's accent so the two stay apart.
-/// Opaque, because the badge ring copies it.
 pub fn hover_background(cx: &App) -> Hsla {
     let theme = cx.theme();
-    theme.sidebar.blend(theme.sidebar_accent.opacity(0.5))
+    crate::window_background::panel_background(
+        theme.sidebar.blend(theme.sidebar_accent.opacity(0.5)),
+        cx,
+    )
 }
 
 /// The row's background, which the badge ring copies so the badge reads as cut out of the
@@ -537,6 +539,7 @@ pub fn tab_row(
 
     div()
         .id(("tab", row.index))
+        .debug_selector(move || format!("sidebar-tab-{}", row.index))
         .group(group.clone())
         .relative()
         .flex()
@@ -746,11 +749,16 @@ pub fn settings_row(
         .h(px(SECTION_HEADING_HEIGHT))
         .pl_3()
         .pb_1()
+        .bg(crate::window_background::panel_background(
+            theme.sidebar,
+            cx,
+        ))
         .text_xs()
         .text_color(theme.muted_foreground)
         .child("Settings");
     let row = div()
         .id("settings-row")
+        .debug_selector(|| "settings-row".into())
         .group("settings-row")
         .flex()
         .items_center()
@@ -796,6 +804,10 @@ pub fn settings_row(
 /// Shown when the sidebar search matches no tab.
 pub fn no_matches_hint(cx: &App) -> impl IntoElement {
     div()
+        .bg(crate::window_background::panel_background(
+            cx.theme().sidebar,
+            cx,
+        ))
         .flex()
         .items_center()
         .h(px(HINT_ROW_HEIGHT))
@@ -904,15 +916,16 @@ fn status_mark(status: TabStatus, cx: &App) -> AnyElement {
 
 fn row_colors(selected: bool, cx: &App) -> (Hsla, Hsla, Hsla) {
     let theme = cx.theme();
+    let background = crate::window_background::panel_background;
     if selected {
         return (
-            theme.sidebar_accent,
+            background(theme.sidebar_accent, cx),
             theme.sidebar_accent_foreground,
-            theme.sidebar_accent,
+            background(theme.sidebar_accent, cx),
         );
     }
     (
-        theme.sidebar,
+        background(theme.sidebar, cx),
         theme.sidebar_foreground,
         hover_background(cx),
     )
@@ -940,9 +953,13 @@ pub fn group_header(
     let group = SharedString::from(format!("group-{}", row.slot));
     let muted = theme.muted_foreground;
     let (background, hovered) = if row.holds_selected {
-        (theme.sidebar_accent, theme.sidebar_accent)
+        let accent = crate::window_background::panel_background(theme.sidebar_accent, cx);
+        (accent, accent)
     } else {
-        (theme.sidebar, hover_background(cx))
+        (
+            crate::window_background::panel_background(theme.sidebar, cx),
+            hover_background(cx),
+        )
     };
     let chevron = if row.collapsed {
         IconName::ChevronRight
@@ -1025,6 +1042,10 @@ pub fn group_header(
 /// Shown under an expanded group with no tabs.
 pub fn empty_group_hint(cx: &App) -> impl IntoElement {
     div()
+        .bg(crate::window_background::panel_background(
+            cx.theme().sidebar,
+            cx,
+        ))
         .flex()
         .items_center()
         .h(px(HINT_ROW_HEIGHT))
@@ -1037,6 +1058,30 @@ pub fn empty_group_hint(cx: &App) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn row_backgrounds_follow_opacity_without_fading_text(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::settings_file::init_in_memory(cx);
+            for percent in [30., 50., 100.] {
+                crate::settings_file::preview(cx, |settings| {
+                    settings.window_opacity = workspace_model::WindowOpacity::new(percent);
+                });
+                for selected in [false, true] {
+                    let (normal, foreground, hovered) = row_colors(selected, cx);
+                    assert_eq!(normal.a, percent as f32 / 100.);
+                    assert_eq!(hovered.a, normal.a);
+                    assert_eq!(foreground.a, 1.);
+                    if selected {
+                        assert_eq!(normal, hovered);
+                    } else {
+                        assert_ne!(normal, hovered);
+                    }
+                }
+            }
+        });
+    }
 
     #[test]
     fn running_badge_pulses_only_with_every_condition_including_the_switch() {

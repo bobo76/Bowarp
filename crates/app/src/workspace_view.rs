@@ -2024,7 +2024,7 @@ impl Render for WorkspaceView {
                             .flex_1()
                             .min_w_0()
                             .h_full()
-                            // Only a terminal is see-through (window opacity below 100 %).
+                            // Settings and the empty state stay opaque.
                             .when(active.is_none(), |area| area.bg(cx.theme().background))
                             .children(active)
                             .children(empty_state)

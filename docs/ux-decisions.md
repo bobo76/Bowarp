@@ -19,11 +19,11 @@
 ## Opacity and blur
 
 ### Opacity: what turns translucent below 100 %?
-Only the terminal's default background and padding (Alacritty/Kitty/WezTerm default); cell
-backgrounds, selection, cursor, overlays and all app chrome stay opaque, so every element
-must paint an explicit opaque background. At 100 % with no blur the window stays `Opaque`.
+The terminal's default background and padding, sidebar and file explorer, including their
+selected and hovered rows, share the opacity setting. Cell backgrounds, selection, cursor,
+file viewer, Settings, title bar and overlays stay opaque. At 100 % the appearance is unchanged.
 Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs unreadable).
-Extending it to the sidebar/explorer is a BACKLOG item. [UX agent]
+[user: extend opacity to the sidebar and explorer]
 
 - **Slider**: 30-100 %, step 5, integer percent in the file, live while dragged like font
   size; no preview on the Settings page. [UX agent]
@@ -42,8 +42,10 @@ Extending it to the sidebar/explorer is a BACKLOG item. [UX agent]
   setting rule); "Not available" wins when both apply. Its "Reset to default" still shows, as
   on other dependent rows. [UX agent]
 - Switching live on Windows must apply live: the app clears the previous backdrop itself
-  (`window_background.rs`). If that fails, fall back to the caption "Mica stays until the app
-  restarts" plus a known limitation. [UX agent]
+  (`window_background.rs`). Mica extends the DWM frame across the client area; leaving it
+  resets that extension. A failed DWM call shows a persistent warning with a restart action
+  in its text. Only add "Mica stays until the app restarts" as a caption and known limitation
+  if live Windows checks establish that behavior. [UX agent]
 
 ## Sidebar and tab status
 

@@ -1,5 +1,7 @@
 use workspace_model::ProgressState;
 
+use crate::AgentMode;
+
 /// What an agent session is doing, as reported by its hooks (Claude Code) or its progress
 /// reports (Copilot CLI).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +57,16 @@ fn notification_wait_reason(kind: &str) -> Option<WaitReason> {
 }
 
 impl HookEvent {
+    /// Autopilot approves permission requests itself, but can still ask a real question.
+    pub fn for_copilot_mode(self, mode: Option<AgentMode>) -> Option<Self> {
+        if mode == Some(AgentMode::Autopilot)
+            && self == Self::InputRequested(WaitReason::Permission)
+        {
+            return None;
+        }
+        Some(self)
+    }
+
     /// Map a hook's `hook_event_name` (and `notification_type` for `Notification`) to an
     /// event. Events that do not affect the status map to `None`.
     pub fn from_hook(event_name: &str, notification_type: Option<&str>) -> Option<Self> {

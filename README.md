@@ -102,13 +102,16 @@ selection is also copied to the primary selection, and middle-click pastes it. A
 scrolls 2 lines on Linux, and X11 touchpad scrolling is slowed the same way (Windows uses the
 system's lines-per-notch setting).
 
-When a program writes the clipboard or the primary selection (OSC 52, e.g. Copilot CLI's
-copy on Windows, tmux, vim), a notice above the terminal shows the text's size and a preview,
+When a program writes the clipboard or the primary selection through the terminal (OSC 52,
+e.g. tmux or vim), a notice above the terminal shows the text's size and a preview,
 and the write waits: Allow applies it, Deny drops it, and "Always for this tab" applies it and
 every later one until the tab closes. A newer write replaces the waiting one; a background tab
 with a waiting write shows Needs attention. Settings → Terminal → Clipboard → **Clipboard
 writes from programs** (`clipboard_writes`: `ask`, `allow` or `deny`) can instead allow or deny
-every write in every tab without asking; Deny also overrides "Always for this tab".
+every OSC 52 write in every tab without asking; Deny also overrides "Always for this tab".
+Programs such as Claude Code and Copilot CLI can also write the system clipboard directly,
+especially on Windows. Those native writes bypass the terminal and cannot be blocked by this
+setting, even with Deny selected.
 
 Terminal search matches literal text, ignoring case, across the current screen and retained
 scrollback, including soft-wrapped lines. All visible matches are highlighted, with the active
@@ -477,12 +480,13 @@ empty, or a font that isn't installed, uses DejaVu Sans Mono, Cascadia Mono on W
 size (the slider applies while dragged and saves when released; the file accepts 6 to 72
 points). Each tab re-measures its cells and resizes its terminal when it is next shown.
 
-Appearance → Window sets the terminal background's opacity and blur, applied live:
+Appearance → Window sets the terminal, sidebar and explorer background opacity and blur, applied live:
 
 - Opacity (`"window_opacity"`, a percent, default 100; the file accepts 30 to 100, the
   slider steps by 5 and saves when released): below 100 % the desktop shows through the
-  terminal's background and padding. Text, cells a program colored, the selection, the cursor
-  and the rest of the window (title bar, sidebar, settings, file panes, menus) stay opaque.
+  terminal's default background and padding, sidebar and file explorer, including selected
+  and hovered rows. Text, cells a program colored, the selection, the cursor, title bar,
+  Settings, file viewer, menus and other overlays stay opaque.
 - Background blur (`"window_blur"`: `"none"` (default), `"blur"` or `"mica"`): what shows
   through. On Windows: None, Acrylic (`"blur"`) or Mica, which needs Windows 11 22H2 or
   later (Acrylic is used before). On Linux: None or Blur, on KDE Plasma (Wayland) only;
@@ -509,7 +513,11 @@ The Terminal page also shows each agent's executable path and a free-text argume
 `claude_args` and `copilot_args` in `settings.json` default to empty. Quotes group words
 (for example `--model opus`, `--permission-mode plan` or `--dangerously-skip-permissions`
 for Claude; `--mode autopilot`, `--mode plan` or `--yolo` for Copilot). Copilot's mode is
-separate from permission bypass. Parsing uses shell-style quoting and backslash escaping,
+separate from permission bypass. Repeated `--mode` flags use the last value.
+`--plan --mode autopilot` starts in Plan (automatic plan approval happens later), regardless
+of flag order. Copilot rejects `--autopilot` combined with `--mode` or `--plan`, and rejects
+`--plan` with an explicit mode other than Autopilot.
+Parsing uses shell-style quoting and backslash escaping,
 without variable expansion or executing a shell; quote Windows paths with single quotes
 or escape their backslashes. Unmatched quotes prevent launching and show an error.
 

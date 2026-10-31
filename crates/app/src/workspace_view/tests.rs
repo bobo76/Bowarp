@@ -382,6 +382,145 @@ fn in_app_notifications_switch_gates_agent_toasts_live(cx: &mut gpui_kit::TestAp
 }
 
 #[gpui::test]
+#[cfg_attr(not(debug_assertions), ignore = "debug_bounds needs debug_assertions")]
+fn panel_opacity_leaves_file_viewer_and_settings_opaque(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::ActiveTheme;
+    use workspace_model::{UiTheme, WindowOpacity};
+
+    let mut h = PanesHarness::new("panel-opacity", cx);
+    h.toggle_explorer();
+    h.open_file();
+    for theme in [UiTheme::Dark, UiTheme::Light, UiTheme::Sepia] {
+        for percent in [50., 100.] {
+            h.cx.update(|_, cx| {
+                settings_file::preview(cx, |settings| {
+                    settings.ui_theme = theme;
+                    settings.window_opacity = WindowOpacity::new(percent);
+                });
+            });
+            h.cx.run_until_parked();
+            h.cx.update(|window, cx| window.draw(cx).clear(cx));
+            let sidebar = h.cx.debug_bounds("sidebar-header").unwrap();
+            let tab = h.cx.debug_bounds("sidebar-tab-0").unwrap();
+            let explorer = h.cx.debug_bounds("explorer-header").unwrap();
+            let viewer = h.cx.debug_bounds("file-viewer").unwrap();
+            h.cx.update(|window, cx| {
+                let expected = crate::window_background::panel_background(cx.theme().sidebar, cx);
+                let accent =
+                    crate::window_background::panel_background(cx.theme().sidebar_accent, cx);
+                for (bounds, color, name) in [
+                    (sidebar, expected, "sidebar"),
+                    (explorer, expected, "explorer"),
+                    (tab, accent, "selected tab"),
+                    (viewer, cx.theme().background, "opaque viewer"),
+                ] {
+                    assert_background_at(window, bounds, color, name);
+                }
+            });
+            let row = h.cx.debug_bounds("explorer-row-0").unwrap();
+            h.cx.simulate_mouse_move(row.center(), None, Default::default());
+            h.cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                assert_background_at(
+                    window,
+                    row,
+                    sidebar::hover_background(cx),
+                    "hovered explorer row",
+                );
+            });
+            h.cx.simulate_mouse_move(viewer.center(), None, Default::default());
+        }
+    }
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_settings(window, cx);
+        });
+    });
+    for theme in [UiTheme::Dark, UiTheme::Light, UiTheme::Sepia] {
+        for percent in [50., 100.] {
+            h.cx.update(|_, cx| {
+                settings_file::preview(cx, |settings| {
+                    settings.ui_theme = theme;
+                    settings.window_opacity = WindowOpacity::new(percent);
+                });
+            });
+            h.cx.run_until_parked();
+            h.cx.update(|window, cx| window.draw(cx).clear(cx));
+            let settings = h.cx.debug_bounds("settings-background").unwrap();
+            let row = h.cx.debug_bounds("settings-row").unwrap();
+            h.cx.update(|window, cx| {
+                assert_background_at(window, settings, cx.theme().background, "opaque Settings");
+                assert_background_at(
+                    window,
+                    row,
+                    crate::window_background::panel_background(cx.theme().sidebar_accent, cx),
+                    "selected Settings row",
+                );
+            });
+        }
+    }
+}
+
+fn assert_background_at(
+    window: &Window,
+    bounds: gpui_kit::Bounds<gpui_kit::Pixels>,
+    expected: gpui_kit::Hsla,
+    name: &str,
+) {
+    let painted_bounds = bounds.scale(window.scale_factor());
+    let backgrounds: Vec<_> = window
+        .painted_quads()
+        .iter()
+        .filter(|quad| quad.bounds == painted_bounds)
+        .filter_map(|quad| quad.background.as_solid())
+        .filter(|color| color.a > 0.)
+        .collect();
+    assert!(!backgrounds.is_empty(), "{name} has no fill at {bounds:?}");
+    assert!(
+        backgrounds.iter().all(|color| *color == expected),
+        "{name} at {bounds:?}: {backgrounds:?}, expected {expected:?}"
+    );
+    if expected.a < 1. {
+        assert_eq!(
+            backgrounds.len(),
+            1,
+            "{name} must not stack translucent fills"
+        );
+    }
+}
+
+#[gpui::test]
+#[cfg_attr(not(debug_assertions), ignore = "debug_bounds needs debug_assertions")]
+fn explorer_opacity_fill_does_not_take_space_from_a_long_listing(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut h = PanesHarness::new("explorer-opacity-height", cx);
+    for index in 0..80 {
+        std::fs::write(h.folder.join(format!("file-{index}.txt")), "").unwrap();
+    }
+    h.toggle_explorer();
+    let folder = h.folder.clone();
+    let explorer = h
+        .workspace
+        .read_with(&h.cx, |workspace, _| workspace.explorer.clone());
+    h.cx.update(|_, cx| {
+        explorer.update(cx, |explorer, cx| {
+            explorer.reread(std::collections::HashSet::from([folder]), &[], cx);
+        });
+    });
+    h.cx.run_until_parked();
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    let panel = h.cx.debug_bounds("file-explorer").unwrap();
+    let rows = h.cx.debug_bounds("explorer-rows").unwrap();
+    assert_eq!(
+        rows.size.height,
+        panel.size.height - px(crate::ui_dimensions::HEADER_HEIGHT),
+        "a long folder must use all space below the header"
+    );
+}
+
+#[gpui::test]
 fn file_panes_switch_refuses_off_with_unsaved_edits(cx: &mut gpui_kit::TestAppContext) {
     let mut h = PanesHarness::new("panes-refuse", cx);
     let viewer = h.open_dirty_viewer();
@@ -448,6 +587,36 @@ fn saving_over_a_file_changed_on_disk_asks_first(cx: &mut gpui_kit::TestAppConte
 fn file_panes_switch_off_after_discarding_every_edit(cx: &mut gpui_kit::TestAppContext) {
     let mut h = PanesHarness::new("panes-discard", cx);
     let viewer = h.open_dirty_viewer();
+    let editor_point = h.cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        gpui_kit::point(
+            window.viewport_size().width - px(100.),
+            window.viewport_size().height - px(100.),
+        )
+    });
+    h.cx.simulate_mouse_down(
+        editor_point,
+        MouseButton::Left,
+        gpui_kit::Modifiers::default(),
+    );
+    h.cx.simulate_mouse_up(
+        editor_point,
+        MouseButton::Left,
+        gpui_kit::Modifiers::default(),
+    );
+    let workspace = h.workspace.clone();
+    let terminal_focused = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            workspace.read(cx).tabs[0]
+                .view
+                .focus_handle(cx)
+                .is_focused(window)
+        })
+    };
+    assert!(
+        !terminal_focused(&mut h),
+        "the viewer starts with the keyboard"
+    );
 
     h.set_panes(false);
     assert!(h.pending());
@@ -458,6 +627,11 @@ fn file_panes_switch_off_after_discarding_every_edit(cx: &mut gpui_kit::TestAppC
     assert!(!on && !explorer && none.is_none());
     assert!(!h.switch_on() && !h.pending());
     assert!(viewer.upgrade().is_none(), "the viewer must be dropped");
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        terminal_focused(&mut h),
+        "Discard must return the keyboard to the terminal"
+    );
 }
 
 #[gpui::test]

@@ -48,6 +48,9 @@ use crate::window_background;
 
 mod keyboard;
 
+#[cfg(test)]
+mod tests;
+
 pub use keyboard::{KeyRecorder, init as init_keyboard};
 
 /// What the page's "Open settings file" button can do right now.
@@ -69,6 +72,7 @@ pub fn render(
     let theme = cx.theme();
     let needs_tab = file_button == SettingsFileButton::NeedsTab;
     div()
+        .debug_selector(|| "settings-background".into())
         .size_full()
         .flex()
         .flex_col()
@@ -201,14 +205,14 @@ const OPACITY_SLIDER: SliderRange = SliderRange {
     unit: "%",
 };
 
-/// The window background: the terminal's opacity and what shows through it.
+/// The window background: panel opacity and what shows through it.
 fn window_group() -> SettingGroup {
     SettingGroup::new().title("Window").items([
         slider_row(
             "Opacity",
-            "Applies to terminal tabs: how opaque the terminal's background is. Below 100 % \
-             the desktop shows through it; text, colored cells and the rest of the window stay \
-             opaque.",
+            "Below 100 % the desktop shows through the terminal's default background, sidebar \
+             and file explorer. Text, colored terminal cells, the file viewer, Settings, title \
+             bar and overlays stay opaque.",
             OPACITY_SLIDER,
             SettingsField::new(
                 |settings| f32::from(settings.window_opacity.percent()),
@@ -338,7 +342,7 @@ fn terminal_colors_row() -> SettingItem {
     )
 }
 
-/// The `clipboard_writes` setting: what happens when a program writes the clipboard.
+/// The `clipboard_writes` setting: terminal OSC 52 writes, not native clipboard access.
 fn clipboard_writes_row() -> SettingItem {
     let options = [
         (ClipboardPolicy::Ask, "Ask"),
@@ -348,10 +352,11 @@ fn clipboard_writes_row() -> SettingItem {
     .map(|(policy, label)| DropdownOption::new(policy.as_str(), label));
     dropdown_row(
         "Clipboard writes from programs",
-        "When a program copies text to the clipboard (OSC 52, e.g. Claude Code, Copilot CLI, \
-         tmux, vim). Ask: a notice above the terminal waits for Allow, Deny or \
+        "Controls terminal clipboard writes (OSC 52, e.g. tmux or vim). Ask: a notice above \
+         the terminal waits for Allow, Deny or \
          \"Always for this tab\". Allow or Deny applies to every tab without asking, and Deny \
-         also overrides \"Always for this tab\".",
+         also overrides \"Always for this tab\". Native clipboard writes by programs such as \
+         Claude Code and Copilot CLI are outside this control and cannot be blocked.",
         DropdownChoices::new(options, |value| format!("{value} (unknown)").into()),
         SettingsField::new(
             |settings| settings.clipboard_writes.as_str().to_owned(),
@@ -1044,6 +1049,7 @@ pub fn text_row(
 /// A text field's input, kept across renders (see [`Binding::state_key`]).
 struct TextField {
     input: Entity<InputState>,
+    committed: String,
     _events: Subscription,
 }
 
@@ -1060,21 +1066,38 @@ fn text_field(
                 .placeholder(placeholder)
                 .default_value(value.clone())
         });
-        let binding = binding.clone();
-        let events = cx.subscribe(&input, move |_, input, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Blur | InputEvent::PressEnter { .. }) {
-                binding.save(input.read(cx).value().to_string(), cx);
+        // Removing the page drops this keyed state before its input can deliver Blur.
+        let save = binding.clone();
+        cx.on_release(move |state: &mut TextField, cx| {
+            let value = state.input.read(cx).value().to_string();
+            if value != state.committed {
+                save.save(value, cx);
             }
-        });
+        })
+        .detach();
+        let binding = binding.clone();
+        let events = cx.subscribe(
+            &input,
+            move |state: &mut TextField, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Blur | InputEvent::PressEnter { .. }) {
+                    let value = input.read(cx).value().to_string();
+                    state.committed = value.clone();
+                    binding.save(value, cx);
+                }
+            },
+        );
         TextField {
             input,
+            committed: value.clone(),
             _events: events,
         }
     });
     let input = state.read(cx).input.clone();
-    // A value changed elsewhere (reset, the file reloaded) shows, unless the user is typing.
+    // Focus can leave before Blur is delivered: keep the draft until the handler commits it.
     let typing = input.read(cx).focus_handle(cx).is_focused(window);
-    if !typing && input.read(cx).value().as_ref() != value.as_str() {
+    let pending = input.read(cx).value().as_ref() != state.read(cx).committed.as_str();
+    if !typing && !pending && input.read(cx).value().as_ref() != value.as_str() {
+        state.update(cx, |state, _| state.committed = value.clone());
         input.update(cx, |input, cx| input.set_value(value, window, cx));
     }
     Input::new(&input).small().w_64().into_any_element()

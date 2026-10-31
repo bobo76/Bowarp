@@ -34,8 +34,9 @@ directly to model APIs.
 - Toggle full screen (F11).
 - Choose the terminal font family and size, applied live to every tab.
 - Light and dark themes, terminal color schemes, and adjustable window opacity.
-  - Opacity applies to the terminal's default background only; text, colored cells and the
-    rest of the window stay opaque. Background blur where the system allows it (Windows
+  - Opacity applies to the terminal's default background, sidebar and file explorer; text,
+    colored cells, the file viewer, Settings, title bar and overlays stay opaque.
+    Background blur where the system allows it (Windows
     Acrylic or Mica, KDE Plasma on Wayland); elsewhere the blur choice is shown unavailable.
 - Warn before closing a session or workspace with running processes.
 

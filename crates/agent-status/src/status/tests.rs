@@ -139,6 +139,32 @@ fn copilot_tool_and_stop_hooks_leave_progress_in_charge() {
 }
 
 #[test]
+fn copilot_autopilot_permissions_keep_working_but_questions_still_wait() {
+    for mode in [
+        None,
+        Some(AgentMode::Interactive),
+        Some(AgentMode::Plan),
+        Some(AgentMode::Autopilot),
+    ] {
+        let mut state = AgentState::default();
+        state.apply_progress(ProgressState::Indeterminate, 1);
+        if let Some(event) = PERMISSION.for_copilot_mode(mode) {
+            state.apply_copilot_hook(event, 2);
+        }
+        let expected = if mode == Some(AgentMode::Autopilot) {
+            AgentStatus::Working
+        } else {
+            AgentStatus::NeedsAttention
+        };
+        assert_eq!(state.status(), expected, "{mode:?}");
+        let question = HookEvent::InputRequested(WaitReason::Reply);
+        state.apply_copilot_hook(question.for_copilot_mode(mode).unwrap(), 3);
+        assert_eq!(state.status(), AgentStatus::NeedsAttention);
+        assert_eq!(state.wait_reason(), Some(WaitReason::Reply));
+    }
+}
+
+#[test]
 fn delayed_copilot_permission_hook_cannot_override_newer_progress() {
     let mut state = AgentState::default();
     state.apply_progress(ProgressState::Hidden, 2);

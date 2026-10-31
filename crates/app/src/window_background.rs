@@ -1,15 +1,15 @@
 //! The window background from the `window_opacity` and `window_blur` settings (see
 //! `workspace_model::Backdrop`). Below 100 % the window asks the platform for a see-through
 //! (or blurred) background and the root view stops painting the theme background over it, so
-//! the terminal's translucent background shows the desktop; every other pane paints its own
-//! opaque background. At 100 % the window stays opaque, as before.
+//! the terminal, sidebar and explorer backgrounds show the desktop. Other panes and overlays
+//! paint opaque backgrounds. At 100 % the window stays opaque, as before.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui_kit::base::Root;
 use gpui_kit::{AnyWindowHandle, App, Styled, Window, WindowBackgroundAppearance};
-use workspace_model::{Backdrop, BlurSupport, WindowsSwitch};
+use workspace_model::{Backdrop, BlurSupport};
 
 use crate::settings_file::{self, AppSettings};
 
@@ -88,61 +88,161 @@ struct Applied {
     mica: Cell<bool>,
 }
 
-/// Windows only: GPUI never undoes Mica (a DWM system backdrop) or the accent policy of the
-/// other backdrops when it applies another one, so do that first.
-fn prepare_switch(window: &mut Window, switch: WindowsSwitch) {
-    #[cfg(windows)]
-    {
-        if switch.opaque_first {
-            window.set_background_appearance(WindowBackgroundAppearance::Opaque);
+trait BackgroundOperations {
+    fn set_appearance(&mut self, backdrop: Backdrop);
+    fn clear_mica(&mut self) -> Result<(), String>;
+    fn set_mica_frame(&mut self, enabled: bool) -> Result<(), String>;
+}
+
+impl Applied {
+    fn update(
+        &self,
+        backdrop: Backdrop,
+        windows: bool,
+        operations: &mut impl BackgroundOperations,
+    ) -> Result<(), String> {
+        if self.backdrop.get() == Some(backdrop) {
+            return Ok(());
         }
-        if switch.clear_mica {
-            clear_mica(window);
+        let result = self.switch(backdrop, windows, operations);
+        self.backdrop.set(result.is_ok().then_some(backdrop));
+        result
+    }
+
+    fn switch(
+        &self,
+        backdrop: Backdrop,
+        windows: bool,
+        operations: &mut impl BackgroundOperations,
+    ) -> Result<(), String> {
+        let switch = backdrop.windows_switch(self.backdrop.get(), self.mica.get());
+        // GPUI never undoes the DWM backdrop or accent policy when switching between them.
+        if windows && switch.opaque_first {
+            operations.set_appearance(Backdrop::Opaque);
+        }
+        if windows && switch.clear_mica {
+            operations.clear_mica()?;
+            operations.set_mica_frame(false)?;
+        }
+        operations.set_appearance(backdrop);
+        if backdrop == Backdrop::Mica {
+            // Remember partial application too, so a failed frame call can be undone.
+            self.mica.set(true);
+            if windows {
+                operations.set_mica_frame(true)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+struct NativeBackground<'a>(&'a mut Window);
+
+impl BackgroundOperations for NativeBackground<'_> {
+    fn set_appearance(&mut self, backdrop: Backdrop) {
+        self.0.set_background_appearance(appearance(backdrop));
+    }
+
+    fn clear_mica(&mut self) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            clear_mica(self.0)
+        }
+        #[cfg(not(windows))]
+        Ok(())
+    }
+
+    fn set_mica_frame(&mut self, enabled: bool) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            set_mica_frame(self.0, enabled)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = enabled;
+            Ok(())
         }
     }
-    #[cfg(not(windows))]
-    let _ = (window, switch);
+}
+
+#[cfg(any(windows, test))]
+fn dwm_result(result: i32, operation: &str) -> Result<(), String> {
+    if result < 0 {
+        return Err(format!("Could not {operation} (DWM {result:#010x})"));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
-fn clear_mica(window: &Window) {
+fn native_handle(window: &Window) -> Result<windows_sys::Win32::Foundation::HWND, String> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use windows_sys::Win32::Foundation::HWND;
+    let handle = HasWindowHandle::window_handle(window).map_err(|error| error.to_string())?;
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return Err("The window has no Windows handle".into());
+    };
+    Ok(handle.hwnd.get() as windows_sys::Win32::Foundation::HWND)
+}
+
+#[cfg(windows)]
+fn clear_mica(window: &Window) -> Result<(), String> {
     use windows_sys::Win32::Graphics::Dwm::{
         DWMSBT_NONE, DWMWA_SYSTEMBACKDROP_TYPE, DwmSetWindowAttribute,
     };
 
-    let Ok(handle) = HasWindowHandle::window_handle(window) else {
-        return;
-    };
-    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-        return;
-    };
+    let hwnd = native_handle(window)?;
     let none = DWMSBT_NONE;
     // SAFETY: `hwnd` is this window's live handle (we hold `&Window`); the attribute value
-    // is a readable `i32` of the size passed. The HRESULT is ignored: a failure leaves Mica.
-    unsafe {
+    // is a readable `i32` of the size passed.
+    let result = unsafe {
         DwmSetWindowAttribute(
-            handle.hwnd.get() as HWND,
+            hwnd,
             DWMWA_SYSTEMBACKDROP_TYPE as u32,
             (&raw const none).cast(),
             size_of_val(&none) as u32,
-        );
-    }
+        )
+    };
+    dwm_result(result, "clear Mica")
+}
+
+#[cfg(windows)]
+fn set_mica_frame(window: &Window, enabled: bool) -> Result<(), String> {
+    use windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
+    use windows_sys::Win32::UI::Controls::MARGINS;
+
+    let hwnd = native_handle(window)?;
+    // Negative margins extend glass over the whole client area; zeros undo the extension.
+    let extent = if enabled { -1 } else { 0 };
+    let margins = MARGINS {
+        cxLeftWidth: extent,
+        cxRightWidth: extent,
+        cyTopHeight: extent,
+        cyBottomHeight: extent,
+    };
+    // SAFETY: the live window handle and initialized margins remain valid for the call.
+    let result = unsafe { DwmExtendFrameIntoClientArea(hwnd, &margins) };
+    dwm_result(result, "update the Mica frame")
 }
 
 fn apply(window: AnyWindowHandle, applied: &Applied, cx: &mut App) {
     let backdrop = backdrop(cx);
+    apply_with(window, applied, backdrop, cx, |window| {
+        applied.update(backdrop, cfg!(windows), &mut NativeBackground(window))
+    });
+}
+
+fn apply_with(
+    window: AnyWindowHandle,
+    applied: &Applied,
+    backdrop: Backdrop,
+    cx: &mut App,
+    set_background: impl FnOnce(&mut Window) -> Result<(), String>,
+) {
     if applied.backdrop.get() == Some(backdrop) {
         return;
     }
     // Fails once the window is gone (nothing left to apply) or while it is being updated.
     let result = window.update(cx, |root, window, cx| {
-        prepare_switch(
-            window,
-            backdrop.windows_switch(applied.backdrop.get(), applied.mica.get()),
-        );
-        window.set_background_appearance(appearance(backdrop));
+        set_background(window)?;
         if let Ok(root) = root.downcast::<Root>() {
             root.update(cx, |root, cx| {
                 // None gives the theme background back (gpui-component's root default).
@@ -152,12 +252,31 @@ fn apply(window: AnyWindowHandle, applied: &Applied, cx: &mut App) {
                 cx.notify();
             });
         }
+        Ok::<(), String>(())
     });
-    if result.is_ok() {
-        applied.backdrop.set(Some(backdrop));
-        applied
-            .mica
-            .set(applied.mica.get() || backdrop == Backdrop::Mica);
+    match result {
+        Ok(Ok(())) => {
+            applied.backdrop.set(Some(backdrop));
+            applied
+                .mica
+                .set(applied.mica.get() || backdrop == Backdrop::Mica);
+        }
+        Ok(Err(message)) => {
+            use gpui_kit::component::WindowExt;
+            use gpui_kit::component::notification::Notification;
+
+            applied.backdrop.set(None);
+            log::error!("Window background: {message}");
+            let _ = window.update(cx, |_, window, cx| {
+                window.push_notification(
+                    Notification::warning(format!("{message}. Restart the app to retry."))
+                        .id::<Applied>()
+                        .autohide(false),
+                    cx,
+                );
+            });
+        }
+        Err(_) => {}
     }
 }
 
@@ -167,71 +286,9 @@ pub fn terminal_alpha(cx: &App) -> f32 {
     settings_file::window_opacity(cx).alpha()
 }
 
-#[cfg(test)]
-mod tests {
-    use gpui_kit::{AppContext, Render, TestAppContext, Window, div};
-    use workspace_model::{WindowBlur, WindowOpacity};
-
-    use super::*;
-
-    struct Empty;
-
-    impl Render for Empty {
-        fn render(
-            &mut self,
-            _: &mut Window,
-            _: &mut gpui_kit::Context<Self>,
-        ) -> impl gpui_kit::IntoElement {
-            div()
-        }
-    }
-
-    #[gpui::test]
-    fn root_background_follows_the_opacity(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            gpui_kit::init(cx);
-            settings_file::init_in_memory(cx);
-        });
-        let window = cx.add_window(|window, cx| {
-            let view = cx.new(|_| Empty);
-            Root::new(view, window, cx)
-        });
-        let root_background = |cx: &mut TestAppContext| {
-            window
-                .update(cx, |root, _, _| root.style().background.is_some())
-                .unwrap()
-        };
-        cx.update(|cx| {
-            assert_eq!(initial(cx), WindowBackgroundAppearance::Opaque);
-            assert_eq!(terminal_alpha(cx), 1.);
-            follow_settings(window.into(), cx);
-        });
-        assert!(!root_background(cx), "opaque: the theme background stays");
-        // As the settings page does: from inside the window.
-        window
-            .update(cx, |_, _, cx| {
-                settings_file::preview(cx, |settings| {
-                    settings.window_opacity = WindowOpacity::new(50.);
-                    settings.window_blur = WindowBlur::Blur;
-                });
-            })
-            .unwrap();
-        cx.run_until_parked();
-        assert!(root_background(cx), "see-through: the root paints nothing");
-        cx.update(|cx| {
-            assert_eq!(terminal_alpha(cx), 0.5);
-            // No blur on the test platform (no compositor name): plain transparency.
-            let expected = if cfg!(windows) {
-                WindowBackgroundAppearance::Blurred
-            } else {
-                WindowBackgroundAppearance::Transparent
-            };
-            assert_eq!(initial(cx), expected);
-            settings_file::preview(cx, |settings| {
-                settings.window_opacity = WindowOpacity::default();
-            });
-        });
-        cx.run_until_parked();
-        assert!(!root_background(cx), "back to opaque");
-    }
+pub fn panel_background(color: gpui_kit::Hsla, cx: &App) -> gpui_kit::Hsla {
+    color.opacity(terminal_alpha(cx))
 }
+
+#[cfg(test)]
+mod tests;

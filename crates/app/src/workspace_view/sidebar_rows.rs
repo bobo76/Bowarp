@@ -46,15 +46,19 @@ impl WorkspaceView {
             .flex_none()
             .w(px(SIDEBAR_WIDTH))
             .h_full()
-            .bg(theme.sidebar)
             .border_r_1()
             .border_color(theme.sidebar_border)
             .child(
                 div()
+                    .debug_selector(|| "sidebar-header".into())
                     .flex()
                     .items_center()
                     .gap_1()
                     .h(px(crate::ui_dimensions::HEADER_HEIGHT))
+                    .bg(crate::window_background::panel_background(
+                        theme.sidebar,
+                        cx,
+                    ))
                     .pl_2()
                     .pr_1()
                     .child(self.render_search(cx))
@@ -195,17 +199,26 @@ impl WorkspaceView {
     /// The space below the last row: drops there go ungrouped to the end.
     fn render_end_drop_zone(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let marker = self.drop_marker(DropTarget::End, cx);
-        sidebar::drop_slot(div().h_full(), marker, cx)
-            .id("tabs-end")
-            .flex_1()
-            .min_h(px(32.))
-            .on_drag_move(
-                cx.listener(|workspace, event: &DragMoveEvent<DraggedTab>, _, cx| {
-                    if event.bounds.contains(&event.event.position) {
-                        workspace.set_drop_hint(Some(DropTarget::End), cx);
-                    }
-                }),
-            )
+        sidebar::drop_slot(
+            div()
+                .h_full()
+                .bg(crate::window_background::panel_background(
+                    cx.theme().sidebar,
+                    cx,
+                )),
+            marker,
+            cx,
+        )
+        .id("tabs-end")
+        .flex_1()
+        .min_h(px(32.))
+        .on_drag_move(cx.listener(
+            |workspace, event: &DragMoveEvent<DraggedTab>, _, cx| {
+                if event.bounds.contains(&event.event.position) {
+                    workspace.set_drop_hint(Some(DropTarget::End), cx);
+                }
+            },
+        ))
     }
 
     /// A draggable tab row. The upper half of the row drops above it, the lower half below.
