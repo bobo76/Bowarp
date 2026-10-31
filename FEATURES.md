@@ -63,7 +63,8 @@ directly to model APIs.
 - Display an icon identifying the session type, with manual icon overrides.
 - Keep session identity, custom colors, and activity status visually distinct.
 - Provide keyboard shortcuts for opening, closing, and switching tabs and panes.
-- Move the keyboard from the tab search into the tab list and pick a tab with the arrow keys.
+- Move the keyboard from the tab search into the tab list and pick a tab with the arrow keys;
+  rename the selected tab there with a key (F2 by default) that the terminal never loses.
 - Let users rebind, add or remove shortcuts in the settings file; a removed shortcut's key
   goes to the terminal program, and invalid entries are skipped and listed in settings.
 - Edit shortcuts on a Keyboard settings page: record a key, add or remove keys, reset one

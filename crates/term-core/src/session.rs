@@ -191,9 +191,10 @@ impl EventListener for SessionListener {
             Event::ChildExit(status) => *shared.exit_code.lock().unwrap() = status.code(),
             Event::Exit => {
                 shared.wake();
-                shared.exited.store(true, Ordering::Release);
                 let code = *shared.exit_code.lock().unwrap();
                 (shared.callback)(SessionEvent::Exited(code));
+                // After the callback: `has_exited()` then means no event is left to deliver.
+                shared.exited.store(true, Ordering::Release);
             }
             Event::PtyWrite(text) => {
                 if !shared.prompt.on_tag_reply(&text) {

@@ -16,6 +16,15 @@ Sidebar tab list keyboard focus:
   scroll, Enter / Escape return to the terminal and typing reaches it. In the Light theme and
   with a tab or group color, check the selected row's focus ring is clearly visible.
 
+F2 renames the selected tab from the tab list:
+
+- On Windows: F2 in the tab list opens the name editor; Enter and Escape give the keyboard
+  back to the list (Up/Down move the selection), a click on the terminal keeps the name and
+  the terminal keeps the keyboard; F2 in the terminal still reaches the program (`mc`,
+  `htop`); the tab menu shows F2 next to "Rename tab". On a desktop with a window manager:
+  switching to another window while renaming from the list keeps the name, and coming back
+  the list has the keyboard.
+
 Wine test runner:
 
 - Linux with Wine: run `scripts/test-windows.sh`; the app tests finish serially with only
@@ -168,13 +177,6 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- F2 renames the selected tab from the tab list: add a rebindable "Rename tab" action
-  (default F2), bound only while the tab list has keyboard focus so the terminal keeps getting
-  F2 for programs such as `mc` or `htop`. It opens the same name editor as the tab menu's
-  Rename (`WorkspaceView::start_rename`). A rename started from the list gives the keyboard
-  back to the list when it ends. The tab menu shows the action's key next to "Rename tab"
-  (`shortcuts::menu_label_with_hint`, like Duplicate). With the ring on the Settings row
-  (Settings page shown), F2 does nothing: it must not rename the hidden active tab.
 - Idle redraw after tab search (likely bug): once the "Search tabs..." field has had the
   keyboard, the idle window keeps redrawing (about 22 CPU ticks/s in Xvfb, even after going
   back to the terminal; a fresh start idles at 0-2). Find what keeps notifying (cursor blink of

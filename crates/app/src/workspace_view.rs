@@ -86,6 +86,7 @@ actions!(
         ToggleExplorer,
         SearchTabs,
         NextAttention,
+        RenameTab,
         SelectTab1,
         SelectTab2,
         SelectTab3,
@@ -123,7 +124,8 @@ pub fn init(cx: &mut App) {
 /// Workspace shortcuts, changed by the settings file's `"keybindings"` (see `keymap`). F11
 /// toggles full screen. It is bound for the whole window, so it works whichever pane has the
 /// keyboard: bindings match before the terminal's key handler, so F11 is not sent to the
-/// program.
+/// program. F2 renames the selected tab only while the tab list has the keyboard, so the
+/// terminal program still gets it.
 fn default_bindings() -> Vec<Shortcut> {
     let bind =
         |keys: &str, action: &dyn Action| Shortcut::new(keys, action.name(), Some(KEY_CONTEXT));
@@ -152,6 +154,11 @@ fn default_bindings() -> Vec<Shortcut> {
     ] {
         bindings.push(bind(&format!("ctrl-shift-{key}"), action));
     }
+    bindings.push(Shortcut::new(
+        "f2",
+        RenameTab.name(),
+        Some(tab_list::KEY_CONTEXT),
+    ));
     bindings
 }
 
@@ -229,9 +236,19 @@ enum RenameTarget {
     Group(GroupId),
 }
 
+/// Where the keyboard goes when a name editor closes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RenameOrigin {
+    /// A menu or a new group: back to the selected terminal.
+    Menu,
+    /// F2 in the tab list: back to the list.
+    TabList,
+}
+
 /// A tab or group name being edited in the sidebar.
 struct Rename {
     target: RenameTarget,
+    origin: RenameOrigin,
     input: Entity<InputState>,
     _events: Subscription,
 }
@@ -1121,7 +1138,7 @@ impl WorkspaceView {
             TabCommand::NewGroup => {
                 if let Some(group) = self.layout.new_group_with(id, NEW_GROUP_NAME) {
                     self.sync_order(cx);
-                    self.start_rename(RenameTarget::Group(group), window, cx);
+                    self.start_rename(RenameTarget::Group(group), RenameOrigin::Menu, window, cx);
                 }
             }
             TabCommand::MoveToGroup(group) => {
@@ -1145,7 +1162,9 @@ impl WorkspaceView {
                     copy_text(location.folder.display().to_string(), cx);
                 }
             }
-            TabCommand::Rename => self.start_rename(RenameTarget::Tab(id), window, cx),
+            TabCommand::Rename => {
+                self.start_rename(RenameTarget::Tab(id), RenameOrigin::Menu, window, cx)
+            }
             TabCommand::ResetName => {
                 // An open editor for this tab would put the old name back when committed.
                 if self
@@ -1201,7 +1220,9 @@ impl WorkspaceView {
             return;
         };
         match command {
-            GroupCommand::Rename => self.start_rename(RenameTarget::Group(id), window, cx),
+            GroupCommand::Rename => {
+                self.start_rename(RenameTarget::Group(id), RenameOrigin::Menu, window, cx)
+            }
             GroupCommand::ToggleCollapsed => {
                 group.collapsed = !group.collapsed;
                 cx.notify();
@@ -1237,8 +1258,15 @@ impl WorkspaceView {
         }
     }
 
-    /// Edit a name in place: Enter or clicking elsewhere keeps it, Escape cancels.
-    fn start_rename(&mut self, target: RenameTarget, window: &mut Window, cx: &mut Context<Self>) {
+    /// Edit a name in place: Enter or clicking elsewhere keeps it, Escape cancels. `origin`:
+    /// where the keyboard goes afterwards (see `end_rename`).
+    fn start_rename(
+        &mut self,
+        target: RenameTarget,
+        origin: RenameOrigin,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let name = match target {
             RenameTarget::Tab(id) => self
                 .tab_index(id)
@@ -1260,6 +1288,7 @@ impl WorkspaceView {
         });
         self.renaming = Some(Rename {
             target,
+            origin,
             input,
             _events: events,
         });
@@ -1283,19 +1312,31 @@ impl WorkspaceView {
                 }
             }
         }
-        self.end_rename(window, cx);
+        self.end_rename(&rename, window, cx);
     }
 
     fn cancel_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.renaming.take().is_some() {
-            self.end_rename(window, cx);
+        if let Some(rename) = self.renaming.take() {
+            self.end_rename(&rename, window, cx);
         }
     }
 
-    /// Give the keyboard back to the selected terminal once the editor is gone.
-    fn end_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus_active(window, cx);
+    /// Give the keyboard back once the editor is gone: to the selected terminal, or to the tab
+    /// list for a rename started there. A click elsewhere (the editor lost the keyboard to
+    /// another element) keeps the keyboard where the click put it in that case.
+    fn end_rename(&mut self, rename: &Rename, window: &mut Window, cx: &mut Context<Self>) {
         cx.notify();
+        match rename.origin {
+            RenameOrigin::Menu => {
+                self.focus_active(window, cx);
+                return;
+            }
+            RenameOrigin::TabList => {}
+        }
+        let editor_focused = rename.input.read(cx).focus_handle(cx).is_focused(window);
+        if editor_focused || window.focused(cx).is_none() {
+            self.return_to_tab_list(window, cx);
+        }
     }
 
     /// The name editor for `target`, when it is being renamed.

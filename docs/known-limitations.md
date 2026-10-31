@@ -163,6 +163,10 @@ entry when the limitation is lifted.
   settings page and README name the default keys. Recording ends on a click outside the
   recording chip, Esc or the keystroke; if the chip is hidden another way (no click), the next
   keystroke ends it and goes on as usual.
+- Rename tab (F2) runs only while the tab list has the keyboard: another key for it, from the
+  Keyboard page or the file, is bound in the list too, never window-wide. A key runs one action
+  whatever the context, so giving F2 to another action (for the whole window) takes it from
+  Rename tab, and the terminal then no longer gets F2.
 - Hover cards are held back only for the menus the sidebar and the file explorer build (tab,
   group, `+`, explorer entry menus) and for any dialog: a dropdown on the settings page or in
   the file viewer doesn't hold them. A card open when a hold ends stays hidden until the
