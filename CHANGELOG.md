@@ -5,6 +5,8 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.53
+
 - Down in "Search tabs..." now moves the keyboard into the tab list while a search is typed
   too, as Tab does, so the focus ring shows and F2 renames the match; Up still steps through
   the matches in the field.
