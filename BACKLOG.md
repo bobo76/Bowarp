@@ -98,6 +98,11 @@ Renamed Claude working spinner:
   prompt; the row shows the turning ring while it works, gone at Stop or a question. Without
   a custom name only Claude's own title glyph animates (no ring).
 
+Tab menu "Reset name":
+
+- With a real Claude Code and Copilot CLI (Linux and Windows): rename a tab, then "Reset name"
+  shows the agent's current AI-generated title and follows its later changes.
+
 Feature switches (0.2.20-0.2.24):
 
 - Running badge pulse with Activity animations on and off, on a hardware GPU.
@@ -157,11 +162,6 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Tab menu "Reset name": shown only when the tab has a manual name (`TabMeta::custom_name`);
-  clears it so the tab goes back to the program's title (the agent's AI-generated name for
-  Claude Code / Copilot tabs, the shell's title otherwise), saved in `tabs.json` like a rename.
-  Renaming to blank already does this today but nobody finds it. Unit-test that the name
-  follows the program's title again after the reset.
 - F2 renames the focused tab: when a sidebar tab row has keyboard focus (not the terminal,
   which keeps getting F2 for programs such as `mc` or `htop`), F2 opens the same name editor
   as the tab menu's Rename (`WorkspaceView::start_rename`). Show F2 next to Rename in the tab

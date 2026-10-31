@@ -338,8 +338,9 @@ There is no sound or OS notification.
 Right-click a row or use its `⋮` button for the tab menu: duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
 and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working
 directory, rename (Enter keeps, Escape cancels, an empty name goes back to the program's
-title), move up / down, close, and a color marker. "New group with tab" and "Move to group"
-put tabs in groups.
+title), "Reset name" (only on a renamed tab: back to the program's title, such as the agent's
+own name for the conversation), move up / down, close, and a color marker. "New group with
+tab" and "Move to group" put tabs in groups.
 
 Closing a busy tab asks first: one where a shell command or a program started at the prompt
 (such as vim) still runs, or whose agent is Working or waiting for an answer. Closing several

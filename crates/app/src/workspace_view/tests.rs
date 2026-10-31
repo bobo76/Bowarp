@@ -323,6 +323,40 @@ impl Drop for PanesHarness {
 }
 
 #[gpui::test]
+fn reset_name_is_offered_for_a_custom_name_and_shows_the_program_title(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut h = PanesHarness::new("reset-name", cx);
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let id = workspace.tabs[0].id;
+            let offered = |workspace: &WorkspaceView, cx: &App| {
+                workspace.tab_menu_state(id, cx).unwrap().has_custom_name
+            };
+            let title = workspace.tabs[0].view.read(cx).name().to_string();
+            assert!(!offered(workspace, cx));
+            workspace.tabs[0].meta.rename("build");
+            assert!(offered(workspace, cx));
+            assert_eq!(WorkspaceView::tab_name(&workspace.tabs[0], cx), "build");
+
+            workspace.run_tab_command(id, TabCommand::ResetName, window, cx);
+            assert_eq!(workspace.tabs[0].meta.custom_name, None);
+            assert!(!offered(workspace, cx));
+            assert_eq!(WorkspaceView::tab_name(&workspace.tabs[0], cx), title);
+
+            // An open name editor is dropped, so it can't put the old name back later.
+            workspace.tabs[0].meta.rename("build");
+            workspace.start_rename(RenameTarget::Tab(id), window, cx);
+            workspace.run_tab_command(id, TabCommand::ResetName, window, cx);
+            assert!(workspace.renaming.is_none());
+            workspace.commit_rename(window, cx);
+            assert_eq!(workspace.tabs[0].meta.custom_name, None);
+        })
+    });
+}
+
+#[gpui::test]
 fn in_app_notifications_switch_gates_agent_toasts_live(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::component::WindowExt;
 

@@ -77,6 +77,8 @@ entry when the limitation is lifted.
   commands.
 - Last-command saves go through a background writer: a crash can lose queued or in-flight
   updates, including a command just deleted from HISTORY.
+- Tab names, pins, order, groups and colors reach `tabs.json` only at window close or a
+  shell's next last-command change: a crash loses those made since.
 - Restore previous tabs off: `tabs.json` is kept unread and unwritten (the one exception:
   "Clear saved session commands" and forgetting a command remove just the matching
   `last_command` values from it, on the tabs writer thread), so the next
