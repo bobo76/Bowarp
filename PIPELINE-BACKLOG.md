@@ -113,7 +113,7 @@ I adopt the recommendation and continue: append `<time> | <slug> | ux-agent | ux
 ## Gate between agents
 Before launching the next agent, I check that:
 - the expected commit exists (agent 1: the step's commit; agent 3: review fixes commit), or for agent 2 that `REVIEW.md` was rewritten and the working tree has no code changes (or, when agent 2 applied the fixes itself, its review fixes commit exists and agent 3 is skipped);
-- the check (see "Pipeline files") is green; skip it when HEAD hasn't moved since the last gate (agent 2 with no fixes), because that commit was already checked;
+- the check (see "Pipeline files") is green, run with `cargo test --no-fail-fast` teed to a scratch file so a failing test is named before any rerun (a test that fails once and passes on reruns is logged as flaky and named to agent 2); skip it when HEAD hasn't moved since the last gate (agent 2 with no fixes), because that commit was already checked;
 - the agent's retro exists in `pipeline/retros/<slug>/`;
 - `pipeline/log.txt` has the agent's `begin` and `end` lines.
 - after a UX/UI agent: `docs/ux-decisions.md` has a short entry per question (see the rule at its top), and the log has a `ux` line per question.
