@@ -206,8 +206,8 @@ fn cards_show_lines_added_only_for_the_folder_they_were_counted_in() {
 fn cards_are_held_while_a_name_editor_a_menu_or_a_dialog_is_open(
     cx: &mut gpui_kit::TestAppContext,
 ) {
-    use super::super::RenameTarget;
     use super::super::tests::PanesHarness;
+    use super::super::{RenameOrigin, RenameTarget};
     use gpui_kit::component::menu::PopupMenu;
     use gpui_kit::{DismissEvent, Entity};
 
@@ -248,7 +248,7 @@ fn cards_are_held_while_a_name_editor_a_menu_or_a_dialog_is_open(
 
     h.cx.update(|window, cx| {
         workspace.update(cx, |workspace, cx| {
-            workspace.start_rename(RenameTarget::Tab(id), window, cx)
+            workspace.start_rename(RenameTarget::Tab(id), RenameOrigin::Menu, window, cx)
         })
     });
     assert_eq!(held(&mut h), (true, false), "a name editor hides the card");

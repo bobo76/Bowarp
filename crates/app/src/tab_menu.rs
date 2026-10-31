@@ -14,7 +14,7 @@ use workspace_model::layout::Direction;
 
 use crate::shortcuts;
 use crate::sidebar::tab_color;
-use crate::workspace_view::DuplicateTab;
+use crate::workspace_view::{DuplicateTab, RenameTab};
 
 /// What the tab menu (`⋮` button or right-click) does to its tab.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +73,7 @@ pub fn build(
     let groups_menu = group_choices(state.other_groups, state.in_group, run.clone());
     let pick_color = run.clone();
     let duplicate = run.clone();
+    let rename = run.clone();
     menu.min_w(px(crate::ui_dimensions::MENU_WIDTH))
         .item(
             PopupMenuItem::element(|_, cx| {
@@ -98,7 +99,12 @@ pub fn build(
             state.has_folder,
         ))
         .separator()
-        .item(item("Rename tab", TabCommand::Rename, true))
+        .item(
+            PopupMenuItem::element(|_, cx| {
+                shortcuts::menu_label_with_hint("rename-tab", "Rename tab", &RenameTab, cx)
+            })
+            .on_click(move |_, window, cx| rename(TabCommand::Rename, window, cx)),
+        )
         .when(state.has_custom_name, |menu| {
             menu.item(item("Reset name", TabCommand::ResetName, true))
         })

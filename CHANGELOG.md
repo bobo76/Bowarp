@@ -5,6 +5,14 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.52
+
+- Rename the selected tab with F2 while the sidebar tab list has the keyboard; the terminal
+  still gets F2. The key is "Rename tab" on the Keyboard settings page and shows next to
+  "Rename tab" in the tab menu. When the rename ends the keyboard goes back to the list.
+- Enter in a tab or group name editor no longer also ends a tab search and moves the keyboard
+  to the terminal.
+
 ## 0.2.51
 
 - Move the keyboard into the sidebar tab list: Tab (or Down with an empty query) in "Search

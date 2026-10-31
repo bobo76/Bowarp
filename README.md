@@ -79,6 +79,7 @@ default shell opens as the first tab.
 | Ctrl+Shift+B | Hide or show the sidebar (also the title bar button) |
 | Ctrl+Shift+S | Search tabs (shows the sidebar if hidden) |
 | Tab, or Down (in an empty search field) | Move the keyboard into the tab list: Up / Down / Home / End select tabs, Enter, Esc or Tab go to the terminal (clearing the search; see Search and attention) |
+| F2 (in the tab list) | Rename the selected tab; the list gets the keyboard back afterwards. In the terminal, F2 goes to the program |
 | Ctrl+Shift+\| | Hide or show the file explorer (also the title bar button; the key that types `\|`) |
 | Ctrl+Shift+A | Go to the next tab needing attention; with none, the next one that is Ready for review |
 | F11 | Full screen on or off, also from a dialog (F11 is not sent to the program; on Linux the window manager applies it). Quitting in full screen starts maximized next time |
@@ -338,10 +339,10 @@ There is no sound or OS notification.
 
 Right-click a row or use its `⋮` button for the tab menu: duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
 and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working
-directory, rename (Enter keeps, Escape cancels, an empty name goes back to the program's
-title), "Reset name" (only on a renamed tab: back to the program's title, such as the agent's
-own name for the conversation), move up / down, close, and a color marker. "New group with
-tab" and "Move to group" put tabs in groups.
+directory, rename (F2 in the tab list; Enter keeps, Escape cancels, an empty name goes back to
+the program's title), "Reset name" (only on a renamed tab: back to the program's title, such
+as the agent's own name for the conversation), move up / down, close, and a color marker.
+"New group with tab" and "Move to group" put tabs in groups.
 
 Closing a busy tab asks first: one where a shell command or a program started at the prompt
 (such as vim) still runs, or whose agent is Working or waiting for an answer. Closing several
@@ -371,6 +372,11 @@ keyboard to the Settings page. Otherwise Enter, Escape or
 Tab gives the keyboard to the terminal and clears the search, as in the field; Shift+Tab goes
 back to the field, keeping it. Clicking a row still gives the keyboard to the terminal. These
 list keys are fixed (not on the Keyboard settings page).
+F2 in the list renames the selected tab (not while the ring is on the Settings row); Enter or
+Escape in the name editor gives the keyboard back to the list (to the terminal when the rename
+hides the tab from the search), while clicking elsewhere keeps
+the name and leaves the keyboard where the click put it. Its key can be changed ("Rename tab"
+on the Keyboard settings page); it only works while the list has the keyboard.
 Selecting a tab the search hides (Ctrl+1..9, Ctrl+Tab, the attention jump) also clears it.
 
 While a tab other than the selected one needs attention, a warning button with the number of
@@ -607,7 +613,8 @@ adds Shift: `ctrl-V` is `ctrl-shift-v`); a space separates the keystrokes of a s
 `Paste`, `PasteOrSend`, `Find`, `CloseFind`, `AllowClipboard`, `DenyClipboard` (in the
 terminal); `NewTab`, `DuplicateTab`, `CloseTab`, `NextTab`, `PreviousTab`, `SelectTab1` to
 `SelectTab9`, `ToggleSidebar`, `ToggleExplorer`, `SearchTabs`, `NextAttention`,
-`ToggleFullScreen` (anywhere in the window). `terminal::Paste` and `workspace::NewTab` also
+`ToggleFullScreen` (anywhere in the window); `RenameTab` (only while the tab list has the
+keyboard). `terminal::Paste` and `workspace::NewTab` also
 work. An entry that can't be used (an unknown action, a key that can't be read, a value that
 is neither a name nor `null`, `null` for a key with no default) is skipped and named in a
 banner on the settings page; the others apply. A change applies when the file is read again:
