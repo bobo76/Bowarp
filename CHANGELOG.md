@@ -5,6 +5,11 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.46
+
+- Add "Reset name" to the tab menu of a renamed tab: the tab shows the program's title again
+  (the agent's own name for Claude Code and Copilot tabs).
+
 ## 0.2.45
 
 - Show the turning working spinner on renamed Claude Code tabs, whose custom name hides

@@ -1050,10 +1050,7 @@ impl WorkspaceView {
 
     /// The name shown in the sidebar: the custom name, else the program's title.
     fn tab_name(tab: &Tab, cx: &App) -> String {
-        match &tab.meta.custom_name {
-            Some(name) => name.clone(),
-            None => tab.view.read(cx).name().to_string(),
-        }
+        tab.meta.display_name(tab.view.read(cx).name()).to_string()
     }
 
     /// The tab's own color, else its group's.
@@ -1069,6 +1066,7 @@ impl WorkspaceView {
         let own_group = self.layout.group_of(id).map(|group| group.id);
         Some(TabMenuState {
             pinned: self.layout.is_pinned(id),
+            has_custom_name: tab.meta.custom_name.is_some(),
             other_groups: self
                 .layout
                 .groups()
@@ -1131,6 +1129,18 @@ impl WorkspaceView {
                 }
             }
             TabCommand::Rename => self.start_rename(RenameTarget::Tab(id), window, cx),
+            TabCommand::ResetName => {
+                // An open editor for this tab would put the old name back when committed.
+                if self
+                    .renaming
+                    .as_ref()
+                    .is_some_and(|rename| rename.target == RenameTarget::Tab(id))
+                {
+                    self.cancel_rename(window, cx);
+                }
+                self.tabs[index].meta.reset_name();
+                cx.notify();
+            }
             TabCommand::Move(direction) => {
                 self.layout.move_tab(id, direction);
                 self.sync_order(cx);

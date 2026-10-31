@@ -28,6 +28,8 @@ pub enum TabCommand {
     CopyTitle,
     CopyFolder,
     Rename,
+    /// Drop the custom name, back to the program's title.
+    ResetName,
     Move(Direction),
     Close,
     CloseOthers,
@@ -38,6 +40,8 @@ pub enum TabCommand {
 /// What the menu shows about its tab, read when it opens.
 pub struct TabMenuState {
     pub pinned: bool,
+    /// The tab has a custom name, so "Reset name" is offered.
+    pub has_custom_name: bool,
     /// Groups the tab can move to: every group but its own.
     pub other_groups: Vec<(GroupId, SharedString)>,
     pub in_group: bool,
@@ -95,6 +99,9 @@ pub fn build(
         ))
         .separator()
         .item(item("Rename tab", TabCommand::Rename, true))
+        .when(state.has_custom_name, |menu| {
+            menu.item(item("Reset name", TabCommand::ResetName, true))
+        })
         .item(item(
             "Move tab up",
             TabCommand::Move(Direction::Up),

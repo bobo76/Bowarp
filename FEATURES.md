@@ -44,7 +44,8 @@ directly to model APIs.
 
 - Organize terminal tabs into named, collapsible groups, such as projects or tasks.
 - Collapse a group without interrupting its sessions.
-- Create, rename, reorder (menu or drag and drop), duplicate, and move tabs between groups.
+- Create, rename (or reset to the program's title), reorder (menu or drag and drop), duplicate,
+  and move tabs between groups.
   A new tab opens right below the selected one, in its group (first after the pinned tabs
   when a pinned tab is selected).
 - Closing the last tab keeps the window and its groups, with buttons to open a new tab; the
