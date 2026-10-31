@@ -14,8 +14,9 @@ use workspace_model::{KnownShell, LauncherIcon, Platform, Settings, agents, shel
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Launcher {
     /// Stable key that settings.json saves (`default_shell`; later per-launcher settings): the
-    /// program name of a `SHELLS`/`AGENTS` entry (`bash`, `zsh`, `fish`, `pwsh`, `powershell`,
-    /// `cmd`, `claude`, `copilot`), `git-bash` for Git Bash (its program is `bash.exe` too) and
+    /// program name of a `SHELLS` entry or an agent's CLI selector (`bash`, `zsh`, `fish`,
+    /// `pwsh`, `powershell`, `cmd`, `claude`, `copilot`), `git-bash` for Git Bash (its program
+    /// is `bash.exe` too) and
     /// `wsl:<distro>` for a WSL distro. Unique in a [`discover`] list; `label` is only shown.
     pub id: String,
     pub label: String,

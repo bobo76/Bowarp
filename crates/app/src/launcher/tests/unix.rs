@@ -251,7 +251,7 @@ fn listed_launcher_ids_are_unique() {
     let mut ids: Vec<&str> = SHELLS
         .iter()
         .map(|&(name, _)| name)
-        .chain(AGENTS.iter().map(|&(name, ..)| name))
+        .chain(agents().map(|agent| agent.cli_selector()))
         .collect();
     ids.push(&git_bash.id);
     let count = ids.len();
