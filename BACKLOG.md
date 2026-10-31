@@ -140,7 +140,9 @@ Earlier features (0.2.17-0.2.19), Windows and Linux unless noted:
   in WSL.
 - Agent launch arguments: quoted arguments, empty fields, malformed quotes, Claude
   `--permission-mode plan`/`--model opus` and Copilot `--mode plan`/`--yolo`; after changing
-  the settings, duplicated and restored tabs keep the old arguments.
+  the settings, duplicated and restored tabs keep the old arguments. On Windows, edits
+  survive leaving the field, Enter, closing/reopening Settings and restart; clearing and
+  resetting work, new tabs use the saved arguments, and Font family keeps its edits too.
 
 Packaged apps on Windows and Linux: a smoke test and the About dialog's version and commit.
 

@@ -34,21 +34,50 @@ pub struct AgentModeState {
 
 impl AgentModeState {
     /// Seed the initial mode before the optional extension reports it. Permission flags such
-    /// as `--yolo` do not select an interaction mode.
+    /// as `--yolo` do not select an interaction mode. The CLI takes the last `--mode` value,
+    /// but `--plan` starts in Plan even with `--mode autopilot` (auto-approval comes later).
+    /// `--plan` accepts only an explicit Autopilot mode. `--autopilot` conflicts with both
+    /// `--mode` and `--plan`; rejected launches stay unknown.
     pub fn from_args(args: &[String]) -> Self {
         let mut state = Self::default();
+        let mut plan = false;
+        let mut autopilot = false;
+        let mut explicit_mode = false;
         let mut args = args.iter().map(String::as_str);
         while let Some(arg) = args.next() {
             let mode = match arg {
                 "--" => break,
-                "--autopilot" => Some(AgentMode::Autopilot),
-                "--plan" => Some(AgentMode::Plan),
-                "--mode" => args.next().and_then(AgentMode::parse),
-                _ => arg.strip_prefix("--mode=").and_then(AgentMode::parse),
+                "--autopilot" => {
+                    autopilot = true;
+                    None
+                }
+                "--plan" => {
+                    plan = true;
+                    None
+                }
+                "--mode" => {
+                    explicit_mode = true;
+                    args.next().and_then(AgentMode::parse)
+                }
+                _ => arg.strip_prefix("--mode=").and_then(|value| {
+                    explicit_mode = true;
+                    AgentMode::parse(value)
+                }),
             };
             if let Some(mode) = mode {
                 state.apply(mode, 0);
             }
+        }
+        if autopilot && (plan || explicit_mode) {
+            return Self::default();
+        }
+        if plan && explicit_mode && state.mode() != Some(AgentMode::Autopilot) {
+            return Self::default();
+        }
+        if plan {
+            state.apply(AgentMode::Plan, 0);
+        } else if autopilot {
+            state.apply(AgentMode::Autopilot, 0);
         }
         state
     }
@@ -117,6 +146,49 @@ mod tests {
             assert_eq!(state.mode(), expected, "{args:?}");
             state.apply(AgentMode::Interactive, 1);
             assert_eq!(state.mode(), Some(AgentMode::Interactive));
+        }
+    }
+
+    #[test]
+    fn repeated_modes_use_the_last_value_but_plan_selects_the_initial_mode() {
+        for (args, expected) in [
+            (
+                vec!["--mode", "plan", "--mode=autopilot"],
+                AgentMode::Autopilot,
+            ),
+            (vec!["--mode=autopilot", "--mode", "plan"], AgentMode::Plan),
+            (
+                vec!["--mode", "plan", "--mode=interactive"],
+                AgentMode::Interactive,
+            ),
+            (vec!["--mode=plan", "--mode=plan"], AgentMode::Plan),
+            (vec!["--plan", "--mode=autopilot"], AgentMode::Plan),
+            (vec!["--mode", "autopilot", "--plan"], AgentMode::Plan),
+            (vec!["--plan", "--plan"], AgentMode::Plan),
+            (vec!["--autopilot", "--autopilot"], AgentMode::Autopilot),
+            (vec!["--plan", "--", "--mode=autopilot"], AgentMode::Plan),
+        ] {
+            let args: Vec<String> = args.into_iter().map(String::from).collect();
+            assert_eq!(
+                AgentModeState::from_args(&args).mode(),
+                Some(expected),
+                "{args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_rejected_mode_combinations_do_not_seed_a_mode() {
+        for args in [
+            vec!["--autopilot", "--plan"],
+            vec!["--plan", "--autopilot"],
+            vec!["--mode", "interactive", "--autopilot"],
+            vec!["--autopilot", "--mode=autopilot"],
+            vec!["--plan", "--mode=interactive"],
+            vec!["--mode=plan", "--plan"],
+        ] {
+            let args: Vec<String> = args.into_iter().map(String::from).collect();
+            assert_eq!(AgentModeState::from_args(&args).mode(), None, "{args:?}");
         }
     }
 }

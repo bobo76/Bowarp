@@ -396,14 +396,10 @@ fn copilot_hooks_add_and_end_waiting_but_only_progress_controls_working_and_idle
     });
 }
 
-#[gpui::test]
-fn copilot_autopilot_permissions_do_not_adopt_status_or_emit_attention(
+fn copilot_view_with_mode_args(
     cx: &mut gpui_kit::TestAppContext,
-) {
-    use agent_status::HookEvent;
-    use std::cell::Cell;
-    use std::rc::Rc;
-
+    mode_args: &[&str],
+) -> Entity<TerminalView> {
     #[cfg(windows)]
     let (program, args) = ("cmd", vec!["/C", "exit 0"]);
     #[cfg(not(windows))]
@@ -423,8 +419,8 @@ fn copilot_autopilot_permissions_do_not_adopt_status_or_emit_attention(
     )
     .unwrap();
     let mut launch = spec.clone();
-    launch.args = vec!["--mode".into(), "autopilot".into()];
-    let view = cx.new(|cx| {
+    launch.args = mode_args.iter().map(|arg| (*arg).into()).collect();
+    cx.new(|cx| {
         TerminalView::new(
             session,
             &launch,
@@ -433,7 +429,18 @@ fn copilot_autopilot_permissions_do_not_adopt_status_or_emit_attention(
             Task::ready(()),
             cx,
         )
-    });
+    })
+}
+
+#[gpui::test]
+fn copilot_autopilot_permissions_do_not_adopt_status_or_emit_attention(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use agent_status::HookEvent;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let view = copilot_view_with_mode_args(cx, &["--mode=plan", "--mode", "autopilot"]);
     let notices = Rc::new(Cell::new(0));
     let seen = notices.clone();
     let _events =
@@ -466,6 +473,66 @@ fn copilot_autopilot_permissions_do_not_adopt_status_or_emit_attention(
         2,
         "only the question and interactive permission notify"
     );
+}
+
+#[gpui::test]
+fn copilot_initial_mode_precedence_controls_permission_attention(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use agent_status::HookEvent;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    for (args, expected) in [
+        (vec!["--plan", "--mode", "autopilot"], Some(AgentMode::Plan)),
+        (vec!["--mode=autopilot", "--plan"], Some(AgentMode::Plan)),
+        (
+            vec!["--mode=autopilot", "--mode=interactive"],
+            Some(AgentMode::Interactive),
+        ),
+        (
+            vec!["--mode=plan", "--mode=autopilot"],
+            Some(AgentMode::Autopilot),
+        ),
+        (
+            vec!["--autopilot", "--autopilot"],
+            Some(AgentMode::Autopilot),
+        ),
+        (vec!["--plan", "--autopilot"], None),
+        (vec!["--plan", "--mode=interactive"], None),
+    ] {
+        let view = copilot_view_with_mode_args(cx, &args);
+        let notices = Rc::new(Cell::new(0));
+        let seen = notices.clone();
+        let _events = cx.update(|cx| {
+            cx.subscribe(&view, move |_, _: &AgentNotice, _| seen.set(seen.get() + 1))
+        });
+        view.update(cx, |view, cx| {
+            assert_eq!(view.agent_mode(), expected, "{args:?}");
+            view.hide();
+            view.apply_progress(ProgressState::Indeterminate, 1, cx);
+            view.apply_hook_event(
+                AgentEvent::Hook(HookEvent::InputRequested(WaitReason::Permission)),
+                2,
+                cx,
+            );
+            assert_eq!(
+                view.tab_status(),
+                if expected == Some(AgentMode::Autopilot) {
+                    TabStatus::Working
+                } else {
+                    TabStatus::NeedsAttention
+                },
+                "{args:?}"
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            notices.get(),
+            usize::from(expected != Some(AgentMode::Autopilot)),
+            "{args:?}"
+        );
+    }
 }
 
 #[gpui::test]

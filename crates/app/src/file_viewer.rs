@@ -942,6 +942,7 @@ impl Render for FileViewer {
         let (background, border) = (theme.background, theme.border);
         div()
             .id("file-viewer")
+            .debug_selector(|| "file-viewer".into())
             .flex()
             .flex_col()
             .size_full()

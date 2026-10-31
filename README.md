@@ -513,7 +513,11 @@ The Terminal page also shows each agent's executable path and a free-text argume
 `claude_args` and `copilot_args` in `settings.json` default to empty. Quotes group words
 (for example `--model opus`, `--permission-mode plan` or `--dangerously-skip-permissions`
 for Claude; `--mode autopilot`, `--mode plan` or `--yolo` for Copilot). Copilot's mode is
-separate from permission bypass. Parsing uses shell-style quoting and backslash escaping,
+separate from permission bypass. Repeated `--mode` flags use the last value.
+`--plan --mode autopilot` starts in Plan (automatic plan approval happens later), regardless
+of flag order. Copilot rejects `--autopilot` combined with `--mode` or `--plan`, and rejects
+`--plan` with an explicit mode other than Autopilot.
+Parsing uses shell-style quoting and backslash escaping,
 without variable expansion or executing a shell; quote Windows paths with single quotes
 or escape their backslashes. Unmatched quotes prevent launching and show an error.
 

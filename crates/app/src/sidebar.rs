@@ -539,6 +539,7 @@ pub fn tab_row(
 
     div()
         .id(("tab", row.index))
+        .debug_selector(move || format!("sidebar-tab-{}", row.index))
         .group(group.clone())
         .relative()
         .flex()
@@ -757,6 +758,7 @@ pub fn settings_row(
         .child("Settings");
     let row = div()
         .id("settings-row")
+        .debug_selector(|| "settings-row".into())
         .group("settings-row")
         .flex()
         .items_center()
