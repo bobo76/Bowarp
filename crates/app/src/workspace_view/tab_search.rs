@@ -1,9 +1,12 @@
 //! The sidebar's "Search tabs..." field: it leaves the matching tabs in the sidebar, Up/Down
 //! select the previous or next match, Enter selects the first one, Escape ends the search.
+//! Tab, or Down with nothing typed, moves the keyboard into the tab list.
 
 use std::collections::HashSet;
 
-use gpui_kit::component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
+use gpui_kit::component::input::{
+    Escape, IndentInline, Input, InputEvent, InputState, MoveDown, MoveUp,
+};
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
@@ -46,6 +49,11 @@ impl TabSearch {
 
     pub fn query(&self, cx: &App) -> TabQuery {
         TabQuery::parse(&self.input.read(cx).value())
+    }
+
+    /// Tab `id` was selected from the tab list: Up/Down and Enter in the field go on from it.
+    pub fn set_cursor(&mut self, id: u64) {
+        self.cursor = Some(id);
     }
 }
 
@@ -104,7 +112,7 @@ impl WorkspaceView {
     }
 
     /// Clear the search and give the keyboard back to the selected terminal.
-    fn end_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn end_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.search.cursor = None;
         self.search
             .input
@@ -155,8 +163,19 @@ impl WorkspaceView {
             .update(cx, |search, cx| search.focus(window, cx));
     }
 
+    /// Down in the search field: with nothing typed, enter the tab list; else select the next
+    /// match.
+    fn search_field_down(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search.query(cx).is_empty() {
+            self.enter_tab_list(window, cx);
+            return;
+        }
+        self.step_search(Direction::Down, window, cx);
+    }
+
     /// The "Search tabs..." field: Up/Down select the previous or next match, Enter selects
-    /// the first match (or keeps the one moved to), Escape clears it.
+    /// the first match (or keeps the one moved to), Escape clears it. Tab, or Down with
+    /// nothing typed, enters the tab list.
     pub(super) fn render_search(&self, cx: &mut Context<Self>) -> AnyElement {
         div()
             .flex_1()
@@ -170,7 +189,12 @@ impl WorkspaceView {
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &MoveDown, window, cx| {
-                workspace.step_search(Direction::Down, window, cx);
+                workspace.search_field_down(window, cx);
+                cx.stop_propagation();
+            }))
+            // Tab would indent, which a one-line field ignores.
+            .capture_action(cx.listener(|workspace, _: &IndentInline, window, cx| {
+                workspace.enter_tab_list(window, cx);
                 cx.stop_propagation();
             }))
             .child(
