@@ -5,6 +5,7 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Keep agent launch arguments and font-family edits when leaving their Settings fields.
 - Clarify that clipboard Ask / Allow / Deny controls terminal OSC 52 writes, not native
   clipboard access by programs such as Claude Code and Copilot CLI.
 - Known Copilot Autopilot sessions ignore automatically approved permission hooks instead of

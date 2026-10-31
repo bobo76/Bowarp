@@ -220,6 +220,25 @@ fn broken_file_is_kept_until_the_first_save_moves_it_aside() {
 }
 
 #[test]
+fn agent_arguments_persist_without_losing_other_on_disk_changes() {
+    let root = TempDir::new();
+    let path = root.0.join("settings.json");
+    let mut file = SettingsFile::load(path.clone());
+    file.update(|settings| settings.claude_args = "--model 'opus'".into())
+        .unwrap();
+    let mut external = SettingsFile::load(path.clone());
+    external
+        .update(|settings| settings.font_family = "External Font".into())
+        .unwrap();
+    file.update(|settings| settings.copilot_args = "--model example --yolo".into())
+        .unwrap();
+    let reloaded = SettingsFile::load(path);
+    assert_eq!(reloaded.settings().claude_args, "--model 'opus'");
+    assert_eq!(reloaded.settings().copilot_args, "--model example --yolo");
+    assert_eq!(reloaded.settings().font_family, "External Font");
+}
+
+#[test]
 fn update_unless_broken_leaves_a_broken_file_alone() {
     let root = TempDir::new();
     let path = root.0.join("settings.json");

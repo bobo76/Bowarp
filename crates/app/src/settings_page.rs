@@ -48,6 +48,9 @@ use crate::window_background;
 
 mod keyboard;
 
+#[cfg(test)]
+mod tests;
+
 pub use keyboard::{KeyRecorder, init as init_keyboard};
 
 /// What the page's "Open settings file" button can do right now.
@@ -1045,6 +1048,7 @@ pub fn text_row(
 /// A text field's input, kept across renders (see [`Binding::state_key`]).
 struct TextField {
     input: Entity<InputState>,
+    committed: String,
     _events: Subscription,
 }
 
@@ -1061,21 +1065,38 @@ fn text_field(
                 .placeholder(placeholder)
                 .default_value(value.clone())
         });
-        let binding = binding.clone();
-        let events = cx.subscribe(&input, move |_, input, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Blur | InputEvent::PressEnter { .. }) {
-                binding.save(input.read(cx).value().to_string(), cx);
+        // Removing the page drops this keyed state before its input can deliver Blur.
+        let save = binding.clone();
+        cx.on_release(move |state: &mut TextField, cx| {
+            let value = state.input.read(cx).value().to_string();
+            if value != state.committed {
+                save.save(value, cx);
             }
-        });
+        })
+        .detach();
+        let binding = binding.clone();
+        let events = cx.subscribe(
+            &input,
+            move |state: &mut TextField, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Blur | InputEvent::PressEnter { .. }) {
+                    let value = input.read(cx).value().to_string();
+                    state.committed = value.clone();
+                    binding.save(value, cx);
+                }
+            },
+        );
         TextField {
             input,
+            committed: value.clone(),
             _events: events,
         }
     });
     let input = state.read(cx).input.clone();
-    // A value changed elsewhere (reset, the file reloaded) shows, unless the user is typing.
+    // Focus can leave before Blur is delivered: keep the draft until the handler commits it.
     let typing = input.read(cx).focus_handle(cx).is_focused(window);
-    if !typing && input.read(cx).value().as_ref() != value.as_str() {
+    let pending = input.read(cx).value().as_ref() != state.read(cx).committed.as_str();
+    if !typing && !pending && input.read(cx).value().as_ref() != value.as_str() {
+        state.update(cx, |state, _| state.committed = value.clone());
         input.update(cx, |input, cx| input.set_value(value, window, cx));
     }
     Input::new(&input).small().w_64().into_any_element()
