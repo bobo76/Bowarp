@@ -164,26 +164,37 @@ behavior"); items below name their switch where they need one.
   keyboard leaves focus on an element no longer drawn (only the tab list itself hands the
   keyboard back, `toggle_sidebar` checks `is_focused`): check the whole sidebar
   (`contains_focused` plus the search input's focus handle) and focus the terminal.
-- `claude` / `copilot` typed at a shell prompt open an agent tab: instead of running in the
-  shell tab, the command opens a new tab exactly like the `+` menu's "Claude Code" / "Copilot
-  CLI" entry (`open_launcher` in `app/src/workspace_view.rs`, so hooks and status work), in the
-  shell's current folder, and selects it; the shell tab stays at its prompt. Steps:
-  - The shell integration scripts (bash, zsh, PowerShell) define `claude` and `copilot`
-    functions that print a new tokened mark, e.g. `ESC ] 133;N;aw=<token>;agent=claude;
-args=<hex>;cwd=<hex> BEL`, and return 0 without starting the program. `Osc133Scanner`
-    accepts it, `PromptTracker` reports it as a new `PromptEvent`, and `TerminalView` asks
-    `WorkspaceView` to open the agent's launcher with the folder and the arguments
-    (`claude --resume` opens a tab running `claude --resume`).
-  - Run in place, not in a new tab: the non-interactive forms (`-p` / `--print`, `--version`,
-    `--help`, subcommands such as `claude mcp ...` / `claude update`), a command whose stdin or
-    stdout isn't a terminal (`echo x | claude -p`), and `command claude` / `\claude`, which skip
-    the function. Agent not found on `PATH` (no launcher program): run in place, so the shell
-    prints its own "command not found".
-  - Switch "Open agents typed at the prompt in a new tab" (Terminal page, on): when off, the
+- `claude` / `copilot` typed at a shell prompt get agent status in place: today they run in
+  the shell tab without hooks and show only "Running for", unlike a tab from the `+` menu.
+  Instead, the agent keeps running in the same shell tab, with the same hooks, status
+  (Working / Waiting / Ready for review), attention target, notifications and mode reporting
+  as a `+` menu agent tab; when it exits, the tab goes back to being a plain shell tab. Steps:
+  1. Environment: a shell tab with shell integration gets what `Hooks::attach`
+     (`app/src/hooks.rs`) gives an agent tab, without the launch flag: `AGENTWS_SESSION`,
+     `AGENTWS_PIPE`, `AGENTWS_HOOK`, plus the Claude settings file path and the tab's
+     Copilot plugin folder (created with the tab, removed with it like an agent tab's) in new
+     variables. Hook events from that session id must reach the shell tab (today only agent
+     tabs use them).
+  2. Shell functions (bash, zsh, PowerShell): `claude` and `copilot` print a tokened mark,
+     e.g. `ESC ] 133;N;aw=<token>;agent=claude BEL`, then run the real program (`command
+     claude`) with `--settings <path>` / `--plugin-dir <path>` put before the user's
+     arguments, and return its exit code. `Osc133Scanner` accepts the mark, `PromptTracker`
+     reports it as a new `PromptEvent`, and the tab switches to that agent's status policy
+     (full hooks for Claude, progress plus attention hooks for Copilot) until the command's
+     `D` mark; then it is a shell tab again (status, last-command tracking, busy-close as
+     today).
+  3. Sidebar while it runs: the agent's icon and status on the row and hover card; the tab's
+     saved kind stays shell, so restore and duplicate start a shell (the last-command
+     suggestion can offer `claude --resume`). Unit-test the switch in and out of agent status
+     (`workspace-model`), including an agent killed with Ctrl+C and a shell exiting mid-run.
+  - Run unwrapped (no hooks, as today): the non-interactive forms (`-p` / `--print`,
+    `--version`, `--help`, subcommands such as `claude mcp ...` / `claude update`), stdin or
+    stdout not a terminal (`echo x | claude -p`), `command claude` / `\claude`, an agent not on
+    `PATH` (the shell prints its own "command not found"), nested shells and cmd tabs (no
+    functions).
+  - Switch "Agent status for agents typed at the prompt" (Terminal page, on): when off, the
     functions aren't defined (the app passes a flag with the token) and typed `claude` /
-    `copilot` run normally. Applies to newly started shells.
-  - A `claude` run in place (`-p` in a script, a nested shell, cmd tabs, which get no functions)
-    gets no hooks and shows "Running for" until it quits. Accepted.
+    `copilot` run as today. Applies to newly started shells.
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
 - Long durations on the sidebar and hover card ("Running for", lap times such as "Working · 2m 14s"):
