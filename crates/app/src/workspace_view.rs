@@ -45,7 +45,7 @@ use crate::assets::FILES_ICON;
 use crate::file_explorer::{CdAvailability, ExplorerEvent, FileExplorer};
 use crate::file_viewer::{FilePlace, FileViewer, ViewerEvent};
 use crate::history;
-use crate::hooks::ClaudeHooks;
+use crate::hooks::AgentHooks;
 use crate::keymap;
 use crate::launcher::{self, Launcher, launch_name};
 use crate::open_menu::OpenMenu;
@@ -283,7 +283,7 @@ pub struct WorkspaceView {
     tabs_writer: Rc<tabs_file::TabsWriter>,
     next_session_id: u64,
     launchers: Rc<[Launcher]>,
-    hooks: Option<Rc<ClaudeHooks>>,
+    hooks: Option<Rc<AgentHooks>>,
     settings: SettingsPane,
     _hook_messages: Task<()>,
     _explorer_events: Subscription,
@@ -337,7 +337,7 @@ impl WorkspaceView {
 
     pub fn new(
         launchers: Rc<[Launcher]>,
-        hooks: Option<Rc<ClaudeHooks>>,
+        hooks: Option<Rc<AgentHooks>>,
         mut hook_messages: UnboundedReceiver<HookMessage>,
         tabs_writer: Rc<tabs_file::TabsWriter>,
         window: &mut Window,
@@ -500,15 +500,15 @@ impl WorkspaceView {
     ) -> io::Result<(Entity<TerminalView>, [Subscription; 5])> {
         let session_id = self.next_session_id;
         let mut launch = spec.clone();
-        let reporting = if self
-            .hooks
-            .as_ref()
-            .is_some_and(|hooks| hooks.attach(session_id, &mut launch))
-        {
+        let attachment = self.hooks.as_ref().map_or_else(Default::default, |hooks| {
+            hooks.attach(session_id, &mut launch)
+        });
+        let reporting = if attachment.reports_full_activity() {
             StatusReporting::Hooks
         } else {
             StatusReporting::OutputActivity
         };
+        let diagnostics = attachment.diagnostics;
         let shell_key = launcher::shell_key(&self.launchers, spec);
         shell_integration::attach(&mut launch);
         let view = TerminalView::spawn(session_id, &launch, reporting, shell_key, cx).inspect_err(
@@ -518,6 +518,18 @@ impl WorkspaceView {
                 }
             },
         )?;
+        struct AgentHooksUnavailable;
+        for diagnostic in diagnostics {
+            log::warn!("{diagnostic}");
+            cx.defer_in(window, move |_, window, cx| {
+                window.push_notification(
+                    Notification::warning(diagnostic)
+                        .id::<AgentHooksUnavailable>()
+                        .autohide(false),
+                    cx,
+                );
+            });
+        }
         self.next_session_id += 1;
         let changed = cx.subscribe(&view, |workspace, _, _: &TabChanged, cx| {
             workspace.sync_explorer(cx);
@@ -1325,7 +1337,7 @@ impl WorkspaceView {
             return;
         };
         tab.view.update(cx, |view, cx| {
-            view.apply_hook_event(message.event, message.at, cx)
+            view.apply_report(&message.report, message.at, cx)
         });
     }
 

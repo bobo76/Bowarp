@@ -19,9 +19,10 @@ use alacritty_terminal::tty;
 use parking_lot::MutexGuard;
 use workspace_model::ProgressState;
 
-use crate::launch::{LaunchSpec, SessionKind};
+use crate::launch::LaunchSpec;
 use crate::palette::Palette;
 use crate::prompt::{ExecutedCommand, MarkedPty, PromptEvent, PromptInput, PromptTracker};
+use workspace_model::{SessionKind, apply_environment};
 
 /// How long a closed session's child has to exit after SIGHUP before it is killed.
 const EXIT_GRACE: Duration = Duration::from_secs(2);
@@ -524,10 +525,8 @@ fn session_env(kind: SessionKind, extra: &HashMap<String, String>) -> HashMap<St
         ("COLORTERM".to_string(), "truecolor".to_string()),
         ("TERM_PROGRAM".to_string(), "agent-workspace".to_string()),
     ]);
-    // Copilot CLI only reports progress (OSC 9;4) to terminals it recognizes; ConEmu's
-    // variable is the narrowest one that turns it on (checked with Copilot CLI 1.0.98).
-    if kind == SessionKind::CopilotCli {
-        env.insert("ConEmuANSI".to_string(), "ON".to_string());
+    if let Some(agent) = kind.agent() {
+        apply_environment(agent, &mut env);
     }
     env.extend(
         extra
@@ -540,12 +539,13 @@ fn session_env(kind: SessionKind, extra: &HashMap<String, String>) -> HashMap<St
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use workspace_model::agents::{CLAUDE, COPILOT};
 
     #[test]
     fn only_copilot_sessions_get_the_progress_report_variable() {
-        let copilot = session_env(SessionKind::CopilotCli, &HashMap::new());
+        let copilot = session_env(SessionKind::Agent(COPILOT), &HashMap::new());
         assert_eq!(copilot.get("ConEmuANSI").map(String::as_str), Some("ON"));
-        for kind in [SessionKind::Shell, SessionKind::ClaudeCode] {
+        for kind in [SessionKind::Shell, SessionKind::Agent(CLAUDE)] {
             assert!(!session_env(kind, &HashMap::new()).contains_key("ConEmuANSI"));
         }
     }

@@ -1,29 +1,4 @@
-/// Copilot CLI's interaction mode, independent of whether it is currently working.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AgentMode {
-    Interactive,
-    Plan,
-    Autopilot,
-}
-
-impl AgentMode {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "interactive" => Some(Self::Interactive),
-            "plan" => Some(Self::Plan),
-            "autopilot" => Some(Self::Autopilot),
-            _ => None,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Interactive => "Interactive",
-            Self::Plan => "Plan",
-            Self::Autopilot => "Autopilot",
-        }
-    }
-}
+use workspace_model::{AgentId, AgentMode};
 
 /// Mode reports can arrive out of order, just like status hooks.
 #[derive(Default)]
@@ -33,51 +8,11 @@ pub struct AgentModeState {
 }
 
 impl AgentModeState {
-    /// Seed the initial mode before the optional extension reports it. Permission flags such
-    /// as `--yolo` do not select an interaction mode. The CLI takes the last `--mode` value,
-    /// but `--plan` starts in Plan even with `--mode autopilot` (auto-approval comes later).
-    /// `--plan` accepts only an explicit Autopilot mode. `--autopilot` conflicts with both
-    /// `--mode` and `--plan`; rejected launches stay unknown.
-    pub fn from_args(args: &[String]) -> Self {
+    /// Seed the mode declared by the provider's launch-argument adapter.
+    pub fn from_agent_args(agent: AgentId, args: &[String]) -> Self {
         let mut state = Self::default();
-        let mut plan = false;
-        let mut autopilot = false;
-        let mut explicit_mode = false;
-        let mut args = args.iter().map(String::as_str);
-        while let Some(arg) = args.next() {
-            let mode = match arg {
-                "--" => break,
-                "--autopilot" => {
-                    autopilot = true;
-                    None
-                }
-                "--plan" => {
-                    plan = true;
-                    None
-                }
-                "--mode" => {
-                    explicit_mode = true;
-                    args.next().and_then(AgentMode::parse)
-                }
-                _ => arg.strip_prefix("--mode=").and_then(|value| {
-                    explicit_mode = true;
-                    AgentMode::parse(value)
-                }),
-            };
-            if let Some(mode) = mode {
-                state.apply(mode, 0);
-            }
-        }
-        if autopilot && (plan || explicit_mode) {
-            return Self::default();
-        }
-        if plan && explicit_mode && state.mode() != Some(AgentMode::Autopilot) {
-            return Self::default();
-        }
-        if plan {
-            state.apply(AgentMode::Plan, 0);
-        } else if autopilot {
-            state.apply(AgentMode::Autopilot, 0);
+        if let Some(mode) = agent.mode_from_args(args) {
+            state.apply(mode, 0);
         }
         state
     }
@@ -101,6 +36,7 @@ impl AgentModeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use workspace_model::agents::COPILOT;
 
     #[test]
     fn recognizes_only_supported_modes() {
@@ -109,11 +45,11 @@ mod tests {
             ("plan", AgentMode::Plan, "Plan"),
             ("autopilot", AgentMode::Autopilot, "Autopilot"),
         ] {
-            assert_eq!(AgentMode::parse(value), Some(mode));
+            assert_eq!(COPILOT.parse_mode(value), Some(mode));
             assert_eq!(mode.label(), label);
         }
-        assert_eq!(AgentMode::parse("unknown"), None);
-        assert_eq!(AgentMode::parse(""), None);
+        assert_eq!(COPILOT.parse_mode("unknown"), None);
+        assert_eq!(COPILOT.parse_mode(""), None);
     }
 
     #[test]
@@ -142,7 +78,7 @@ mod tests {
             (vec!["--mode", "unknown"], None),
         ] {
             let args: Vec<String> = args.into_iter().map(String::from).collect();
-            let mut state = AgentModeState::from_args(&args);
+            let mut state = AgentModeState::from_agent_args(COPILOT, &args);
             assert_eq!(state.mode(), expected, "{args:?}");
             state.apply(AgentMode::Interactive, 1);
             assert_eq!(state.mode(), Some(AgentMode::Interactive));
@@ -170,7 +106,7 @@ mod tests {
         ] {
             let args: Vec<String> = args.into_iter().map(String::from).collect();
             assert_eq!(
-                AgentModeState::from_args(&args).mode(),
+                AgentModeState::from_agent_args(COPILOT, &args).mode(),
                 Some(expected),
                 "{args:?}"
             );
@@ -188,7 +124,11 @@ mod tests {
             vec!["--mode=plan", "--plan"],
         ] {
             let args: Vec<String> = args.into_iter().map(String::from).collect();
-            assert_eq!(AgentModeState::from_args(&args).mode(), None, "{args:?}");
+            assert_eq!(
+                AgentModeState::from_agent_args(COPILOT, &args).mode(),
+                None,
+                "{args:?}"
+            );
         }
     }
 }

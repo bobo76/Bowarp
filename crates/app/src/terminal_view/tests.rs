@@ -1,5 +1,6 @@
 use super::*;
 use term_core::Palette;
+use workspace_model::agents::{CLAUDE, COPILOT};
 
 #[test]
 fn only_a_hidden_finished_turn_is_ready_for_review() {
@@ -17,7 +18,7 @@ fn unread_completions_are_acknowledged_and_replaced_for_both_agents(
 ) {
     use agent_status::HookEvent;
 
-    for kind in [SessionKind::ClaudeCode, SessionKind::CopilotCli] {
+    for kind in [SessionKind::Agent(CLAUDE), SessionKind::Agent(COPILOT)] {
         #[cfg(windows)]
         let (program, args) = ("cmd", vec!["/C", "exit 0"]);
         #[cfg(not(windows))]
@@ -50,8 +51,8 @@ fn unread_completions_are_acknowledged_and_replaced_for_both_agents(
             let mut at = 0;
             let mut report = |view: &mut TerminalView, working, cx: &mut Context<TerminalView>| {
                 at += 1;
-                match kind {
-                    SessionKind::ClaudeCode => view.apply_hook_event(
+                if kind.has_activity_hooks() {
+                    view.apply_hook_event(
                         AgentEvent::Hook(if working {
                             HookEvent::PromptSubmitted
                         } else {
@@ -59,8 +60,9 @@ fn unread_completions_are_acknowledged_and_replaced_for_both_agents(
                         }),
                         at,
                         cx,
-                    ),
-                    SessionKind::CopilotCli => view.apply_progress(
+                    )
+                } else if kind.has_progress_status() {
+                    view.apply_progress(
                         if working {
                             ProgressState::Indeterminate
                         } else {
@@ -68,8 +70,9 @@ fn unread_completions_are_acknowledged_and_replaced_for_both_agents(
                         },
                         at,
                         cx,
-                    ),
-                    SessionKind::Shell => unreachable!(),
+                    )
+                } else {
+                    unreachable!()
                 }
             };
             report(view, true, cx);
@@ -145,7 +148,7 @@ fn repeated_hooks_titles_and_output_do_not_repeat_agent_notices(cx: &mut gpui_ki
     #[cfg(not(windows))]
     let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
     let spec = LaunchSpec::new(
-        SessionKind::ClaudeCode,
+        SessionKind::Agent(CLAUDE),
         Some(program.into()),
         args.into_iter().map(String::from).collect(),
         None,
@@ -237,7 +240,7 @@ fn a_copilot_bell_keeps_the_pending_wait_reason(cx: &mut gpui_kit::TestAppContex
     #[cfg(not(windows))]
     let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
     let spec = LaunchSpec::new(
-        SessionKind::CopilotCli,
+        SessionKind::Agent(COPILOT),
         Some(program.into()),
         args.into_iter().map(String::from).collect(),
         None,
@@ -298,7 +301,7 @@ fn copilot_hooks_add_and_end_waiting_but_only_progress_controls_working_and_idle
     #[cfg(not(windows))]
     let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
     let spec = LaunchSpec::new(
-        SessionKind::CopilotCli,
+        SessionKind::Agent(COPILOT),
         Some(program.into()),
         args.into_iter().map(String::from).collect(),
         None,
@@ -405,7 +408,7 @@ fn copilot_view_with_mode_args(
     #[cfg(not(windows))]
     let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
     let spec = LaunchSpec::new(
-        SessionKind::CopilotCli,
+        SessionKind::Agent(COPILOT),
         Some(program.into()),
         args.into_iter().map(String::from).collect(),
         None,
@@ -666,8 +669,8 @@ fn a_quiet_claude_tab_without_hooks_shows_status_unavailable(cx: &mut gpui_kit::
     #[cfg(not(windows))]
     let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
     for (kind, quiet) in [
-        (SessionKind::ClaudeCode, TabStatus::Unavailable),
-        (SessionKind::CopilotCli, TabStatus::Quiet),
+        (SessionKind::Agent(CLAUDE), TabStatus::Unavailable),
+        (SessionKind::Agent(COPILOT), TabStatus::Quiet),
         (SessionKind::Shell, TabStatus::Quiet),
     ] {
         let spec = LaunchSpec::new(

@@ -1,9 +1,8 @@
-use workspace_model::ProgressState;
+use workspace_model::{ActivityPolicy, AgentId, HookSemantic, ProgressState};
 
 use crate::AgentMode;
 
-/// What an agent session is doing, as reported by its hooks (Claude Code) or its progress
-/// reports (Copilot CLI).
+/// What an agent session is doing, as reported by its hooks or progress reports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentStatus {
     Idle,
@@ -31,8 +30,7 @@ impl WaitReason {
     }
 }
 
-/// A status-changing hook event (Copilot uses `InputRequested` and the tool events, see
-/// [`AgentState::apply_copilot_hook`]).
+/// A status-changing hook event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HookEvent {
     PromptSubmitted,
@@ -40,52 +38,35 @@ pub enum HookEvent {
     ToolFinished,
     /// A permission dialog, question or other prompt is waiting for the user.
     InputRequested(WaitReason),
-    /// The turn ended, or Claude Code reported it has been waiting for input.
+    /// The turn ended or the agent reported it is waiting for input.
     Stopped,
 }
 
-/// What a `notification_type` asks the user for, if the user has to answer before work
-/// continues.
-fn notification_wait_reason(kind: &str) -> Option<WaitReason> {
-    match kind {
-        "permission_prompt" => Some(WaitReason::Permission),
-        "elicitation_dialog" | "elicitation_url_dialog" | "agent_needs_input" => {
-            Some(WaitReason::Reply)
-        }
-        _ => None,
-    }
-}
-
 impl HookEvent {
-    /// Autopilot approves permission requests itself, but can still ask a real question.
-    pub fn for_copilot_mode(self, mode: Option<AgentMode>) -> Option<Self> {
-        if mode == Some(AgentMode::Autopilot)
+    pub fn from_agent(agent: AgentId, name: &str, detail: Option<&str>) -> Option<Self> {
+        match agent.decode_hook_event(name, detail)? {
+            HookSemantic::PromptSubmitted => Some(Self::PromptSubmitted),
+            HookSemantic::ToolStarted => Some(Self::ToolStarted),
+            HookSemantic::ToolFinished => Some(Self::ToolFinished),
+            HookSemantic::PermissionRequested => Some(Self::InputRequested(WaitReason::Permission)),
+            HookSemantic::ReplyRequested => Some(Self::InputRequested(WaitReason::Reply)),
+            HookSemantic::Stopped => Some(Self::Stopped),
+        }
+    }
+
+    /// Apply a provider's declared automatic-approval policy to permission requests.
+    pub fn for_mode(
+        self,
+        mode: Option<AgentMode>,
+        autopilot_approves_permissions: bool,
+    ) -> Option<Self> {
+        if autopilot_approves_permissions
+            && mode == Some(AgentMode::Autopilot)
             && self == Self::InputRequested(WaitReason::Permission)
         {
             return None;
         }
         Some(self)
-    }
-
-    /// Map a hook's `hook_event_name` (and `notification_type` for `Notification`) to an
-    /// event. Events that do not affect the status map to `None`.
-    pub fn from_hook(event_name: &str, notification_type: Option<&str>) -> Option<Self> {
-        match event_name {
-            "UserPromptSubmit" => Some(Self::PromptSubmitted),
-            "PreToolUse" => Some(Self::ToolStarted),
-            "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" => Some(Self::ToolFinished),
-            "PermissionRequest" => Some(Self::InputRequested(WaitReason::Permission)),
-            // `Stop` does not fire when the user interrupts a turn; the idle prompt notification
-            // that follows a minute later is what returns such a session to idle.
-            "Stop" | "StopFailure" => Some(Self::Stopped),
-            // `SessionEnd` also fires on `/clear`, when the process keeps running; a real exit is
-            // reported by the terminal session instead.
-            "Notification" => match notification_type? {
-                "idle_prompt" => Some(Self::Stopped),
-                kind => notification_wait_reason(kind).map(Self::InputRequested),
-            },
-            _ => None,
-        }
     }
 
     fn status(self) -> AgentStatus {
@@ -142,15 +123,17 @@ impl AgentState {
         self.last_event_at = at;
     }
 
-    /// Apply a Copilot CLI hook. Its progress reports Working and Idle, so hooks only add
-    /// Waiting, and a tool hook only ends it: the user answered and the turn moved on.
-    pub fn apply_copilot_hook(&mut self, event: HookEvent, at: u64) {
-        let applies = match event {
-            HookEvent::InputRequested(_) => true,
-            HookEvent::ToolStarted | HookEvent::ToolFinished => {
-                self.status == AgentStatus::NeedsAttention
-            }
-            HookEvent::PromptSubmitted | HookEvent::Stopped => false,
+    /// Apply a hook according to the provider's declared source of activity status.
+    pub fn apply_hook(&mut self, event: HookEvent, at: u64, policy: ActivityPolicy) {
+        let applies = match policy {
+            ActivityPolicy::FullHooks => true,
+            ActivityPolicy::ProgressWithAttentionHooks => match event {
+                HookEvent::InputRequested(_) => true,
+                HookEvent::ToolStarted | HookEvent::ToolFinished => {
+                    self.status == AgentStatus::NeedsAttention
+                }
+                HookEvent::PromptSubmitted | HookEvent::Stopped => false,
+            },
         };
         if applies {
             self.apply(event, at);

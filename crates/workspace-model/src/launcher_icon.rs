@@ -1,3 +1,5 @@
+use crate::AgentId;
+
 /// Icon the new-tab menu shows next to a launcher.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LauncherIcon {
@@ -14,8 +16,7 @@ pub enum LauncherIcon {
     Debian,
     /// Any other WSL distro.
     Linux,
-    Claude,
-    Copilot,
+    Agent(AgentId),
 }
 
 /// Icon for a shell run as `program`: a file name or a path (`/` or `\` separated), with or

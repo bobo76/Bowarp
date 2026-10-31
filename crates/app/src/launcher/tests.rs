@@ -1,4 +1,5 @@
 use super::*;
+use workspace_model::agents::{CLAUDE, COPILOT};
 
 #[cfg(unix)]
 mod unix;
@@ -59,14 +60,14 @@ fn quoted_or_escaped_windows_paths_survive_agent_argument_parsing() {
             copilot_args: arguments.into(),
             ..Settings::default()
         };
-        for kind in [SessionKind::ClaudeCode, SessionKind::CopilotCli] {
+        for kind in [SessionKind::Agent(CLAUDE), SessionKind::Agent(COPILOT)] {
             let launcher = Launcher {
                 id: "agent".into(),
                 label: "Agent".into(),
                 kind,
                 program: Some("agent".into()),
                 args: Vec::new(),
-                icon: LauncherIcon::Copilot,
+                icon: LauncherIcon::Agent(COPILOT),
             };
             let spec = launcher.configured_spec(None, &settings).unwrap().unwrap();
             assert_eq!(

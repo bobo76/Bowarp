@@ -1,4 +1,5 @@
 use super::*;
+use workspace_model::agents::CLAUDE;
 
 const PERMISSION: HookEvent = HookEvent::InputRequested(WaitReason::Permission);
 
@@ -8,6 +9,10 @@ fn run(events: &[(HookEvent, u64)]) -> AgentStatus {
         state.apply(event, at);
     }
     state.status()
+}
+
+fn apply_attention_hook(state: &mut AgentState, event: HookEvent, at: u64) {
+    state.apply_hook(event, at, ActivityPolicy::ProgressWithAttentionHooks);
 }
 
 #[test]
@@ -91,7 +96,7 @@ fn copilot_waits_through_repeated_progress_until_a_tool_hook_or_the_turn_end() {
     ] {
         let mut state = AgentState::default();
         state.apply_progress(ProgressState::Indeterminate, 1);
-        state.apply_copilot_hook(PERMISSION, 2);
+        apply_attention_hook(&mut state, PERMISSION, 2);
         state.apply_progress(ProgressState::Indeterminate, 3);
         assert_eq!(
             state.status(),
@@ -99,12 +104,12 @@ fn copilot_waits_through_repeated_progress_until_a_tool_hook_or_the_turn_end() {
             "repeated progress"
         );
         assert_eq!(state.wait_reason(), Some(WaitReason::Permission));
-        state.apply_copilot_hook(end, 4);
+        apply_attention_hook(&mut state, end, 4);
         assert_eq!(state.status(), end.status(), "{end:?}");
     }
 
     let mut state = AgentState::default();
-    state.apply_copilot_hook(PERMISSION, 1);
+    apply_attention_hook(&mut state, PERMISSION, 1);
     state.apply_progress(ProgressState::Hidden, 2);
     assert_eq!(state.status(), AgentStatus::Idle);
     assert_eq!(state.wait_reason(), None);
@@ -120,17 +125,17 @@ fn copilot_tool_and_stop_hooks_leave_progress_in_charge() {
         HookEvent::PromptSubmitted,
         HookEvent::Stopped,
     ] {
-        state.apply_copilot_hook(event, 2);
+        apply_attention_hook(&mut state, event, 2);
         assert_eq!(state.status(), AgentStatus::Working, "{event:?}");
     }
-    state.apply_copilot_hook(PERMISSION, 3);
-    state.apply_copilot_hook(HookEvent::Stopped, 4);
+    apply_attention_hook(&mut state, PERMISSION, 3);
+    apply_attention_hook(&mut state, HookEvent::Stopped, 4);
     assert_eq!(
         state.status(),
         AgentStatus::NeedsAttention,
         "Stopped is ignored"
     );
-    state.apply_copilot_hook(HookEvent::ToolFinished, 2);
+    apply_attention_hook(&mut state, HookEvent::ToolFinished, 2);
     assert_eq!(
         state.status(),
         AgentStatus::NeedsAttention,
@@ -148,8 +153,8 @@ fn copilot_autopilot_permissions_keep_working_but_questions_still_wait() {
     ] {
         let mut state = AgentState::default();
         state.apply_progress(ProgressState::Indeterminate, 1);
-        if let Some(event) = PERMISSION.for_copilot_mode(mode) {
-            state.apply_copilot_hook(event, 2);
+        if let Some(event) = PERMISSION.for_mode(mode, true) {
+            apply_attention_hook(&mut state, event, 2);
         }
         let expected = if mode == Some(AgentMode::Autopilot) {
             AgentStatus::Working
@@ -158,7 +163,7 @@ fn copilot_autopilot_permissions_keep_working_but_questions_still_wait() {
         };
         assert_eq!(state.status(), expected, "{mode:?}");
         let question = HookEvent::InputRequested(WaitReason::Reply);
-        state.apply_copilot_hook(question.for_copilot_mode(mode).unwrap(), 3);
+        apply_attention_hook(&mut state, question.for_mode(mode, true).unwrap(), 3);
         assert_eq!(state.status(), AgentStatus::NeedsAttention);
         assert_eq!(state.wait_reason(), Some(WaitReason::Reply));
     }
@@ -201,13 +206,17 @@ fn maps_hook_names() {
         ("SessionStart", None, None),
     ];
     for (name, kind, expected) in cases {
-        assert_eq!(HookEvent::from_hook(name, kind), expected, "{name}");
+        assert_eq!(
+            HookEvent::from_agent(CLAUDE, name, kind),
+            expected,
+            "{name}"
+        );
     }
 }
 
 #[test]
 fn maps_notification_types() {
-    let notification = |kind| HookEvent::from_hook("Notification", kind);
+    let notification = |kind| HookEvent::from_agent(CLAUDE, "Notification", kind);
     assert_eq!(notification(Some("permission_prompt")), Some(PERMISSION));
     for kind in [
         "elicitation_dialog",

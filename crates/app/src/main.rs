@@ -39,23 +39,23 @@ use std::path::PathBuf;
 use std::process;
 use std::rc::Rc;
 
+use agent_status::{AGENT_ENV, PIPE_ENV, SESSION_ENV};
 use futures::channel::mpsc;
 use gpui_kit::component::TitleBar;
 use gpui_kit::{App, AppContext, Context, Window, WindowDecorations, WindowOptions};
 use term_core::{LaunchSpec, SessionKind};
+use workspace_model::{AgentId, HOOK_PROGRAM_ENV, agents};
 
-use crate::hooks::ClaudeHooks;
+use crate::hooks::AgentHooks;
 use crate::instance_lock::InstanceLock;
 use crate::workspace_view::{TabOwnership, WorkspaceView};
-
-const USAGE: &str = "usage: agent-workspace [shell|claude|copilot] [project-dir]";
 
 /// Usage: `agent-workspace [shell|claude|copilot] [project-dir]`. `None` without arguments.
 fn launch_spec_from_args() -> Option<LaunchSpec> {
     match parse_launch_args(std::env::args().skip(1), || std::env::current_dir().ok()) {
         Ok(spec) => spec,
         Err(message) => {
-            eprintln!("agent-workspace: {message}\n{USAGE}");
+            eprintln!("agent-workspace: {message}\n{}", usage());
             process::exit(2);
         }
     }
@@ -71,40 +71,33 @@ fn parse_launch_args(
     let Some(kind) = args.next() else {
         return Ok(None);
     };
-    let launch = match kind.as_str() {
-        "claude" => LaunchSpec::claude_code,
-        "copilot" => LaunchSpec::copilot_cli,
-        "shell" => LaunchSpec::shell,
-        _ => return Err(format!("unknown session kind {kind:?}")),
-    };
     let folder = args.next().map(PathBuf::from).or_else(current_dir);
-    Ok(Some(launch(folder)))
+    let launch = if kind == "shell" {
+        LaunchSpec::shell(folder)
+    } else if let Some(agent) = AgentId::from_cli_selector(&kind) {
+        LaunchSpec::agent(agent, folder)
+    } else {
+        return Err(format!("unknown session kind {kind:?}"));
+    };
+    Ok(Some(launch))
 }
 
-/// Markers a running Claude Code sets on its children. When this app is started from inside a
-/// Claude Code session they would leak into every session we spawn, making each one act as a
-/// nested child (e.g. transcript saving disabled). User configuration such as
-/// `CLAUDE_CONFIG_DIR` is deliberately kept.
-const INHERITED_AGENT_MARKERS: &[&str] = &[
-    "AI_AGENT",
-    "CLAUDECODE",
-    "CLAUDE_CODE_CHILD_SESSION",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "CLAUDE_CODE_EXECPATH",
-    "CLAUDE_CODE_MESSAGING_SOCKET",
-    "CLAUDE_CODE_MESSAGING_TOKEN",
-    "CLAUDE_CODE_SESSION_ATTENDED",
-    "CLAUDE_CODE_SESSION_ID",
-    "CLAUDE_CODE_VERSION",
-    "CLAUDE_EFFORT",
-    "CLAUDE_PID",
-];
-
 fn scrub_inherited_agent_env() {
-    for name in INHERITED_AGENT_MARKERS {
+    let inherited_markers = agents()
+        .flat_map(|agent| agent.inherited_markers().iter().copied())
+        .chain([AGENT_ENV, PIPE_ENV, SESSION_ENV, HOOK_PROGRAM_ENV]);
+    for name in inherited_markers {
         // SAFETY: called first in `main`, before any other thread exists.
         unsafe { std::env::remove_var(name) };
     }
+}
+
+fn usage() -> String {
+    let selectors = std::iter::once("shell".to_owned())
+        .chain(agents().map(|agent| agent.cli_selector().to_owned()))
+        .collect::<Vec<_>>()
+        .join("|");
+    format!("usage: agent-workspace [{selectors}] [project-dir]")
 }
 
 fn validate_requested_folder(requested: Option<&LaunchSpec>) {
@@ -120,14 +113,14 @@ fn validate_requested_folder(requested: Option<&LaunchSpec>) {
 type HookMessages = mpsc::UnboundedReceiver<agent_status::HookMessage>;
 
 /// The hooks, their messages, and the warning to show when they could not start.
-fn start_hooks() -> (Option<Rc<ClaudeHooks>>, HookMessages, Option<String>) {
+fn start_hooks() -> (Option<Rc<AgentHooks>>, HookMessages, Option<String>) {
     let (hook_sender, hook_messages) = mpsc::unbounded();
-    match ClaudeHooks::start(move |message| {
+    match AgentHooks::start(move |message| {
         let _ = hook_sender.unbounded_send(message);
     }) {
         Ok(hooks) => (Some(Rc::new(hooks)), hook_messages, None),
         Err(err) => {
-            eprintln!("agent-workspace: agent hooks and Copilot mode bridge disabled: {err}");
+            eprintln!("agent-workspace: agent status hooks disabled: {err}");
             (None, hook_messages, Some(err.warning()))
         }
     }
@@ -135,7 +128,7 @@ fn start_hooks() -> (Option<Rc<ClaudeHooks>>, HookMessages, Option<String>) {
 
 struct WorkspaceStartup {
     launchers: Rc<[launcher::Launcher]>,
-    hooks: Option<Rc<ClaudeHooks>>,
+    hooks: Option<Rc<AgentHooks>>,
     hook_messages: HookMessages,
     /// Shown once at start when the hooks could not start.
     hooks_warning: Option<String>,
@@ -326,6 +319,7 @@ fn open_first_tab(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use workspace_model::agents::{CLAUDE, COPILOT};
 
     fn parse(args: &[&str]) -> Result<Option<LaunchSpec>, String> {
         parse_launch_args(args.iter().map(|arg| arg.to_string()), || {
@@ -337,10 +331,10 @@ mod tests {
     fn launch_args_name_a_kind_then_a_folder() {
         assert!(parse(&[]).unwrap().is_none());
         let claude = parse(&["claude", "/project"]).unwrap().unwrap();
-        assert_eq!(claude.kind, SessionKind::ClaudeCode);
+        assert_eq!(claude.kind, SessionKind::Agent(CLAUDE));
         assert_eq!(claude.cwd, Some(PathBuf::from("/project")));
         let copilot = parse(&["copilot"]).unwrap().unwrap();
-        assert_eq!(copilot.kind, SessionKind::CopilotCli);
+        assert_eq!(copilot.kind, SessionKind::Agent(COPILOT));
         assert_eq!(copilot.cwd, Some(PathBuf::from("/cwd")));
         assert_eq!(parse(&["shell"]).unwrap().unwrap().kind, SessionKind::Shell);
     }

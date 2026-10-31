@@ -6,19 +6,40 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::AgentId;
 use crate::TabMeta;
 use crate::layout::{SavedItem, SavedLayout};
 use crate::window_state::write_private_atomic;
 
 /// What a saved tab runs, as the new-tab menu tells them apart.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SavedKind {
     Shell,
-    ClaudeCode,
-    CopilotCli,
+    Agent(AgentId),
+}
+
+impl Serialize for SavedKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let value = match self {
+            Self::Shell => "shell",
+            Self::Agent(agent) => agent.saved_kind(),
+        };
+        serializer.serialize_str(value)
+    }
+}
+
+impl<'de> Deserialize<'de> for SavedKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        if value == "shell" {
+            return Ok(Self::Shell);
+        }
+        AgentId::from_saved_kind(&value)
+            .map(Self::Agent)
+            .ok_or_else(|| serde::de::Error::custom("unknown saved session kind"))
+    }
 }
 
 /// One tab as saved: its launch and what the user set on it.

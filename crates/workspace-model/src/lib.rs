@@ -17,6 +17,7 @@
 #![cfg_attr(test, allow(clippy::too_many_lines))]
 
 mod about;
+pub mod agents;
 mod attention;
 mod clipboard_guard;
 mod close_warning;
@@ -52,6 +53,12 @@ mod window_state;
 mod workspace_features;
 
 pub use about::version_line;
+pub use agents::{
+    ActivityPolicy, AgentDefinition, AgentId, AgentIdentity, AgentMode, ArgumentSetting,
+    ArtifactFile, BellPrecedence, HOOK_PROGRAM_ENV, HookArtifactKind, HookArtifactPlan,
+    HookNamePolicy, HookProtocol, HookSemantic, LaunchPlan, ModeReporting, NoStatusPolicy,
+    Presentation, SessionKind, StatusPolicy, agents, apply_environment,
+};
 pub use attention::{Attention, next_attention, waiting_count};
 pub use clipboard_guard::{
     CLIPBOARD_PREVIEW_CHARS, ClipboardAnswer, ClipboardGuard, ClipboardNotice, ClipboardOffer,

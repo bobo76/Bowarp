@@ -110,3 +110,23 @@ impl AssetSource for Assets {
         Ok(paths)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use workspace_model::agents;
+
+    use super::*;
+
+    /// An agent's icon is a path in its definition; a missing entry here would show no icon.
+    #[test]
+    fn every_agent_icon_is_bundled() {
+        for agent in agents() {
+            let path = agent.definition().presentation.icon_asset;
+            assert!(
+                ICONS.iter().any(|(icon, _)| *icon == path),
+                "{} icon {path} is not in ICONS",
+                agent.cli_selector()
+            );
+        }
+    }
+}

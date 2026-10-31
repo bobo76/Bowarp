@@ -7,7 +7,7 @@
 use std::ffi::OsStr;
 use std::io::{self, Read};
 
-use agent_status::{PIPE_ENV, SESSION_ENV, forward_hook, now_micros};
+use agent_status::{AGENT_ENV, AgentId, PIPE_ENV, SESSION_ENV, forward_hook, now_micros};
 
 fn main() {
     let result = run();
@@ -31,5 +31,9 @@ fn run() -> io::Result<()> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?
         .parse()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-    forward_hook(&pipe_name, session, at, &input)
+    // Missing when an older app instance launched the session; the line is still sent.
+    let agent = std::env::var(AGENT_ENV)
+        .ok()
+        .and_then(|id| AgentId::from_cli_selector(&id));
+    forward_hook(agent, &pipe_name, session, at, &input)
 }

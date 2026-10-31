@@ -183,18 +183,13 @@ pub fn launch_spec(tab: &SavedTab) -> LaunchSpec {
 }
 
 fn saved_kind(kind: SessionKind) -> SavedKind {
-    match kind {
-        SessionKind::Shell => SavedKind::Shell,
-        SessionKind::ClaudeCode => SavedKind::ClaudeCode,
-        SessionKind::CopilotCli => SavedKind::CopilotCli,
-    }
+    kind.agent().map_or(SavedKind::Shell, SavedKind::Agent)
 }
 
 fn session_kind(kind: SavedKind) -> SessionKind {
     match kind {
         SavedKind::Shell => SessionKind::Shell,
-        SavedKind::ClaudeCode => SessionKind::ClaudeCode,
-        SavedKind::CopilotCli => SessionKind::CopilotCli,
+        SavedKind::Agent(agent) => SessionKind::Agent(agent),
     }
 }
 

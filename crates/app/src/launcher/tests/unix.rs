@@ -50,7 +50,7 @@ fn configured_agent_arguments_are_shell_words_after_existing_arguments() {
         ..Settings::default()
     };
     let mut agent = shell("/usr/bin/claude");
-    agent.kind = SessionKind::ClaudeCode;
+    agent.kind = SessionKind::Agent(CLAUDE);
     agent.args = vec!["own-argument".into()];
     let spec = agent
         .configured_spec(Some("/repo".into()), &settings)
@@ -80,7 +80,7 @@ fn configured_agent_arguments_are_shell_words_after_existing_arguments() {
             .args,
         agent.args
     );
-    agent.kind = SessionKind::CopilotCli;
+    agent.kind = SessionKind::Agent(COPILOT);
     assert_eq!(
         agent
             .configured_spec(None, &settings)
@@ -107,7 +107,7 @@ fn invalid_agent_arguments_are_reported_but_never_affect_shells() {
             .args
             .is_empty()
     );
-    for kind in [SessionKind::ClaudeCode, SessionKind::CopilotCli] {
+    for kind in [SessionKind::Agent(CLAUDE), SessionKind::Agent(COPILOT)] {
         launcher.kind = kind;
         assert!(launcher.configured_spec(None, &settings).is_err());
     }
@@ -120,7 +120,7 @@ fn terminal_entry_opens_first_installed_shell() {
     let mut missing = shell("/usr/bin/zsh");
     missing.program = None;
     let mut claude = shell("/usr/bin/claude");
-    claude.kind = SessionKind::ClaudeCode;
+    claude.kind = SessionKind::Agent(CLAUDE);
     let launchers = [claude, missing, shell("/usr/bin/bash")];
     assert_eq!(
         default_shell(&launchers, None).and_then(|shell| shell.program.as_deref()),
@@ -152,7 +152,7 @@ fn windows_terminal_entry_prefers_git_bash() {
 #[test]
 fn menu_lists_other_shells_then_agents() {
     let mut claude = shell("/usr/bin/claude");
-    claude.kind = SessionKind::ClaudeCode;
+    claude.kind = SessionKind::Agent(CLAUDE);
     let launchers = [shell("/usr/bin/zsh"), claude, shell("/usr/bin/bash")];
     let (default, shells, agents) = menu_sections(&launchers, None);
     let programs = |group: Vec<&Launcher>| {
@@ -251,7 +251,7 @@ fn listed_launcher_ids_are_unique() {
     let mut ids: Vec<&str> = SHELLS
         .iter()
         .map(|&(name, _)| name)
-        .chain(AGENTS.iter().map(|&(name, ..)| name))
+        .chain(agents().map(|agent| agent.cli_selector()))
         .collect();
     ids.push(&git_bash.id);
     let count = ids.len();
@@ -343,7 +343,10 @@ fn finds_default_shell_by_name() {
 
 #[test]
 fn default_names() {
-    let claude = LaunchSpec::claude_code(None);
+    let claude = LaunchSpec::agent(
+        workspace_model::AgentId::from_cli_selector("claude").unwrap(),
+        None,
+    );
     assert_eq!(default_name(&claude), "Claude Code");
     let bash = LaunchSpec::new(
         SessionKind::Shell,
