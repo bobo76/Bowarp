@@ -92,6 +92,12 @@ Copilot working spinner:
 
 - Linux: minimize/restore through a real window manager.
 
+Renamed Claude working spinner:
+
+- With a real Claude Code on a hardware GPU (Linux and Windows): rename a tab and give it a
+  prompt; the row shows the turning ring while it works, gone at Stop or a question. Without
+  a custom name only Claude's own title glyph animates (no ring).
+
 Feature switches (0.2.20-0.2.24):
 
 - Running badge pulse with Activity animations on and off, on a hardware GPU.
@@ -151,9 +157,6 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Renamed Claude tabs should also get the working spinner: a custom name hides
-  Claude Code's animated title glyph, so a renamed Claude tab shows no working animation
-  today (the spinner is Copilot only).
 - Tab menu "Reset name": shown only when the tab has a manual name (`TabMeta::custom_name`);
   clears it so the tab goes back to the program's title (the agent's AI-generated name for
   Claude Code / Copilot tabs, the shell's title otherwise), saved in `tabs.json` like a rename.

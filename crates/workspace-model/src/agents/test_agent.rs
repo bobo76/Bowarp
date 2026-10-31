@@ -1,7 +1,7 @@
 use super::{
     ActivityPolicy, AgentDefinition, AgentIdentity, ArgumentSetting, BellPrecedence,
     HookArtifactKind, HookArtifactPlan, HookNamePolicy, HookProtocol, LaunchPlan, NoStatusPolicy,
-    Presentation, StatusPolicy,
+    Presentation, StatusPolicy, WorkingSpinner,
 };
 
 pub(super) const DEFINITION: AgentDefinition = AgentDefinition {
@@ -13,7 +13,7 @@ pub(super) const DEFINITION: AgentDefinition = AgentDefinition {
     presentation: Presentation {
         icon_asset: "icons/agentws/agent-spark.svg",
         tint_rgb: None,
-        working_spinner: false,
+        working_spinner: WorkingSpinner::Never,
     },
     launch: LaunchPlan {
         executable: "test-agent",

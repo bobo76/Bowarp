@@ -6,7 +6,7 @@ use serde_json::json;
 use super::{
     ActivityPolicy, AgentDefinition, AgentId, AgentIdentity, ArgumentSetting, ArtifactFile,
     BellPrecedence, HookArtifactKind, HookArtifactPlan, HookNamePolicy, HookProtocol, LaunchPlan,
-    NoStatusPolicy, Presentation, StatusPolicy, claude_settings_json,
+    NoStatusPolicy, Presentation, StatusPolicy, WorkingSpinner, claude_settings_json,
 };
 
 const HOOK_EVENTS: &[&str] = &[
@@ -31,7 +31,7 @@ pub const DEFINITION: AgentDefinition = AgentDefinition {
     presentation: Presentation {
         icon_asset: "icons/agentws/agent-spark.svg",
         tint_rgb: Some(0xd97757),
-        working_spinner: false,
+        working_spinner: WorkingSpinner::WhenTitleHidden,
     },
     launch: LaunchPlan {
         executable: "claude",

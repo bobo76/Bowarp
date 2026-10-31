@@ -5,6 +5,10 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.45
+
+- Show the turning working spinner on renamed Claude Code tabs, whose custom name hides
+  Claude Code's own animated title.
 - When an agent's status hooks can't be installed for a tab, a warning now appears in the app
   instead of only on the console (which Windows release builds don't have).
 - Agent status keeps arriving from sessions started by an older running instance after the
