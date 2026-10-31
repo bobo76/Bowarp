@@ -104,7 +104,12 @@ fn exit_code_is_reported() {
     let events = wait_for_exit(&rx);
 
     assert_eq!(events.last(), Some(&SessionEvent::Exited(Some(3))));
-    assert!(session.has_exited());
+    // The flag is stored just after the `Exited` callback returns, on the reader thread.
+    let deadline = Instant::now() + TIMEOUT;
+    while !session.has_exited() {
+        assert!(Instant::now() < deadline, "has_exited() never became true");
+        std::thread::yield_now();
+    }
     assert_eq!(session.exit_code(), Some(3));
 }
 
