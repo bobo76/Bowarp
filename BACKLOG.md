@@ -156,14 +156,6 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Idle redraw after tab search (likely bug): once the "Search tabs..." field has had the
-  keyboard, the idle window keeps redrawing (about 22 CPU ticks/s in Xvfb, even after going
-  back to the terminal; a fresh start idles at 0-2). Find what keeps notifying (cursor blink of
-  the unfocused input?) and stop it.
-- Hiding the sidebar (Ctrl+Shift+B) while the search field or a tab name editor has the
-  keyboard leaves focus on an element no longer drawn (only the tab list itself hands the
-  keyboard back, `toggle_sidebar` checks `is_focused`): check the whole sidebar
-  (`contains_focused` plus the search input's focus handle) and focus the terminal.
 - `claude` / `copilot` typed at a shell prompt get agent status in place: today they run in
   the shell tab without hooks and show only "Running for", unlike a tab from the `+` menu.
   Instead, the agent keeps running in the same shell tab, with the same hooks, status
@@ -195,6 +187,10 @@ behavior"); items below name their switch where they need one.
   - Switch "Agent status for agents typed at the prompt" (Terminal page, on): when off, the
     functions aren't defined (the app passes a flag with the token) and typed `claude` /
     `copilot` run as today. Applies to newly started shells.
+- Hiding the sidebar (Ctrl+Shift+B) while the search field or a tab name editor has the
+  keyboard leaves focus on an element no longer drawn (only the tab list itself hands the
+  keyboard back, `toggle_sidebar` checks `is_focused`): check the whole sidebar
+  (`contains_focused` plus the search input's focus handle) and focus the terminal.
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
 - Long durations on the sidebar and hover card ("Running for", lap times such as "Working · 2m 14s"):
@@ -231,32 +227,7 @@ behavior"); items below name their switch where they need one.
   (`$BUFFER`, `.zshenv` `__agentws_report_line`) excludes it, so the Backspaces leave the
   accepted rest in front of the new command. Send a key that doesn't accept it, or clear
   `POSTDISPLAY` first.
-- Prompt at the bottom ([reference](docs/ui-reference/revers_command_line_order.png)): in a
-  shell tab the prompt stays on the last rows, the HISTORY panel (Up) opens just above it, and
-  the earlier commands and their output sit above the panel. Today a new tab or `clear` puts
-  the prompt at the top and the popup then opens below it. Shell tabs with shell integration
-  only; the alternate screen (vim, less, an agent's TUI) and agent tabs draw as today. Steps:
-  1. Bottom-anchored grid: while the rows below the cursor are empty, `terminal_element`
-     draws the screen shifted down by that many rows (blank space at the top), so the prompt
-     line is the last row. Selection, links, mouse reports, the IME box and the history popup
-     use the same offset (one `row_offset` in the geometry). No pty resize, so output and
-     `tput lines` are unchanged; scrollback and `display_offset` work as before. Unit-test the
-     offset (empty screen, full screen, cursor mid-screen after `tput cup`, alternate screen).
-  2. Docked HISTORY panel: always above the prompt (drop the below-the-prompt placement and
-     `MIN_ROWS_ABOVE`), full terminal width, newest row next to the prompt as now. It pushes
-     the rows above the prompt line up by its height instead of covering them, so the last
-     command's output stays readable right above it; closing it puts them back.
-  3. Command blocks: from the OSC 133 marks, record each finished command's prompt line (as
-     an absolute grid line, kept through scrolling and dropped when it leaves the scrollback),
-     folder and duration (`C` to `D`). Draw a thin separator above each prompt line and the
-     folder and duration ("~/.config/stock-watcher (0.02s)") right-aligned on it, dimmed; a
-     failed exit code tints the separator. A resize that reflows lines drops the blocks.
-     Switches (Terminal page, both on when built, independent): "Prompt at the bottom" (off:
-     today's top-anchored layout; with the history popup off, no docked panel is built) and
-     "Command separators and details" (off: no separators, folder or duration labels, and no
-     command-block metadata recorded).
-     Not planned from the screenshot: the separate input box with the folder chip (the prompt is
-     the shell's own, in the grid) and the panel's "Configure" button.
+- Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - Zoom with Ctrl+scroll, like Windows Terminal: Ctrl+wheel up / down over the terminal makes
   the font bigger / smaller one point per notch (clamped, e.g. 6-48 pt), also Ctrl+= / Ctrl+-
   and Ctrl+0 to reset. Build on the existing terminal font-size setting, re-measuring cells
@@ -294,7 +265,6 @@ behavior"); items below name their switch where they need one.
   - Clicking a line selects that tab (expanding the group). The card ticks the lap times while
     it shows (`set_card_clock` for each working tab) and is built only while it shows; no
     card during a drag. Empty groups keep their basic zero-count card.
-- Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - Draw box-drawing and block characters procedurally; font glyphs leave small gaps between rows for heavy/double verticals (`┃`, `║`).
 - Answer OSC 52 clipboard reads (`ESC ] 52;c;? BEL`): refused today by alacritty's default
   `Osc52::OnlyCopy`; writes are already stored.
@@ -314,12 +284,41 @@ behavior"); items below name their switch where they need one.
 - PowerShell: the integration writes the `C` mark on Enter even when PSReadLine only adds a
   line to an unfinished command (`if ($x) {`), so the tab shows Running while typing; write it
   only for accepted lines (needs a machine with pwsh to check).
+- PowerShell: after an app restart, a restored PowerShell tab doesn't show its last command
+  (the restored-tab suggestion that bash, zsh and Git Bash tabs get). Find whether the
+  command is never saved for PowerShell tabs or saved but not offered on restore.
 - Configurable terminal icon: the icon for each launcher entry, picked from the bundled
   `LauncherIcon` set (Bash, PowerShell, Command Prompt, Zsh, Fish, Ubuntu, ...) and saved in
   the settings file (settings page row); it shows in the new-tab menu and on the sidebar row
   of every tab started from that entry (restored tabs included). "Automatic" keeps the
   current detection (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`),
   e.g. for a wrapper script that `shell_icon` only sees as `Shell`.
+- Prompt at the bottom ([reference](docs/ui-reference/revers_command_line_order.png)): in a
+  shell tab the prompt stays on the last rows, the HISTORY panel (Up) opens just above it, and
+  the earlier commands and their output sit above the panel. Today a new tab or `clear` puts
+  the prompt at the top and the popup then opens below it. Shell tabs with shell integration
+  only; the alternate screen (vim, less, an agent's TUI) and agent tabs draw as today. Steps:
+  1. Bottom-anchored grid: while the rows below the cursor are empty, `terminal_element`
+     draws the screen shifted down by that many rows (blank space at the top), so the prompt
+     line is the last row. Selection, links, mouse reports, the IME box and the history popup
+     use the same offset (one `row_offset` in the geometry). No pty resize, so output and
+     `tput lines` are unchanged; scrollback and `display_offset` work as before. Unit-test the
+     offset (empty screen, full screen, cursor mid-screen after `tput cup`, alternate screen).
+  2. Docked HISTORY panel: always above the prompt (drop the below-the-prompt placement and
+     `MIN_ROWS_ABOVE`), full terminal width, newest row next to the prompt as now. It pushes
+     the rows above the prompt line up by its height instead of covering them, so the last
+     command's output stays readable right above it; closing it puts them back.
+  3. Command blocks: from the OSC 133 marks, record each finished command's prompt line (as
+     an absolute grid line, kept through scrolling and dropped when it leaves the scrollback),
+     folder and duration (`C` to `D`). Draw a thin separator above each prompt line and the
+     folder and duration ("~/.config/stock-watcher (0.02s)") right-aligned on it, dimmed; a
+     failed exit code tints the separator. A resize that reflows lines drops the blocks.
+     Switches (Terminal page, both on when built, independent): "Prompt at the bottom" (off:
+     today's top-anchored layout; with the history popup off, no docked panel is built) and
+     "Command separators and details" (off: no separators, folder or duration labels, and no
+     command-block metadata recorded).
+     Not planned from the screenshot: the separate input box with the folder chip (the prompt is
+     the shell's own, in the grid) and the panel's "Configure" button.
 - More agents: OpenCode, OpenAI Codex CLI and Gemini CLI (plus Antigravity's CLI if it ships
   as its own program), each integrated like Claude Code / Copilot CLI today. One agent per
   step, each tested; add them to FEATURES.md when picked.
@@ -333,6 +332,10 @@ behavior"); items below name their switch where they need one.
     (turn complete only; look for newer hooks), Gemini CLI hooks. Where events are missing,
     fall back to OSC 9;4 progress or the title, like Copilot, and list the gaps in
     docs/known-limitations.md.
+- Idle redraw after tab search (likely bug): once the "Search tabs..." field has had the
+  keyboard, the idle window keeps redrawing (about 22 CPU ticks/s in Xvfb, even after going
+  back to the terminal; a fresh start idles at 0-2). Find what keeps notifying (cursor blink of
+  the unfocused input?) and stop it.
 
 ### Git
 
