@@ -12,7 +12,8 @@ fn test_provider_has_an_independent_capability_combination() {
     assert!(session.has_activity_hooks());
     assert!(!session.has_progress_status());
     assert!(!session.has_mode_reporting());
-    assert!(!session.has_working_spinner());
+    assert!(!session.shows_working_spinner(false));
+    assert!(!session.shows_working_spinner(true));
     assert!(!session.has_shell_fallback());
     assert!(!session.unavailable_without_hooks());
     assert!(!session.hooks_precede_bell());
@@ -20,6 +21,18 @@ fn test_provider_has_an_independent_capability_combination() {
     assert_eq!(agent.parse_mode("interactive"), None);
     assert_eq!(agent.mode_event_name(), None);
     assert!(!agent.autopilot_approves_permissions());
+}
+
+#[test]
+fn claude_spins_only_when_a_custom_name_hides_its_animated_title() {
+    let claude = SessionKind::Agent(CLAUDE);
+    assert!(!claude.shows_working_spinner(false));
+    assert!(claude.shows_working_spinner(true));
+    let copilot = SessionKind::Agent(COPILOT);
+    assert!(copilot.shows_working_spinner(false));
+    assert!(copilot.shows_working_spinner(true));
+    assert!(!SessionKind::Shell.shows_working_spinner(false));
+    assert!(!SessionKind::Shell.shows_working_spinner(true));
 }
 
 #[test]

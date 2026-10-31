@@ -245,6 +245,7 @@ impl WorkspaceView {
             spinner: sidebar::working_spinner(
                 kind,
                 status,
+                tab.meta.custom_name.is_some(),
                 sidebar::running_pulse(may_animate, true),
             )
             .map(|motion| match motion {

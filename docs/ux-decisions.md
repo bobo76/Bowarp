@@ -49,13 +49,12 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
 
 ## Sidebar and tab status
 
-- **Copilot Working spinner**: a rotating Lucide `LoaderCircle` in the attention triangle's
-  slot, Working color, row only (cards, drag preview and collapsed groups stay static); the
-  title shifts like it does for the triangle. With "Activity animations" off it is the same
-  icon, still. One shared `SpinnerClock` (`workspace_view/spinner_clock.rs`) steps it, and
-  only while a turning spinner is drawn. [user: redraw rate and shared clock]
-  - Open, needs the user: a renamed Claude tab loses its title glyph, so it shows no Working
-    animation.
+- **Working spinner** (Copilot; Claude Code only while a custom name hides its animated
+  title glyph, so never two animations): a rotating Lucide `LoaderCircle` in the attention
+  triangle's slot, Working color, row only (cards, drag preview and collapsed groups stay
+  static); the title shifts like it does for the triangle. With "Activity animations" off it
+  is the same icon, still. One shared `SpinnerClock` (`workspace_view/spinner_clock.rs`)
+  steps it, and only while a turning spinner is drawn. [user: redraw rate and shared clock]
 - **"Status unavailable"** (agent hooks failed): Claude tabs only, replacing "No recent
   output"; "Recent output" stays. Looks and counts like Quiet (no badge, not in attention or
   group chips). Copilot tabs are unchanged (their status comes from the CLI). [UX agent]

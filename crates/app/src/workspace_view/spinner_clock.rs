@@ -1,6 +1,6 @@
-//! The one timer behind every working Copilot tab's spinner. Per-element animations each run
-//! their own timer, and timers firing either side of a frame cost a window repaint each; one
-//! shared tick repaints once for any number of spinners.
+//! The one timer behind every working spinner (Copilot, renamed Claude Code). Per-element
+//! animations each run their own timer, and timers firing either side of a frame cost a window
+//! repaint each; one shared tick repaints once for any number of spinners.
 
 use std::cell::Cell;
 

@@ -86,7 +86,8 @@ directly to model APIs.
 - Indicate when an agent is working, idle, waiting for user input or permission,
   or has exited, when reliable status information is available.
   - A working Copilot tab shows a slowly turning ring left of its title in the sidebar
-    (Claude Code animates its own title); still when activity animations are off.
+    (Claude Code animates its own title, so a Claude Code tab shows the ring only once renamed);
+    still when activity animations are off.
 - Show status on individual tabs, including tabs that are not currently selected.
 - Show how long an agent has been working on its current turn.
 - Show when a command typed at a shell tab's prompt is running, and which command (shell

@@ -7,7 +7,7 @@ use super::{
     ActivityPolicy, AgentDefinition, AgentId, AgentIdentity, AgentMode, ArgumentSetting,
     ArtifactFile, BellPrecedence, HOOK_PROGRAM_ENV, HookArtifactKind, HookArtifactPlan,
     HookNamePolicy, HookProtocol, LaunchPlan, ModeReporting, NoStatusPolicy, Presentation,
-    StatusPolicy, copilot_hooks_json,
+    StatusPolicy, WorkingSpinner, copilot_hooks_json,
 };
 
 const HOOK_EVENTS: &[&str] = &[
@@ -31,7 +31,7 @@ pub const DEFINITION: AgentDefinition = AgentDefinition {
     presentation: Presentation {
         icon_asset: "icons/agentws/githubcopilot.svg",
         tint_rgb: None,
-        working_spinner: true,
+        working_spinner: WorkingSpinner::Always,
     },
     launch: LaunchPlan {
         executable: "copilot",

@@ -58,9 +58,9 @@ const ADDED_GREEN: u32 = 0x3fb950;
 const RUNNING_PULSE: Duration = Duration::from_millis(2000);
 const RUNNING_PULSE_OPACITY: (f32, f32) = (0.35, 1.);
 const RUNNING_PULSE_FPS: f32 = 10.;
-/// How often working Copilot tabs' spinners turn a step, all on one shared tick (the
-/// workspace's `SpinnerClock`), only while one is drawn. Each repaint redraws the whole
-/// window, so the rate is kept low.
+/// How often working spinners turn a step, all on one shared tick (the workspace's
+/// `SpinnerClock`), only while one is drawn. Each repaint redraws the whole window, so the
+/// rate is kept low.
 pub const WORKING_SPIN_TICK: Duration = Duration::from_millis(250);
 /// The spinner's positions in one turn (90 degrees apart).
 pub const WORKING_SPIN_STEPS: u8 = 4;
@@ -361,14 +361,16 @@ pub fn running_pulse(may_animate: bool, pulsing: bool) -> RunningPulse {
     }
 }
 
-/// The spinner a row shows left of its name: only a working Copilot tab has one (Claude Code
-/// animates its own title). `motion` is whether it turns (see [`running_pulse`]).
+/// The spinner a row shows left of its name: a working Copilot tab, or a working Claude Code tab
+/// whose custom name hides its own animated title (`title_hidden`). `motion` is whether it
+/// turns (see [`running_pulse`]).
 pub fn working_spinner(
     kind: SessionKind,
     status: TabStatus,
+    title_hidden: bool,
     motion: RunningPulse,
 ) -> Option<RunningPulse> {
-    (kind.has_working_spinner() && status == TabStatus::Working).then_some(motion)
+    (kind.shows_working_spinner(title_hidden) && status == TabStatus::Working).then_some(motion)
 }
 
 /// The working spinner: a ring with a gap, turned `step` quarter turns.
@@ -1096,36 +1098,54 @@ mod tests {
     }
 
     #[test]
-    fn only_a_working_copilot_tab_shows_the_spinner_turning_when_allowed() {
+    fn a_working_copilot_or_renamed_claude_tab_shows_the_spinner_turning_when_allowed() {
         let copilot = SessionKind::Agent(COPILOT);
-        assert_eq!(
-            working_spinner(copilot, TabStatus::Working, RunningPulse::Animated),
-            Some(RunningPulse::Animated)
-        );
-        assert_eq!(
-            working_spinner(copilot, TabStatus::Working, RunningPulse::Still),
-            Some(RunningPulse::Still),
-            "animations off or not allowed: a still spinner, no timer"
-        );
-        for status in [
-            TabStatus::NeedsAttention,
-            TabStatus::ReadyForReview,
-            TabStatus::Idle,
-            TabStatus::Running,
-            TabStatus::Active,
-            TabStatus::Quiet,
-            TabStatus::Unavailable,
-            TabStatus::Exited,
-        ] {
+        let claude = SessionKind::Agent(CLAUDE);
+        for (kind, title_hidden) in [(copilot, false), (copilot, true), (claude, true)] {
             assert_eq!(
-                working_spinner(copilot, status, RunningPulse::Animated),
-                None,
-                "{status:?}"
+                working_spinner(
+                    kind,
+                    TabStatus::Working,
+                    title_hidden,
+                    RunningPulse::Animated
+                ),
+                Some(RunningPulse::Animated)
             );
-        }
-        for kind in [SessionKind::Agent(CLAUDE), SessionKind::Shell] {
             assert_eq!(
-                working_spinner(kind, TabStatus::Working, RunningPulse::Animated),
+                working_spinner(kind, TabStatus::Working, title_hidden, RunningPulse::Still),
+                Some(RunningPulse::Still),
+                "animations off or not allowed: a still spinner, no timer"
+            );
+            for status in [
+                TabStatus::NeedsAttention,
+                TabStatus::ReadyForReview,
+                TabStatus::Idle,
+                TabStatus::Running,
+                TabStatus::Active,
+                TabStatus::Quiet,
+                TabStatus::Unavailable,
+                TabStatus::Exited,
+            ] {
+                assert_eq!(
+                    working_spinner(kind, status, title_hidden, RunningPulse::Animated),
+                    None,
+                    "{status:?}"
+                );
+            }
+        }
+        assert_eq!(
+            working_spinner(claude, TabStatus::Working, false, RunningPulse::Animated),
+            None,
+            "Claude Code animates its own title"
+        );
+        for title_hidden in [false, true] {
+            assert_eq!(
+                working_spinner(
+                    SessionKind::Shell,
+                    TabStatus::Working,
+                    title_hidden,
+                    RunningPulse::Animated
+                ),
                 None
             );
         }

@@ -229,7 +229,7 @@ disables, but remembers, the piece switches; turning every piece off also hides 
 Changes off skips `git diff`; Status off stops the card's clock. Group cards are unaffected.
 Appearance → Group hover cards (on) turns the cards beside group headers off (a collapsed
 group still shows its status); Activity animations (on) off makes the Running badge and a
-working Copilot tab's spinner static and starts no animation timers. Both apply live and are
+working spinner static and starts no animation timers. Both apply live and are
 saved as `group_hover_cards` and `activity_animations` (missing or non-boolean means on).
 
 ### Copilot permission and question status (CLI 1.0.105)
@@ -304,7 +304,7 @@ Run the extension's tests with `node --test .\crates\app\copilot-extension\bridg
 
 | Badge | Status |
 |---|---|
-| blue; a Copilot tab also shows a turning blue ring before the title (still with Activity animations off or on a software-rendered GPU) | Working |
+| blue; a Copilot tab, or a Claude Code tab with a custom name (which hides its animated title), also shows a turning blue ring before the title (still with Activity animations off or on a software-rendered GPU) | Working |
 | orange, plus a warning triangle before the title | Needs attention |
 | green with a check | Ready for review: finished while you were on another tab (until you select it) |
 | green | Idle |

@@ -5,6 +5,10 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.45
+
+- Show the turning working spinner on renamed Claude Code tabs, whose custom name hides
+  Claude Code's own animated title.
 - Keep agent launch arguments and font-family edits when leaving their Settings fields.
 - Clarify that clipboard Ask / Allow / Deny controls terminal OSC 52 writes, not native
   clipboard access by programs such as Claude Code and Copilot CLI.
