@@ -7,14 +7,12 @@
 
 mod ipc;
 mod mode;
-mod settings;
 mod status;
 
 pub use ipc::{
-    AGENT_ENV, AgentEvent, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, default_pipe_name,
-    forward_hook, now_micros,
+    AGENT_ENV, AgentEvent, AgentReport, HookMessage, HookServer, PIPE_ENV, SESSION_ENV,
+    default_pipe_name, forward_hook, now_micros,
 };
 pub use mode::AgentModeState;
-pub use settings::hook_artifact;
 pub use status::{AgentState, AgentStatus, HookEvent, WaitReason};
 pub use workspace_model::{AgentId, AgentMode};

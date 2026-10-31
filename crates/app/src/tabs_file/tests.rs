@@ -2,6 +2,7 @@ use std::fs;
 use std::time::Duration;
 
 use workspace_model::TabColor;
+use workspace_model::agents::CLAUDE;
 
 use super::*;
 
@@ -241,10 +242,10 @@ fn restored_agent_keeps_original_arguments_not_new_launcher_settings() {
     let launcher = Launcher {
         id: "claude".into(),
         label: "Claude Code".into(),
-        kind: SessionKind::ClaudeCode,
+        kind: SessionKind::Agent(CLAUDE),
         program: Some("claude".into()),
         args: vec![],
-        icon: LauncherIcon::Claude,
+        icon: LauncherIcon::Agent(CLAUDE),
     };
     let mut settings = Settings {
         claude_args: "--model 'opus' --settings 'user settings.json'".into(),

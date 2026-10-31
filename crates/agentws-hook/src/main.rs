@@ -31,9 +31,9 @@ fn run() -> io::Result<()> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?
         .parse()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    // Missing when an older app instance launched the session; the line is still sent.
     let agent = std::env::var(AGENT_ENV)
         .ok()
-        .and_then(|id| AgentId::from_cli_selector(&id))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing or unknown agent"))?;
+        .and_then(|id| AgentId::from_cli_selector(&id));
     forward_hook(agent, &pipe_name, session, at, &input)
 }

@@ -1,40 +1,47 @@
-use super::{AgentDefinition, ArgumentSetting, HookArtifactKind, HookArtifactPlan};
+use super::{
+    ActivityPolicy, AgentDefinition, AgentIdentity, ArgumentSetting, BellPrecedence,
+    HookArtifactKind, HookArtifactPlan, HookNamePolicy, HookProtocol, LaunchPlan, NoStatusPolicy,
+    Presentation, StatusPolicy,
+};
 
 pub(super) const DEFINITION: AgentDefinition = AgentDefinition {
-    cli_selector: "test-agent",
-    saved_kind: "test-agent-kind",
-    executable: "test-agent",
-    label: "Test Agent",
-    icon_asset: "icons/agentws/agent-spark.svg",
-    tint_rgb: None,
-    argument_setting: ArgumentSetting {
-        key: "test_agent_args",
-        caption: "Test Agent arguments",
-        placeholder: "--example",
+    identity: AgentIdentity {
+        cli_selector: "test-agent",
+        saved_kind: "test-agent-kind",
+        label: "Test Agent",
     },
-    environment: &[],
-    inherited_markers: &[],
-    activity: super::ActivityPolicy::FullHooks,
-    progress_status: true,
-    mode_reporting: false,
-    mode_from_args: super::no_mode_from_args,
-    mode_from_report: super::no_mode_from_report,
-    autopilot_approves_permissions: false,
-    working_spinner: false,
-    normal_exit_shell_fallback: false,
-    no_status_policy: super::NoStatusPolicy::Quiet,
-    bell_precedence: super::BellPrecedence::Bell,
-    hook_artifact: HookArtifactPlan {
-        kind: HookArtifactKind::SettingsFile,
-        events: &["PreToolUse"],
-        timeout_secs: 5,
-        generate: super::claude::settings,
+    presentation: Presentation {
+        icon_asset: "icons/agentws/agent-spark.svg",
+        tint_rgb: None,
+        working_spinner: false,
     },
-    decode_hook_event: super::claude::decode_hook_event,
-    hook_name_policy: super::HookNamePolicy::DirectOnly,
-    mode_event_name: None,
-    hook_launch_flag: "--settings",
-    hook_program_env: None,
-    plugin_name: "",
-    resource_suffix: "-test-agent-settings.json",
+    launch: LaunchPlan {
+        executable: "test-agent",
+        argument_setting: ArgumentSetting {
+            key: "test_agent_args",
+            caption: "Test Agent arguments",
+            placeholder: "--example",
+        },
+        environment: &[],
+        inherited_markers: &[],
+        shell_after_normal_exit: false,
+    },
+    hooks: HookProtocol {
+        artifact: HookArtifactPlan {
+            kind: HookArtifactKind::SettingsFile,
+            launch_flag: "--settings",
+            resource_suffix: "-test-agent-settings.json",
+            events: &["PreToolUse"],
+            timeout_secs: 5,
+            generate: super::claude::settings,
+        },
+        name_policy: HookNamePolicy::DirectOnly,
+        decode: super::claude::decode_hook_event,
+    },
+    mode: None,
+    status: StatusPolicy {
+        activity: ActivityPolicy::FullHooks,
+        without_status: NoStatusPolicy::Quiet,
+        bell: BellPrecedence::Bell,
+    },
 };

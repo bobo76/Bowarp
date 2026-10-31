@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use agent_status::{AgentEvent, AgentMode, AgentModeState, AgentState, AgentStatus, WaitReason};
+use agent_status::{
+    AgentEvent, AgentMode, AgentModeState, AgentReport, AgentState, AgentStatus, WaitReason,
+};
 
 use futures::StreamExt;
 use futures::channel::mpsc;
@@ -615,6 +617,14 @@ impl TerminalView {
         self.last_command.saved()
     }
 
+    /// Apply a raw report from this session's hooks, as its agent integration decodes it.
+    pub fn apply_report(&mut self, report: &AgentReport, at: u64, cx: &mut Context<Self>) {
+        let Some(event) = self.kind().agent().and_then(|agent| report.decode(agent)) else {
+            return;
+        };
+        self.apply_hook_event(event, at, cx);
+    }
+
     /// Mode reports must not change activity, lap time or the unseen-finished badge.
     pub fn apply_hook_event(&mut self, event: AgentEvent, at: u64, cx: &mut Context<Self>) {
         if self.process != ProcessState::Running {
@@ -625,22 +635,6 @@ impl TerminalView {
         };
         match event {
             AgentEvent::Hook(event) => self.apply_status_hook(agent_id, event, at, cx),
-            AgentEvent::RawReport { event_name, detail } => {
-                if agent_id.mode_event_name() == Some(event_name.as_str()) {
-                    if self.kind().has_mode_reporting()
-                        && let Some(mode) = detail
-                            .as_deref()
-                            .and_then(|value| agent_id.parse_mode(value))
-                        && self.mode.apply(mode, at)
-                    {
-                        cx.emit(TabChanged);
-                    }
-                } else if let Some(event) =
-                    agent_status::HookEvent::from_agent(agent_id, &event_name, detail.as_deref())
-                {
-                    self.apply_status_hook(agent_id, event, at, cx);
-                }
-            }
             AgentEvent::ModeChanged(mode)
                 if self.kind().has_mode_reporting() && self.mode.apply(mode, at) =>
             {
@@ -657,20 +651,20 @@ impl TerminalView {
         at: u64,
         cx: &mut Context<Self>,
     ) {
-        let definition = agent_id.definition();
         let Some(event) =
-            event.for_mode(self.mode.mode(), definition.autopilot_approves_permissions)
+            event.for_mode(self.mode.mode(), agent_id.autopilot_approves_permissions())
         else {
             return;
         };
+        // Permission hooks can arrive before the first terminal progress report.
         if self.agent.is_none()
-            && self.kind().has_attention_hooks()
+            && self.kind().has_progress_status()
             && matches!(event, agent_status::HookEvent::InputRequested(_))
         {
             self.agent = Some(AgentTracker::new(Instant::now()));
             self.activity_task = None;
         }
-        let policy = definition.activity;
+        let policy = agent_id.activity();
         self.update_agent(|agent| agent.apply_hook(event, at, policy), cx);
     }
 

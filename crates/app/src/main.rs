@@ -120,7 +120,7 @@ fn start_hooks() -> (Option<Rc<AgentHooks>>, HookMessages, Option<String>) {
     }) {
         Ok(hooks) => (Some(Rc::new(hooks)), hook_messages, None),
         Err(err) => {
-            eprintln!("agent-workspace: agent hooks and Copilot mode bridge disabled: {err}");
+            eprintln!("agent-workspace: agent status hooks disabled: {err}");
             (None, hook_messages, Some(err.warning()))
         }
     }
@@ -319,6 +319,7 @@ fn open_first_tab(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use workspace_model::agents::{CLAUDE, COPILOT};
 
     fn parse(args: &[&str]) -> Result<Option<LaunchSpec>, String> {
         parse_launch_args(args.iter().map(|arg| arg.to_string()), || {
@@ -330,10 +331,10 @@ mod tests {
     fn launch_args_name_a_kind_then_a_folder() {
         assert!(parse(&[]).unwrap().is_none());
         let claude = parse(&["claude", "/project"]).unwrap().unwrap();
-        assert_eq!(claude.kind, SessionKind::ClaudeCode);
+        assert_eq!(claude.kind, SessionKind::Agent(CLAUDE));
         assert_eq!(claude.cwd, Some(PathBuf::from("/project")));
         let copilot = parse(&["copilot"]).unwrap().unwrap();
-        assert_eq!(copilot.kind, SessionKind::CopilotCli);
+        assert_eq!(copilot.kind, SessionKind::Agent(COPILOT));
         assert_eq!(copilot.cwd, Some(PathBuf::from("/cwd")));
         assert_eq!(parse(&["shell"]).unwrap().unwrap().kind, SessionKind::Shell);
     }

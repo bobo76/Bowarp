@@ -19,13 +19,6 @@ pub enum LauncherIcon {
     Agent(AgentId),
 }
 
-impl LauncherIcon {
-    #[allow(non_upper_case_globals)]
-    pub const Claude: Self = Self::Agent(crate::agents::CLAUDE);
-    #[allow(non_upper_case_globals)]
-    pub const Copilot: Self = Self::Agent(crate::agents::COPILOT);
-}
-
 /// Icon for a shell run as `program`: a file name or a path (`/` or `\` separated), with or
 /// without `.exe`, any case. Git Bash is told apart by where it is found, not by its name, so
 /// its launcher sets [`LauncherIcon::GitBash`] itself.

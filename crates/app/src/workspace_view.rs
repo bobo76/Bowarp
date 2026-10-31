@@ -1337,7 +1337,7 @@ impl WorkspaceView {
             return;
         };
         tab.view.update(cx, |view, cx| {
-            view.apply_hook_event(message.event, message.at, cx)
+            view.apply_report(&message.report, message.at, cx)
         });
     }
 

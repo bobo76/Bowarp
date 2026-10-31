@@ -30,7 +30,6 @@ fn run_hook_with_args(env: &[(&str, &str)], input: &str, args: &[&str]) -> Outpu
         .env_remove(AGENT_ENV)
         .env_remove(PIPE_ENV)
         .env_remove(SESSION_ENV)
-        .env(AGENT_ENV, "claude")
         .envs(env.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -47,16 +46,8 @@ fn run_hook_with_args(env: &[(&str, &str)], input: &str, args: &[&str]) -> Outpu
 }
 
 fn decoded_event(message: &HookMessage, agent_id: &str) -> Option<AgentEvent> {
-    let AgentEvent::RawReport { event_name, detail } = &message.event else {
-        return Some(message.event.clone());
-    };
-    let agent = AgentId::from_cli_selector(agent_id)?;
-    if agent.mode_event_name() == Some(event_name.as_str()) {
-        return agent
-            .parse_mode(detail.as_deref()?)
-            .map(AgentEvent::ModeChanged);
-    }
-    HookEvent::from_agent(agent, event_name, detail.as_deref()).map(AgentEvent::Hook)
+    let agent = AgentId::from_cli_selector(agent_id).expect("registered agent");
+    message.report.decode(agent)
 }
 
 fn assert_silent_success(output: &Output) {
@@ -69,7 +60,11 @@ fn forwards_event_to_server() {
     let (server, receiver) = start_server();
     let before = now_micros();
     let output = run_hook(
-        &[(PIPE_ENV, server.pipe_name()), (SESSION_ENV, "12")],
+        &[
+            (AGENT_ENV, "claude"),
+            (PIPE_ENV, server.pipe_name()),
+            (SESSION_ENV, "12"),
+        ],
         r#"{"session_id":"abc","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}"#,
     );
     assert_silent_success(&output);
@@ -127,6 +122,32 @@ fn copilot_permission_request_is_silent_and_isolated_to_its_tab() {
             )))
         );
     }
+}
+
+/// A session launched by an older app instance has no agent variable; its hooks still arrive.
+#[test]
+fn forwards_events_without_an_agent_variable() {
+    let (server, receiver) = start_server();
+    for input in [
+        r#"{"hook_event_name":"Stop"}"#,
+        r#"{"hookName":"permissionRequest"}"#,
+    ] {
+        let output = run_hook(
+            &[(PIPE_ENV, server.pipe_name()), (SESSION_ENV, "12")],
+            input,
+        );
+        assert_silent_success(&output);
+    }
+    let names: Vec<_> = (0..2)
+        .map(|_| {
+            receiver
+                .recv_timeout(TIMEOUT)
+                .expect("message")
+                .report
+                .event_name
+        })
+        .collect();
+    assert_eq!(names, ["Stop", "PermissionRequest"]);
 }
 
 #[test]

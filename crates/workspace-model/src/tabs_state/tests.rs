@@ -1,5 +1,6 @@
 use super::*;
 use crate::TabColor;
+use crate::agents::{CLAUDE, COPILOT};
 use crate::git::tests::TempDir;
 use crate::layout::{SavedGroup, SavedItem};
 use crate::window_state::temp_path;
@@ -16,7 +17,7 @@ fn tab(kind: SavedKind, folder: &str) -> SavedTab {
 }
 
 fn sample() -> TabsState {
-    let mut claude = tab(SavedKind::ClaudeCode, "/work/api");
+    let mut claude = tab(SavedKind::Agent(CLAUDE), "/work/api");
     claude.program = Some("/usr/bin/claude".into());
     claude.meta.custom_name = Some("api".into());
     claude.meta.color = Some(TabColor::Pink);
@@ -32,7 +33,7 @@ fn sample() -> TabsState {
                     name: "Agents".into(),
                     color: Some(TabColor::Blue),
                     collapsed: true,
-                    tabs: vec![tab(SavedKind::CopilotCli, "/work"), wsl],
+                    tabs: vec![tab(SavedKind::Agent(COPILOT), "/work"), wsl],
                 }),
             ],
         },

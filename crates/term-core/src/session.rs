@@ -539,12 +539,13 @@ fn session_env(kind: SessionKind, extra: &HashMap<String, String>) -> HashMap<St
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use workspace_model::agents::{CLAUDE, COPILOT};
 
     #[test]
     fn only_copilot_sessions_get_the_progress_report_variable() {
-        let copilot = session_env(SessionKind::CopilotCli, &HashMap::new());
+        let copilot = session_env(SessionKind::Agent(COPILOT), &HashMap::new());
         assert_eq!(copilot.get("ConEmuANSI").map(String::as_str), Some("ON"));
-        for kind in [SessionKind::Shell, SessionKind::ClaudeCode] {
+        for kind in [SessionKind::Shell, SessionKind::Agent(CLAUDE)] {
             assert!(!session_env(kind, &HashMap::new()).contains_key("ConEmuANSI"));
         }
     }

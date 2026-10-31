@@ -17,6 +17,10 @@ omitted unless they affect how the app is used.
   hovered rows, while the file viewer, Settings, title bar and overlays stay opaque.
 - Extend the Windows Mica backdrop into the client area and reset the frame extension when
   leaving Mica. A failed DWM call now shows a persistent warning instead of failing silently.
+- When an agent's status hooks can't be installed for a tab, a warning now appears in the app
+  instead of only on the console (which Windows release builds don't have).
+- Agent status keeps arriving from sessions started by an older running instance after the
+  app is upgraded in place.
 
 ## 0.2.42
 

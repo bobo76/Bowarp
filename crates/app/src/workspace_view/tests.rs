@@ -1,4 +1,5 @@
 use super::*;
+use workspace_model::agents::CLAUDE;
 
 use std::time::{Duration, Instant};
 
@@ -1352,7 +1353,7 @@ fn closing_the_last_tab_keeps_the_window_its_groups_and_the_explorer_state(
     let launchers: Rc<[Launcher]> = Rc::from([
         test_launcher("one", SessionKind::Shell, true),
         test_launcher("two", SessionKind::Shell, true),
-        test_launcher("agent", SessionKind::ClaudeCode, false),
+        test_launcher("agent", SessionKind::Agent(CLAUDE), false),
     ]);
     let mut h = PanesHarness::with_launchers("last-tab", launchers, cx);
     let workspace = h.workspace.clone();

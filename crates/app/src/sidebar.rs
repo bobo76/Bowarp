@@ -12,7 +12,9 @@ use gpui_kit::{
     IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
     Transformation, Window, div, percentage, pulsating_between, px, rgb,
 };
-use workspace_model::{Attention, LauncherIcon, SessionKind, TabColor, format_clock, format_lap};
+use workspace_model::{
+    AgentId, Attention, LauncherIcon, SessionKind, TabColor, format_clock, format_lap,
+};
 
 use crate::assets::{
     BASH_ICON, DEBIAN_ICON, FISH_ICON, GIT_BRANCH_ICON, GIT_ICON, LINUX_ICON, PIN_ICON,
@@ -155,11 +157,14 @@ pub fn attention_color(cx: &App) -> Hsla {
 }
 
 pub fn kind_icon(kind: SessionKind) -> Icon {
-    let Some(agent) = kind.agent() else {
-        return Icon::new(IconName::SquareTerminal);
-    };
-    let icon = Icon::empty().path(agent.definition().icon_asset);
-    match agent.definition().tint_rgb {
+    kind.agent()
+        .map_or_else(|| Icon::new(IconName::SquareTerminal), agent_icon)
+}
+
+fn agent_icon(agent: AgentId) -> Icon {
+    let presentation = &agent.definition().presentation;
+    let icon = Icon::empty().path(presentation.icon_asset);
+    match presentation.tint_rgb {
         Some(tint) => icon.text_color(rgb(tint)),
         None => icon,
     }
@@ -168,13 +173,7 @@ pub fn kind_icon(kind: SessionKind) -> Icon {
 /// Icon of a new-tab menu entry.
 pub fn launcher_icon(icon: LauncherIcon) -> Icon {
     let path = match icon {
-        LauncherIcon::Agent(agent) => {
-            let icon = Icon::empty().path(agent.definition().icon_asset);
-            return match agent.definition().tint_rgb {
-                Some(tint) => icon.text_color(rgb(tint)),
-                None => icon,
-            };
-        }
+        LauncherIcon::Agent(agent) => return agent_icon(agent),
         LauncherIcon::Shell | LauncherIcon::CommandPrompt => PROMPT_ICON,
         LauncherIcon::PowerShell => POWERSHELL_ICON,
         LauncherIcon::GitBash => GIT_ICON,
@@ -1062,6 +1061,7 @@ pub fn empty_group_hint(cx: &App) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use workspace_model::agents::{CLAUDE, COPILOT};
 
     #[gpui::test]
     fn row_backgrounds_follow_opacity_without_fading_text(cx: &mut gpui_kit::TestAppContext) {
@@ -1097,7 +1097,7 @@ mod tests {
 
     #[test]
     fn only_a_working_copilot_tab_shows_the_spinner_turning_when_allowed() {
-        let copilot = SessionKind::CopilotCli;
+        let copilot = SessionKind::Agent(COPILOT);
         assert_eq!(
             working_spinner(copilot, TabStatus::Working, RunningPulse::Animated),
             Some(RunningPulse::Animated)
@@ -1123,7 +1123,7 @@ mod tests {
                 "{status:?}"
             );
         }
-        for kind in [SessionKind::ClaudeCode, SessionKind::Shell] {
+        for kind in [SessionKind::Agent(CLAUDE), SessionKind::Shell] {
             assert_eq!(
                 working_spinner(kind, TabStatus::Working, RunningPulse::Animated),
                 None

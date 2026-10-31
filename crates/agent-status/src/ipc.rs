@@ -15,7 +15,7 @@ use interprocess::local_socket::prelude::*;
 use interprocess::local_socket::{GenericNamespaced, ListenerOptions, Stream};
 use serde_json::Value;
 
-use workspace_model::AgentId;
+use workspace_model::{AgentId, HookNamePolicy};
 
 use crate::{AgentMode, status::HookEvent};
 
@@ -25,7 +25,7 @@ pub const SESSION_ENV: &str = "AGENTWS_SESSION";
 pub const PIPE_ENV: &str = "AGENTWS_PIPE";
 /// Environment variable holding the registered agent id for provider protocol decoding.
 pub const AGENT_ENV: &str = "AGENTWS_AGENT";
-/// Environment variable holding the registered agent id for provider protocol decoding.
+
 /// Longest line a hook may send; anything longer is not a hook message.
 const MAX_LINE: u64 = 512;
 /// How long a connection may take to send its line; a hook sends it right after connecting.
@@ -34,23 +34,41 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// misbehaving peer keeps one open; past this, new connections are dropped.
 const MAX_READERS: usize = 16;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A report decoded by the session's agent integration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentEvent {
     Hook(HookEvent),
     ModeChanged(AgentMode),
-    RawReport {
-        event_name: String,
-        detail: Option<String>,
-    },
 }
 
-/// A status or mode event for one session.
+/// A report as it arrives over the wire: the transport is provider-neutral, so only the
+/// destination session's agent knows what it means (see [`AgentReport::decode`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentReport {
+    pub event_name: String,
+    pub detail: Option<String>,
+}
+
+impl AgentReport {
+    /// What the report means to `agent`: its mode report, or a status-changing hook. Reports
+    /// that change neither map to `None`.
+    pub fn decode(&self, agent: AgentId) -> Option<AgentEvent> {
+        if agent.mode_event_name() == Some(self.event_name.as_str()) {
+            return agent
+                .parse_mode(self.detail.as_deref()?)
+                .map(AgentEvent::ModeChanged);
+        }
+        HookEvent::from_agent(agent, &self.event_name, self.detail.as_deref()).map(AgentEvent::Hook)
+    }
+}
+
+/// A raw report for one session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookMessage {
     pub session: u64,
     /// When the hook started, in microseconds since the Unix epoch.
     pub at: u64,
-    pub event: AgentEvent,
+    pub report: AgentReport,
 }
 
 pub fn now_micros() -> u64 {
@@ -64,9 +82,11 @@ pub fn default_pipe_name() -> String {
     format!("agentws-{}.sock", std::process::id())
 }
 
-/// Forward a hook's JSON input (its stdin) to the server listening on `pipe_name`.
+/// Forward a hook's JSON input (its stdin) to the server listening on `pipe_name`. `agent` is
+/// `None` when the launching instance did not name one (e.g. an older app version still running
+/// sessions after an upgrade): the event name is then read leniently.
 pub fn forward_hook(
-    agent: AgentId,
+    agent: Option<AgentId>,
     pipe_name: &str,
     session: u64,
     at: u64,
@@ -79,10 +99,13 @@ pub fn forward_hook(
 }
 
 /// The wire line for a hook's JSON input, newline included.
-fn hook_line(agent: AgentId, session: u64, at: u64, input: &[u8]) -> io::Result<String> {
+fn hook_line(agent: Option<AgentId>, session: u64, at: u64, input: &[u8]) -> io::Result<String> {
     let payload: Value = serde_json::from_slice(input)?;
     let field = |name| payload.get(name).and_then(Value::as_str);
-    let event_name = agent
+    let policy = agent.map_or(HookNamePolicy::PascalCaseFallback, |agent| {
+        agent.definition().hooks.name_policy
+    });
+    let event_name = policy
         .event_name(field("hook_event_name"), field("hookName"))
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing hook_event_name"))?;
     let mut line = format!("{session} {at} {event_name}");
@@ -103,7 +126,7 @@ fn parse_line(line: &str) -> Option<HookMessage> {
     Some(HookMessage {
         session,
         at,
-        event: AgentEvent::RawReport {
+        report: AgentReport {
             event_name: event_name.to_owned(),
             detail,
         },
@@ -224,6 +247,15 @@ mod tests {
     use super::*;
     use workspace_model::agents::{CLAUDE, COPILOT};
 
+    use crate::WaitReason;
+
+    fn report(event_name: &str, detail: Option<&str>) -> AgentReport {
+        AgentReport {
+            event_name: event_name.into(),
+            detail: detail.map(Into::into),
+        }
+    }
+
     #[test]
     fn parses_lines() {
         assert_eq!(
@@ -231,50 +263,78 @@ mod tests {
             Some(HookMessage {
                 session: 7,
                 at: 1000,
-                event: AgentEvent::RawReport {
-                    event_name: "PreToolUse".into(),
-                    detail: None
-                }
+                report: report("PreToolUse", None),
             })
         );
         assert_eq!(
-            parse_line("7 1000 Notification permission_prompt\n").map(|m| m.event),
-            Some(AgentEvent::RawReport {
-                event_name: "Notification".into(),
-                detail: Some("permission_prompt".into())
-            })
+            parse_line("7 1000 Notification permission_prompt\n").map(|m| m.report),
+            Some(report("Notification", Some("permission_prompt")))
         );
         assert_eq!(
-            parse_line("7 1000 Notification elicitation_dialog\n").map(|m| m.event),
-            Some(AgentEvent::RawReport {
-                event_name: "Notification".into(),
-                detail: Some("elicitation_dialog".into())
-            })
+            parse_line("7 1000 CopilotMode autopilot\n").map(|m| m.report),
+            Some(report("CopilotMode", Some("autopilot")))
         );
         assert_eq!(
-            parse_line("7 1000 CopilotMode autopilot\n").map(|m| m.event),
-            Some(AgentEvent::RawReport {
-                event_name: "CopilotMode".into(),
-                detail: Some("autopilot".into())
-            })
+            parse_line("7 1000 SessionStart\n").map(|m| m.report),
+            Some(report("SessionStart", None)),
+            "the transport keeps events it can't interpret"
         );
-        assert!(parse_line("7 1000 CopilotMode unknown\n").is_some());
-        assert!(parse_line("7 1000 CopilotMode\n").is_some());
-        assert!(parse_line("7 1000 SessionStart\n").is_some());
         assert_eq!(parse_line("x 1000 Stop\n"), None);
         assert_eq!(parse_line("7 Stop\n"), None);
         assert_eq!(parse_line(""), None);
     }
 
     #[test]
-    fn builds_hook_lines() {
+    fn reports_decode_by_the_destination_agent() {
+        let permission = Some(AgentEvent::Hook(HookEvent::InputRequested(
+            WaitReason::Permission,
+        )));
+        let reply = Some(AgentEvent::Hook(HookEvent::InputRequested(
+            WaitReason::Reply,
+        )));
+        for agent in [CLAUDE, COPILOT] {
+            let notification = |kind| report("Notification", Some(kind)).decode(agent);
+            assert_eq!(notification("permission_prompt"), permission);
+            assert_eq!(notification("elicitation_dialog"), reply);
+            assert_eq!(
+                report("PreToolUse", None).decode(agent),
+                Some(AgentEvent::Hook(HookEvent::ToolStarted))
+            );
+            assert_eq!(report("SessionStart", None).decode(agent), None);
+        }
         assert_eq!(
-            hook_line(CLAUDE, 7, 1000, br#"{"hook_event_name":"Stop"}"#).unwrap(),
+            report("CopilotMode", Some("autopilot")).decode(COPILOT),
+            Some(AgentEvent::ModeChanged(AgentMode::Autopilot))
+        );
+        assert_eq!(report("CopilotMode", Some("unknown")).decode(COPILOT), None);
+        assert_eq!(report("CopilotMode", None).decode(COPILOT), None);
+        assert_eq!(
+            report("CopilotMode", Some("autopilot")).decode(CLAUDE),
+            None,
+            "only the agent that declares the mode event reads it"
+        );
+        assert_eq!(
+            report("Notification", Some("idle_prompt")).decode(CLAUDE),
+            Some(AgentEvent::Hook(HookEvent::Stopped))
+        );
+        assert_eq!(
+            report("UserPromptSubmit", None).decode(COPILOT),
+            None,
+            "Copilot's progress reports Working"
+        );
+    }
+
+    #[test]
+    fn builds_hook_lines() {
+        let claude = Some(CLAUDE);
+        let copilot = Some(COPILOT);
+        assert_eq!(
+            hook_line(claude, 7, 1000, br#"{"hook_event_name":"Stop"}"#).unwrap(),
             "7 1000 Stop\n"
         );
         assert_eq!(
             hook_line(
-                CLAUDE,
+                claude,
                 7,
                 1000,
                 br#"{"hook_event_name":"Notification","notification_type":"idle_prompt"}"#
@@ -282,20 +342,31 @@ mod tests {
             .unwrap(),
             "7 1000 Notification idle_prompt\n"
         );
+        let camel_case = br#"{"hookName":"permissionRequest","sessionId":"abc","toolName":"bash"}"#;
         assert_eq!(
-            hook_line(
-                COPILOT,
-                7,
-                1000,
-                br#"{"hookName":"permissionRequest","sessionId":"abc","toolName":"bash"}"#
-            )
-            .unwrap(),
+            hook_line(copilot, 7, 1000, camel_case).unwrap(),
             "7 1000 PermissionRequest\n",
             "Copilot's camelCase payload"
         );
-        assert!(hook_line(COPILOT, 7, 1000, br#"{"hookName":""}"#).is_err());
-        assert!(hook_line(CLAUDE, 7, 1000, br#"{"session_id":"abc"}"#).is_err());
-        assert!(hook_line(CLAUDE, 7, 1000, b"not json").is_err());
+        assert!(
+            hook_line(claude, 7, 1000, camel_case).is_err(),
+            "Claude names every event"
+        );
+        assert!(hook_line(copilot, 7, 1000, br#"{"hookName":""}"#).is_err());
+        assert!(hook_line(claude, 7, 1000, br#"{"session_id":"abc"}"#).is_err());
+        assert!(hook_line(claude, 7, 1000, b"not json").is_err());
+    }
+
+    #[test]
+    fn hook_lines_without_an_agent_read_either_name() {
+        assert_eq!(
+            hook_line(None, 7, 1000, br#"{"hook_event_name":"Stop"}"#).unwrap(),
+            "7 1000 Stop\n"
+        );
+        assert_eq!(
+            hook_line(None, 7, 1000, br#"{"hookName":"permissionRequest"}"#).unwrap(),
+            "7 1000 PermissionRequest\n"
+        );
     }
 
     #[test]
@@ -308,7 +379,7 @@ mod tests {
         .expect("start server");
 
         let input = br#"{"session_id":"abc","hook_event_name":"Notification","notification_type":"idle_prompt","message":"waiting"}"#;
-        forward_hook(CLAUDE, &pipe_name, 3, 42, input).expect("forward");
+        forward_hook(Some(CLAUDE), &pipe_name, 3, 42, input).expect("forward");
 
         let message = receiver
             .recv_timeout(Duration::from_secs(5))
@@ -318,10 +389,7 @@ mod tests {
             HookMessage {
                 session: 3,
                 at: 42,
-                event: AgentEvent::RawReport {
-                    event_name: "Notification".into(),
-                    detail: Some("idle_prompt".into())
-                }
+                report: report("Notification", Some("idle_prompt")),
             }
         );
     }
@@ -341,6 +409,6 @@ mod tests {
     #[test]
     fn forward_fails_without_server() {
         let input = br#"{"hook_event_name":"Stop"}"#;
-        assert!(forward_hook(CLAUDE, "agentws-test-no-server.sock", 1, 1, input).is_err());
+        assert!(forward_hook(Some(CLAUDE), "agentws-test-no-server.sock", 1, 1, input).is_err());
     }
 }

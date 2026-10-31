@@ -20,13 +20,6 @@ pub enum SavedKind {
     Agent(AgentId),
 }
 
-impl SavedKind {
-    #[allow(non_upper_case_globals)]
-    pub const ClaudeCode: Self = Self::Agent(crate::agents::CLAUDE);
-    #[allow(non_upper_case_globals)]
-    pub const CopilotCli: Self = Self::Agent(crate::agents::COPILOT);
-}
-
 impl Serialize for SavedKind {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let value = match self {

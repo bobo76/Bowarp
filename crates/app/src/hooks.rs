@@ -6,11 +6,9 @@ use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use agent_status::{
-    AGENT_ENV, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, default_pipe_name, hook_artifact,
-};
+use agent_status::{AGENT_ENV, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, default_pipe_name};
 use term_core::LaunchSpec;
-use workspace_model::{AgentId, HookArtifactKind, agents};
+use workspace_model::{ActivityPolicy, AgentId, HookArtifactKind, agents};
 
 use crate::processes;
 
@@ -104,14 +102,22 @@ impl AgentHooks {
             HookServer::start(default_pipe_name(), on_message).map_err(HooksError::Server)?;
         let settings_dir = settings_dir();
         if let Err(error) = sweep_stale_files(&settings_dir, processes::is_running) {
-            log::warn!("could not sweep stale hook settings and Copilot plugins: {error}");
+            log::warn!("could not sweep stale agent hook artifacts: {error}");
         }
         let mut artifacts = HashMap::new();
         for agent in agents() {
             let artifact_path = artifact_path(&settings_dir, agent);
             if agent.hook_artifact_kind() == HookArtifactKind::SettingsFile {
-                let contents = hook_artifact(agent, &hook_program).map_err(HooksError::Other)?;
-                if let Err(error) = write_private(&artifact_path, contents.as_bytes()) {
+                let files = agent
+                    .hook_artifact(&hook_program)
+                    .map_err(HooksError::Other)?;
+                let [file] = files.as_slice() else {
+                    return Err(HooksError::Other(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("{} settings must be one file", agent.label()),
+                    )));
+                };
+                if let Err(error) = write_private(&artifact_path, file.contents.as_bytes()) {
                     return Err(HooksError::SettingsWrite {
                         path: artifact_path,
                         error,
@@ -132,59 +138,52 @@ impl AgentHooks {
         let Some(agent) = spec.kind.agent() else {
             return HookAttachment::default();
         };
-        let definition = agent.definition();
         spec.env.insert(SESSION_ENV.into(), session.to_string());
         spec.env
             .insert(AGENT_ENV.into(), agent.cli_selector().into());
         spec.env
             .insert(PIPE_ENV.into(), self.server.pipe_name().into());
-        if let Some(name) = definition.hook_program_env {
+        if let Some(name) = agent.mode().and_then(|mode| mode.hook_program_env) {
             spec.env.insert(
                 name.into(),
                 self.hook_program.to_string_lossy().into_owned(),
             );
         }
-        match agent.hook_artifact_kind() {
-            HookArtifactKind::SettingsFile => {
-                let path = &self.artifacts[&agent];
-                spec.args.splice(
-                    0..0,
-                    [
-                        definition.hook_launch_flag.into(),
-                        path.to_string_lossy().into_owned(),
-                    ],
-                );
-                HookAttachment {
-                    reporting: HookReporting::FullActivity,
-                    diagnostics: Vec::new(),
-                }
+        let artifact = match agent.hook_artifact_kind() {
+            HookArtifactKind::SettingsFile => Ok(self.artifacts[&agent].clone()),
+            HookArtifactKind::PluginDirectory => self.plugin(agent, session),
+        };
+        let path = match artifact {
+            Ok(path) => path,
+            Err(error) => {
+                self.remove_session(session);
+                let fallback = match agent.activity() {
+                    ActivityPolicy::FullHooks => "using output activity",
+                    ActivityPolicy::ProgressWithAttentionHooks => "using progress",
+                };
+                return HookAttachment {
+                    reporting: HookReporting::None,
+                    diagnostics: vec![format!(
+                        "{} hooks unavailable; {fallback}: {error}",
+                        agent.label()
+                    )],
+                };
             }
-            HookArtifactKind::PluginDirectory => match self.plugin(agent, session) {
-                Ok(plugin) => {
-                    spec.args.splice(
-                        0..0,
-                        [
-                            definition.hook_launch_flag.into(),
-                            plugin.to_string_lossy().into_owned(),
-                        ],
-                    );
-                    HookAttachment {
-                        reporting: HookReporting::Supplemental,
-                        diagnostics: Vec::new(),
-                    }
-                }
-                Err(error) => {
-                    self.remove_session(session);
-                    let diagnostic = format!(
-                        "{} hooks unavailable; using progress: {error}",
-                        definition.label
-                    );
-                    HookAttachment {
-                        reporting: HookReporting::None,
-                        diagnostics: vec![diagnostic],
-                    }
-                }
-            },
+        };
+        spec.args.splice(
+            0..0,
+            [
+                agent.hook_artifact_plan().launch_flag.into(),
+                path.to_string_lossy().into_owned(),
+            ],
+        );
+        let reporting = match agent.activity() {
+            ActivityPolicy::FullHooks => HookReporting::FullActivity,
+            ActivityPolicy::ProgressWithAttentionHooks => HookReporting::Supplemental,
+        };
+        HookAttachment {
+            reporting,
+            diagnostics: Vec::new(),
         }
     }
 
@@ -193,15 +192,9 @@ impl AgentHooks {
         create_private_dir(plugin_root)?;
         let plugin = plugin_root.join(session.to_string());
         create_private_dir(&plugin)?;
-        let plugin_manifest = format!(
-            "{{\"name\":\"{}\",\"version\":\"1.0.0\",\"hooks\":\"hooks.json\"}}",
-            agent.definition().plugin_name
-        );
-        write_private(&plugin.join("plugin.json"), plugin_manifest.as_bytes())?;
-        write_private(
-            &plugin.join("hooks.json"),
-            hook_artifact(agent, &self.hook_program)?.as_bytes(),
-        )?;
+        for file in agent.hook_artifact(&self.hook_program)? {
+            write_private(&plugin.join(file.name), file.contents.as_bytes())?;
+        }
         Ok(plugin)
     }
 
@@ -232,20 +225,20 @@ impl AgentHooks {
 }
 
 fn artifact_path(dir: &Path, agent: AgentId) -> PathBuf {
-    let definition = agent.definition();
-    let name = match agent.hook_artifact_kind() {
+    let plan = agent.hook_artifact_plan();
+    let name = match plan.kind {
         HookArtifactKind::SettingsFile => {
             format!(
                 "agentws-{}{suffix}",
                 std::process::id(),
-                suffix = definition.resource_suffix
+                suffix = plan.resource_suffix
             )
         }
         HookArtifactKind::PluginDirectory => format!(
             "agentws-{}-{}{suffix}",
             std::process::id(),
             agent_status::now_micros(),
-            suffix = definition.resource_suffix
+            suffix = plan.resource_suffix
         ),
     };
     dir.join(name)
@@ -269,19 +262,17 @@ fn owned_entry(name: &str) -> Option<OwnedEntry> {
     let name = name.strip_prefix("agentws-")?;
     let valid_pid = |pid: &str| pid.parse::<u32>().ok().filter(|pid| *pid != 0);
     agents().find_map(|agent| {
-        let definition = agent.definition();
-        match agent.hook_artifact_kind() {
+        let plan = agent.hook_artifact_plan();
+        match plan.kind {
             HookArtifactKind::SettingsFile => name
-                .strip_suffix(definition.resource_suffix)
+                .strip_suffix(plan.resource_suffix)
                 .and_then(valid_pid)
                 .map(|pid| OwnedEntry {
                     pid,
                     kind: HookArtifactKind::SettingsFile,
                 }),
             HookArtifactKind::PluginDirectory => {
-                let (pid, timestamp) = name
-                    .strip_suffix(definition.resource_suffix)?
-                    .split_once('-')?;
+                let (pid, timestamp) = name.strip_suffix(plan.resource_suffix)?.split_once('-')?;
                 timestamp.parse::<u64>().ok()?;
                 valid_pid(pid).map(|pid| OwnedEntry {
                     pid,

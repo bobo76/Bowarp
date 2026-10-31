@@ -43,14 +43,6 @@ impl AgentMode {
     }
 }
 
-fn no_mode_from_args(_: &[String]) -> Option<AgentMode> {
-    None
-}
-
-fn no_mode_from_report(_: &str) -> Option<AgentMode> {
-    None
-}
-
 /// A session is either a shell or a registered agent integration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SessionKind {
@@ -59,11 +51,6 @@ pub enum SessionKind {
 }
 
 impl SessionKind {
-    #[allow(non_upper_case_globals)]
-    pub const ClaudeCode: Self = Self::Agent(CLAUDE);
-    #[allow(non_upper_case_globals)]
-    pub const CopilotCli: Self = Self::Agent(COPILOT);
-
     pub fn agent(self) -> Option<AgentId> {
         match self {
             Self::Shell => None,
@@ -75,45 +62,41 @@ impl SessionKind {
         matches!(self, Self::Shell)
     }
 
+    /// Hooks report every status change (no output-activity fallback while they run).
     pub fn has_activity_hooks(self) -> bool {
         self.agent()
-            .is_some_and(|agent| agent.definition().activity == ActivityPolicy::FullHooks)
+            .is_some_and(|agent| agent.activity() == ActivityPolicy::FullHooks)
     }
 
-    pub fn has_attention_hooks(self) -> bool {
-        self.agent().is_some_and(|agent| {
-            agent.definition().activity == ActivityPolicy::ProgressWithAttentionHooks
-        })
-    }
-
+    /// Terminal progress reports drive Working/Idle; hooks only add and end Waiting.
     pub fn has_progress_status(self) -> bool {
         self.agent()
-            .is_some_and(|agent| agent.definition().progress_status)
+            .is_some_and(|agent| agent.activity() == ActivityPolicy::ProgressWithAttentionHooks)
     }
 
     pub fn has_mode_reporting(self) -> bool {
-        self.agent()
-            .is_some_and(|agent| agent.definition().mode_reporting)
+        self.agent().is_some_and(|agent| agent.mode().is_some())
     }
 
     pub fn has_working_spinner(self) -> bool {
         self.agent()
-            .is_some_and(|agent| agent.definition().working_spinner)
+            .is_some_and(|agent| agent.definition().presentation.working_spinner)
     }
 
     pub fn has_shell_fallback(self) -> bool {
         self.agent()
-            .is_some_and(|agent| agent.definition().normal_exit_shell_fallback)
+            .is_some_and(|agent| agent.definition().launch.shell_after_normal_exit)
     }
 
     pub fn unavailable_without_hooks(self) -> bool {
-        self.agent()
-            .is_some_and(|agent| agent.definition().no_status_policy == NoStatusPolicy::Unavailable)
+        self.agent().is_some_and(|agent| {
+            agent.definition().status.without_status == NoStatusPolicy::Unavailable
+        })
     }
 
     pub fn hooks_precede_bell(self) -> bool {
         self.agent()
-            .is_some_and(|agent| agent.definition().bell_precedence == BellPrecedence::Hooks)
+            .is_some_and(|agent| agent.definition().status.bell == BellPrecedence::Hooks)
     }
 }
 
@@ -123,30 +106,25 @@ pub struct AgentId(&'static str);
 
 impl AgentId {
     pub fn from_cli_selector(selector: &str) -> Option<Self> {
-        AGENTS
-            .iter()
-            .copied()
-            .find(|agent| agent.cli_selector == selector)
-            .map(|agent| Self(agent.cli_selector))
+        Self::find(|identity| identity.cli_selector == selector)
     }
 
     pub fn from_saved_kind(kind: &str) -> Option<Self> {
-        AGENTS
-            .iter()
-            .copied()
-            .find(|agent| agent.saved_kind == kind)
-            .map(|agent| Self(agent.cli_selector))
+        Self::find(|identity| identity.saved_kind == kind)
     }
 
-    pub fn all() -> &'static [&'static AgentDefinition] {
+    fn find(matches: impl Fn(&AgentIdentity) -> bool) -> Option<Self> {
         AGENTS
+            .iter()
+            .find(|agent| matches(&agent.identity))
+            .map(|agent| Self(agent.identity.cli_selector))
     }
 
     pub fn definition(self) -> &'static AgentDefinition {
         AGENTS
             .iter()
             .copied()
-            .find(|agent| agent.cli_selector == self.0)
+            .find(|agent| agent.identity.cli_selector == self.0)
             .expect("AgentId is created only from the static registry")
     }
 
@@ -155,103 +133,149 @@ impl AgentId {
     }
 
     pub fn saved_kind(self) -> &'static str {
-        self.definition().saved_kind
-    }
-
-    pub fn executable(self) -> &'static str {
-        self.definition().executable
+        self.definition().identity.saved_kind
     }
 
     pub fn label(self) -> &'static str {
-        self.definition().label
+        self.definition().identity.label
+    }
+
+    pub fn executable(self) -> &'static str {
+        self.definition().launch.executable
     }
 
     pub fn argument_setting(self) -> &'static ArgumentSetting {
-        &self.definition().argument_setting
+        &self.definition().launch.argument_setting
     }
 
     pub fn inherited_markers(self) -> &'static [&'static str] {
-        self.definition().inherited_markers
+        self.definition().launch.inherited_markers
     }
 
     pub fn environment(self) -> &'static [(&'static str, &'static str)] {
-        self.definition().environment
+        self.definition().launch.environment
     }
 
-    pub fn hook_artifact(self, hook_program: &Path) -> io::Result<String> {
-        let artifact = self.definition().hook_artifact;
+    pub fn activity(self) -> ActivityPolicy {
+        self.definition().status.activity
+    }
+
+    /// Hook configuration serialized according to the provider's declared format.
+    pub fn hook_artifact(self, hook_program: &Path) -> io::Result<Vec<ArtifactFile>> {
+        let artifact = &self.definition().hooks.artifact;
         (artifact.generate)(hook_program, artifact.events, artifact.timeout_secs)
     }
 
+    pub fn hook_artifact_plan(self) -> &'static HookArtifactPlan {
+        &self.definition().hooks.artifact
+    }
+
     pub fn hook_artifact_kind(self) -> HookArtifactKind {
-        self.definition().hook_artifact.kind
-    }
-
-    pub fn hook_launch_flag(self) -> &'static str {
-        self.definition().hook_launch_flag
-    }
-
-    pub fn mode_event_name(self) -> Option<&'static str> {
-        self.definition().mode_event_name
-    }
-
-    pub fn mode_from_args(self, args: &[String]) -> Option<AgentMode> {
-        (self.definition().mode_from_args)(args)
-    }
-
-    pub fn parse_mode(self, value: &str) -> Option<AgentMode> {
-        (self.definition().mode_from_report)(value)
+        self.hook_artifact_plan().kind
     }
 
     pub fn event_name(self, direct_name: Option<&str>, hook_name: Option<&str>) -> Option<String> {
-        if let Some(name) = direct_name {
-            return Some(name.to_owned());
-        }
-        match self.definition().hook_name_policy {
-            HookNamePolicy::DirectOnly => None,
-            HookNamePolicy::PascalCaseFallback => {
-                let mut chars = hook_name?.chars();
-                let first = chars.next()?;
-                Some(first.to_ascii_uppercase().to_string() + chars.as_str())
-            }
-        }
+        self.definition()
+            .hooks
+            .name_policy
+            .event_name(direct_name, hook_name)
     }
 
     pub fn decode_hook_event(self, name: &str, detail: Option<&str>) -> Option<HookSemantic> {
-        (self.definition().decode_hook_event)(name, detail)
+        (self.definition().hooks.decode)(name, detail)
+    }
+
+    pub fn mode(self) -> Option<&'static ModeReporting> {
+        self.definition().mode.as_ref()
+    }
+
+    pub fn mode_event_name(self) -> Option<&'static str> {
+        self.mode().map(|mode| mode.event_name)
+    }
+
+    pub fn mode_from_args(self, args: &[String]) -> Option<AgentMode> {
+        (self.mode()?.from_args)(args)
+    }
+
+    pub fn parse_mode(self, value: &str) -> Option<AgentMode> {
+        (self.mode()?.from_report)(value)
+    }
+
+    pub fn autopilot_approves_permissions(self) -> bool {
+        self.mode()
+            .is_some_and(|mode| mode.autopilot_approves_permissions)
     }
 }
 
-/// Shared definitions consumed by launch, settings, hook, status and presentation code.
+/// One agent integration, read by launch, settings, hook, status and presentation code.
 #[derive(Debug)]
 pub struct AgentDefinition {
+    pub identity: AgentIdentity,
+    pub presentation: Presentation,
+    pub launch: LaunchPlan,
+    pub hooks: HookProtocol,
+    /// How the agent reports its interaction mode; `None` when it has no modes we track.
+    pub mode: Option<ModeReporting>,
+    pub status: StatusPolicy,
+}
+
+/// Names that identify the agent in the CLI, saved files and the UI.
+#[derive(Debug)]
+pub struct AgentIdentity {
+    /// `agent-workspace <selector>`, the launcher id settings save and `AGENTWS_AGENT`.
     pub cli_selector: &'static str,
+    /// The kind saved in `tabs.json`.
     pub saved_kind: &'static str,
-    pub executable: &'static str,
     pub label: &'static str,
+}
+
+#[derive(Debug)]
+pub struct Presentation {
     pub icon_asset: &'static str,
     pub tint_rgb: Option<u32>,
-    pub argument_setting: ArgumentSetting,
-    pub environment: &'static [(&'static str, &'static str)],
-    pub inherited_markers: &'static [&'static str],
-    pub activity: ActivityPolicy,
-    pub progress_status: bool,
-    pub mode_reporting: bool,
-    pub mode_from_args: fn(&[String]) -> Option<AgentMode>,
-    pub mode_from_report: fn(&str) -> Option<AgentMode>,
-    pub autopilot_approves_permissions: bool,
+    /// A working tab shows a turning spinner instead of the pulsing badge.
     pub working_spinner: bool,
-    pub normal_exit_shell_fallback: bool,
-    pub no_status_policy: NoStatusPolicy,
-    pub bell_precedence: BellPrecedence,
-    pub hook_artifact: HookArtifactPlan,
-    pub decode_hook_event: fn(&str, Option<&str>) -> Option<HookSemantic>,
-    pub hook_name_policy: HookNamePolicy,
-    pub mode_event_name: Option<&'static str>,
-    pub hook_launch_flag: &'static str,
+}
+
+#[derive(Debug)]
+pub struct LaunchPlan {
+    pub executable: &'static str,
+    pub argument_setting: ArgumentSetting,
+    /// Variables set in the agent's environment.
+    pub environment: &'static [(&'static str, &'static str)],
+    /// Variables a running agent sets on its children, removed when the app starts inside one.
+    pub inherited_markers: &'static [&'static str],
+    /// A clean exit replaces the tab with a shell in the same folder.
+    pub shell_after_normal_exit: bool,
+}
+
+/// How the agent's hooks are installed and how their reports read.
+#[derive(Debug)]
+pub struct HookProtocol {
+    pub artifact: HookArtifactPlan,
+    pub name_policy: HookNamePolicy,
+    pub decode: fn(&str, Option<&str>) -> Option<HookSemantic>,
+}
+
+#[derive(Debug)]
+pub struct ModeReporting {
+    /// Event name of mode reports on the hook socket; the mode is their detail.
+    pub event_name: &'static str,
+    /// The mode the launch arguments select, before the first report.
+    pub from_args: fn(&[String]) -> Option<AgentMode>,
+    pub from_report: fn(&str) -> Option<AgentMode>,
+    /// Autopilot answers permission requests itself, so they don't make the tab wait.
+    pub autopilot_approves_permissions: bool,
+    /// Variable through which the agent's mode reporter finds `agentws-hook`.
     pub hook_program_env: Option<&'static str>,
-    pub plugin_name: &'static str,
-    pub resource_suffix: &'static str,
+}
+
+#[derive(Debug)]
+pub struct StatusPolicy {
+    pub activity: ActivityPolicy,
+    /// What the tab shows while running without any status reports.
+    pub without_status: NoStatusPolicy,
+    pub bell: BellPrecedence,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -261,9 +285,12 @@ pub struct ArgumentSetting {
     pub placeholder: &'static str,
 }
 
+/// Where a tab's activity status comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivityPolicy {
+    /// Hooks report every status change.
     FullHooks,
+    /// Terminal progress (OSC 9;4) reports Working and Idle; hooks only add and end Waiting.
     ProgressWithAttentionHooks,
 }
 
@@ -285,18 +312,49 @@ pub enum HookArtifactKind {
     PluginDirectory,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct HookArtifactPlan {
     pub kind: HookArtifactKind,
+    /// Flag that passes the artifact's path on the agent's command line.
+    pub launch_flag: &'static str,
+    /// Ends the artifact's name after `agentws-<pid>`; tells an instance's leftovers apart.
+    pub resource_suffix: &'static str,
     pub events: &'static [&'static str],
     pub timeout_secs: u64,
-    pub generate: fn(&Path, &[&str], u64) -> io::Result<String>,
+    /// Every file of the artifact. A `SettingsFile` artifact is one file, written where the app
+    /// chooses; a `PluginDirectory` artifact's files are written into a per-session folder.
+    pub generate: fn(&Path, &[&str], u64) -> io::Result<Vec<ArtifactFile>>,
+}
+
+/// One file of a hook artifact, named relative to the artifact's folder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactFile {
+    pub name: &'static str,
+    pub contents: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HookNamePolicy {
     DirectOnly,
     PascalCaseFallback,
+}
+
+impl HookNamePolicy {
+    /// The hook's event name: `direct_name` (`hook_event_name`) when present, otherwise, under
+    /// `PascalCaseFallback`, `hook_name` (camelCase `hookName`) turned PascalCase.
+    pub fn event_name(self, direct_name: Option<&str>, hook_name: Option<&str>) -> Option<String> {
+        if let Some(name) = direct_name {
+            return Some(name.to_owned());
+        }
+        match self {
+            Self::DirectOnly => None,
+            Self::PascalCaseFallback => {
+                let mut chars = hook_name?.chars();
+                let first = chars.next()?;
+                Some(first.to_ascii_uppercase().to_string() + chars.as_str())
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -320,12 +378,7 @@ pub fn agents() -> impl Iterator<Item = AgentId> {
     AGENTS
         .iter()
         .copied()
-        .map(|agent| AgentId(agent.cli_selector))
-}
-
-/// Hook configuration serialized according to the provider's declared format.
-pub fn hook_artifact(agent: AgentId, hook_program: &Path) -> io::Result<String> {
-    agent.hook_artifact(hook_program)
+        .map(|agent| AgentId(agent.identity.cli_selector))
 }
 
 /// Apply provider-declared launch environment defaults.

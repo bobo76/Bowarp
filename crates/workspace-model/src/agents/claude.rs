@@ -4,8 +4,9 @@ use std::path::Path;
 use serde_json::json;
 
 use super::{
-    AgentDefinition, AgentId, ArgumentSetting, HookArtifactKind, HookArtifactPlan,
-    claude_settings_json,
+    ActivityPolicy, AgentDefinition, AgentId, AgentIdentity, ArgumentSetting, ArtifactFile,
+    BellPrecedence, HookArtifactKind, HookArtifactPlan, HookNamePolicy, HookProtocol, LaunchPlan,
+    NoStatusPolicy, Presentation, StatusPolicy, claude_settings_json,
 };
 
 const HOOK_EVENTS: &[&str] = &[
@@ -22,57 +23,60 @@ const HOOK_EVENTS: &[&str] = &[
 const HOOK_TIMEOUT_SECS: u64 = 5;
 
 pub const DEFINITION: AgentDefinition = AgentDefinition {
-    cli_selector: "claude",
-    saved_kind: "claude-code",
-    executable: "claude",
-    label: "Claude Code",
-    icon_asset: "icons/agentws/agent-spark.svg",
-    tint_rgb: Some(0xd97757),
-    argument_setting: ArgumentSetting {
-        key: "claude_args",
-        caption: "Claude Code arguments",
-        placeholder: "--model sonnet",
+    identity: AgentIdentity {
+        cli_selector: "claude",
+        saved_kind: "claude-code",
+        label: "Claude Code",
     },
-    environment: &[],
-    inherited_markers: &[
-        "AI_AGENT",
-        "CLAUDECODE",
-        "CLAUDE_CODE_CHILD_SESSION",
-        "CLAUDE_CODE_ENTRYPOINT",
-        "CLAUDE_CODE_EXECPATH",
-        "CLAUDE_CODE_MESSAGING_SOCKET",
-        "CLAUDE_CODE_MESSAGING_TOKEN",
-        "CLAUDE_CODE_SESSION_ATTENDED",
-        "CLAUDE_CODE_SESSION_ID",
-        "CLAUDE_CODE_VERSION",
-        "CLAUDE_EFFORT",
-        "CLAUDE_PID",
-    ],
-    activity: super::ActivityPolicy::FullHooks,
-    progress_status: false,
-    mode_reporting: false,
-    mode_from_args: super::no_mode_from_args,
-    mode_from_report: super::no_mode_from_report,
-    autopilot_approves_permissions: false,
-    working_spinner: false,
-    normal_exit_shell_fallback: true,
-    no_status_policy: super::NoStatusPolicy::Unavailable,
-    bell_precedence: super::BellPrecedence::Hooks,
-    hook_artifact: HookArtifactPlan {
-        kind: HookArtifactKind::SettingsFile,
-        events: HOOK_EVENTS,
-        timeout_secs: HOOK_TIMEOUT_SECS,
-        generate: settings,
+    presentation: Presentation {
+        icon_asset: "icons/agentws/agent-spark.svg",
+        tint_rgb: Some(0xd97757),
+        working_spinner: false,
     },
-    decode_hook_event,
-    hook_name_policy: super::HookNamePolicy::DirectOnly,
-    mode_event_name: None,
-    hook_launch_flag: "--settings",
-    hook_program_env: None,
-    plugin_name: "",
-    resource_suffix: "-claude-settings.json",
+    launch: LaunchPlan {
+        executable: "claude",
+        argument_setting: ArgumentSetting {
+            key: "claude_args",
+            caption: "Claude Code arguments",
+            placeholder: "--model opus",
+        },
+        environment: &[],
+        inherited_markers: &[
+            "AI_AGENT",
+            "CLAUDECODE",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_CODE_EXECPATH",
+            "CLAUDE_CODE_MESSAGING_SOCKET",
+            "CLAUDE_CODE_MESSAGING_TOKEN",
+            "CLAUDE_CODE_SESSION_ATTENDED",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_VERSION",
+            "CLAUDE_EFFORT",
+            "CLAUDE_PID",
+        ],
+        shell_after_normal_exit: true,
+    },
+    hooks: HookProtocol {
+        artifact: HookArtifactPlan {
+            kind: HookArtifactKind::SettingsFile,
+            launch_flag: "--settings",
+            resource_suffix: "-claude-settings.json",
+            events: HOOK_EVENTS,
+            timeout_secs: HOOK_TIMEOUT_SECS,
+            generate: settings,
+        },
+        name_policy: HookNamePolicy::DirectOnly,
+        decode: decode_hook_event,
+    },
+    mode: None,
+    status: StatusPolicy {
+        activity: ActivityPolicy::FullHooks,
+        without_status: NoStatusPolicy::Unavailable,
+        bell: BellPrecedence::Hooks,
+    },
 };
-pub const CLAUDE: AgentId = AgentId("claude");
+pub const CLAUDE: AgentId = AgentId(DEFINITION.identity.cli_selector);
 
 pub(super) fn decode_hook_event(name: &str, detail: Option<&str>) -> Option<super::HookSemantic> {
     use super::HookSemantic as Semantic;
@@ -99,15 +103,17 @@ pub(super) fn settings(
     hook_program: &Path,
     events: &[&str],
     timeout_secs: u64,
-) -> io::Result<String> {
+) -> io::Result<Vec<ArtifactFile>> {
     let command = hook_command(hook_program)?;
     let handler = json!([{
         "hooks": [{ "type": "command", "command": command, "timeout": timeout_secs }]
     }]);
-    Ok(
-        serde_json::to_string_pretty(&claude_settings_json(events, handler))
-            .expect("settings serialize"),
-    )
+    let contents = serde_json::to_string_pretty(&claude_settings_json(events, handler))
+        .expect("settings serialize");
+    Ok(vec![ArtifactFile {
+        name: "settings.json",
+        contents,
+    }])
 }
 
 #[cfg(unix)]

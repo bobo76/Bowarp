@@ -54,9 +54,10 @@ mod workspace_features;
 
 pub use about::version_line;
 pub use agents::{
-    ActivityPolicy, AgentDefinition, AgentId, AgentMode, BellPrecedence, HOOK_PROGRAM_ENV,
-    HookArtifactKind, HookArtifactPlan, HookNamePolicy, HookSemantic, NoStatusPolicy, SessionKind,
-    agents, apply_environment, hook_artifact,
+    ActivityPolicy, AgentDefinition, AgentId, AgentIdentity, AgentMode, ArgumentSetting,
+    ArtifactFile, BellPrecedence, HOOK_PROGRAM_ENV, HookArtifactKind, HookArtifactPlan,
+    HookNamePolicy, HookProtocol, HookSemantic, LaunchPlan, ModeReporting, NoStatusPolicy,
+    Presentation, SessionKind, StatusPolicy, agents, apply_environment,
 };
 pub use attention::{Attention, next_attention, waiting_count};
 pub use clipboard_guard::{
