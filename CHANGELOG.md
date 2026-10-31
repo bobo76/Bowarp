@@ -5,6 +5,37 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.53
+
+- Down in "Search tabs..." now moves the keyboard into the tab list while a search is typed
+  too, as Tab does, so the focus ring shows and F2 renames the match; Up still steps through
+  the matches in the field.
+- The tab menu no longer shows F2 next to "Rename tab": the key only works while the tab list
+  has the keyboard, not after clicking a tab.
+
+## 0.2.52
+
+- Rename the selected tab with F2 while the sidebar tab list has the keyboard; the terminal
+  still gets F2. The key is "Rename tab" on the Keyboard settings page and shows next to
+  "Rename tab" in the tab menu. When the rename ends the keyboard goes back to the list.
+- Enter in a tab or group name editor no longer also ends a tab search and moves the keyboard
+  to the terminal.
+
+## 0.2.51
+
+- Move the keyboard into the sidebar tab list: Tab (or Down with an empty query) in "Search
+  tabs..." enters it, Up / Down / Home / End select tabs, Enter, Escape or Tab return to the
+  terminal and clear the search, Shift+Tab goes back to the field. A focus ring marks the row.
+
+## 0.2.50
+
+- Add "Reset name" to the tab menu of a renamed tab: the tab shows the program's title again
+  (the agent's own name for Claude Code and Copilot tabs).
+
+## 0.2.45
+
+- Show the turning working spinner on renamed Claude Code tabs, whose custom name hides
+  Claude Code's own animated title.
 - When an agent's status hooks can't be installed for a tab, a warning now appears in the app
   instead of only on the console (which Windows release builds don't have).
 - Agent status keeps arriving from sessions started by an older running instance after the

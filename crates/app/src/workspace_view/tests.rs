@@ -16,7 +16,7 @@ fn wait_for_exit(session: &term_core::Session) {
 #[test]
 fn default_bindings_name_workspace_actions() {
     let bindings = default_bindings();
-    assert_eq!(bindings.len(), 19);
+    assert_eq!(bindings.len(), 20);
     assert!(
         bindings
             .iter()
@@ -320,6 +320,40 @@ impl Drop for PanesHarness {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.folder);
     }
+}
+
+#[gpui::test]
+fn reset_name_is_offered_for_a_custom_name_and_shows_the_program_title(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut h = PanesHarness::new("reset-name", cx);
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let id = workspace.tabs[0].id;
+            let offered = |workspace: &WorkspaceView, cx: &App| {
+                workspace.tab_menu_state(id, cx).unwrap().has_custom_name
+            };
+            let title = workspace.tabs[0].view.read(cx).name().to_string();
+            assert!(!offered(workspace, cx));
+            workspace.tabs[0].meta.rename("build");
+            assert!(offered(workspace, cx));
+            assert_eq!(WorkspaceView::tab_name(&workspace.tabs[0], cx), "build");
+
+            workspace.run_tab_command(id, TabCommand::ResetName, window, cx);
+            assert_eq!(workspace.tabs[0].meta.custom_name, None);
+            assert!(!offered(workspace, cx));
+            assert_eq!(WorkspaceView::tab_name(&workspace.tabs[0], cx), title);
+
+            // An open name editor is dropped, so it can't put the old name back later.
+            workspace.tabs[0].meta.rename("build");
+            workspace.start_rename(RenameTarget::Tab(id), RenameOrigin::Menu, window, cx);
+            workspace.run_tab_command(id, TabCommand::ResetName, window, cx);
+            assert!(workspace.renaming.is_none());
+            workspace.commit_rename(window, cx);
+            assert_eq!(workspace.tabs[0].meta.custom_name, None);
+        })
+    });
 }
 
 #[gpui::test]
@@ -1531,4 +1565,508 @@ fn restoring_no_tab_keeps_the_saved_groups(cx: &mut gpui_kit::TestAppContext) {
             .collect();
         assert_eq!(groups, vec![("Kept".into(), Some(TabColor::Blue), true)]);
     });
+}
+
+#[gpui::test]
+fn the_tab_list_takes_the_keyboard_from_the_search_field(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("tab-list-keys", cx);
+    let workspace = h.workspace.clone();
+    // Four tabs, named so a search can find some; the first stays selected.
+    let ids = h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            for _ in 0..3 {
+                let spec = workspace.tabs[0].spec.clone();
+                workspace.open_tab_or_notify(spec, window, cx);
+                wait_for_exit(&workspace.active_tab().unwrap().view.read(cx).session);
+            }
+            workspace.activate(0, window, cx);
+            let ids: Vec<u64> = workspace.tabs.iter().map(|tab| tab.id).collect();
+            for (tab, name) in workspace
+                .tabs
+                .iter_mut()
+                .zip(["one", "two", "three", "four"])
+            {
+                tab.meta.custom_name = Some(name.into());
+            }
+            ids
+        })
+    });
+    let selected = |h: &mut PanesHarness| {
+        workspace.read_with(&h.cx, |workspace, _| workspace.active_tab().unwrap().id)
+    };
+    let list_focused = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| workspace.read(cx).tab_list.focus.is_focused(window))
+    };
+    let terminal_focused = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            let workspace = workspace.read(cx);
+            let tab = workspace.active_tab().unwrap();
+            tab.view.focus_handle(cx).is_focused(window)
+        })
+    };
+    let press = |h: &mut PanesHarness, keys: &str| {
+        h.cx.update(|window, cx| window.draw(cx).clear(cx));
+        h.cx.simulate_keystrokes(keys);
+    };
+    let search = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| workspace.focus_search(window, cx));
+        });
+    };
+
+    // Down with nothing typed enters the list on the selected tab.
+    search(&mut h);
+    press(&mut h, "down");
+    assert!(list_focused(&mut h));
+    assert_eq!(selected(&mut h), ids[0]);
+    // The list keys select tabs, keeping the keyboard in the list; Up/Down wrap.
+    press(&mut h, "down");
+    assert_eq!(selected(&mut h), ids[1]);
+    press(&mut h, "end");
+    assert_eq!(selected(&mut h), ids[3]);
+    press(&mut h, "down");
+    assert_eq!(selected(&mut h), ids[0]);
+    press(&mut h, "up");
+    assert_eq!(selected(&mut h), ids[3]);
+    press(&mut h, "home");
+    assert_eq!(selected(&mut h), ids[0]);
+    assert!(list_focused(&mut h));
+    // Escape gives the keyboard to the selected terminal.
+    press(&mut h, "escape");
+    assert!(!list_focused(&mut h));
+    assert!(terminal_focused(&mut h));
+
+    // A collapsed group's tabs are skipped.
+    h.cx.update(|_, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let group = workspace.layout.new_group_with(ids[1], "G").unwrap();
+            workspace.layout.move_to_group(ids[2], group);
+            workspace.layout.group_mut(group).unwrap().collapsed = true;
+            workspace.sync_order(cx);
+        })
+    });
+    search(&mut h);
+    press(&mut h, "tab");
+    assert!(list_focused(&mut h), "Tab enters the list too");
+    press(&mut h, "down");
+    assert_eq!(selected(&mut h), ids[3]);
+    press(&mut h, "up");
+    assert_eq!(selected(&mut h), ids[0]);
+    // Shift+Tab goes back to the field; Tab (one focus stop) or Enter in the list to the
+    // terminal.
+    press(&mut h, "shift-tab");
+    assert!(!list_focused(&mut h));
+    press(&mut h, "tab");
+    press(&mut h, "tab");
+    assert!(
+        terminal_focused(&mut h),
+        "Tab leaves the list for the terminal"
+    );
+    search(&mut h);
+    press(&mut h, "tab");
+    press(&mut h, "enter");
+    assert!(terminal_focused(&mut h));
+
+    // While searching: Up steps through the matches in the field, Down enters the list (ring
+    // shown) on the selected tab when it matches, Tab on the first match when the selected tab
+    // is hidden, and the list keeps to the matches, collapsed group included.
+    search(&mut h);
+    // ("o": not in the test folder's path, which the search also matches.)
+    h.cx.simulate_input("o");
+    press(&mut h, "up");
+    assert!(
+        !list_focused(&mut h),
+        "Up steps through matches while a query is typed"
+    );
+    assert_eq!(
+        selected(&mut h),
+        ids[3],
+        "Up wraps to the last match, \"four\""
+    );
+    press(&mut h, "down");
+    assert!(
+        list_focused(&mut h),
+        "Down enters the list while a query is typed"
+    );
+    assert_eq!(selected(&mut h), ids[3]);
+    press(&mut h, "down");
+    assert_eq!(selected(&mut h), ids[0], "the list wraps over the matches");
+    press(&mut h, "shift-tab");
+    press(&mut h, "up");
+    assert_eq!(
+        selected(&mut h),
+        ids[3],
+        "Up steps on from the tab the list moved to"
+    );
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let index = workspace.tab_index(ids[2]).unwrap();
+            workspace.select_tab(index, window, cx);
+            workspace.focus_search(window, cx);
+        })
+    });
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    h.cx.simulate_input("wo");
+    press(&mut h, "tab");
+    assert!(list_focused(&mut h));
+    assert_eq!(selected(&mut h), ids[1], "\"wo\" matches only \"two\"");
+    press(&mut h, "down");
+    assert_eq!(selected(&mut h), ids[1]);
+    // Shift+Tab keeps the search; Escape in the list ends it, as in the field.
+    let query_empty = |h: &mut PanesHarness| {
+        workspace.read_with(&h.cx, |workspace, cx| workspace.search.query(cx).is_empty())
+    };
+    press(&mut h, "shift-tab");
+    assert!(!query_empty(&mut h));
+    press(&mut h, "tab");
+    press(&mut h, "escape");
+    assert!(terminal_focused(&mut h));
+    assert!(query_empty(&mut h));
+
+    // Hiding the sidebar while the list has the keyboard hands it to the terminal.
+    search(&mut h);
+    press(&mut h, "down");
+    assert!(list_focused(&mut h));
+    press(&mut h, "ctrl-shift-b");
+    assert!(terminal_focused(&mut h));
+}
+
+#[gpui::test]
+fn the_tab_list_keeps_the_settings_page_until_a_key_moves_off_it(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut h = PanesHarness::new("tab-list-settings", cx);
+    let workspace = h.workspace.clone();
+    let ids = h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            for _ in 0..2 {
+                let spec = workspace.tabs[0].spec.clone();
+                workspace.open_tab_or_notify(spec, window, cx);
+                wait_for_exit(&workspace.active_tab().unwrap().view.read(cx).session);
+            }
+            workspace.activate(1, window, cx);
+            workspace.open_settings(window, cx);
+            workspace.focus_search(window, cx);
+            workspace
+                .tabs
+                .iter()
+                .map(|tab| tab.id)
+                .collect::<Vec<u64>>()
+        })
+    });
+    let state = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            let workspace = workspace.read(cx);
+            (
+                workspace.tab_list.focus.is_focused(window),
+                workspace.settings.shows_page(),
+                workspace.active_tab().unwrap().id,
+            )
+        })
+    };
+    let press = |h: &mut PanesHarness, keys: &str| {
+        h.cx.update(|window, cx| window.draw(cx).clear(cx));
+        h.cx.simulate_keystrokes(keys);
+    };
+
+    // Entering moves only the keyboard: the page stays and the selected tab is unchanged.
+    press(&mut h, "down");
+    assert_eq!(state(&mut h), (true, true, ids[1]));
+    // The first Down selects the tab entering would have selected, not the one after it.
+    press(&mut h, "down");
+    assert_eq!(state(&mut h), (true, false, ids[1]));
+    press(&mut h, "down");
+    assert_eq!(state(&mut h).2, ids[2]);
+
+    // Escape from the list gives the keyboard to the Settings page while it shows.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_settings(window, cx);
+            workspace.focus_search(window, cx);
+        })
+    });
+    press(&mut h, "down");
+    press(&mut h, "escape");
+    h.cx.update(|window, cx| {
+        let workspace = workspace.read(cx);
+        assert!(workspace.settings.shows_page());
+        assert!(workspace.settings.focus().is_focused(window));
+    });
+
+    // End selects the last tab and hides the page.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| workspace.focus_search(window, cx))
+    });
+    press(&mut h, "down");
+    press(&mut h, "end");
+    assert_eq!(state(&mut h), (true, false, ids[2]));
+}
+
+#[gpui::test]
+fn f2_in_the_tab_list_renames_the_selected_tab_and_gives_the_list_the_keyboard_back(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut h = PanesHarness::new("tab-list-rename", cx);
+    let workspace = h.workspace.clone();
+    // Focus-lost events (the editor's Blur) need an active window.
+    h.cx.update(|window, _| window.activate_window());
+    let ids = h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let spec = workspace.tabs[0].spec.clone();
+            workspace.open_tab_or_notify(spec, window, cx);
+            wait_for_exit(&workspace.active_tab().unwrap().view.read(cx).session);
+            workspace.activate(0, window, cx);
+            workspace
+                .tabs
+                .iter()
+                .map(|tab| tab.id)
+                .collect::<Vec<u64>>()
+        })
+    });
+    let press = |h: &mut PanesHarness, keys: &str| {
+        h.cx.update(|window, cx| window.draw(cx).clear(cx));
+        h.cx.simulate_keystrokes(keys);
+    };
+    let enter_list = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| workspace.focus_search(window, cx));
+        });
+        press(h, "down");
+    };
+    let list_focused = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| workspace.read(cx).tab_list.focus.is_focused(window))
+    };
+    let terminal_focused = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            let workspace = workspace.read(cx);
+            let tab = workspace.active_tab().unwrap();
+            tab.view.focus_handle(cx).is_focused(window)
+        })
+    };
+    let renaming = |h: &mut PanesHarness| {
+        workspace.read_with(&h.cx, |workspace, _| {
+            workspace
+                .renaming
+                .as_ref()
+                .map(|rename| (rename.target, rename.origin))
+        })
+    };
+    let name = |h: &mut PanesHarness, index: usize| {
+        workspace.read_with(&h.cx, |workspace, _| {
+            workspace.tabs[index].meta.custom_name.clone()
+        })
+    };
+
+    // F2 opens the selected tab's name editor; Enter keeps the name and the list gets the
+    // keyboard back, so Down moves the selection.
+    enter_list(&mut h);
+    press(&mut h, "down");
+    press(&mut h, "f2");
+    assert_eq!(
+        renaming(&mut h),
+        Some((RenameTarget::Tab(ids[1]), RenameOrigin::TabList))
+    );
+    assert!(!list_focused(&mut h), "the editor has the keyboard");
+    h.cx.simulate_input("build");
+    press(&mut h, "f2");
+    assert_eq!(renaming(&mut h).unwrap().0, RenameTarget::Tab(ids[1]));
+    press(&mut h, "enter");
+    assert_eq!(renaming(&mut h), None);
+    assert_eq!(name(&mut h, 1).as_deref(), Some("build"));
+    assert!(list_focused(&mut h));
+    press(&mut h, "down");
+    assert_eq!(
+        workspace.read_with(&h.cx, |workspace, _| workspace.active),
+        0
+    );
+
+    // Escape keeps the old name and also gives the keyboard back to the list.
+    press(&mut h, "f2");
+    h.cx.simulate_input("other");
+    press(&mut h, "escape");
+    assert_eq!(renaming(&mut h), None);
+    assert_eq!(name(&mut h, 0), None);
+    assert!(list_focused(&mut h));
+
+    // A click elsewhere commits and leaves the keyboard where the click put it.
+    press(&mut h, "f2");
+    h.cx.simulate_input("clicked");
+    h.cx.update(|window, cx| {
+        let terminal = workspace.read(cx).tabs[0].view.focus_handle(cx);
+        window.focus(&terminal, cx);
+    });
+    h.cx.run_until_parked();
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    h.cx.run_until_parked();
+    assert_eq!(renaming(&mut h), None);
+    assert_eq!(name(&mut h, 0).as_deref(), Some("clicked"));
+    assert!(terminal_focused(&mut h));
+
+    // Hiding the sidebar while the editor has the keyboard: it commits and the terminal gets
+    // the keyboard, the hidden list can't.
+    enter_list(&mut h);
+    press(&mut h, "f2");
+    h.cx.update(|_, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.sidebar_visible = false;
+            cx.notify();
+        })
+    });
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    h.cx.run_until_parked();
+    assert_eq!(renaming(&mut h), None);
+    assert!(terminal_focused(&mut h));
+    h.cx.update(|_, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.sidebar_visible = true;
+            cx.notify();
+        })
+    });
+
+    // F2 in the terminal is left to the program.
+    press(&mut h, "f2");
+    assert_eq!(renaming(&mut h), None);
+    assert!(terminal_focused(&mut h));
+
+    // The tab menu's Rename keeps giving the keyboard back to the terminal.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.run_tab_command(ids[0], TabCommand::Rename, window, cx);
+        })
+    });
+    assert_eq!(
+        renaming(&mut h),
+        Some((RenameTarget::Tab(ids[0]), RenameOrigin::Menu))
+    );
+    h.cx.simulate_input("menu");
+    press(&mut h, "enter");
+    assert_eq!(renaming(&mut h), None);
+    assert_eq!(name(&mut h, 0).as_deref(), Some("menu"));
+    assert!(terminal_focused(&mut h));
+
+    // With the ring on the Settings row, F2 renames nothing (the selected tab is hidden).
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| workspace.open_settings(window, cx))
+    });
+    enter_list(&mut h);
+    assert!(list_focused(&mut h));
+    press(&mut h, "f2");
+    assert_eq!(renaming(&mut h), None);
+    assert!(list_focused(&mut h));
+}
+
+#[gpui::test]
+fn a_name_editor_keeps_the_search_and_a_rename_that_hides_the_tab_sends_the_keyboard_on(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut h = PanesHarness::new("rename-with-search", cx);
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, _| window.activate_window());
+    let ids = h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let spec = workspace.tabs[0].spec.clone();
+            workspace.open_tab_or_notify(spec, window, cx);
+            wait_for_exit(&workspace.active_tab().unwrap().view.read(cx).session);
+            for tab in &mut workspace.tabs {
+                tab.meta.rename("quux");
+            }
+            workspace.activate(1, window, cx);
+            workspace
+                .tabs
+                .iter()
+                .map(|tab| tab.id)
+                .collect::<Vec<u64>>()
+        })
+    });
+    let press = |h: &mut PanesHarness, keys: &str| {
+        h.cx.update(|window, cx| window.draw(cx).clear(cx));
+        h.cx.simulate_keystrokes(keys);
+    };
+    let search = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| workspace.focus_search(window, cx));
+        });
+        h.cx.simulate_input("quux");
+    };
+    let query_kept = |h: &mut PanesHarness| {
+        workspace.read_with(&h.cx, |workspace, cx| {
+            !workspace.search.query(cx).is_empty()
+        })
+    };
+
+    // Enter in a tab name editor only commits: the list's own Enter (end the search) doesn't run.
+    search(&mut h);
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.run_tab_command(ids[0], TabCommand::Rename, window, cx);
+        })
+    });
+    h.cx.simulate_input("quux-menu");
+    press(&mut h, "enter");
+    assert!(
+        query_kept(&mut h),
+        "Enter in the tab name editor keeps the search"
+    );
+
+    // The same in a group name editor.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let group = workspace
+                .layout
+                .new_group_with(ids[0], "quux-group")
+                .unwrap();
+            workspace.run_group_command(group, GroupCommand::Rename, window, cx);
+        })
+    });
+    h.cx.simulate_input("quux-team");
+    press(&mut h, "enter");
+    assert!(
+        query_kept(&mut h),
+        "Enter in the group name editor keeps the search"
+    );
+
+    // A rename from the list that hides the selected tab: the terminal gets the keyboard, as no
+    // row could show the list's focus ring.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.select_tab(1, window, cx);
+        })
+    });
+    search(&mut h);
+    press(&mut h, "tab");
+    assert!(h.cx.update(|window, cx| workspace.read(cx).tab_list.focus.is_focused(window)));
+    press(&mut h, "f2");
+    h.cx.simulate_input("zzz");
+    press(&mut h, "enter");
+    h.cx.run_until_parked();
+    assert!(workspace.read_with(&h.cx, |workspace, _| workspace.renaming.is_none()));
+    assert!(h.cx.update(|window, cx| {
+        let workspace = workspace.read(cx);
+        let tab = workspace.active_tab().unwrap();
+        tab.view.focus_handle(cx).is_focused(window)
+    }));
+}
+
+#[gpui::test]
+fn the_tab_list_cannot_take_the_keyboard_without_a_tab(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("tab-list-empty", cx);
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.close_tab(0, window, cx);
+            workspace.focus_search(window, cx);
+        })
+    });
+    for key in ["down", "tab"] {
+        h.cx.update(|window, cx| window.draw(cx).clear(cx));
+        h.cx.simulate_keystrokes(key);
+        h.cx.update(|window, cx| {
+            let workspace = workspace.read(cx);
+            assert!(!workspace.tab_list.focus.is_focused(window));
+            assert!(
+                !workspace.empty_focus.is_focused(window),
+                "the field keeps it"
+            );
+        });
+    }
 }

@@ -78,9 +78,16 @@ impl SessionKind {
         self.agent().is_some_and(|agent| agent.mode().is_some())
     }
 
-    pub fn has_working_spinner(self) -> bool {
-        self.agent()
-            .is_some_and(|agent| agent.definition().presentation.working_spinner)
+    /// Whether a working tab shows the sidebar spinner; `title_hidden` is whether a custom name
+    /// replaces the program's title.
+    pub fn shows_working_spinner(self, title_hidden: bool) -> bool {
+        self.agent().is_some_and(|agent| {
+            agent
+                .definition()
+                .presentation
+                .working_spinner
+                .shows(title_hidden)
+        })
     }
 
     pub fn has_shell_fallback(self) -> bool {
@@ -233,8 +240,27 @@ pub struct AgentIdentity {
 pub struct Presentation {
     pub icon_asset: &'static str,
     pub tint_rgb: Option<u32>,
-    /// A working tab shows a turning spinner instead of the pulsing badge.
-    pub working_spinner: bool,
+    /// When a working tab shows a turning spinner instead of the pulsing badge.
+    pub working_spinner: WorkingSpinner,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkingSpinner {
+    Never,
+    Always,
+    /// Only while a custom name hides the program's title, for an agent that animates its own
+    /// title while it works (no double animation).
+    WhenTitleHidden,
+}
+
+impl WorkingSpinner {
+    fn shows(self, title_hidden: bool) -> bool {
+        match self {
+            Self::Never => false,
+            Self::Always => true,
+            Self::WhenTitleHidden => title_hidden,
+        }
+    }
 }
 
 #[derive(Debug)]

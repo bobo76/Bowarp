@@ -77,6 +77,8 @@ entry when the limitation is lifted.
   commands.
 - Last-command saves go through a background writer: a crash can lose queued or in-flight
   updates, including a command just deleted from HISTORY.
+- Tab names, pins, order, groups and colors reach `tabs.json` only at window close or a
+  shell's next last-command change: a crash loses those made since.
 - Restore previous tabs off: `tabs.json` is kept unread and unwritten (the one exception:
   "Clear saved session commands" and forgetting a command remove just the matching
   `last_command` values from it, on the tabs writer thread), so the next
@@ -94,10 +96,9 @@ entry when the limitation is lifted.
   allowed. Edits made on disk while running apply when the settings page opens, when the
   file is saved in the file viewer, or at the next change from the app; edits made in another
   editor while the page shows apply only then (no file watch).
-- Activity animations: the switch gates the Running badge's pulse and the working Copilot
-  tab's spinner. Under software rendering both are already still. A Claude Code tab with a
-  custom name hides its title's working glyph, so its row shows no Working animation (the
-  spinner is Copilot-only). A window covered by others keeps animating on Windows and under
+- Activity animations: the switch gates the Running badge's pulse and the working
+  spinner (Copilot, or Claude Code with a custom name). Under software rendering both are
+  already still. A window covered by others keeps animating on Windows and under
   compositing X11 window managers (GPUI reports it visible there); minimized stops it.
 - Terminal font: a family that isn't installed (exact name; any case on Windows) silently uses
   the built-in one (DejaVu Sans Mono, Cascadia Mono on Windows); the page doesn't say so. So do
@@ -162,6 +163,10 @@ entry when the limitation is lifted.
   settings page and README name the default keys. Recording ends on a click outside the
   recording chip, Esc or the keystroke; if the chip is hidden another way (no click), the next
   keystroke ends it and goes on as usual.
+- Rename tab (F2) runs only while the tab list has the keyboard: another key for it, from the
+  Keyboard page or the file, is bound in the list too, never window-wide. A key runs one action
+  whatever the context, so giving F2 to another action (for the whole window) takes it from
+  Rename tab, and the terminal then no longer gets F2.
 - Hover cards are held back only for the menus the sidebar and the file explorer build (tab,
   group, `+`, explorer entry menus) and for any dialog: a dropdown on the settings page or in
   the file viewer doesn't hold them. A card open when a hold ends stays hidden until the

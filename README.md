@@ -78,6 +78,8 @@ default shell opens as the first tab.
 | Ctrl+Shift+W | Close the selected tab (or the Settings row while it is selected); nothing with no tab |
 | Ctrl+Shift+B | Hide or show the sidebar (also the title bar button) |
 | Ctrl+Shift+S | Search tabs (shows the sidebar if hidden) |
+| Tab or Down (in the search field) | Move the keyboard into the tab list: Up / Down / Home / End select tabs, Enter, Esc or Tab go to the terminal (clearing the search; see Search and attention) |
+| F2 (in the tab list) | Rename the selected tab; the list gets the keyboard back afterwards. In the terminal, F2 goes to the program |
 | Ctrl+Shift+\| | Hide or show the file explorer (also the title bar button; the key that types `\|`) |
 | Ctrl+Shift+A | Go to the next tab needing attention; with none, the next one that is Ready for review |
 | F11 | Full screen on or off, also from a dialog (F11 is not sent to the program; on Linux the window manager applies it). Quitting in full screen starts maximized next time |
@@ -229,7 +231,7 @@ disables, but remembers, the piece switches; turning every piece off also hides 
 Changes off skips `git diff`; Status off stops the card's clock. Group cards are unaffected.
 Appearance → Group hover cards (on) turns the cards beside group headers off (a collapsed
 group still shows its status); Activity animations (on) off makes the Running badge and a
-working Copilot tab's spinner static and starts no animation timers. Both apply live and are
+working spinner static and starts no animation timers. Both apply live and are
 saved as `group_hover_cards` and `activity_animations` (missing or non-boolean means on).
 
 ### Copilot permission and question status (CLI 1.0.105)
@@ -304,7 +306,7 @@ Run the extension's tests with `node --test .\crates\app\copilot-extension\bridg
 
 | Badge | Status |
 |---|---|
-| blue; a Copilot tab also shows a turning blue ring before the title (still with Activity animations off or on a software-rendered GPU) | Working |
+| blue; a Copilot tab, or a Claude Code tab with a custom name (which hides its animated title), also shows a turning blue ring before the title (still with Activity animations off or on a software-rendered GPU) | Working |
 | orange, plus a warning triangle before the title | Needs attention |
 | green with a check | Ready for review: finished while you were on another tab (until you select it) |
 | green | Idle |
@@ -337,9 +339,10 @@ There is no sound or OS notification.
 
 Right-click a row or use its `⋮` button for the tab menu: duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
 and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working
-directory, rename (Enter keeps, Escape cancels, an empty name goes back to the program's
-title), move up / down, close, and a color marker. "New group with tab" and "Move to group"
-put tabs in groups.
+directory, rename (F2 in the tab list; Enter keeps, Escape cancels, an empty name goes back to
+the program's title), "Reset name" (only on a renamed tab: back to the program's title, such
+as the agent's own name for the conversation), move up / down, close, and a color marker.
+"New group with tab" and "Move to group" put tabs in groups.
 
 Closing a busy tab asks first: one where a shell command or a program started at the prompt
 (such as vim) still runs, or whose agent is Working or waiting for an answer. Closing several
@@ -354,8 +357,26 @@ The "Search tabs..." field above the list (Ctrl+Shift+S) keeps the tabs whose na
 folder, branch or group name contain every word typed, ignoring case. Groups holding a match
 show expanded while searching (their headers do not collapse until the search ends). Enter
 selects the first match and clears the search; Escape clears it and returns to the terminal.
-Up / Down in the field select the previous / next match (wrapping around) and keep the keyboard
-in the field; Enter then keeps the tab moved to.
+Up in the field selects the previous match (wrapping around) and keeps the keyboard in the field;
+Enter then keeps the tab moved to.
+
+Tab or Down in the field moves the keyboard into the tab list, as one stop:
+it starts on the selected tab, or on the first row when the selected tab is not shown. In the
+list, Up / Down select the previous / next tab shown (wrapping around) and Home / End the first
+/ last, scrolling to it; with no search, tabs in collapsed groups are skipped, and tabs the
+search hides always are; a match inside a collapsed group is listed and choosing it expands the
+group. The selected row shows a focus ring while the list has the keyboard. While the Settings
+page shows, the list starts on the Settings row (ring included) and the page stays; the first
+Up / Down select the tab entering would have started on, and Enter, Escape or Tab give the
+keyboard to the Settings page. Otherwise Enter, Escape or
+Tab gives the keyboard to the terminal and clears the search, as in the field; Shift+Tab goes
+back to the field, keeping it. Clicking a row still gives the keyboard to the terminal. These
+list keys are fixed (not on the Keyboard settings page).
+F2 in the list renames the selected tab (not while the ring is on the Settings row); Enter or
+Escape in the name editor gives the keyboard back to the list (to the terminal when the rename
+hides the tab from the search), while clicking elsewhere keeps
+the name and leaves the keyboard where the click put it. Its key can be changed ("Rename tab"
+on the Keyboard settings page); it only works while the list has the keyboard.
 Selecting a tab the search hides (Ctrl+1..9, Ctrl+Tab, the attention jump) also clears it.
 
 While a tab other than the selected one needs attention, a warning button with the number of
@@ -592,7 +613,8 @@ adds Shift: `ctrl-V` is `ctrl-shift-v`); a space separates the keystrokes of a s
 `Paste`, `PasteOrSend`, `Find`, `CloseFind`, `AllowClipboard`, `DenyClipboard` (in the
 terminal); `NewTab`, `DuplicateTab`, `CloseTab`, `NextTab`, `PreviousTab`, `SelectTab1` to
 `SelectTab9`, `ToggleSidebar`, `ToggleExplorer`, `SearchTabs`, `NextAttention`,
-`ToggleFullScreen` (anywhere in the window). `terminal::Paste` and `workspace::NewTab` also
+`ToggleFullScreen` (anywhere in the window); `RenameTab` (only while the tab list has the
+keyboard). `terminal::Paste` and `workspace::NewTab` also
 work. An entry that can't be used (an unknown action, a key that can't be read, a value that
 is neither a name nor `null`, `null` for a key with no default) is skipped and named in a
 banner on the settings page; the others apply. A change applies when the file is read again:

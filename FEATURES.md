@@ -44,7 +44,8 @@ directly to model APIs.
 
 - Organize terminal tabs into named, collapsible groups, such as projects or tasks.
 - Collapse a group without interrupting its sessions.
-- Create, rename, reorder (menu or drag and drop), duplicate, and move tabs between groups.
+- Create, rename (or reset to the program's title), reorder (menu or drag and drop), duplicate,
+  and move tabs between groups.
   A new tab opens right below the selected one, in its group (first after the pinned tabs
   when a pinned tab is selected).
 - Closing the last tab keeps the window and its groups, with buttons to open a new tab; the
@@ -62,6 +63,8 @@ directly to model APIs.
 - Display an icon identifying the session type, with manual icon overrides.
 - Keep session identity, custom colors, and activity status visually distinct.
 - Provide keyboard shortcuts for opening, closing, and switching tabs and panes.
+- Move the keyboard from the tab search into the tab list and pick a tab with the arrow keys;
+  rename the selected tab there with a key (F2 by default) that the terminal never loses.
 - Let users rebind, add or remove shortcuts in the settings file; a removed shortcut's key
   goes to the terminal program, and invalid entries are skipped and listed in settings.
 - Edit shortcuts on a Keyboard settings page: record a key, add or remove keys, reset one
@@ -86,7 +89,8 @@ directly to model APIs.
 - Indicate when an agent is working, idle, waiting for user input or permission,
   or has exited, when reliable status information is available.
   - A working Copilot tab shows a slowly turning ring left of its title in the sidebar
-    (Claude Code animates its own title); still when activity animations are off.
+    (Claude Code animates its own title, so a Claude Code tab shows the ring only once renamed);
+    still when activity animations are off.
 - Show status on individual tabs, including tabs that are not currently selected.
 - Show how long an agent has been working on its current turn.
 - Show when a command typed at a shell tab's prompt is running, and which command (shell

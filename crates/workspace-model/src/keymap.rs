@@ -377,6 +377,7 @@ pub fn action_label(action: &str) -> String {
         "PreviousTab" => "Previous tab",
         "NewTab" => "New tab",
         "DuplicateTab" => "Duplicate tab",
+        "RenameTab" => "Rename tab",
         "CloseTab" => "Close tab",
         "ToggleSidebar" => "Show or hide the sidebar",
         "ToggleExplorer" => "Show or hide the file explorer",

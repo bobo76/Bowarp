@@ -129,13 +129,19 @@ impl WorkspaceView {
             .on_click(cx.listener(|workspace, _, window, cx| workspace.toggle_settings(window, cx)))
     }
 
-    /// The sidebar's Settings row, while it is open.
-    pub(super) fn render_settings_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The sidebar's Settings row, while it is open. `list_focused`: the tab list has the
+    /// keyboard, so the row shows the focus ring while the page shows.
+    pub(super) fn render_settings_row(
+        &self,
+        list_focused: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if !self.settings.open {
             return None;
         }
         let row = sidebar::settings_row(
             self.settings.shown,
+            list_focused && self.settings.shows_page(),
             cx.listener(|workspace, _, window, cx| workspace.open_settings(window, cx)),
             cx.listener(|workspace, _, window, cx| {
                 cx.stop_propagation();

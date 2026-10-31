@@ -54,6 +54,16 @@ impl TabMeta {
         let name = input.trim();
         self.custom_name = (!name.is_empty()).then(|| name.to_string());
     }
+
+    /// Drop the custom name: the tab shows the program's title again.
+    pub fn reset_name(&mut self) {
+        self.custom_name = None;
+    }
+
+    /// The name shown for the tab: the custom name, else the program's current title.
+    pub fn display_name<'a>(&'a self, program_title: &'a str) -> &'a str {
+        self.custom_name.as_deref().unwrap_or(program_title)
+    }
 }
 
 #[cfg(test)]
@@ -67,5 +77,16 @@ mod tests {
         assert_eq!(meta.custom_name.as_deref(), Some("build"));
         meta.rename("   ");
         assert_eq!(meta.custom_name, None);
+    }
+
+    #[test]
+    fn reset_name_follows_the_program_title_again() {
+        let mut meta = TabMeta::default();
+        meta.rename("build");
+        assert_eq!(meta.display_name("✳ Fix login bug"), "build");
+        meta.reset_name();
+        assert_eq!(meta.custom_name, None);
+        assert_eq!(meta.display_name("✳ Fix login bug"), "✳ Fix login bug");
+        assert_eq!(meta.display_name("✳ Add tests"), "✳ Add tests");
     }
 }

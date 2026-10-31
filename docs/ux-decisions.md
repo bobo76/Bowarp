@@ -15,6 +15,25 @@
 - **Tab keys with no tab open do nothing** (Ctrl+Shift+W, Ctrl+Tab, Ctrl+1..9, next-attention,
   duplicate): a key that closes tabs must never close the window (unlike VS Code's Ctrl+W).
   No beep or toast. [UX agent]
+- **The tab list takes keyboard focus as one list**, entered with Down (or Tab) from the
+  "Search tabs..." field; the focused row is always the selected tab (Up/Down/Home/End select
+  visible rows, like Ctrl+Tab), marked by a focus ring on top of the selection color. Enter,
+  Escape or Tab hands the keyboard to the terminal and ends the search like the field's own
+  Enter/Escape (one rule: leaving a search for the terminal clears it, so no tab stays hidden
+  by a forgotten filter); Shift+Tab goes back to the field, keeping the query. So Tab and
+  Shift+Tab walk the usual focus order field, list, terminal (the explorer takes no keyboard
+  yet). A match inside a collapsed group expands it for good when chosen, as the field's
+  Up/Down does. While the Settings page shows, entering the list moves the keyboard only (the
+  ring sits on the selected Settings row, not a list entry); the first Up/Down selects the
+  tab entering would have, Home/End the first/last, and leaving goes back to the page, so
+  entering never swaps the page away by itself. A mouse click on a row still focuses the
+  terminal as today. Rejected: F2 "anywhere but the terminal" (it would fire from the file
+  explorer, where F2 should one day rename files, and still needs a hidden target). Built
+  before F2, as its own step. [UX agent; split confirmed by user]
+- **F2 is the default key of a rebindable "Rename tab" action** bound only while the tab
+  list has focus, so the terminal never loses F2. The tab menu shows its current key like
+  Duplicate does; a rename started from the list gives the keyboard back to the list.
+  [UX agent]
 
 ## Opacity and blur
 
@@ -49,13 +68,12 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
 
 ## Sidebar and tab status
 
-- **Copilot Working spinner**: a rotating Lucide `LoaderCircle` in the attention triangle's
-  slot, Working color, row only (cards, drag preview and collapsed groups stay static); the
-  title shifts like it does for the triangle. With "Activity animations" off it is the same
-  icon, still. One shared `SpinnerClock` (`workspace_view/spinner_clock.rs`) steps it, and
-  only while a turning spinner is drawn. [user: redraw rate and shared clock]
-  - Open, needs the user: a renamed Claude tab loses its title glyph, so it shows no Working
-    animation.
+- **Working spinner** (Copilot; Claude Code only while a custom name hides its animated
+  title glyph, so never two animations): a rotating Lucide `LoaderCircle` in the attention
+  triangle's slot, Working color, row only (cards, drag preview and collapsed groups stay
+  static); the title shifts like it does for the triangle. With "Activity animations" off it
+  is the same icon, still. One shared `SpinnerClock` (`workspace_view/spinner_clock.rs`)
+  steps it, and only while a turning spinner is drawn. [user: redraw rate and shared clock]
 - **"Status unavailable"** (agent hooks failed): Claude tabs only, replacing "No recent
   output"; "Recent output" stays. Looks and counts like Quiet (no badge, not in attention or
   group chips). Copilot tabs are unchanged (their status comes from the CLI). [UX agent]

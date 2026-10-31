@@ -26,6 +26,9 @@ use crate::sidebar::{
 use crate::tab_menu;
 use crate::workspace_view::{NewTab, NextAttention};
 
+/// A row of the tab list, with its tab's id when it is a tab row.
+type SidebarRow = (Option<u64>, AnyElement);
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GroupPresentation {
     Layout,
@@ -33,10 +36,18 @@ enum GroupPresentation {
 }
 
 impl WorkspaceView {
-    pub(super) fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn render_sidebar(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let workspace = cx.entity().downgrade();
         let new_tab_button = self.new_tab_button(workspace.clone(), cx);
-        let rows = self.sidebar_rows(cx);
+        let list_focused = self.tab_list.focus.is_focused(window);
+        let rows = self.sidebar_rows(list_focused, cx);
+        if self.tab_list.scroll_to_selected.take() {
+            self.scroll_to_selected_row(&rows);
+        }
         let attention_button = self.attention_button(cx);
         let theme = cx.theme();
         div()
@@ -66,8 +77,7 @@ impl WorkspaceView {
                     .child(new_tab_button),
             )
             .child(
-                div()
-                    .id("tabs")
+                self.tab_list_keys(div().id("tabs"), cx)
                     .flex()
                     .flex_col()
                     .flex_1()
@@ -83,41 +93,70 @@ impl WorkspaceView {
                         workspace.drop_dragged(dragged.id, cx)
                     }))
                     .children(
-                        rows.into_iter()
-                            .flat_map(|row| [row, sidebar::row_divider(cx).into_any_element()]),
+                        rows.into_iter().flat_map(|(_, row)| {
+                            [row, sidebar::row_divider(cx).into_any_element()]
+                        }),
                     )
                     .child(self.render_end_drop_zone(cx)),
             )
     }
 
-    fn sidebar_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// Scroll the tab list to the selected tab's row in `rows`.
+    fn scroll_to_selected_row(&self, rows: &[SidebarRow]) {
+        let Some(selected) = self.active_tab().map(|tab| tab.id) else {
+            return;
+        };
+        if let Some(row) = rows.iter().position(|(id, _)| *id == Some(selected)) {
+            // Each row is followed by its divider.
+            self.tab_list.scroll.scroll_to_item(row * 2);
+        }
+    }
+
+    /// The list's rows, each with its tab's id (`None` for headers and other rows).
+    /// `list_focused`: the list has the keyboard, so the selected row shows a focus ring.
+    fn sidebar_rows(&self, list_focused: bool, cx: &mut Context<Self>) -> Vec<SidebarRow> {
         // While searching, only matching tabs show, and groups holding one show expanded.
         let matches = self.search_matches(cx);
         let shown = |id: &u64| matches.as_ref().is_none_or(|matches| matches.contains(id));
         let mut rows = Vec::new();
         for id in self.layout.pinned().iter().filter(|id| shown(id)) {
-            rows.extend(
-                self.render_tab_row(*id, cx)
-                    .map(IntoElement::into_any_element),
-            );
+            rows.extend(self.tab_row_entry(*id, list_focused, |row| row, cx));
         }
         for (slot, item) in self.layout.items().iter().enumerate() {
             match item {
-                Item::Tab(id) if shown(id) => rows.extend(
-                    self.render_tab_row(*id, cx)
-                        .map(IntoElement::into_any_element),
-                ),
-                Item::Tab(_) => {}
-                Item::Group(group) => {
-                    rows.extend(self.sidebar_group_rows(slot, group, matches.as_ref(), cx))
+                Item::Tab(id) if shown(id) => {
+                    rows.extend(self.tab_row_entry(*id, list_focused, |row| row, cx));
                 }
+                Item::Tab(_) => {}
+                Item::Group(group) => rows.extend(self.sidebar_group_rows(
+                    slot,
+                    group,
+                    matches.as_ref(),
+                    list_focused,
+                    cx,
+                )),
             }
         }
         if matches.is_some() && rows.is_empty() {
-            rows.push(sidebar::no_matches_hint(cx).into_any_element());
+            rows.push((None, sidebar::no_matches_hint(cx).into_any_element()));
         }
-        rows.extend(self.render_settings_row(cx));
+        rows.extend(
+            self.render_settings_row(list_focused, cx)
+                .map(|row| (None, row)),
+        );
         rows
+    }
+
+    /// Tab `id`'s row, changed by `style`, tagged with the id.
+    fn tab_row_entry(
+        &self,
+        id: u64,
+        list_focused: bool,
+        style: impl FnOnce(Stateful<Div>) -> Stateful<Div>,
+        cx: &mut Context<Self>,
+    ) -> Option<SidebarRow> {
+        let row = self.render_tab_row(id, list_focused, cx)?;
+        Some((Some(id), style(row).into_any_element()))
     }
 
     fn sidebar_group_rows(
@@ -125,10 +164,11 @@ impl WorkspaceView {
         slot: usize,
         group: &Group,
         matches: Option<&std::collections::HashSet<u64>>,
+        list_focused: bool,
         cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
+    ) -> Vec<SidebarRow> {
         let Some(matches) = matches else {
-            return self.render_group(slot, group, None, cx);
+            return self.render_group(slot, group, None, list_focused, cx);
         };
         let tabs: Vec<_> = group
             .tabs()
@@ -139,7 +179,7 @@ impl WorkspaceView {
         if tabs.is_empty() {
             return Vec::new();
         }
-        self.render_group(slot, group, Some(&tabs), cx)
+        self.render_group(slot, group, Some(&tabs), list_focused, cx)
     }
 
     /// Shown while a tab needs attention: the count; clicking jumps to the next one.
@@ -173,25 +213,26 @@ impl WorkspaceView {
         slot: usize,
         group: &Group,
         only: Option<&[u64]>,
+        list_focused: bool,
         cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
+    ) -> Vec<SidebarRow> {
         let presentation = if only.is_some() {
             GroupPresentation::SearchResults
         } else {
             GroupPresentation::Layout
         };
-        let mut rows = vec![self.render_group_header(slot, group, presentation, cx)];
+        let mut rows = vec![(
+            None,
+            self.render_group_header(slot, group, presentation, cx),
+        )];
         if group.collapsed && only.is_none() {
             return rows;
         }
         if group.tabs().is_empty() {
-            rows.push(self.render_empty_group(group.id, cx));
+            rows.push((None, self.render_empty_group(group.id, cx)));
         }
         for &id in only.unwrap_or(group.tabs()) {
-            rows.extend(
-                self.render_tab_row(id, cx)
-                    .map(|row| row.pl_3().into_any_element()),
-            );
+            rows.extend(self.tab_row_entry(id, list_focused, |row| row.pl_3(), cx));
         }
         rows
     }
@@ -222,7 +263,12 @@ impl WorkspaceView {
     }
 
     /// A draggable tab row. The upper half of the row drops above it, the lower half below.
-    fn render_tab_row(&self, id: u64, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    fn render_tab_row(
+        &self,
+        id: u64,
+        list_focused: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
         let workspace = cx.entity().downgrade();
         let index = self.tab_index(id)?;
         let tab = &self.tabs[index];
@@ -233,6 +279,7 @@ impl WorkspaceView {
         let may_animate =
             self.pulse_running && self.window_visible && settings_file::activity_animations(cx);
         let status = view.tab_status();
+        let selected = index == self.active && !self.settings.shows_page();
         let row = TabRow {
             index,
             kind,
@@ -245,13 +292,15 @@ impl WorkspaceView {
             spinner: sidebar::working_spinner(
                 kind,
                 status,
+                tab.meta.custom_name.is_some(),
                 sidebar::running_pulse(may_animate, true),
             )
             .map(|motion| match motion {
                 RunningPulse::Animated => self.spinner_clock.drawn_step(),
                 RunningPulse::Still => 0,
             }),
-            selected: index == self.active && !self.settings.shows_page(),
+            selected,
+            focused: selected && list_focused,
             pinned: self.layout.is_pinned(id),
             color: self.tab_color(tab),
             name_editor,

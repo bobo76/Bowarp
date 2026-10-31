@@ -45,6 +45,7 @@ mod running;
 mod search;
 mod settings;
 mod tab;
+mod tab_list;
 mod tabs_state;
 mod time;
 mod wheel;
@@ -105,6 +106,7 @@ pub use settings::{
     TabCardFields, TerminalColors, UiTheme, installed_font_family, settings_backup_path,
 };
 pub use tab::{TabColor, TabMeta};
+pub use tab_list::{ListMove, list_entry, list_step, listed_tabs};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};
 pub use wheel::{WheelScroll, notch_lines};
 pub use window_background::{

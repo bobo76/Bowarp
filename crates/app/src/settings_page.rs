@@ -176,8 +176,8 @@ fn appearance_groups() -> Vec<SettingGroup> {
         SettingGroup::new().title("Animation").item(
             switch_row(
                 "Activity animations",
-                "Animate the sidebar's activity indicators (the Running badge's pulse, a \
-                 working Copilot tab's spinner). Off: static indicators and no animation \
+                "Animate the sidebar's activity indicators (the Running badge's pulse, the \
+                 working spinner). Off: static indicators and no animation \
                  timers; status still updates.",
                 SettingsField::new(
                     |settings| settings.activity_animations.is_on(),

@@ -5,6 +5,7 @@ mod settings_pane;
 mod sidebar_rows;
 mod spinner_clock;
 mod tab_card;
+mod tab_list;
 mod tab_search;
 
 use std::io;
@@ -39,6 +40,7 @@ use self::divider_drag::DividerDrag;
 use self::settings_pane::SettingsPane;
 use self::spinner_clock::SpinnerClock;
 use self::tab_card::TabCards;
+use self::tab_list::TabList;
 use self::tab_search::TabSearch;
 use crate::about;
 use crate::assets::FILES_ICON;
@@ -84,6 +86,7 @@ actions!(
         ToggleExplorer,
         SearchTabs,
         NextAttention,
+        RenameTab,
         SelectTab1,
         SelectTab2,
         SelectTab3,
@@ -99,6 +102,7 @@ actions!(
 /// Registers the workspace shortcuts (see `default_bindings`).
 pub fn init(cx: &mut App) {
     keymap::add_defaults(cx, default_bindings());
+    tab_list::init(cx);
     // A global listener, so F11 also works while a dialog or notification has the keyboard
     // (they are not inside the workspace view) or nothing does.
     cx.on_action(|_: &ToggleFullScreen, cx| {
@@ -120,7 +124,8 @@ pub fn init(cx: &mut App) {
 /// Workspace shortcuts, changed by the settings file's `"keybindings"` (see `keymap`). F11
 /// toggles full screen. It is bound for the whole window, so it works whichever pane has the
 /// keyboard: bindings match before the terminal's key handler, so F11 is not sent to the
-/// program.
+/// program. F2 renames the selected tab only while the tab list has the keyboard, so the
+/// terminal program still gets it.
 fn default_bindings() -> Vec<Shortcut> {
     let bind =
         |keys: &str, action: &dyn Action| Shortcut::new(keys, action.name(), Some(KEY_CONTEXT));
@@ -149,6 +154,11 @@ fn default_bindings() -> Vec<Shortcut> {
     ] {
         bindings.push(bind(&format!("ctrl-shift-{key}"), action));
     }
+    bindings.push(Shortcut::new(
+        "f2",
+        RenameTab.name(),
+        Some(tab_list::KEY_CONTEXT),
+    ));
     bindings
 }
 
@@ -226,9 +236,19 @@ enum RenameTarget {
     Group(GroupId),
 }
 
+/// Where the keyboard goes when a name editor closes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RenameOrigin {
+    /// A menu or a new group: back to the selected terminal.
+    Menu,
+    /// F2 in the tab list: back to the list.
+    TabList,
+}
+
 /// A tab or group name being edited in the sidebar.
 struct Rename {
     target: RenameTarget,
+    origin: RenameOrigin,
     input: Entity<InputState>,
     _events: Subscription,
 }
@@ -275,6 +295,8 @@ pub struct WorkspaceView {
     /// The sidebar menu (tab, group, `+`) that is open, if any.
     menu: OpenMenu,
     search: TabSearch,
+    /// The sidebar's tab list as a keyboard stop.
+    tab_list: TabList,
     cards: TabCards,
     /// Where the tab being dragged would land, from the last drag move over the sidebar.
     drop_hint: Option<DropTarget>,
@@ -393,6 +415,7 @@ impl WorkspaceView {
             last_closed_folder: None,
             menu: OpenMenu::default(),
             search: TabSearch::new(window, cx),
+            tab_list: TabList::new(cx),
             cards: TabCards::default(),
             drop_hint: None,
             home: std::env::home_dir(),
@@ -926,11 +949,22 @@ impl WorkspaceView {
         self.open_tab_in_or_notify(spec, NewTabPlace::After(id), window, cx);
     }
 
-    /// Select a tab, expanding its group if it is collapsed and ending a search that hides it.
+    /// Select a tab and give its terminal the keyboard (see `select_tab`).
     fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(tab) = self.tabs.get(index) else {
-            return;
-        };
+        if let Some(view) = self.select_tab(index, window, cx) {
+            window.focus(&view.focus_handle(cx), cx);
+        }
+    }
+
+    /// Select a tab, expanding its group if it is collapsed and ending a search that hides it,
+    /// without moving the keyboard. Returns the tab's view; `None` when there is no such tab.
+    fn select_tab(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<TerminalView>> {
+        let tab = self.tabs.get(index)?;
         let (id, view) = (tab.id, tab.view.clone());
         self.focus_empty_default = false;
         self.settings.hide_page();
@@ -941,9 +975,9 @@ impl WorkspaceView {
         }
         self.active = index;
         view.update(cx, |view, cx| view.show(cx));
-        window.focus(&view.focus_handle(cx), cx);
         self.sync_explorer(cx);
         cx.notify();
+        Some(view)
     }
 
     /// Close a tab, ending its process, once the user agrees to drop the unsaved edits of its
@@ -1050,10 +1084,7 @@ impl WorkspaceView {
 
     /// The name shown in the sidebar: the custom name, else the program's title.
     fn tab_name(tab: &Tab, cx: &App) -> String {
-        match &tab.meta.custom_name {
-            Some(name) => name.clone(),
-            None => tab.view.read(cx).name().to_string(),
-        }
+        tab.meta.display_name(tab.view.read(cx).name()).to_string()
     }
 
     /// The tab's own color, else its group's.
@@ -1069,6 +1100,7 @@ impl WorkspaceView {
         let own_group = self.layout.group_of(id).map(|group| group.id);
         Some(TabMenuState {
             pinned: self.layout.is_pinned(id),
+            has_custom_name: tab.meta.custom_name.is_some(),
             other_groups: self
                 .layout
                 .groups()
@@ -1106,7 +1138,7 @@ impl WorkspaceView {
             TabCommand::NewGroup => {
                 if let Some(group) = self.layout.new_group_with(id, NEW_GROUP_NAME) {
                     self.sync_order(cx);
-                    self.start_rename(RenameTarget::Group(group), window, cx);
+                    self.start_rename(RenameTarget::Group(group), RenameOrigin::Menu, window, cx);
                 }
             }
             TabCommand::MoveToGroup(group) => {
@@ -1130,7 +1162,21 @@ impl WorkspaceView {
                     copy_text(location.folder.display().to_string(), cx);
                 }
             }
-            TabCommand::Rename => self.start_rename(RenameTarget::Tab(id), window, cx),
+            TabCommand::Rename => {
+                self.start_rename(RenameTarget::Tab(id), RenameOrigin::Menu, window, cx)
+            }
+            TabCommand::ResetName => {
+                // An open editor for this tab would put the old name back when committed.
+                if self
+                    .renaming
+                    .as_ref()
+                    .is_some_and(|rename| rename.target == RenameTarget::Tab(id))
+                {
+                    self.cancel_rename(window, cx);
+                }
+                self.tabs[index].meta.reset_name();
+                cx.notify();
+            }
             TabCommand::Move(direction) => {
                 self.layout.move_tab(id, direction);
                 self.sync_order(cx);
@@ -1174,7 +1220,9 @@ impl WorkspaceView {
             return;
         };
         match command {
-            GroupCommand::Rename => self.start_rename(RenameTarget::Group(id), window, cx),
+            GroupCommand::Rename => {
+                self.start_rename(RenameTarget::Group(id), RenameOrigin::Menu, window, cx)
+            }
             GroupCommand::ToggleCollapsed => {
                 group.collapsed = !group.collapsed;
                 cx.notify();
@@ -1210,8 +1258,15 @@ impl WorkspaceView {
         }
     }
 
-    /// Edit a name in place: Enter or clicking elsewhere keeps it, Escape cancels.
-    fn start_rename(&mut self, target: RenameTarget, window: &mut Window, cx: &mut Context<Self>) {
+    /// Edit a name in place: Enter or clicking elsewhere keeps it, Escape cancels. `origin`:
+    /// where the keyboard goes afterwards (see `end_rename`).
+    fn start_rename(
+        &mut self,
+        target: RenameTarget,
+        origin: RenameOrigin,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let name = match target {
             RenameTarget::Tab(id) => self
                 .tab_index(id)
@@ -1233,6 +1288,7 @@ impl WorkspaceView {
         });
         self.renaming = Some(Rename {
             target,
+            origin,
             input,
             _events: events,
         });
@@ -1256,19 +1312,31 @@ impl WorkspaceView {
                 }
             }
         }
-        self.end_rename(window, cx);
+        self.end_rename(&rename, window, cx);
     }
 
     fn cancel_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.renaming.take().is_some() {
-            self.end_rename(window, cx);
+        if let Some(rename) = self.renaming.take() {
+            self.end_rename(&rename, window, cx);
         }
     }
 
-    /// Give the keyboard back to the selected terminal once the editor is gone.
-    fn end_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus_active(window, cx);
+    /// Give the keyboard back once the editor is gone: to the selected terminal, or to the tab
+    /// list for a rename started there. A click elsewhere (the editor lost the keyboard to
+    /// another element) keeps the keyboard where the click put it in that case.
+    fn end_rename(&mut self, rename: &Rename, window: &mut Window, cx: &mut Context<Self>) {
         cx.notify();
+        match rename.origin {
+            RenameOrigin::Menu => {
+                self.focus_active(window, cx);
+                return;
+            }
+            RenameOrigin::TabList => {}
+        }
+        let editor_focused = rename.input.read(cx).focus_handle(cx).is_focused(window);
+        if editor_focused || window.focused(cx).is_none() {
+            self.return_to_tab_list(window, cx);
+        }
     }
 
     /// The name editor for `target`, when it is being renamed.
@@ -1341,8 +1409,12 @@ impl WorkspaceView {
         });
     }
 
-    fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+    fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_visible = !self.sidebar_visible;
+        // A hidden list can't keep the keyboard: no key would reach anything.
+        if !self.sidebar_visible && self.tab_list.focus.is_focused(window) {
+            self.focus_active(window, cx);
+        }
         cx.notify();
     }
 
@@ -1839,7 +1911,7 @@ impl WorkspaceView {
             .ghost()
             .small()
             .tooltip(shortcuts::with_shortcut(label, &ToggleSidebar, cx))
-            .on_click(cx.listener(|workspace, _, _, cx| workspace.toggle_sidebar(cx)))
+            .on_click(cx.listener(|workspace, _, window, cx| workspace.toggle_sidebar(window, cx)))
     }
 
     fn explorer_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1901,7 +1973,7 @@ impl Render for WorkspaceView {
         self.spinner_clock.begin_frame();
         let sidebar = self
             .sidebar_visible
-            .then(|| self.render_sidebar(cx).into_any_element());
+            .then(|| self.render_sidebar(window, cx).into_any_element());
         self.spinner_clock.end_frame(cx);
         div()
             .size_full()
@@ -1930,8 +2002,8 @@ impl Render for WorkspaceView {
                 workspace.close_active(window, cx);
                 cx.stop_propagation();
             }))
-            .capture_action(cx.listener(|workspace, _: &ToggleSidebar, _, cx| {
-                workspace.toggle_sidebar(cx);
+            .capture_action(cx.listener(|workspace, _: &ToggleSidebar, window, cx| {
+                workspace.toggle_sidebar(window, cx);
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &ToggleExplorer, window, cx| {
