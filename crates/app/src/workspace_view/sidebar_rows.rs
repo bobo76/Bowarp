@@ -50,6 +50,7 @@ impl WorkspaceView {
             .border_color(theme.sidebar_border)
             .child(
                 div()
+                    .debug_selector(|| "sidebar-header".into())
                     .flex()
                     .items_center()
                     .gap_1()

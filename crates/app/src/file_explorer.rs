@@ -697,6 +697,7 @@ impl FileExplorer {
             crate::window_background::panel_background(theme.sidebar_accent, cx);
         self.row_shell(row.depth, cx)
             .id(("explorer-row", index))
+            .debug_selector(move || format!("explorer-row-{index}"))
             .when(selected, |row| row.bg(selected_background))
             .when(!selected, |row| row.hover(|style| style.bg(hovered)))
             // Git-ignored entries are dimmed like the icons.
@@ -755,6 +756,7 @@ impl FileExplorer {
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         div()
+            .debug_selector(|| "explorer-header".into())
             .flex()
             .flex_none()
             .items_center()

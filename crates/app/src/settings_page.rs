@@ -72,6 +72,7 @@ pub fn render(
     let theme = cx.theme();
     let needs_tab = file_button == SettingsFileButton::NeedsTab;
     div()
+        .debug_selector(|| "settings-background".into())
         .size_full()
         .flex()
         .flex_col()

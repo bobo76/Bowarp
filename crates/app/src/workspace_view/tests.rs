@@ -382,6 +382,7 @@ fn in_app_notifications_switch_gates_agent_toasts_live(cx: &mut gpui_kit::TestAp
 }
 
 #[gpui::test]
+#[cfg_attr(not(debug_assertions), ignore = "debug_bounds needs debug_assertions")]
 fn panel_opacity_leaves_file_viewer_and_settings_opaque(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::component::ActiveTheme;
     use workspace_model::{UiTheme, WindowOpacity};
@@ -398,49 +399,95 @@ fn panel_opacity_leaves_file_viewer_and_settings_opaque(cx: &mut gpui_kit::TestA
                 });
             });
             h.cx.run_until_parked();
+            h.cx.update(|window, cx| window.draw(cx).clear(cx));
+            let sidebar = h.cx.debug_bounds("sidebar-header").unwrap();
+            let tab = h.cx.debug_bounds("sidebar-tab-0").unwrap();
+            let explorer = h.cx.debug_bounds("explorer-header").unwrap();
+            let viewer = h.cx.debug_bounds("file-viewer").unwrap();
             h.cx.update(|window, cx| {
-                window.draw(cx).clear(cx);
                 let expected = crate::window_background::panel_background(cx.theme().sidebar, cx);
                 let accent =
                     crate::window_background::panel_background(cx.theme().sidebar_accent, cx);
-                let quads = window.painted_quads();
-                let backgrounds: Vec<_> = quads
-                    .iter()
-                    .filter(|quad| quad.bounds.size.width.0 > 100.)
-                    .filter_map(|quad| quad.background.as_solid())
-                    .collect();
-                assert!(
-                    backgrounds.contains(&expected),
-                    "{theme:?}, {percent}: panel"
-                );
-                assert!(
-                    backgrounds.contains(&accent),
-                    "{theme:?}, {percent}: selected row"
-                );
-                assert!(
-                    backgrounds.contains(&cx.theme().background),
-                    "viewer stays opaque"
+                for (bounds, color, name) in [
+                    (sidebar, expected, "sidebar"),
+                    (explorer, expected, "explorer"),
+                    (tab, accent, "selected tab"),
+                    (viewer, cx.theme().background, "opaque viewer"),
+                ] {
+                    assert_background_at(window, bounds, color, name);
+                }
+            });
+            let row = h.cx.debug_bounds("explorer-row-0").unwrap();
+            h.cx.simulate_mouse_move(row.center(), None, Default::default());
+            h.cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                assert_background_at(
+                    window,
+                    row,
+                    sidebar::hover_background(cx),
+                    "hovered explorer row",
                 );
             });
+            h.cx.simulate_mouse_move(viewer.center(), None, Default::default());
         }
     }
     let workspace = h.workspace.clone();
     h.cx.update(|window, cx| {
-        settings_file::preview(cx, |settings| {
-            settings.window_opacity = WindowOpacity::new(50.);
-        });
         workspace.update(cx, |workspace, cx| {
             workspace.open_settings(window, cx);
         });
     });
-    h.cx.run_until_parked();
-    h.cx.update(|window, cx| {
-        window.draw(cx).clear(cx);
-        assert!(window.painted_quads().iter().any(|quad| {
-            quad.bounds.size.width.0 > 100.
-                && quad.background.as_solid() == Some(cx.theme().background)
-        }));
-    });
+    for theme in [UiTheme::Dark, UiTheme::Light, UiTheme::Sepia] {
+        for percent in [50., 100.] {
+            h.cx.update(|_, cx| {
+                settings_file::preview(cx, |settings| {
+                    settings.ui_theme = theme;
+                    settings.window_opacity = WindowOpacity::new(percent);
+                });
+            });
+            h.cx.run_until_parked();
+            h.cx.update(|window, cx| window.draw(cx).clear(cx));
+            let settings = h.cx.debug_bounds("settings-background").unwrap();
+            let row = h.cx.debug_bounds("settings-row").unwrap();
+            h.cx.update(|window, cx| {
+                assert_background_at(window, settings, cx.theme().background, "opaque Settings");
+                assert_background_at(
+                    window,
+                    row,
+                    crate::window_background::panel_background(cx.theme().sidebar_accent, cx),
+                    "selected Settings row",
+                );
+            });
+        }
+    }
+}
+
+fn assert_background_at(
+    window: &Window,
+    bounds: gpui_kit::Bounds<gpui_kit::Pixels>,
+    expected: gpui_kit::Hsla,
+    name: &str,
+) {
+    let painted_bounds = bounds.scale(window.scale_factor());
+    let backgrounds: Vec<_> = window
+        .painted_quads()
+        .iter()
+        .filter(|quad| quad.bounds == painted_bounds)
+        .filter_map(|quad| quad.background.as_solid())
+        .filter(|color| color.a > 0.)
+        .collect();
+    assert!(!backgrounds.is_empty(), "{name} has no fill at {bounds:?}");
+    assert!(
+        backgrounds.iter().all(|color| *color == expected),
+        "{name} at {bounds:?}: {backgrounds:?}, expected {expected:?}"
+    );
+    if expected.a < 1. {
+        assert_eq!(
+            backgrounds.len(),
+            1,
+            "{name} must not stack translucent fills"
+        );
+    }
 }
 
 #[gpui::test]

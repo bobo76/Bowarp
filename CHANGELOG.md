@@ -11,6 +11,8 @@ omitted unless they affect how the app is used.
 - Known Copilot Autopilot sessions ignore automatically approved permission hooks instead of
   showing false Waiting notices; real questions still need attention. Launch mode is available
   before the optional extension's first report.
+- Copilot launch mode follows flag precedence: the last `--mode` wins, while
+  `--plan --mode autopilot` starts in Plan and keeps permission attention enabled.
 - Window opacity now also applies to the sidebar and file explorer, including selected and
   hovered rows, while the file viewer, Settings, title bar and overlays stay opaque.
 - Extend the Windows Mica backdrop into the client area and reset the frame extension when
