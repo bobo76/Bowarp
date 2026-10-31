@@ -78,7 +78,7 @@ default shell opens as the first tab.
 | Ctrl+Shift+W | Close the selected tab (or the Settings row while it is selected); nothing with no tab |
 | Ctrl+Shift+B | Hide or show the sidebar (also the title bar button) |
 | Ctrl+Shift+S | Search tabs (shows the sidebar if hidden) |
-| Tab, or Down (in an empty search field) | Move the keyboard into the tab list: Up / Down / Home / End select tabs, Enter, Esc or Tab go to the terminal (clearing the search; see Search and attention) |
+| Tab or Down (in the search field) | Move the keyboard into the tab list: Up / Down / Home / End select tabs, Enter, Esc or Tab go to the terminal (clearing the search; see Search and attention) |
 | F2 (in the tab list) | Rename the selected tab; the list gets the keyboard back afterwards. In the terminal, F2 goes to the program |
 | Ctrl+Shift+\| | Hide or show the file explorer (also the title bar button; the key that types `\|`) |
 | Ctrl+Shift+A | Go to the next tab needing attention; with none, the next one that is Ready for review |
@@ -357,10 +357,10 @@ The "Search tabs..." field above the list (Ctrl+Shift+S) keeps the tabs whose na
 folder, branch or group name contain every word typed, ignoring case. Groups holding a match
 show expanded while searching (their headers do not collapse until the search ends). Enter
 selects the first match and clears the search; Escape clears it and returns to the terminal.
-Up / Down in the field select the previous / next match (wrapping around) and keep the keyboard
-in the field; Enter then keeps the tab moved to.
+Up in the field selects the previous match (wrapping around) and keeps the keyboard in the field;
+Enter then keeps the tab moved to.
 
-Tab in the field, or Down with nothing typed, moves the keyboard into the tab list, as one stop:
+Tab or Down in the field moves the keyboard into the tab list, as one stop:
 it starts on the selected tab, or on the first row when the selected tab is not shown. In the
 list, Up / Down select the previous / next tab shown (wrapping around) and Home / End the first
 / last, scrolling to it; with no search, tabs in collapsed groups are skipped, and tabs the

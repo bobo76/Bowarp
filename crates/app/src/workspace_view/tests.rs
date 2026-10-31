@@ -1667,19 +1667,37 @@ fn the_tab_list_takes_the_keyboard_from_the_search_field(cx: &mut gpui_kit::Test
     press(&mut h, "enter");
     assert!(terminal_focused(&mut h));
 
-    // While searching: Down steps through the matches in the field, Tab enters the list on
-    // the first match when the selected tab is hidden, and the list keeps to the matches,
-    // collapsed group included.
+    // While searching: Up steps through the matches in the field, Down enters the list (ring
+    // shown) on the selected tab when it matches, Tab on the first match when the selected tab
+    // is hidden, and the list keeps to the matches, collapsed group included.
     search(&mut h);
     // ("o": not in the test folder's path, which the search also matches.)
     h.cx.simulate_input("o");
-    press(&mut h, "down");
-    press(&mut h, "down");
+    press(&mut h, "up");
     assert!(
         !list_focused(&mut h),
-        "Down steps through matches while a query is typed"
+        "Up steps through matches while a query is typed"
     );
-    assert_eq!(selected(&mut h), ids[1]);
+    assert_eq!(
+        selected(&mut h),
+        ids[3],
+        "Up wraps to the last match, \"four\""
+    );
+    press(&mut h, "down");
+    assert!(
+        list_focused(&mut h),
+        "Down enters the list while a query is typed"
+    );
+    assert_eq!(selected(&mut h), ids[3]);
+    press(&mut h, "down");
+    assert_eq!(selected(&mut h), ids[0], "the list wraps over the matches");
+    press(&mut h, "shift-tab");
+    press(&mut h, "up");
+    assert_eq!(
+        selected(&mut h),
+        ids[3],
+        "Up steps on from the tab the list moved to"
+    );
     h.cx.update(|window, cx| {
         workspace.update(cx, |workspace, cx| {
             let index = workspace.tab_index(ids[2]).unwrap();

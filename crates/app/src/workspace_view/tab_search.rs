@@ -140,8 +140,8 @@ impl WorkspaceView {
         self.end_search(window, cx);
     }
 
-    /// Up/Down in the search field: select the previous or next tab the search shows, keeping
-    /// the keyboard in the field to type on or move again.
+    /// Up in the search field: select the previous tab the search shows, keeping the keyboard
+    /// in the field to type on or move again.
     fn step_search(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
         let query = self.search.query(cx);
         if query.is_empty() {
@@ -163,19 +163,8 @@ impl WorkspaceView {
             .update(cx, |search, cx| search.focus(window, cx));
     }
 
-    /// Down in the search field: with nothing typed, enter the tab list; else select the next
-    /// match.
-    fn search_field_down(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.search.query(cx).is_empty() {
-            self.enter_tab_list(window, cx);
-            return;
-        }
-        self.step_search(Direction::Down, window, cx);
-    }
-
-    /// The "Search tabs..." field: Up/Down select the previous or next match, Enter selects
-    /// the first match (or keeps the one moved to), Escape clears it. Tab, or Down with
-    /// nothing typed, enters the tab list.
+    /// The "Search tabs..." field: Up selects the previous match, Enter selects the first
+    /// match (or keeps the one moved to), Escape clears it. Tab or Down enters the tab list.
     pub(super) fn render_search(&self, cx: &mut Context<Self>) -> AnyElement {
         div()
             .flex_1()
@@ -189,7 +178,7 @@ impl WorkspaceView {
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &MoveDown, window, cx| {
-                workspace.search_field_down(window, cx);
+                workspace.enter_tab_list(window, cx);
                 cx.stop_propagation();
             }))
             // Tab would indent, which a one-line field ignores.

@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Down in "Search tabs..." now moves the keyboard into the tab list while a search is typed
+  too, as Tab does, so the focus ring shows and F2 renames the match; Up still steps through
+  the matches in the field.
+- The tab menu no longer shows F2 next to "Rename tab": the key only works while the tab list
+  has the keyboard, not after clicking a tab.
+
 ## 0.2.52
 
 - Rename the selected tab with F2 while the sidebar tab list has the keyboard; the terminal
