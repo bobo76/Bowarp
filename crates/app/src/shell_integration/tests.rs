@@ -569,3 +569,215 @@ fn powershell_paths_are_single_quoted() {
         r". ([ScriptBlock]::Create([IO.File]::ReadAllText('C:\x.ps1')))"
     );
 }
+
+#[test]
+fn powershell_script_keeps_windows_powershell_syntax_and_reports_exit_status() {
+    let code: Vec<&str> = PWSH_SCRIPT
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect();
+    for operator in ["&&", "||", "??"] {
+        assert!(
+            !code.iter().any(|line| line.contains(operator)),
+            "{operator} needs PowerShell 7"
+        );
+    }
+    assert!(PWSH_SCRIPT.contains("133;D;aw=$global:__agentws_token;exit=$exit"));
+    assert!(PWSH_SCRIPT.contains("function global:claude"));
+    assert!(PWSH_SCRIPT.contains("function global:copilot"));
+}
+
+/// Stand-ins for `claude` and `copilot` as PowerShell finds them, printing their arguments and
+/// `ConEmuANSI` and exiting with status 3: [`fake_agents`]'s scripts, batch files on Windows.
+/// Returns their folder.
+fn fake_powershell_agents(dir: &Path) -> PathBuf {
+    #[cfg(unix)]
+    {
+        fake_agents(dir).0
+    }
+    #[cfg(windows)]
+    {
+        let bin = dir.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        for agent in ["claude", "copilot"] {
+            fs::write(
+                bin.join(format!("{agent}.cmd")),
+                format!(
+                    "@echo off\r\n\
+                     if defined ConEmuANSI (set \"c=%ConEmuANSI%\") else (set \"c=unset\")\r\n\
+                     echo {agent}-argv:%*^|conemu:%c%\r\n\
+                     exit /b 3\r\n"
+                ),
+            )
+            .unwrap();
+        }
+        bin
+    }
+}
+
+/// Runs `test` (PowerShell) after loading the script the way a tab does, with PSReadLine
+/// stood in for (a console host is needed for the real one), the agents of
+/// [`fake_powershell_agents`] first on PATH, the hook variables set, and stdin and stdout
+/// taken for the console. `user` runs before the script, as the profile would. Returns the
+/// marks and the output (stdout, then stderr); `None` when pwsh is not installed.
+fn run_powershell(
+    name: &str,
+    user: &str,
+    test: &str,
+) -> Option<(Vec<workspace_model::PromptMark>, String)> {
+    use std::process::Command;
+
+    Command::new("pwsh")
+        .args(["-NoProfile", "-NonInteractive", "-Command", "exit"])
+        .output()
+        .ok()?;
+    let dir = std::env::temp_dir().join(format!("agentws-{name}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let scripts = dir.join("scripts");
+    write_scripts(&scripts).unwrap();
+    let bin = fake_powershell_agents(&dir);
+    let script = scripts.join(PWSH_FILE);
+    let test_file = dir.join("test.ps1");
+    fs::write(
+        &test_file,
+        format!(
+            "$env:PATH = {bin} + [IO.Path]::PathSeparator + $env:PATH\n\
+             Remove-Item Env:ConEmuANSI -ErrorAction SilentlyContinue\n\
+             $env:AGENTWS_CLAUDE_SETTINGS = 'hooks-settings'\n\
+             $env:AGENTWS_COPILOT_PLUGIN = 'hooks-plugin'\n\
+             function Get-Module {{ 'PSReadLine' }}\n\
+             function Set-PSReadLineKeyHandler {{ }}\n\
+             {user}\n\
+             {load}\n\
+             function global:__agentws_on_terminal {{ $true }}\n\
+             {test}\n",
+            bin = powershell_quote(&bin.to_string_lossy()),
+            load = powershell_load(&script.to_string_lossy()),
+        ),
+    )
+    .unwrap();
+    let output = Command::new("pwsh")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+        ])
+        .arg("-File")
+        .arg(&test_file)
+        .env(MARK_TOKEN_ENV, "t0k")
+        .output()
+        .unwrap();
+    let mut scanner = workspace_model::Osc133Scanner::new("t0k");
+    let mut marks = Vec::new();
+    let mut rest = &output.stdout[..];
+    while let Some((end, mark)) = scanner.scan(rest) {
+        marks.push(mark);
+        rest = &rest[end..];
+    }
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(&dir).unwrap();
+    Some((marks, text))
+}
+
+const POWERSHELL_AGENT_INPUT: &str = concat!(
+    "claude --resume x; \"after=$LASTEXITCODE\"\n",
+    "copilot\n",
+    "\"conemu-after=$env:ConEmuANSI|\"\n",
+    // One-shot runs, pipes and the escape run the program unchanged.
+    "claude -p hi\n",
+    "copilot --version\n",
+    "claude mcp list\n",
+    "claude --settings z.json\n",
+    "claude | Out-String\n",
+    "'in' | claude a\n",
+    "& (Get-Command claude -CommandType Application -TotalCount 1) b\n",
+    "Remove-Item Env:AGENTWS_CLAUDE_SETTINGS; claude c\n",
+    // The D mark's exit status: a program's, a success, a cmdlet's failure.
+    "& (Get-Command claude -CommandType Application -TotalCount 1) d\n",
+    "$p = prompt; [Console]::Write($p)\n",
+    "$null = 1; $p = prompt; [Console]::Write($p)\n",
+    "$global:LASTEXITCODE = 0\n",
+    "Get-Item -LiteralPath 'agentws-missing' -ErrorAction SilentlyContinue\n",
+    "$p = prompt; [Console]::Write($p)\n",
+    // Not on PATH: PowerShell's own error.
+    "$env:PATH = 'agentws-nonexistent'; copilot e\n",
+);
+
+#[test]
+fn powershell_agent_functions_run_interactive_agents_in_place() {
+    use workspace_model::PromptMark::*;
+    use workspace_model::agents::{CLAUDE, COPILOT};
+
+    let Some((marks, output)) = run_powershell("pwsh-agents", "", POWERSHELL_AGENT_INPUT) else {
+        return;
+    };
+    let agent_marks: Vec<_> = marks
+        .iter()
+        .filter(|mark| matches!(mark, AgentStarted(_) | AgentFinished(_)))
+        .collect();
+    assert_eq!(
+        agent_marks,
+        [
+            &AgentStarted(CLAUDE),
+            &AgentFinished(Some(3)),
+            &AgentStarted(COPILOT),
+            &AgentFinished(Some(3))
+        ],
+        "{output}"
+    );
+    for expected in [
+        "claude-argv:--settings hooks-settings --resume x|conemu:unset",
+        "after=3",
+        "copilot-argv:--plugin-dir hooks-plugin|conemu:ON",
+        "conemu-after=|",
+        "claude-argv:-p hi|",
+        "copilot-argv:--version|",
+        "claude-argv:mcp list|",
+        "claude-argv:--settings z.json|",
+        "claude-argv:|",
+        "claude-argv:a|",
+        "claude-argv:b|",
+        "claude-argv:c|",
+        "claude-argv:d|",
+        "not recognized",
+    ] {
+        assert!(output.contains(expected), "{expected}: {output}");
+    }
+    let exits: Vec<_> = marks
+        .iter()
+        .filter_map(|mark| match mark {
+            CommandFinished { exit, .. } => Some(*exit),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(exits, [Some(3), Some(0), Some(1)], "{output}");
+}
+
+#[test]
+fn powershell_agent_functions_keep_the_users_own() {
+    let user = concat!(
+        "function global:claude { 'user-claude' }\n",
+        "function global:__user_copilot { 'user-copilot' }\n",
+        "Set-Alias -Name copilot -Value __user_copilot -Scope Global\n",
+    );
+    let Some((marks, output)) = run_powershell("pwsh-user-agents", user, "claude\ncopilot\n")
+    else {
+        return;
+    };
+    assert!(output.contains("user-claude"), "{output}");
+    assert!(output.contains("user-copilot"), "{output}");
+    assert!(
+        !marks.iter().any(|mark| matches!(
+            mark,
+            workspace_model::PromptMark::AgentStarted(_)
+                | workspace_model::PromptMark::AgentFinished(_)
+        )),
+        "{marks:?}"
+    );
+}
