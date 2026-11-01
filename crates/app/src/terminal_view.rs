@@ -37,8 +37,8 @@ use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
     ActivityPolicy, AgentActivity, AgentId, BusyReason, COMMAND_LABEL_CHARS, ClipboardGuard,
     InPlaceAgent, Leftover, Location, ProgressState, RUNNING_AFTER, RunEnd, RunEndOutcome,
-    RunningBadge, Shortcut, TabActivity, TabAtEnd, WorkspaceFeatures, agents, command_label,
-    running_badge, shows_exit_toast,
+    RunningBadge, Shortcut, Subagent, SubagentEvent, Subagents, TabActivity, TabAtEnd,
+    WorkspaceFeatures, agents, command_label, running_badge, shows_exit_toast,
 };
 
 use self::agent_tracker::AgentTracker;
@@ -216,6 +216,8 @@ pub struct TerminalView {
     /// Agent status from hooks or progress reports once the provider sends its first one;
     /// `None` for sessions without either. In a shell tab, only while an agent runs in place.
     agent: Option<AgentTracker>,
+    /// The agent's running subagents, from its hooks.
+    subagents: Subagents,
     mode: AgentModeState,
     /// The agent finished a turn while the tab was hidden; cleared when it is shown. Kept
     /// after an in-place agent's run ends (the shell tab shows Ready for review).
@@ -353,6 +355,7 @@ impl TerminalView {
             location: spec.cwd.clone().map(Location::read),
             shell: launcher::shell_syntax(spec),
             agent: (reporting == StatusReporting::Hooks).then(|| AgentTracker::new(Instant::now())),
+            subagents: Subagents::default(),
             mode: spec
                 .kind
                 .agent()
@@ -645,14 +648,46 @@ impl TerminalView {
 
     /// Apply a raw report from this session's hooks, as its agent integration decodes it.
     pub fn apply_report(&mut self, report: &AgentReport, at: u64, cx: &mut Context<Self>) {
-        let Some(event) = self
-            .status_kind()
-            .agent()
-            .and_then(|agent| report.decode(agent))
-        else {
+        let Some(agent) = self.status_kind().agent() else {
             return;
         };
-        self.apply_hook_event(event, at, cx);
+        let event = report.decode(agent);
+        if let Some(subagent_event) = report.subagent_event(agent) {
+            self.apply_subagent_event(agent, subagent_event, event, at, cx);
+        }
+        if let Some(event) = event {
+            self.apply_hook_event(event, at, cx);
+        }
+    }
+
+    /// The agent's running subagents, in start order.
+    pub fn subagents(&self) -> &[Subagent] {
+        self.subagents.running()
+    }
+
+    /// `hook` is the same report as a main-agent event: a permission request autopilot
+    /// answers itself leaves the subagent working.
+    fn apply_subagent_event(
+        &mut self,
+        agent: AgentId,
+        event: SubagentEvent,
+        hook: Option<AgentEvent>,
+        at: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if self.process != ProcessState::Running {
+            return;
+        }
+        let auto_approved = matches!(hook, Some(AgentEvent::Hook(hook))
+            if hook
+                .for_mode(self.mode.mode(), agent.autopilot_approves_permissions())
+                .is_none());
+        if matches!(event, SubagentEvent::Waiting { .. }) && auto_approved {
+            return;
+        }
+        if self.subagents.apply(event, at) {
+            cx.emit(TabChanged);
+        }
     }
 
     /// Mode reports must not change activity, lap time or the unseen-finished badge.
@@ -875,6 +910,7 @@ impl TerminalView {
             self.activity_task = None;
         }
         self.mode = AgentModeState::default();
+        self.subagents.clear();
         self.finished_unseen = false;
         cx.emit(TabChanged);
     }
@@ -914,6 +950,7 @@ impl TerminalView {
         }
         self.title = outcome.title;
         self.agent = None;
+        self.subagents.clear();
         self.mode = AgentModeState::default();
         self.finished_unseen = outcome.leftover == Leftover::ReadyForReview;
         self.bell_unseen = false;
@@ -940,6 +977,7 @@ impl TerminalView {
         if let Some(agent) = self.agent.as_mut() {
             agent.exit(Instant::now());
         }
+        self.subagents.clear();
         cx.emit(TabChanged);
         // A failed agent keeps its last screen, so its error can be read.
         if self.kind().has_shell_fallback() && code == Some(0) {

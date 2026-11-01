@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Claude Code and Copilot CLI tabs show their running subagents: their count in a ring after the
+  tab name (turning while the list is folded in, orange while one waits for you) and their list
+  under the row (description or type, a warning mark while waiting); click the ring to fold the
+  list. The tab's own status is unchanged.
+
+
 ## 0.2.57
 
 - Add the switch "Agent status for agents typed at the prompt" (Settings, Terminal, Agents at

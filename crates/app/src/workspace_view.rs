@@ -8,6 +8,7 @@ mod tab_card;
 mod tab_list;
 mod tab_search;
 
+use std::collections::HashSet;
 use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -266,6 +267,8 @@ pub struct WorkspaceView {
     /// then, in case a platform still draws a hidden window.
     window_visible: bool,
     spinner_clock: SpinnerClock,
+    /// Tabs whose subagent list the user folded in; others show it (not saved).
+    folded_subagents: HashSet<u64>,
     explorer: Entity<FileExplorer>,
     /// The "close busy tabs?" question is open (it is never asked twice at once).
     close_question_open: bool,
@@ -402,6 +405,7 @@ impl WorkspaceView {
             pulse_running: sidebar::pulse_allowed(window),
             window_visible: window.is_visible(),
             spinner_clock: SpinnerClock::default(),
+            folded_subagents: HashSet::new(),
             explorer,
             close_question_open: false,
             explorer_visible: false,
@@ -1029,6 +1033,7 @@ impl WorkspaceView {
 
     fn remove_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let tab = self.tabs.remove(index);
+        self.folded_subagents.remove(&tab.id);
         if let Some(hooks) = &self.hooks {
             hooks.remove_session(tab.view.read(cx).id());
         }

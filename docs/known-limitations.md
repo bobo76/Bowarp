@@ -20,6 +20,11 @@ entry when the limitation is lifted.
   Code tabs fall back to output activity ("Status unavailable" when quiet) and a bell asks for
   attention as in a shell; a Copilot CLI permission prompt reads Working, not Needs attention,
   unless it rings the bell. The warning shows once per start, not again when an agent tab opens.
+- Subagents show from their start hook to their stop hook. A subagent whose stop hook never
+  arrives (e.g. if killing one from the agent's task panel sends none) stays listed until the
+  agent exits. Copilot CLI gives the description only on the spawning tool call, not on the
+  start: subagents started at the same moment can swap descriptions, and one with none shows
+  its type.
 - Copilot CLI Waiting ends on its next tool hook or when the turn ends: after a question is
   answered, a reply with no tool call keeps the tab Waiting until the turn finishes.
 - Copilot Autopilot permission hooks do not show Waiting when the mode is known. The optional

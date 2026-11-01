@@ -10,6 +10,17 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Subagent list (Claude Code 2.1.316, Copilot CLI 1.0.105):
+
+- Real Claude Code: a background subagent (`run_in_background`) shows under the tab with its
+  description while the main tab goes Idle, and goes away when it finishes; a subagent's
+  permission prompt turns its row and the count ring orange. Killing a background agent from the
+  task panel removes it (else note it in docs/known-limitations.md).
+- Real Copilot CLI: a sync and a background `task` subagent show and go away; under
+  `--autopilot` its permission requests do not mark it waiting.
+- Windows: the same, with the turning count ring (its digit centered) and the list under the
+  row, folded in and out by clicking the ring.
+
 Agent running in place in a shell tab (from its `N` mark until the command's `D`):
 
 - Windows (Git Bash, PowerShell, WSL): `env` shows `AGENTWS_SESSION`, `AGENTWS_PIPE`,

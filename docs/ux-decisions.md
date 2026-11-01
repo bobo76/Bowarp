@@ -71,7 +71,8 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
 - **Working spinner** (Copilot; Claude Code only while a custom name hides its animated
   title glyph, so never two animations): a rotating Lucide `LoaderCircle` in the attention
   triangle's slot, Working color, row only (cards, drag preview and collapsed groups stay
-  static); the title shifts like it does for the triangle. With "Activity animations" off it
+  static); the title shifts like it does for the triangle. Two animations in one row are
+  allowed (e.g. the working spinner and the subagent ring) [user, 2026-11-01, less annimations is better]. With "Activity animations" off it
   is the same icon, still. One shared `SpinnerClock` (`workspace_view/spinner_clock.rs`)
   steps it, and only while a turning spinner is drawn. [user: redraw rate and shared clock]
 - **"Status unavailable"** (agent hooks failed): Claude tabs only, replacing "No recent
@@ -118,6 +119,21 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   file) is rare and its wrong status ends with the run. Rejected: parsing the command line
   from the invocation (only the current line is available, multi-line and nested captures
   defeat it) for a near-empty case. [UX agent]
+- **Running subagents** show as their count inside a ring after the name (and after the pin),
+  where the "▸ N" chip was. The spinner before the name is gone, so the space left of the name
+  is only for the tab's own status (working spinner, attention triangle). The ring turns with
+  the shared spinner clock, in the same direction as the working spinner, in the Working color.
+  When any subagent waits for the user it becomes a closed, still circle in the attention color:
+  a different shape, not only a different color. While the list is out the ring is a closed,
+  still circle in the Working color: the list's spinners show the activity [user]. With
+  animations off the ring stands still, keeping its gap. A muted chevron before the ring folds
+  the indented list under the row (open by default, as group chevrons do); the ring itself is
+  part of the same click target, and its tooltip gives the counts. Ring and count look the same
+  whether the list is open or folded except for turning, so nothing moves when it is toggled.
+  List rows keep a small spinner or attention triangle per subagent, at the detail icon size.
+  Rows only, like the working spinner. Rejected: a badge on the icon tile (too small for a
+  digit, and it clashes with the status badge); a still count pill (it shows nothing moving when
+  subagents run in the background while the agent is idle). [UX agent, from user feedback]
 - **Hover card under the cursor when a hold ends** (rename, menu, dialog, drag) stays hidden
   until the pointer leaves the row, like Windows/VS Code tooltips. [UX agent]
 

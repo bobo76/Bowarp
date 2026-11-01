@@ -6,7 +6,8 @@ use serde_json::json;
 use super::{
     ActivityPolicy, AgentDefinition, AgentId, AgentIdentity, ArgumentSetting, ArtifactFile,
     BellPrecedence, HookArtifactKind, HookArtifactPlan, HookNamePolicy, HookProtocol, LaunchPlan,
-    NoStatusPolicy, Presentation, StatusPolicy, WorkingSpinner, claude_settings_json,
+    NoStatusPolicy, Presentation, StatusPolicy, SubagentHooks, WorkingSpinner,
+    claude_settings_json,
 };
 
 const HOOK_EVENTS: &[&str] = &[
@@ -19,6 +20,8 @@ const HOOK_EVENTS: &[&str] = &[
     "Notification",
     "Stop",
     "StopFailure",
+    "SubagentStart",
+    "SubagentStop",
 ];
 const HOOK_TIMEOUT_SECS: u64 = 5;
 
@@ -69,6 +72,10 @@ pub const DEFINITION: AgentDefinition = AgentDefinition {
         },
         name_policy: HookNamePolicy::DirectOnly,
         decode: decode_hook_event,
+        subagents: SubagentHooks {
+            spawn_tools: &["Agent", "Task"],
+            unnamed_start: false,
+        },
     },
     mode: None,
     status: StatusPolicy {

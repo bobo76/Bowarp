@@ -225,6 +225,14 @@ files not yet added and not ignored, refreshed at most every 5 s). No card opens
 is dragged, a name is edited, or a menu or dialog is open; a card hidden that way comes back
 after the pointer leaves the row and hovers it again.
 
+While a Claude Code or Copilot CLI agent runs subagents, its row shows their count in a ring
+after the name: in the Working color, turning only while the list is folded in, or a still
+orange circle while one waits for you. Their list shows under the row: each subagent's
+description (or its type) with a spinner, or a warning mark while it waits for a permission or
+an answer. Click the chevron and ring to fold the list in or out (per tab, not saved). A
+subagent shows from its `SubagentStart` hook to its `SubagentStop`; the tab keeps its own status
+(Idle once the main turn ends, even while background subagents work).
+
 Appearance → Tab hover card controls the card and its Status, Location, Changes, Program
 title and Session kind pieces (all on initially). The tab name and Ctrl+number shortcut
 always remain. Program title appears when a custom name hides it. Turning the card off
@@ -243,8 +251,10 @@ updates with `COPILOT_AUTO_UPDATE=false` when reproducing these checks.
 
 Each new Copilot tab mounts its own app-owned plugin with the supported
 `--plugin-dir <directory>` option. The plugin registers `PermissionRequest`, `Notification`,
-`PreToolUse`, `PostToolUse` and `PostToolUseFailure` as direct `exec` command hooks, and
-`agentws-hook` forwards them to that tab's local status socket. A permission request is
+`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStart` and `SubagentStop` as
+direct `exec` command hooks, and `agentws-hook` forwards them to that tab's local status
+socket (`SubagentStart` arrives without an event name; a payload with a subagent and a parent
+id is read as one). A permission request is
 **Waiting for permission**; a question (`ask_user`, reported as an `elicitation_dialog`
 notification) is **Waiting for your reply**. Copilot sends most events in the PascalCase/
 snake_case payload, but `PermissionRequest` in its camelCase one (`hookName`), which

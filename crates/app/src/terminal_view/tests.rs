@@ -400,6 +400,72 @@ fn copilot_hooks_add_and_end_waiting_but_only_progress_controls_working_and_idle
     });
 }
 
+fn line(text: &str) -> AgentReport {
+    let mut fields = text.splitn(2, ' ');
+    let event_name = fields.next().unwrap().to_owned();
+    let mut report = AgentReport {
+        event_name,
+        ..AgentReport::default()
+    };
+    for field in fields.next().unwrap_or_default().split(' ') {
+        if let Some(id) = field.strip_prefix("agent=") {
+            report.subagent = Some(id.into());
+        } else if let Some(kind) = field.strip_prefix("kind=") {
+            report.subagent_kind = Some(kind.into());
+        } else if let Some(description) = field.strip_prefix("desc=") {
+            report.description = Some(description.into());
+        } else if !field.is_empty() {
+            report.detail = Some(field.into());
+        }
+    }
+    report
+}
+
+#[gpui::test]
+fn subagents_show_from_start_to_stop_and_end_with_the_agent(cx: &mut gpui_kit::TestAppContext) {
+    let view = copilot_view_with_mode_args(cx, &[]);
+    view.update(cx, |view, cx| {
+        view.apply_report(&line("PreToolUse desc=List"), 1, cx);
+        view.apply_report(&line("SubagentStart agent=a1 kind=explore"), 2, cx);
+        view.apply_report(&line("SubagentStart agent=a2 kind=explore"), 3, cx);
+        let labels: Vec<_> = view
+            .subagents()
+            .iter()
+            .map(|s| s.label().to_owned())
+            .collect();
+        assert_eq!(labels, ["List", "explore"]);
+        assert_eq!(
+            view.tab_status(),
+            TabStatus::Quiet,
+            "the main status stays its own"
+        );
+
+        view.apply_report(&line("PermissionRequest agent=a2"), 4, cx);
+        assert!(view.subagents()[1].waiting);
+        view.apply_report(&line("PostToolUse agent=a2"), 5, cx);
+        assert!(!view.subagents()[1].waiting);
+        view.apply_report(&line("SubagentStop agent=a1"), 6, cx);
+        assert_eq!(view.subagents().len(), 1);
+
+        view.on_session_event(SessionEvent::Exited(Some(1)), cx);
+        assert!(view.subagents().is_empty());
+        view.apply_report(&line("SubagentStart agent=a3"), 7, cx);
+        assert!(view.subagents().is_empty(), "nothing runs after the exit");
+    });
+}
+
+#[gpui::test]
+fn autopilot_subagents_do_not_wait_for_permissions(cx: &mut gpui_kit::TestAppContext) {
+    let view = copilot_view_with_mode_args(cx, &["--autopilot"]);
+    view.update(cx, |view, cx| {
+        view.apply_report(&line("SubagentStart agent=a1 kind=explore"), 1, cx);
+        view.apply_report(&line("PermissionRequest agent=a1"), 2, cx);
+        assert!(!view.subagents()[0].waiting);
+        view.apply_report(&line("Notification elicitation_dialog agent=a1"), 3, cx);
+        assert!(view.subagents()[0].waiting, "questions still wait");
+    });
+}
+
 fn copilot_view_with_mode_args(
     cx: &mut gpui_kit::TestAppContext,
     mode_args: &[&str],
@@ -784,6 +850,7 @@ fn report(name: &str) -> AgentReport {
     AgentReport {
         event_name: name.into(),
         detail: None,
+        ..AgentReport::default()
     }
 }
 

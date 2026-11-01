@@ -192,6 +192,10 @@ impl AgentId {
         (self.definition().hooks.decode)(name, detail)
     }
 
+    pub fn subagent_hooks(self) -> &'static SubagentHooks {
+        &self.definition().hooks.subagents
+    }
+
     pub fn mode(self) -> Option<&'static ModeReporting> {
         self.definition().mode.as_ref()
     }
@@ -281,6 +285,18 @@ pub struct HookProtocol {
     pub artifact: HookArtifactPlan,
     pub name_policy: HookNamePolicy,
     pub decode: fn(&str, Option<&str>) -> Option<HookSemantic>,
+    pub subagents: SubagentHooks,
+}
+
+/// How the agent's hooks report subagents: `SubagentStart`/`SubagentStop` with the subagent's
+/// id, which its own hooks carry too.
+#[derive(Debug)]
+pub struct SubagentHooks {
+    /// Tools the main agent starts a subagent with; their `description` input names it.
+    pub spawn_tools: &'static [&'static str],
+    /// `SubagentStart` arrives without an event name (Copilot CLI 1.0.105): a nameless payload
+    /// with a subagent id and a parent id is one.
+    pub unnamed_start: bool,
 }
 
 #[derive(Debug)]
@@ -408,6 +424,18 @@ pub fn agents() -> impl Iterator<Item = AgentId> {
         .iter()
         .copied()
         .map(|agent| AgentId(agent.identity.cli_selector))
+}
+
+/// Whether `tool` starts a subagent for `agent`, or for any agent when it is unknown.
+pub fn is_spawn_tool(agent: Option<AgentId>, tool: &str) -> bool {
+    let spawns = |agent: AgentId| agent.subagent_hooks().spawn_tools.contains(&tool);
+    agent.map_or_else(|| agents().any(spawns), spawns)
+}
+
+/// Whether a nameless hook payload is a subagent start, for `agent` or any agent when unknown.
+pub fn reads_unnamed_subagent_start(agent: Option<AgentId>) -> bool {
+    let unnamed = |agent: AgentId| agent.subagent_hooks().unnamed_start;
+    agent.map_or_else(|| agents().any(unnamed), unnamed)
 }
 
 /// Apply provider-declared launch environment defaults.

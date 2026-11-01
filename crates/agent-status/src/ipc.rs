@@ -1,6 +1,8 @@
 //! Hook IPC: `agentws-hook` opens one local socket connection per hook event (a Unix socket on
 //! Linux, a named pipe on Windows) and sends a single line:
-//! `<session id> <hook start time in µs since the Unix epoch> <hook_event_name> [notification_type]`.
+//! `<session id> <hook start time in µs since the Unix epoch> <hook_event_name> [notification_type]
+//! [agent=<subagent id>] [kind=<subagent type>] [desc=<spawned subagent's description>]`, the
+//! description last since it may hold spaces. Older readers take only the first four fields.
 //! Provider-neutral transport preserves the event and detail for the destination session to
 //! interpret. Copilot mode reports use `CopilotMode` with the interaction mode as
 //! `notification_type`.
@@ -15,7 +17,10 @@ use interprocess::local_socket::prelude::*;
 use interprocess::local_socket::{GenericNamespaced, ListenerOptions, Stream};
 use serde_json::Value;
 
-use workspace_model::{AgentId, HookNamePolicy};
+use workspace_model::{
+    AgentId, HookNamePolicy, HookSemantic, SubagentEvent, is_spawn_tool,
+    reads_unnamed_subagent_start,
+};
 
 use crate::{AgentMode, status::HookEvent};
 
@@ -27,7 +32,14 @@ pub const PIPE_ENV: &str = "AGENTWS_PIPE";
 pub const AGENT_ENV: &str = "AGENTWS_AGENT";
 
 /// Longest line a hook may send; anything longer is not a hook message.
-const MAX_LINE: u64 = 512;
+const MAX_LINE: u64 = 1024;
+/// Longest subagent id or type sent; a longer one is left out.
+const MAX_TOKEN: usize = 64;
+/// Most characters of a subagent description sent.
+const MAX_DESCRIPTION: usize = 80;
+const SUBAGENT_KEY: &str = "agent=";
+const KIND_KEY: &str = "kind=";
+const DESCRIPTION_KEY: &str = " desc=";
 /// How long a connection may take to send its line; a hook sends it right after connecting.
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// Most connections read at once. A hook sends its line right after connecting, so only a
@@ -43,10 +55,16 @@ pub enum AgentEvent {
 
 /// A report as it arrives over the wire: the transport is provider-neutral, so only the
 /// destination session's agent knows what it means (see [`AgentReport::decode`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentReport {
     pub event_name: String,
     pub detail: Option<String>,
+    /// The subagent the hook ran in or is about, `None` for the main agent.
+    pub subagent: Option<String>,
+    /// The subagent's type, on its start.
+    pub subagent_kind: Option<String>,
+    /// The description the main agent gave a subagent it is starting.
+    pub description: Option<String>,
 }
 
 impl AgentReport {
@@ -59,6 +77,33 @@ impl AgentReport {
                 .map(AgentEvent::ModeChanged);
         }
         HookEvent::from_agent(agent, &self.event_name, self.detail.as_deref()).map(AgentEvent::Hook)
+    }
+
+    /// What the report says about `agent`'s subagents, if anything.
+    pub fn subagent_event(&self, agent: AgentId) -> Option<SubagentEvent> {
+        let Some(id) = self.subagent.clone() else {
+            return (self.event_name == "PreToolUse")
+                .then(|| self.description.clone())
+                .flatten()
+                .map(|description| SubagentEvent::Spawned { description });
+        };
+        match self.event_name.as_str() {
+            "SubagentStart" => Some(SubagentEvent::Started {
+                id,
+                kind: self.subagent_kind.clone(),
+            }),
+            "SubagentStop" => Some(SubagentEvent::Finished { id }),
+            name => match agent.decode_hook_event(name, self.detail.as_deref())? {
+                HookSemantic::PermissionRequested | HookSemantic::ReplyRequested => {
+                    Some(SubagentEvent::Waiting { id })
+                }
+                // Its turn ending is not its end: `SubagentStop` follows.
+                HookSemantic::Stopped => None,
+                HookSemantic::PromptSubmitted
+                | HookSemantic::ToolStarted
+                | HookSemantic::ToolFinished => Some(SubagentEvent::Active { id }),
+            },
+        }
     }
 }
 
@@ -105,31 +150,96 @@ fn hook_line(agent: Option<AgentId>, session: u64, at: u64, input: &[u8]) -> io:
     let policy = agent.map_or(HookNamePolicy::PascalCaseFallback, |agent| {
         agent.definition().hooks.name_policy
     });
+    let either = |snake, camel| field(snake).or_else(|| field(camel));
+    let subagent = either("agent_id", "agentId").and_then(token);
     let event_name = policy
         .event_name(field("hook_event_name"), field("hookName"))
+        .or_else(|| {
+            let unnamed_start = reads_unnamed_subagent_start(agent)
+                && subagent.is_some()
+                && either("parent_agent_id", "parentAgentId").is_some();
+            unnamed_start.then(|| "SubagentStart".to_owned())
+        })
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing hook_event_name"))?;
     let mut line = format!("{session} {at} {event_name}");
     if let Some(kind) = field("notification_type") {
         line.push(' ');
         line.push_str(kind);
     }
+    if let Some(subagent) = subagent {
+        line.push_str(&format!(" {SUBAGENT_KEY}{subagent}"));
+    }
+    if event_name == "SubagentStart"
+        && let Some(kind) = either("agent_type", "agentType").and_then(token)
+    {
+        line.push_str(&format!(" {KIND_KEY}{kind}"));
+    }
+    if subagent.is_none()
+        && event_name == "PreToolUse"
+        && let Some(description) = spawn_description(agent, &payload)
+    {
+        line.push_str(DESCRIPTION_KEY);
+        line.push_str(&description);
+    }
     line.push('\n');
     Ok(line)
 }
 
+/// `value` when it fits in one wire field: short, and only characters ids are made of.
+fn token(value: &str) -> Option<&str> {
+    let fits = !value.is_empty()
+        && value.len() <= MAX_TOKEN
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'));
+    fits.then_some(value)
+}
+
+/// The description a spawn tool call gives its subagent, on one line and cut to
+/// [`MAX_DESCRIPTION`] characters.
+fn spawn_description(agent: Option<AgentId>, payload: &Value) -> Option<String> {
+    let field = |name| payload.get(name);
+    let tool = field("tool_name").or_else(|| field("toolName"))?.as_str()?;
+    if !is_spawn_tool(agent, tool) {
+        return None;
+    }
+    let input = field("tool_input").or_else(|| field("toolArgs"))?;
+    let text = ["description", "name"]
+        .into_iter()
+        .find_map(|key| input.get(key).and_then(Value::as_str))?;
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let line: String = words.join(" ").chars().take(MAX_DESCRIPTION).collect();
+    (!line.is_empty()).then_some(line)
+}
+
 fn parse_line(line: &str) -> Option<HookMessage> {
-    let mut fields = line.split_whitespace();
+    let line = line.trim_end_matches(['\r', '\n']);
+    let (fields, description) = match line.split_once(DESCRIPTION_KEY) {
+        Some((fields, description)) => (fields, Some(description.trim()).filter(|d| !d.is_empty())),
+        None => (line, None),
+    };
+    let mut fields = fields.split_whitespace();
     let session = fields.next()?.parse().ok()?;
     let at = fields.next()?.parse().ok()?;
     let event_name = fields.next()?;
-    let detail = fields.next().map(str::to_owned);
+    let mut report = AgentReport {
+        event_name: event_name.to_owned(),
+        description: description.map(str::to_owned),
+        ..AgentReport::default()
+    };
+    for field in fields {
+        if let Some(subagent) = field.strip_prefix(SUBAGENT_KEY) {
+            report.subagent = Some(subagent.to_owned());
+        } else if let Some(kind) = field.strip_prefix(KIND_KEY) {
+            report.subagent_kind = Some(kind.to_owned());
+        } else if report.detail.is_none() && !field.contains('=') {
+            report.detail = Some(field.to_owned());
+        }
+    }
     Some(HookMessage {
         session,
         at,
-        report: AgentReport {
-            event_name: event_name.to_owned(),
-            detail,
-        },
+        report,
     })
 }
 
@@ -248,11 +358,13 @@ mod tests {
     use workspace_model::agents::{CLAUDE, COPILOT};
 
     use crate::WaitReason;
+    use workspace_model::SubagentEvent;
 
     fn report(event_name: &str, detail: Option<&str>) -> AgentReport {
         AgentReport {
             event_name: event_name.into(),
             detail: detail.map(Into::into),
+            ..AgentReport::default()
         }
     }
 
@@ -367,6 +479,115 @@ mod tests {
             hook_line(None, 7, 1000, br#"{"hookName":"permissionRequest"}"#).unwrap(),
             "7 1000 PermissionRequest\n"
         );
+    }
+
+    #[test]
+    fn subagent_hook_lines_carry_its_id_type_and_spawn_description() {
+        let claude = Some(CLAUDE);
+        // Payloads as Claude Code 2.1.316 sends them (trimmed).
+        let start = br#"{"hook_event_name":"SubagentStart","agent_id":"a75e254eb9c44cedf","agent_type":"general-purpose"}"#;
+        assert_eq!(
+            hook_line(claude, 7, 1000, start).unwrap(),
+            "7 1000 SubagentStart agent=a75e254eb9c44cedf kind=general-purpose\n"
+        );
+        let tool = br#"{"hook_event_name":"PreToolUse","tool_name":"Bash","agent_id":"a75e","agent_type":"Explore","tool_input":{"description":"List"}}"#;
+        assert_eq!(
+            hook_line(claude, 7, 1000, tool).unwrap(),
+            "7 1000 PreToolUse agent=a75e\n",
+            "only spawn calls send a description, and only starts a type"
+        );
+        let spawn = br#"{"hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"description":"  Count\n rust   files ","prompt":"..."}}"#;
+        assert_eq!(
+            hook_line(claude, 7, 1000, spawn).unwrap(),
+            "7 1000 PreToolUse desc=Count rust files\n"
+        );
+        let long = format!(
+            r#"{{"hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{{"description":"{}"}}}}"#,
+            "é".repeat(200)
+        );
+        let line = hook_line(claude, 7, 1000, long.as_bytes()).unwrap();
+        assert_eq!(
+            line.trim_end().rsplit('=').next().unwrap().chars().count(),
+            MAX_DESCRIPTION
+        );
+        let odd_id = br#"{"hook_event_name":"SubagentStop","agent_id":"a b"}"#;
+        assert_eq!(
+            hook_line(claude, 7, 1000, odd_id).unwrap(),
+            "7 1000 SubagentStop\n",
+            "an id that would break the line is left out"
+        );
+    }
+
+    #[test]
+    fn copilot_subagent_start_has_no_event_name() {
+        // Copilot CLI 1.0.105 with PascalCase hooks (trimmed).
+        let start = br#"{"sessionId":"09e4","agentName":"explore","agent_id":"80ab664f-2208","agent_type":"explore","parent_agent_id":"09e4"}"#;
+        let expected = "7 1000 SubagentStart agent=80ab664f-2208 kind=explore\n";
+        assert_eq!(hook_line(Some(COPILOT), 7, 1000, start).unwrap(), expected);
+        assert_eq!(hook_line(None, 7, 1000, start).unwrap(), expected);
+        assert!(hook_line(Some(CLAUDE), 7, 1000, start).is_err());
+        let spawn = br#"{"hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"description":"List files","agent_type":"explore"}}"#;
+        assert_eq!(
+            hook_line(Some(COPILOT), 7, 1000, spawn).unwrap(),
+            "7 1000 PreToolUse desc=List files\n"
+        );
+    }
+
+    #[test]
+    fn parses_subagent_fields() {
+        let message = parse_line("7 1000 SubagentStart agent=a1 kind=Explore\n").unwrap();
+        assert_eq!(message.report.subagent.as_deref(), Some("a1"));
+        assert_eq!(message.report.subagent_kind.as_deref(), Some("Explore"));
+        assert_eq!(message.report.detail, None);
+        let message = parse_line("7 1000 Notification permission_prompt agent=a1\n").unwrap();
+        assert_eq!(message.report.detail.as_deref(), Some("permission_prompt"));
+        assert_eq!(message.report.subagent.as_deref(), Some("a1"));
+        let message = parse_line("7 1000 PreToolUse desc=Count rust files\n").unwrap();
+        assert_eq!(
+            message.report.description.as_deref(),
+            Some("Count rust files")
+        );
+        assert_eq!(message.report.detail, None);
+    }
+
+    #[test]
+    fn subagent_events_decode_by_the_destination_agent() {
+        let line = |text: &str| parse_line(text).unwrap().report;
+        let id = || "a1".to_owned();
+        for agent in [CLAUDE, COPILOT] {
+            assert_eq!(
+                line("7 1 SubagentStart agent=a1 kind=Explore").subagent_event(agent),
+                Some(SubagentEvent::Started {
+                    id: id(),
+                    kind: Some("Explore".into())
+                })
+            );
+            assert_eq!(
+                line("7 1 SubagentStop agent=a1").subagent_event(agent),
+                Some(SubagentEvent::Finished { id: id() })
+            );
+            assert_eq!(
+                line("7 1 PostToolUse agent=a1").subagent_event(agent),
+                Some(SubagentEvent::Active { id: id() })
+            );
+            assert_eq!(
+                line("7 1 Notification permission_prompt agent=a1").subagent_event(agent),
+                Some(SubagentEvent::Waiting { id: id() })
+            );
+            assert_eq!(
+                line("7 1 PreToolUse desc=List files").subagent_event(agent),
+                Some(SubagentEvent::Spawned {
+                    description: "List files".into()
+                })
+            );
+            assert_eq!(line("7 1 PreToolUse").subagent_event(agent), None);
+            assert_eq!(
+                line("7 1 SubagentStart agent=a1").decode(agent),
+                None,
+                "subagent starts leave the main status alone"
+            );
+        }
+        assert_eq!(line("7 1 Stop agent=a1").subagent_event(CLAUDE), None);
     }
 
     #[test]
