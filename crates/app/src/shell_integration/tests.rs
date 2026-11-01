@@ -524,6 +524,9 @@ fn zsh_agent_functions_run_interactive_agents_in_place() {
     let dir = scratch("zsh-agents");
     let zdotdir = dir.join("scripts").join(ZSH_DIR);
     let home = dir.join("home");
+    // Skip the system rc files: a distro's /etc/zsh/zshrc may run compinit, whose
+    // "insecure directories" question would swallow the first typed line.
+    fs::write(home.join(".zshenv"), "unsetopt GLOBAL_RCS\n").unwrap();
     let (_bin, path) = fake_agents(&dir);
     let path = Path::new(&path);
     let env = [
