@@ -28,6 +28,7 @@ mod git;
 mod history;
 mod history_features;
 mod history_shells;
+mod in_place_agent;
 mod instance_lock;
 mod keymap;
 mod lap;
@@ -44,6 +45,7 @@ mod progress;
 mod running;
 mod search;
 mod settings;
+mod subagents;
 mod tab;
 mod tab_list;
 mod tabs_state;
@@ -58,7 +60,8 @@ pub use agents::{
     ActivityPolicy, AgentDefinition, AgentId, AgentIdentity, AgentMode, ArgumentSetting,
     ArtifactFile, BellPrecedence, HOOK_PROGRAM_ENV, HookArtifactKind, HookArtifactPlan,
     HookNamePolicy, HookProtocol, HookSemantic, LaunchPlan, ModeReporting, NoStatusPolicy,
-    Presentation, SessionKind, StatusPolicy, agents, apply_environment,
+    Presentation, SessionKind, StatusPolicy, SubagentHooks, agents, apply_environment,
+    is_spawn_tool, reads_unnamed_subagent_start,
 };
 pub use attention::{Attention, next_attention, waiting_count};
 pub use clipboard_guard::{
@@ -79,6 +82,9 @@ pub use history::{
 pub use history_features::{HistoryFeatures, HistoryKey};
 pub use history_shells::{
     KnownShell, ShellChip, history_chips, shell_key, shell_name, switch_chip,
+};
+pub use in_place_agent::{
+    InPlaceAgent, Leftover, RunEnd, RunEndOutcome, TabAtEnd, in_place_kind_label, shows_exit_toast,
 };
 pub use instance_lock::{held_by_other, lock_pid, lock_text};
 pub use keymap::{
@@ -105,6 +111,7 @@ pub use settings::{
     DependentState, FeatureSwitch, FontSize, Settings, SettingsFile, SettingsLoad, TabCardField,
     TabCardFields, TerminalColors, UiTheme, installed_font_family, settings_backup_path,
 };
+pub use subagents::{Subagent, SubagentEvent, Subagents};
 pub use tab::{TabColor, TabMeta};
 pub use tab_list::{ListMove, list_entry, list_step, listed_tabs};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};

@@ -42,7 +42,9 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::tty::{ChildEvent, EventedPty, EventedReadWrite};
 use polling::{Event as PollingEvent, PollMode, Poller};
 use workspace_model::file_tree::ShellSyntax;
-use workspace_model::{CommandLine, Osc133Scanner, ProgressScanner, ProgressState, PromptMark};
+use workspace_model::{
+    AgentId, CommandLine, Osc133Scanner, ProgressScanner, ProgressState, PromptMark,
+};
 
 /// DECRQM mode numbers used as tags: `TAG_BASE..TAG_BASE + TAG_COUNT`, far from real modes.
 const TAG_BASE: u16 = 61_000;
@@ -89,9 +91,17 @@ pub enum PromptEvent {
     Started(Option<String>),
     /// A command line typed at a tracked prompt is about to run; sent after its `Started`.
     Executed(ExecutedCommand),
-    /// The running command finished (`D` mark): the shell is back at its prompt. Also sent
-    /// for a `D` mark that reports a new folder without a command before it.
-    Finished,
+    /// The running command finished (`D` mark): the shell is back at its prompt, with the
+    /// command's exit status when the shell sent it. Also sent (without a status) for a `D`
+    /// mark that reports a new folder without a command before it, and for a prompt that
+    /// starts while a command runs.
+    Finished(Option<i32>),
+    /// The running command is this agent, started with the tab's hooks (`N` mark); ignored
+    /// when no command runs.
+    AgentStarted(AgentId),
+    /// The agent the `N` mark named exited (`X` mark), with its exit status; the command line
+    /// may go on with other commands. Ignored when no command runs.
+    AgentFinished(Option<i32>),
 }
 
 /// What the user typed at the prompt, as the shell reported it (zsh) or read from the grid.
@@ -191,7 +201,11 @@ impl TrackerState {
         match mark {
             PromptMark::PromptStart | PromptMark::CommandStart => self.start_prompt(mark, tracking),
             PromptMark::CommandExecuted(command) => (self.execute_command(command), None),
-            PromptMark::CommandFinished(folder) => (self.finish_command(folder), None),
+            PromptMark::CommandFinished { folder, exit } => {
+                (self.finish_command(folder, exit), None)
+            }
+            PromptMark::AgentStarted(agent) => (self.name_agent(agent), None),
+            PromptMark::AgentFinished(exit) => (self.finish_agent(exit), None),
             PromptMark::CommandLine(line) => {
                 self.reports_line = line.is_some();
                 self.line = line;
@@ -210,7 +224,7 @@ impl TrackerState {
         if self.phase == Phase::Running {
             self.phase = Phase::Idle;
             self.line = None;
-            events.push(PromptEvent::Finished);
+            events.push(PromptEvent::Finished(None));
         }
         if tracking == PromptTracking::EventsOnly {
             return (events, None);
@@ -237,15 +251,34 @@ impl TrackerState {
         events
     }
 
-    fn finish_command(&mut self, folder: Option<PathBuf>) -> Vec<PromptEvent> {
+    /// The running command is `agent`; ignored when no command runs.
+    fn name_agent(&self, agent: AgentId) -> Vec<PromptEvent> {
+        if self.phase != Phase::Running {
+            return Vec::new();
+        }
+        vec![PromptEvent::AgentStarted(agent)]
+    }
+
+    /// The running command's agent exited; ignored when no command runs.
+    fn finish_agent(&self, exit: Option<i32>) -> Vec<PromptEvent> {
+        if self.phase != Phase::Running {
+            return Vec::new();
+        }
+        vec![PromptEvent::AgentFinished(exit)]
+    }
+
+    fn finish_command(&mut self, folder: Option<PathBuf>, exit: Option<i32>) -> Vec<PromptEvent> {
         let moved = folder.is_some() && folder != self.folder;
         if moved {
             self.folder = folder;
         }
         let was_running = std::mem::replace(&mut self.phase, Phase::Idle);
         self.line = None;
-        if was_running == Phase::Running || moved {
-            return vec![PromptEvent::Finished];
+        if was_running == Phase::Running {
+            return vec![PromptEvent::Finished(exit)];
+        }
+        if moved {
+            return vec![PromptEvent::Finished(None)];
         }
         Vec::new()
     }

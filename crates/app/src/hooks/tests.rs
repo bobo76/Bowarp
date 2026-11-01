@@ -66,9 +66,32 @@ fn attachments_are_provider_driven_and_keep_hooks_before_user_arguments() {
     assert_eq!(copilot.env[PIPE_ENV], hooks.server.pipe_name());
     assert_eq!(copilot.env["AGENTWS_HOOK"], "agentws-hook");
 
+    // A shell without integration gets nothing; with it, the hooks without a launch flag.
     let mut shell = LaunchSpec::shell(None);
     assert_eq!(hooks.attach(13, &mut shell).reporting, HookReporting::None);
     assert!(shell.env.is_empty());
+    shell.mark_token = Some("t0k".into());
+    assert_eq!(hooks.attach(13, &mut shell).reporting, HookReporting::None);
+    assert!(shell.args.is_empty());
+    let shell_plugin = root.join("copilot").join("13");
+    assert_eq!(shell.env[SESSION_ENV], "13");
+    assert_eq!(shell.env[PIPE_ENV], hooks.server.pipe_name());
+    assert_eq!(shell.env["AGENTWS_HOOK"], "agentws-hook");
+    assert_eq!(
+        shell.env["AGENTWS_CLAUDE_SETTINGS"],
+        root.join("claude-settings.json").to_str().unwrap()
+    );
+    assert_eq!(
+        shell.env["AGENTWS_COPILOT_PLUGIN"],
+        shell_plugin.to_str().unwrap()
+    );
+    assert!(!shell.env.contains_key(AGENT_ENV));
+    assert!(shell_plugin.join("hooks.json").is_file());
+    hooks.remove_session(13);
+    assert!(
+        !shell_plugin.exists(),
+        "closing a shell tab removes its plugin"
+    );
 
     let mut claude = agent_spec("claude");
     claude.args = vec!["--settings".into(), "user.json".into()];

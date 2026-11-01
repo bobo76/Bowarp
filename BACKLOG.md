@@ -10,6 +10,49 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Subagent list (Claude Code 2.1.316, Copilot CLI 1.0.105):
+
+- Real Claude Code: a background subagent (`run_in_background`) shows under the tab with its
+  description while the main tab goes Idle, and goes away when it finishes; a subagent's
+  permission prompt turns its row and the count ring orange. Killing a background agent from the
+  task panel removes it (else note it in docs/known-limitations.md).
+- Real Copilot CLI: a sync and a background `task` subagent show and go away; under
+  `--autopilot` its permission requests do not mark it waiting.
+- Windows: the same, with the turning count ring (its digit centered) and the list under the
+  row, folded in and out by clicking the ring.
+
+Agent running in place in a shell tab (from its `N` mark until the command's `D`):
+
+- Windows (Git Bash, PowerShell, WSL): `env` shows `AGENTWS_SESSION`, `AGENTWS_PIPE`,
+  `AGENTWS_HOOK`, `AGENTWS_CLAUDE_SETTINGS`, `AGENTWS_COPILOT_PLUGIN` (WSL: not passed in);
+  the plugin folder goes away when the tab closes.
+- Linux and Windows: real Copilot CLI in place (`ConEmuANSI=ON copilot --plugin-dir
+  "$AGENTWS_COPILOT_PLUGIN"` after the mark): Working spinner from progress, Waiting on a
+  permission prompt, Mode line from the extension; Claude Code in Plan mode via hooks.
+- zsh: the same as bash (mark by hand, status, title back at `D`, exit toast code from
+  `exit=`).
+- Typed `claude` / `copilot` (bash, zsh with oh-my-zsh, Git Bash on Windows): the real agents
+  run in place with status (Copilot's Working spinner needs the `ConEmuANSI=ON` the function
+  sets); `claude; sleep 5` shows teal Running for `sleep` once Claude exits, and a background
+  tab gets one exit toast, at the agent's exit; `claude -p hi`, `claude --version`,
+  `claude mcp list`, `copilot login`, `claude -p hi | cat`, `\claude` and `command claude`
+  run unchanged; a `claude` alias in `~/.bashrc` / `~/.zshrc` is kept.
+- Typed `claude` / `copilot` in PowerShell (pwsh 7 and Windows PowerShell 5.1, Windows and
+  Linux; the pwsh tests only run where pwsh is installed, e.g. the Windows CI): the real
+  `claude.exe`, npm's `claude.ps1` / `claude.cmd` shims and `copilot` run in place with status
+  and see the terminal (a native program run from a function keeps the console); which of
+  `claude.ps1` / `claude.cmd` `Get-Command` picks first; `claude -p hi`, `'hi' | claude -p`,
+  `claude | Out-String`, `claude.exe`, `claude mcp list` run unchanged; a `claude` function
+  in the profile is kept; Ctrl+C in Claude and Copilot (the X mark or the `D` ends the run,
+  `ConEmuANSI` restored); a background tab's exit toast code; D's `exit=` after a failed
+  program, a failed cmdlet and success; an oh-my-posh / starship prompt still shows the
+  failure of the last command (`$?` restored before the user's prompt).
+- Switch "Agent status for agents typed at the prompt" off (Settings → Terminal), then a new
+  zsh (oh-my-zsh), PowerShell (pwsh 7 and 5.1), Git Bash and WSL bash tab: typed `claude` /
+  `copilot` run unchanged with no agent icon, a `claude` alias of your own is untouched,
+  `$AGENTWS_TYPED_AGENTS` / `$env:AGENTWS_TYPED_AGENTS` is unset in the shell; switched back
+  on, the next new tab wraps them again and tabs already open keep their behavior.
+
 Down enters the tab list during a search:
 
 - Linux and Windows: type a search, press Down: the ring shows on the match and F2 renames
@@ -156,34 +199,60 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Idle redraw after tab search (likely bug): once the "Search tabs..." field has had the
-  keyboard, the idle window keeps redrawing (about 22 CPU ticks/s in Xvfb, even after going
-  back to the terminal; a fresh start idles at 0-2). Find what keeps notifying (cursor blink of
-  the unfocused input?) and stop it.
+UX review, Tier 1 ([reviews/ux-review.md](reviews/ux-review.md), numbers are its items):
+
+- Start failures open the window (#15): bad arguments (`main.rs:58`), a folder that isn't a
+  directory (`main.rs:108`) and the shell plus its fallback failing (`main.rs:315`) print to
+  stderr and exit, so on Windows the app seems not to start. A missing folder opens the tab in
+  the home folder with an error toast naming it; a total start failure or bad arguments open
+  the window with an error panel in the terminal area (message or usage, "Open settings",
+  Retry). Keep the stderr lines.
+- Viewer width from the free space (#2): `viewer_width` takes `fraction * row` of the whole
+  window and the terminal keeps only 240 px (`pane_width.rs`), ~28 columns with the sidebar and
+  explorer open. Take the fraction of `row - fixed` and raise `MIN_TERMINAL_WIDTH` to ~60
+  columns (480 px); the viewer minimum (240) still wins in a window too narrow for both. Pure
+  function, unit-tested; saved `file_viewer_fraction` values keep loading.
+- Ask the OS for attention (#11, needs the user's yes): when a tab turns Needs attention or
+  Ready for review while the window isn't active (Settings shown counts as background), call
+  `Window::request_attention` (Windows taskbar flash, X11 urgency; nothing on Wayland). Follows
+  the "In-app notifications" switch; cleared when the window activates. A system notification
+  (`show_system_notification`) is left for later.
+- Restart an exited tab (#17): a "Restart" button on the exit bar, and Enter while the tab has
+  the keyboard, start the same launch spec in the tab's last folder through
+  `replace_tab_session` (as `fall_back_to_shell` does); the tab keeps name, color, group and
+  place, scrollback is cleared (say so in the tooltip), agents restart with their saved
+  arguments (no `--continue`). Hide the cursor on a dead grid.
+- Window title follows the selected tab (#12): "<tab name> — Agent Workspace", prefixed
+  "(N) " while N tabs need attention, "Settings — Agent Workspace" while Settings shows. Set
+  only on selection, rename and status change (today fixed at `workspace_view.rs:385`).
+- Failed exit on the row (#6): Exited is the Quiet grey ring whatever the code
+  (`sidebar.rs:107`). A nonzero or unknown code gets a red ring with a small `×` and
+  "Exited (3)" in the hover card; code 0 keeps the grey ring, raised to >= 3:1 contrast.
+
+UX review, Tier 2 (small polish, one batch):
+
+- Shortcut hints and wording (#29, #28, #8): "Close tab" shows Ctrl+Shift+W
+  (`tab_menu.rs:116`); "Copy pane title" becomes "Copy title" (`tab_menu.rs:94`); "Close
+  explorer" tooltip shows its key (`file_explorer.rs:793`); "Search tabs..." gets a tooltip
+  with Ctrl+Shift+S; all through `shortcuts::with_shortcut` / `menu_label_with_hint`.
+  "Bowarp's history" becomes "the command history" (`settings_page.rs:478`, `:514`); the
+  inline suggestions description (`settings_page.rs:503`) says the last session's command is
+  accepted with Right or End only (Tab doesn't take it, `history_popup.rs:174`); the
+  Keyboard page's '"Copy" in settings.json.' line moves to a tooltip. The hover card's bare
+  "+5" (`sidebar.rs:747`) reads "+5 lines".
+- Settings layout (#25): `SettingsView::sidebar_width(px(200.))` (`settings_page.rs:85`) and
+  a max width on text inputs so the Font family field stays inside the content column.
+- "Hold Shift to select" hint (#19): on the first drag in a mouse-reporting tab per run, an
+  info toast "Hold Shift to select text". One flag.
+
+- Drag group headers to reorder groups (the group menu's Move up / down does it for now).
+- PowerShell: after an app restart, a restored PowerShell tab doesn't show its last command
+  (the restored-tab suggestion that bash, zsh and Git Bash tabs get). Find whether the
+  command is never saved for PowerShell tabs or saved but not offered on restore.
 - Hiding the sidebar (Ctrl+Shift+B) while the search field or a tab name editor has the
   keyboard leaves focus on an element no longer drawn (only the tab list itself hands the
   keyboard back, `toggle_sidebar` checks `is_focused`): check the whole sidebar
   (`contains_focused` plus the search input's focus handle) and focus the terminal.
-- `claude` / `copilot` typed at a shell prompt open an agent tab: instead of running in the
-  shell tab, the command opens a new tab exactly like the `+` menu's "Claude Code" / "Copilot
-  CLI" entry (`open_launcher` in `app/src/workspace_view.rs`, so hooks and status work), in the
-  shell's current folder, and selects it; the shell tab stays at its prompt. Steps:
-  - The shell integration scripts (bash, zsh, PowerShell) define `claude` and `copilot`
-    functions that print a new tokened mark, e.g. `ESC ] 133;N;aw=<token>;agent=claude;
-args=<hex>;cwd=<hex> BEL`, and return 0 without starting the program. `Osc133Scanner`
-    accepts it, `PromptTracker` reports it as a new `PromptEvent`, and `TerminalView` asks
-    `WorkspaceView` to open the agent's launcher with the folder and the arguments
-    (`claude --resume` opens a tab running `claude --resume`).
-  - Run in place, not in a new tab: the non-interactive forms (`-p` / `--print`, `--version`,
-    `--help`, subcommands such as `claude mcp ...` / `claude update`), a command whose stdin or
-    stdout isn't a terminal (`echo x | claude -p`), and `command claude` / `\claude`, which skip
-    the function. Agent not found on `PATH` (no launcher program): run in place, so the shell
-    prints its own "command not found".
-  - Switch "Open agents typed at the prompt in a new tab" (Terminal page, on): when off, the
-    functions aren't defined (the app passes a flag with the token) and typed `claude` /
-    `copilot` run normally. Applies to newly started shells.
-  - A `claude` run in place (`-p` in a script, a nested shell, cmd tabs, which get no functions)
-    gets no hooks and shows "Running for" until it quits. Accepted.
 - Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
   (~60 s); no hook fires on interrupt.
 - Long durations on the sidebar and hover card ("Running for", lap times such as "Working · 2m 14s"):
@@ -220,32 +289,6 @@ args=<hex>;cwd=<hex> BEL`, and return 0 without starting the program. `Osc133Sca
   (`$BUFFER`, `.zshenv` `__agentws_report_line`) excludes it, so the Backspaces leave the
   accepted rest in front of the new command. Send a key that doesn't accept it, or clear
   `POSTDISPLAY` first.
-- Prompt at the bottom ([reference](docs/ui-reference/revers_command_line_order.png)): in a
-  shell tab the prompt stays on the last rows, the HISTORY panel (Up) opens just above it, and
-  the earlier commands and their output sit above the panel. Today a new tab or `clear` puts
-  the prompt at the top and the popup then opens below it. Shell tabs with shell integration
-  only; the alternate screen (vim, less, an agent's TUI) and agent tabs draw as today. Steps:
-  1. Bottom-anchored grid: while the rows below the cursor are empty, `terminal_element`
-     draws the screen shifted down by that many rows (blank space at the top), so the prompt
-     line is the last row. Selection, links, mouse reports, the IME box and the history popup
-     use the same offset (one `row_offset` in the geometry). No pty resize, so output and
-     `tput lines` are unchanged; scrollback and `display_offset` work as before. Unit-test the
-     offset (empty screen, full screen, cursor mid-screen after `tput cup`, alternate screen).
-  2. Docked HISTORY panel: always above the prompt (drop the below-the-prompt placement and
-     `MIN_ROWS_ABOVE`), full terminal width, newest row next to the prompt as now. It pushes
-     the rows above the prompt line up by its height instead of covering them, so the last
-     command's output stays readable right above it; closing it puts them back.
-  3. Command blocks: from the OSC 133 marks, record each finished command's prompt line (as
-     an absolute grid line, kept through scrolling and dropped when it leaves the scrollback),
-     folder and duration (`C` to `D`). Draw a thin separator above each prompt line and the
-     folder and duration ("~/.config/stock-watcher (0.02s)") right-aligned on it, dimmed; a
-     failed exit code tints the separator. A resize that reflows lines drops the blocks.
-     Switches (Terminal page, both on when built, independent): "Prompt at the bottom" (off:
-     today's top-anchored layout; with the history popup off, no docked panel is built) and
-     "Command separators and details" (off: no separators, folder or duration labels, and no
-     command-block metadata recorded).
-     Not planned from the screenshot: the separate input box with the folder chip (the prompt is
-     the shell's own, in the grid) and the panel's "Configure" button.
 - Zoom with Ctrl+scroll, like Windows Terminal: Ctrl+wheel up / down over the terminal makes
   the font bigger / smaller one point per notch (clamped, e.g. 6-48 pt), also Ctrl+= / Ctrl+-
   and Ctrl+0 to reset. Build on the existing terminal font-size setting, re-measuring cells
@@ -283,7 +326,6 @@ args=<hex>;cwd=<hex> BEL`, and return 0 without starting the program. `Osc133Sca
   - Clicking a line selects that tab (expanding the group). The card ticks the lap times while
     it shows (`set_card_clock` for each working tab) and is built only while it shows; no
     card during a drag. Empty groups keep their basic zero-count card.
-- Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - Draw box-drawing and block characters procedurally; font glyphs leave small gaps between rows for heavy/double verticals (`┃`, `║`).
 - Answer OSC 52 clipboard reads (`ESC ] 52;c;? BEL`): refused today by alacritty's default
   `Osc52::OnlyCopy`; writes are already stored.
@@ -309,6 +351,32 @@ args=<hex>;cwd=<hex> BEL`, and return 0 without starting the program. `Osc133Sca
   of every tab started from that entry (restored tabs included). "Automatic" keeps the
   current detection (`shell_icon` / `distro_icon` in `workspace-model/src/launcher_icon.rs`),
   e.g. for a wrapper script that `shell_icon` only sees as `Shell`.
+- Prompt at the bottom ([reference](docs/ui-reference/revers_command_line_order.png)): in a
+  shell tab the prompt stays on the last rows, the HISTORY panel (Up) opens just above it, and
+  the earlier commands and their output sit above the panel. Today a new tab or `clear` puts
+  the prompt at the top and the popup then opens below it. Shell tabs with shell integration
+  only; the alternate screen (vim, less, an agent's TUI) and agent tabs draw as today. Steps:
+  1. Bottom-anchored grid: while the rows below the cursor are empty, `terminal_element`
+     draws the screen shifted down by that many rows (blank space at the top), so the prompt
+     line is the last row. Selection, links, mouse reports, the IME box and the history popup
+     use the same offset (one `row_offset` in the geometry). No pty resize, so output and
+     `tput lines` are unchanged; scrollback and `display_offset` work as before. Unit-test the
+     offset (empty screen, full screen, cursor mid-screen after `tput cup`, alternate screen).
+  2. Docked HISTORY panel: always above the prompt (drop the below-the-prompt placement and
+     `MIN_ROWS_ABOVE`), full terminal width, newest row next to the prompt as now. It pushes
+     the rows above the prompt line up by its height instead of covering them, so the last
+     command's output stays readable right above it; closing it puts them back.
+  3. Command blocks: from the OSC 133 marks, record each finished command's prompt line (as
+     an absolute grid line, kept through scrolling and dropped when it leaves the scrollback),
+     folder and duration (`C` to `D`). Draw a thin separator above each prompt line and the
+     folder and duration ("~/.config/stock-watcher (0.02s)") right-aligned on it, dimmed; a
+     failed exit code tints the separator. A resize that reflows lines drops the blocks.
+     Switches (Terminal page, both on when built, independent): "Prompt at the bottom" (off:
+     today's top-anchored layout; with the history popup off, no docked panel is built) and
+     "Command separators and details" (off: no separators, folder or duration labels, and no
+     command-block metadata recorded).
+     Not planned from the screenshot: the separate input box with the folder chip (the prompt is
+     the shell's own, in the grid) and the panel's "Configure" button.
 - More agents: OpenCode, OpenAI Codex CLI and Gemini CLI (plus Antigravity's CLI if it ships
   as its own program), each integrated like Claude Code / Copilot CLI today. One agent per
   step, each tested; add them to FEATURES.md when picked.
@@ -322,6 +390,10 @@ args=<hex>;cwd=<hex> BEL`, and return 0 without starting the program. `Osc133Sca
     (turn complete only; look for newer hooks), Gemini CLI hooks. Where events are missing,
     fall back to OSC 9;4 progress or the title, like Copilot, and list the gaps in
     docs/known-limitations.md.
+- Idle redraw after tab search (likely bug): once the "Search tabs..." field has had the
+  keyboard, the idle window keeps redrawing (about 22 CPU ticks/s in Xvfb, even after going
+  back to the terminal; a fresh start idles at 0-2). Find what keeps notifying (cursor blink of
+  the unfocused input?) and stop it.
 
 ### Git
 

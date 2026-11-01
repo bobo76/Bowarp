@@ -17,59 +17,59 @@ Items already planned in BACKLOG.md (command palette, light theme softening, ren
 spinner, viewer close shortcut and search, new-tab folder picker, async explorer reads,
 TerminalView caching, extended group card, group drag) are not repeated.
 
+## Validation (2026-11-01, 0.2.56, 873db5f)
+
+Each claim was re-checked against the code 82 commits after the review. Status column:
+**Valid** (claim confirmed in the code), **Unverified** (needs a live check) or **Design** (a
+judgment, no factual claim).
+
+- Built since the review and removed from this file: #1, #9, #13, #14, #21, #24, and the
+  `RenameTab` part of #30.
+- Line references that moved: viewer bounds `pane_width.rs:14,21` (unchanged),
+  `SIDEBAR_WIDTH` `sidebar.rs:27` (drag preview `:268`, `sidebar_rows.rs:58`), Exited color
+  `sidebar.rs:107`, `+N` `sidebar.rs:747`, window title `workspace_view.rs:385`, start
+  failures `main.rs:58`, `:108`, `:315`, watcher errors `folder_watcher.rs:63`, `:175`, tab
+  menu "Copy pane title" / "Close tab" `tab_menu.rs:94`, `:116`, "Close explorer"
+  `file_explorer.rs:793`, settings nav `settings_page.rs:85`, About button `about.rs:33`.
+- #11: `Window::request_attention` and `show_system_notification` exist in gpui-pre 0.3.9.
+- #17: cheaper than estimated: `replace_tab_session` already restarts a tab in place (used by
+  `fall_back_to_shell`, `workspace_view.rs:641`).
+- #23: `file_explorer.rs` has no focus handle at all.
+
 ## Summary
 
-| # | Area | Suggestion | Impact | Cost | Needs the user |
-|---|---|---|---|---|---|
-| 1 | Layout | Hide the file viewer while Settings shows | High | S | no |
-| 2 | Layout | Viewer width from the free space; terminal keeps ~60 columns | High | S | no |
-| 3 | Layout | Make the sidebar resizable, saved like the explorer width | Medium | M | no |
-| 4 | Sidebar | Name shell tabs by command / folder, not `user@host: path` | High | S | yes |
-| 5 | Sidebar | Draw a group rail so group membership is visible | Medium | S | no |
-| 6 | Sidebar | Tell a failed exit from a clean one on the row | Medium | S | no |
-| 7 | Sidebar | Compact row density for many tabs | Medium | M | yes |
-| 8 | Sidebar | Label the hover card's `+N` | Low | S | no |
-| 9 | Sidebar | No hover card while a rename editor or menu is open | Low | S | no |
-| 10 | Sidebar | Prompt redraws shouldn't count as "Recent output" | Low | S | no |
-| 11 | Attention | Taskbar flash / urgency when unfocused and a tab needs you | High | S | yes |
-| 12 | Attention | Window title follows the selected tab and attention count | Medium | S | no |
-| 13 | Attention | Say what the agent waits for in the toast, with the jump key | Low | S | no |
-| 14 | Errors | Show "agent status disabled" in the UI, not only on stderr | High | S | no |
-| 15 | Errors | Start failures open the window with an error, not exit | High | S | no |
-| 16 | Errors | Say when a folder can't be watched (explorer/viewer go stale) | Low | S | no |
-| 17 | Terminal | Restart an exited tab (button + Enter) | Medium | S | no |
-| 18 | Terminal | Close a shell tab on a clean `exit` | Medium | S | yes |
-| 19 | Terminal | One-time "Hold Shift to select" hint under mouse reporting | Low | S | no |
-| 20 | Tabs | Reopen closed tab | Medium | M | yes |
-| 21 | Persistence | Closing the last tab shouldn't wipe the saved workspace | High | S | yes |
-| 22 | Persistence | Restored agent tabs: say it's a new session, start on demand | High | M | yes |
-| 23 | Explorer | Keyboard navigation in the file tree | Medium | M | no |
-| 24 | Explorer | Dim git-ignored entries | Low | M | no |
-| 25 | Settings | Narrow the settings nav, keep inputs inside the row | Medium | S | no |
-| 26 | Settings | Shorten row descriptions to one sentence | Medium | M | no |
-| 27 | Settings | Say when the font family isn't installed | Medium | S | no |
-| 28 | Settings | Wording: "Bowarp", Tab vs last-session text, Keyboard subtitles | Low | S | no |
-| 29 | Shortcuts | All shortcut hints in menus/tooltips; "Copy title" | Low | S | no |
-| 30 | Shortcuts | Actions for rename, pin, move tab, previous tab | Medium | S | no |
-| 31 | Shortcuts | Ctrl+9 selects the last tab | Low | S | yes |
-| 32 | Title bar | Drop the `i` About button (Settings -> About stays) | Low | S | yes |
-| 33 | A11y | Give Running a shape, not only a teal color | Low | S | no |
-| 34 | A11y | A left accent bar on the selected row | Low | S | no |
+| # | Area | Suggestion | Impact | Cost | Needs the user | Status |
+|---|---|---|---|---|---|---|
+| 2 | Layout | Viewer width from the free space; terminal keeps ~60 columns | High | S | no | Valid |
+| 3 | Layout | Make the sidebar resizable, saved like the explorer width | Medium | M | no | Valid |
+| 4 | Sidebar | Name shell tabs by command / folder, not `user@host: path` | High | S | yes | Valid |
+| 5 | Sidebar | Draw a group rail so group membership is visible | Medium | S | no | Design |
+| 6 | Sidebar | Tell a failed exit from a clean one on the row | Medium | S | no | Valid |
+| 7 | Sidebar | Compact row density for many tabs | Medium | M | yes | Design |
+| 8 | Sidebar | Label the hover card's `+N` | Low | S | no | Valid |
+| 10 | Sidebar | Prompt redraws shouldn't count as "Recent output" | Low | S | no | Unverified |
+| 11 | Attention | Taskbar flash / urgency when unfocused and a tab needs you | High | S | yes | Valid |
+| 12 | Attention | Window title follows the selected tab and attention count | Medium | S | no | Valid |
+| 15 | Errors | Start failures open the window with an error, not exit | High | S | no | Valid |
+| 16 | Errors | Say when a folder can't be watched (explorer/viewer go stale) | Low | S | no | Valid |
+| 17 | Terminal | Restart an exited tab (button + Enter) | Medium | S | no | Valid |
+| 18 | Terminal | Close a shell tab on a clean `exit` | Medium | S | yes | Valid |
+| 19 | Terminal | One-time "Hold Shift to select" hint under mouse reporting | Low | S | no | Valid |
+| 20 | Tabs | Reopen closed tab | Medium | M | yes | Valid |
+| 22 | Persistence | Restored agent tabs: say it's a new session, start on demand | High | M | yes | Valid |
+| 23 | Explorer | Keyboard navigation in the file tree | Medium | M | no | Valid |
+| 25 | Settings | Narrow the settings nav, keep inputs inside the row | Medium | S | no | Valid |
+| 26 | Settings | Shorten row descriptions to one sentence | Medium | M | no | Design |
+| 27 | Settings | Say when the font family isn't installed | Medium | S | no | Valid |
+| 28 | Settings | Wording: "Bowarp", Tab vs last-session text, Keyboard subtitles | Low | S | no | Valid |
+| 29 | Shortcuts | All shortcut hints in menus/tooltips; "Copy title" | Low | S | no | Valid |
+| 30 | Shortcuts | Actions for pin, move tab, previous tab | Medium | S | no | Valid |
+| 31 | Shortcuts | Ctrl+9 selects the last tab | Low | S | yes | Valid |
+| 32 | Title bar | Drop the `i` About button (Settings -> About stays) | Low | S | yes | Valid |
+| 33 | A11y | Give Running a shape, not only a teal color | Low | S | no | Valid |
+| 34 | A11y | A left accent bar on the selected row | Low | S | no | Design |
 
 ## Layout, dividers and narrow windows
-
-### 1. Hide the file viewer while Settings shows
-- Problem: the viewer stays beside the Settings page, which then gets what is left. At 1200 px
-  with the explorer and README.md open, Settings is ~240 px wide, one word per line (shot 08).
-  `Render for WorkspaceView` filters the terminal by `shows_page()` but not `viewer`
-  (`workspace_view.rs:1762-1767`).
-- Recommendation: while `shows_page()`, don't render the viewer or its divider (the tab keeps
-  its open file and unsaved edits; it reappears with the tab). One `.filter`, because the
-  viewer belongs to the tab that Settings replaces.
-- Edge cases: "Open settings file" opens `settings.json` in the viewer: it must then close
-  the page (or the file opens out of sight). The explorer also keeps the hidden tab's
-  folder under Settings; keep it (it is a global toggle), but no cd actions apply while
-  Settings shows.
 
 ### 2. Viewer width from the space right of the fixed panes; a real terminal minimum
 - Problem: `viewer_width = fraction * row` uses the whole window (`pane_width.rs:21`), so with
@@ -151,12 +151,6 @@ TerminalView caching, extended group card, group drag) are not repeated.
 - Problem: the card shows a bare green "+5" (`sidebar.rs:712`, shot 04): lines? files?
 - Recommendation: "+5 lines" (or a tooltip "Lines added in the working tree"). One string.
 
-### 9. No hover card over editors and menus
-- Problem: a tab card popped up over the screen while the new group's name was being typed
-  (shot 15); at 640 px a card covers the prompt (shot 13).
-- Recommendation: don't open a card while a rename editor, a context menu or a dialog is open,
-  same as the existing "no card during a drag" rule.
-
 ### 10. "Recent output" for a shell at its prompt
 - Problem: a selected bash tab sitting at its prompt shows "Recent output" (shot 13): the
   prompt redraw counts as output.
@@ -190,24 +184,7 @@ TerminalView caching, extended group card, group drag) are not repeated.
 - Edge cases: Settings shown -> "Settings — Agent Workspace"; a very long tab name is cut
   (taskbars truncate anyway).
 
-### 13. Toast says what the agent waits for
-- Problem: the toast reads "Needs attention" (shot 14) for a permission prompt, a question
-  and a bell alike; it doesn't mention Ctrl+Shift+A.
-- Recommendation: keep the hook's `notification_type` and say "Waiting for permission" /
-  "Waiting for your reply"; bell and clipboard keep "Needs attention". Clicking already selects
-  the tab; add the jump key as a tooltip on the toast. Needs `agent-status` to carry the kind.
-
 ## Error states (Windows release builds have no stderr)
-
-### 14. Agent status disabled must show in the UI
-- Problem: when `agentws-hook` is missing next to the exe or the hook server can't start,
-  `ClaudeHooks::start` fails (`hooks.rs:34-39`) and `main.rs:127` prints to stderr only. On a
-  Windows release build Claude tabs then never show Working / Waiting, and the user reads
-  silence as idle (FEATURES: "Do not treat ... terminal silence as proof that it is idle").
-- Recommendation: the persistent warning used for the shell fallback ("Agent status is off:
-  agentws-hook.exe not found next to the app. Reinstall to fix.") and the agent tabs' card
-  status "Status unavailable" instead of Idle/No recent output.
-- Edge cases: shell-only users get the warning once per start; dismissing hides it for the run.
 
 ### 15. Command-line and first-tab failures open a window
 - Problem: `main.rs:56` (bad arguments), `main.rs:113` (folder not a directory) and
@@ -241,7 +218,7 @@ TerminalView caching, extended group card, group drag) are not repeated.
   the tab on a clean exit (Windows Terminal `closeOnExit: graceful`, GNOME Terminal).
 - Recommendation: shell tab, code 0 -> close the tab (it is not busy, so no warning); nonzero
   -> keep the bar (#17). Needs the user: it changes README "When the program exits, a bar...".
-- Edge cases: the last tab follows #21; agent tabs keep "go on as a shell".
+- Edge cases: the last tab leaves the empty state; agent tabs keep "go on as a shell".
 
 ### 19. "Hold Shift to select" hint
 - Problem: in Claude Code (mouse reporting) a drag selects nothing; the Shift override is
@@ -258,19 +235,6 @@ TerminalView caching, extended group card, group drag) are not repeated.
   a new session in that folder and place. New feature, so it needs the user.
 
 ## Persistence and restore
-
-### 21. Closing the last tab
-- Problem: closing the last tab closes the window (`workspace_view.rs:921-923`) after saving a
-  snapshot with no tabs (`close_window`, `workspace_view.rs:733-735`), so the next start has
-  lost every group, empty group, color and pin.
-- Option A — Keep the window with an empty state: "New tab" buttons for the launchers, "Reopen
-  closed tab" (#20), and the groups still listed. Pros: the workspace survives. Cons: a
-  window that doesn't close on the last Ctrl+Shift+W (VS Code behaves so; Windows Terminal
-  doesn't).
-- Option B — Close the window but keep the previous snapshot when the last tab goes. Pros: no
-  new UI. Cons: a restart restores tabs the user closed on purpose.
-- Option C — Today's behavior.
-- Recommendation: A, because the organization is the app's main value; picked by the user.
 
 ### 22. Restored agent tabs: new session, started on demand (Needs the user)
 - Problem: a restored Claude tab named "PLAN.md remaining work" starts a fresh `claude` with no
@@ -297,12 +261,6 @@ TerminalView caching, extended group card, group drag) are not repeated.
   Ctrl+Shift+| opening the explorer focuses it, Esc returns to the terminal. Keys are local
   to the tree, so no terminal key is taken.
 
-### 24. Dim git-ignored entries
-- Problem: `target/`, `.git/` and the sources look the same (shot 06); in Rust/Node repos
-  the big ignored folders sit among the real ones.
-- Recommendation: dim entries git ignores (one `git check-ignore --stdin` per expanded folder
-  off the UI thread, refreshed with the watcher). Folder order unchanged.
-
 ## Settings
 
 ### 25. Narrower settings nav; inputs inside the row
@@ -326,11 +284,11 @@ TerminalView caching, extended group card, group drag) are not repeated.
   `.`-names).
 
 ### 28. Wording fixes
-- "Bowarp's history" in two descriptions (`settings_page.rs:359`, `:395`): the UI says Agent
+- "Bowarp's history" in two descriptions (`settings_page.rs:478`, `:514`): the UI says Agent
   Workspace everywhere else.
 - "Inline suggestions ... accepted with Right, End or Tab, including the last session's
-  command" (`settings_page.rs:383-385`) vs README:161 "Right or End accepts it; Tab keeps
-  shell completion": one of them is wrong; check the code and align both.
+  command" (`settings_page.rs:503`): Tab accepts history suggestions but not the restored
+  last-session command, which takes Right/End only (`history_popup.rs:174`); README is right.
 - Keyboard page: '"Copy" in settings.json.' under every action (shot 10) is noise; move the
   action id to the row's tooltip.
 
@@ -345,11 +303,11 @@ TerminalView caching, extended group card, group drag) are not repeated.
 - All through `shortcuts::with_shortcut` / `menu_label_with_hint`, so rebinding stays right.
 
 ### 30. Actions for frequent tab gestures
-- Problem: rename, pin, move up/down and "back to the previous tab" have no action, so the
+- Problem: pin, move up/down and "back to the previous tab" have no action, so the
   Keyboard page can't bind them and the palette (PLAN) will have nothing to call.
-- Recommendation: add `RenameTab`, `TogglePin`, `MoveTabUp`, `MoveTabDown`, `PreviousSelected`
+- Recommendation: add `TogglePin`, `MoveTabUp`, `MoveTabDown`, `PreviousSelected`
   (MRU toggle) actions. Defaults: Ctrl+Shift+PageUp / PageDown for move (Chrome, Firefox;
-  not used by shells or TUIs), the rest unbound (F2 would take htop/mc keys).
+  not used by shells or TUIs), the rest unbound.
 - Edge cases: move across group boundaries behaves like the menu's Move up/down.
 
 ### 31. Ctrl+9 = last tab (Needs the user)
@@ -377,17 +335,35 @@ TerminalView caching, extended group card, group drag) are not repeated.
 - Recommendation: a 2 px accent bar at the row's left edge (on the left of the 3 px color
   stripe when the tab has a color), in the theme's accent color.
 
-## Quick wins
+## Priority (re-ranked 2026-11-01)
 
-In priority order (high impact or near-zero cost, small effort):
+High impact and low cost first. Tiers 1 and 2 are in BACKLOG.md (2026-11-01).
 
-1. #1 Hide the viewer while Settings shows.
-2. #14 Agent status disabled shown as a persistent warning.
-3. #15 Start failures open the window with an error instead of exiting.
-4. #2 Viewer width from the remaining space, terminal minimum ~60 columns.
-5. #11 A `request_attention()` when unfocused (after the user's yes).
-6. #12 Window title follows the selected tab.
-7. #6 Failed exit shown on the row.
-8. #29 Missing shortcut hints and "Copy title".
-9. #28 Wording fixes.
-10. #25 Narrower settings nav.
+Tier 1, next (small cost, high impact):
+
+1. #15 Start failures open the window with an error instead of exiting.
+2. #2 Viewer width from the remaining space, terminal minimum ~60 columns (pure function in
+   `workspace-model`).
+3. #11 A `request_attention()` when unfocused (after the user's yes).
+4. #17 Restart an exited tab (`replace_tab_session` does most of it).
+5. #12 Window title follows the selected tab and the attention count.
+6. #6 Failed exit shown on the row.
+
+Tier 2, near-zero cost polish (one batch):
+
+7. #29 + #28 + #8 Shortcut hints, "Copy title", "Bowarp" wording, the settings Tab text,
+   "+N lines".
+8. #25 Narrower settings nav, inputs kept inside the row.
+9. #19 One-time "Hold Shift to select" toast.
+
+Tier 3, worth doing:
+
+10. #4 Shell tab names from command / folder (needs the user).
+11. #30 remainder: pin, move and previous-tab actions (the command palette needs them too).
+12. #5 group rail, #33 Running shape, #34 selected-row accent.
+13. #16 "Not following changes" caption.
+
+Later (M cost or a product decision): #3, #22 (overlaps the parked named-workspaces panel),
+#23, #20, #7, #26, #27, #18, #31, #32, #10.
+
+Decisions for the user: #4, #11, #18, #20, #22, #31, #32.

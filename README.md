@@ -196,16 +196,17 @@ On Unix, every write makes `tabs.json` owner-only (`0600`); on Windows it inheri
 folder's permissions.
 
 These tabs start with a small script that loads your own `~/.bashrc` / zsh startup files /
-PowerShell profile and then marks the prompt (OSC 133); the scripts live in
-`shell-integration/` in the config folder. zsh reads your `.zprofile` and `.zshrc` itself, from
-your own `ZDOTDIR`. The marks carry a per-session token, so output that merely contains such
-marks (a file you `cat`, a remote shell over ssh) is not tracked. bash needs 4.4 or later;
-PowerShell needs PSReadLine. Git Bash's login shell gets the script too, which then loads your
-login files (`/etc/profile`, then `~/.bash_profile`) instead of `~/.bashrc`; so does a WSL
-distro whose login shell is bash (it reports Linux folders as `\\wsl.localhost\<distro>\...`).
-cmd gets no script: its `PROMPT` (yours, else `$P$G`) is prefixed with a mark that reports the
-folder and puts it in the title, so cmd tabs get the folder but no history and no Running
-status.
+PowerShell profile and then marks the prompt (OSC 133); the scripts live in `shell-integration/`
+in the config folder. zsh reads your `.zprofile` and `.zshrc` itself, from your own `ZDOTDIR`.
+The marks carry a per-session token, so output that merely contains such marks (a file you
+`cat`, a remote shell over ssh) is not tracked. The bash, zsh and PowerShell scripts also define
+`claude` and `copilot` (unless switched off), which run the agent in place (below). bash needs
+4.4 or later; PowerShell needs PSReadLine. Git Bash's login shell gets the script too, which
+then loads your login files (`/etc/profile`, then `~/.bash_profile`) instead of `~/.bashrc`; so
+does a WSL distro whose login shell is bash (it reports Linux folders as
+`\\wsl.localhost\<distro>\...`). cmd gets no script: its `PROMPT` (yours, else `$P$G`) is
+prefixed with a mark that reports the folder and puts it in the title, so cmd tabs get the
+folder but no history and no Running status.
 
 The scroll bar sits in the right margin and shows while you scroll or hover it. Drag the
 thumb, or click the track to jump there. It is hidden when there is no history, as on a
@@ -223,6 +224,14 @@ lines added in the working tree (`+N`: changes to tracked files from `git diff H
 files not yet added and not ignored, refreshed at most every 5 s). No card opens while a tab
 is dragged, a name is edited, or a menu or dialog is open; a card hidden that way comes back
 after the pointer leaves the row and hovers it again.
+
+While a Claude Code or Copilot CLI agent runs subagents, its row shows their count in a ring
+after the name: in the Working color, turning only while the list is folded in, or a still
+orange circle while one waits for you. Their list shows under the row: each subagent's
+description (or its type) with a spinner, or a warning mark while it waits for a permission or
+an answer. Click the chevron and ring to fold the list in or out (per tab, not saved). A
+subagent shows from its `SubagentStart` hook to its `SubagentStop`; the tab keeps its own status
+(Idle once the main turn ends, even while background subagents work).
 
 Appearance → Tab hover card controls the card and its Status, Location, Changes, Program
 title and Session kind pieces (all on initially). The tab name and Ctrl+number shortcut
@@ -242,8 +251,10 @@ updates with `COPILOT_AUTO_UPDATE=false` when reproducing these checks.
 
 Each new Copilot tab mounts its own app-owned plugin with the supported
 `--plugin-dir <directory>` option. The plugin registers `PermissionRequest`, `Notification`,
-`PreToolUse`, `PostToolUse` and `PostToolUseFailure` as direct `exec` command hooks, and
-`agentws-hook` forwards them to that tab's local status socket. A permission request is
+`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStart` and `SubagentStop` as
+direct `exec` command hooks, and `agentws-hook` forwards them to that tab's local status
+socket (`SubagentStart` arrives without an event name; a payload with a subagent and a parent
+id is read as one). A permission request is
 **Waiting for permission**; a question (`ask_user`, reported as an `elicitation_dialog`
 notification) is **Waiting for your reply**. Copilot sends most events in the PascalCase/
 snake_case payload, but `PermissionRequest` in its camelCase one (`hookName`), which
@@ -310,7 +321,7 @@ Run the extension's tests with `node --test .\crates\app\copilot-extension\bridg
 | orange, plus a warning triangle before the title | Needs attention |
 | green with a check | Ready for review: finished while you were on another tab (until you select it) |
 | green | Idle |
-| teal, pulsing for the first 10 s | Running: a command typed at the prompt of a bash, zsh or PowerShell tab has run for half a second; the card shows it and how long it has run (`Running for 2:14`, ticking while the card is open; no pulse on a software-rendered GPU) |
+| teal, pulsing for the first 10 s | Running: a command typed at the prompt of a bash, zsh or PowerShell tab has run for half a second (not an agent running in place, which shows its own status); the card shows it and how long it has run (`Running for 2:14`, ticking while the card is open; no pulse on a software-rendered GPU) |
 | light grey | Recent output (shell or Copilot) |
 | none | No recent output |
 | none | Status unavailable (agent status off): a quiet Claude Code tab while the status hooks could not start |
@@ -320,14 +331,49 @@ Ready for review marks an unread Working-to-Idle transition, not confirmation th
 agent's work is correct. Selecting the tab acknowledges it and restores Idle; a turn that
 finishes in the selected tab stays Idle. New Working or Needs attention reports replace
 the unread status. The sidebar, tab hover card, group totals and completion toast use the
-same status; there is no extra completion notice.
+same status; there is no extra completion notice. When an agent running in place in a shell
+tab exits, a pending Ready for review stays until you select the tab.
 
 A tab whose program rings the bell (BEL: Copilot, scripts, anything without status hooks)
 while you are on another tab shows Needs attention until you select it. Claude Code tabs with
-hooks ignore the bell, since their hooks already report it.
+hooks, and Claude Code running in place in a shell tab, ignore the bell, since their hooks
+already report it.
 
-Background Claude Code and Copilot tabs show an in-app toast when they need attention, finish
-a turn, or exit (an unsuccessful exit includes its code when available). An attention toast
+An agent can also run in place in a bash, zsh or PowerShell tab: `claude` or `copilot` typed at
+the prompt starts with the tab's status hooks and gets the status, attention, toasts and mode of
+a tab from the `+` menu. While it runs, the row shows the agent's icon and the hover card names
+both ("Claude Code in bash"); when it exits, the tab is a shell tab again with its earlier title
+(a command after it on the same line, as in `claude; make`, shows as a running shell command),
+and it is saved, restored and duplicated as the shell. One-shot runs (`claude -p`, `--version`,
+`--help`, subcommands such as `claude mcp` or `copilot login`), runs whose input or output isn't
+the terminal (`claude -p hi | less`), Claude runs with your own `--settings`, and `command
+claude` or `\claude` run the program unchanged. An alias of your own that starts with the agent
+(`alias claude='claude --dangerously-skip-permissions'`) gets the status too; other `claude` /
+`copilot` aliases and functions of your own are kept as they are; to give them the status, start
+the agent in them after the agent mark, with the hooks: `printf '\e]133;N;aw=%s;agent=claude\a'
+"$__agentws_token"; command claude --settings "$AGENTWS_CLAUDE_SETTINGS"` (Copilot:
+`agent=copilot`, `ConEmuANSI=ON command copilot --plugin-dir "$AGENTWS_COPILOT_PLUGIN"`); the
+status then lasts until the command line ends. In PowerShell, `claude` and `copilot` are
+functions that run the program PowerShell finds on PATH (`claude.exe`, or npm's `claude.ps1` /
+`claude.cmd`); the same runs are left unchanged (pipeline input such as `'hi' | claude -p`
+included), the exit status stays in `$LASTEXITCODE`, and an alias of your own that points at
+the agent (`Set-Alias claude C:\tools\claude.exe`) gets the status too, running its target.
+Other aliases and functions from your profile are kept; to give them the status, start the
+agent in them after the agent mark, with the hooks:
+`[Console]::Write("$([char]27)]133;N;aw=$__agentws_token;agent=claude$([char]7)"); claude.exe
+--settings $env:AGENTWS_CLAUDE_SETTINGS @args` (Copilot: `agent=copilot`,
+`$env:ConEmuANSI = 'ON'`, `copilot.exe --plugin-dir $env:AGENTWS_COPILOT_PLUGIN`). To run
+the program unchanged, type its file name (`claude.exe`,
+`claude.cmd`) or `& (Get-Command claude -CommandType Application -TotalCount 1)`.
+Settings → Terminal → "Agent status for agents typed at the prompt" (on by default) turns
+this off: shells started afterwards don't get the `claude` and `copilot` wrappers, so typed
+agents run unchanged, without status, and your own aliases are left alone; shells already
+running keep what they started with.
+
+Background Claude Code and Copilot tabs, and agents running in place in a shell tab, show an
+in-app toast when they need attention, finish a turn, or exit (an unsuccessful exit includes
+its code when available; for an agent in place, the shell exiting mid-run counts as its
+exit). An attention toast
 says what the agent waits for: "Waiting for permission", "Waiting for your reply", or "Needs
 attention" after a bell; hovering its text shows the key that goes to the next tab needing
 attention (nothing while that action has no key). Background means the terminal is hidden:
@@ -347,9 +393,9 @@ as the agent's own name for the conversation), move up / down, close, and a colo
 Closing a busy tab asks first: one where a shell command or a program started at the prompt
 (such as vim) still runs, or whose agent is Working or waiting for an answer. Closing several
 tabs (a group's, other tabs, tabs below) or the window asks once, listing every busy tab.
-Close (Enter) goes ahead, Cancel (Escape) keeps everything open. Idle prompts, idle agents and
-exited programs close without a question. The question is a safeguard, not a notification:
-no setting turns it off.
+Close (Enter) goes ahead, Cancel (Escape) keeps everything open. Idle prompts, idle agents
+(also one running in place in a shell tab) and exited programs close without a question. The
+question is a safeguard, not a notification: no setting turns it off.
 
 ## Search and attention
 
@@ -547,6 +593,12 @@ These words follow the app's own arguments, including Claude's hooks `--settings
 explorer agent launches always use the current setting (Ctrl+Shift+T still opens the default
 shell). Existing, duplicated and restored tabs keep their original argument vector, saved
 in `tabs.json`; changing the setting only affects new launches.
+
+The Terminal page's "Agent status for agents typed at the prompt" switch
+(`typed_agent_status`, on by default) decides whether `claude` and `copilot` typed in a bash,
+zsh or PowerShell tab run in place with the tab's status (see Tab rows). It applies to
+shells started after the change; tabs already open keep their shell's behavior until they are
+restarted.
 
 Hover-card settings are saved as independent booleans, for example:
 

@@ -2,15 +2,18 @@
 # Loads the user's ~/.bashrc first (as bash would without --rcfile), then marks the prompt with
 # OSC 133 so the app knows where the command line starts and when a command runs:
 # A prompt start, B command start (end of PS1), C command executed (PS0, with the command line
-# as bash saved it to its history), D command finished (with the shell's folder). Each mark
-# carries the session's token (AGENTWS_MARK_TOKEN), so the app ignores marks printed by
-# programs. Needs bash 4.4 (PS0). With AGENTWS_BASH_LOGIN set (Git Bash, whose shortcut starts
-# a login shell, which ignores --rcfile, and WSL, which starts one too) it loads the login files
-# instead of ~/.bashrc.
+# as bash saved it to its history), D command finished (with its exit status and the shell's
+# folder). Each mark carries the session's token (AGENTWS_MARK_TOKEN), so the app ignores marks
+# printed by programs; it stays in $__agentws_token, which the `claude` and `copilot` functions
+# (agentws-agents.sh, defined only when AGENTWS_TYPED_AGENTS is 1) need for their marks too.
+# Needs bash 4.4 (PS0). With AGENTWS_BASH_LOGIN set (Git Bash, whose shortcut starts a login
+# shell, which ignores --rcfile, and WSL, which starts one too) it loads the login files instead
+# of ~/.bashrc.
 
 __agentws_token=${AGENTWS_MARK_TOKEN-}
 __agentws_login=${AGENTWS_BASH_LOGIN-}
-unset AGENTWS_MARK_TOKEN AGENTWS_BASH_LOGIN
+__agentws_typed_agents=${AGENTWS_TYPED_AGENTS-}
+unset AGENTWS_MARK_TOKEN AGENTWS_BASH_LOGIN AGENTWS_TYPED_AGENTS
 
 if [ -n "$__agentws_login" ]; then
     if [ -f /etc/profile ]; then
@@ -74,7 +77,7 @@ if [ -z "${__agentws_loaded-}" ] && [ -n "$__agentws_token" ] &&
         if [ "$PWD" != "${__agentws_pwd-}" ]; then
             __agentws_update_cwd
         fi
-        printf '\e]133;D;aw=%s%s\a' "$__agentws_token" "$__agentws_cwd"
+        printf '\e]133;D;aw=%s;exit=%s%s\a' "$__agentws_token" "$status" "$__agentws_cwd"
         __agentws_histcmd=$HISTCMD
         return "$status"
     }
@@ -113,6 +116,11 @@ if [ -z "${__agentws_loaded-}" ] && [ -n "$__agentws_token" ] &&
     fi
     # PS0 is printed after a command line is read, before it runs.
     PS0='$(__agentws_ps0)'"${PS0-}"
+    # `claude` and `copilot` with the tab's hooks, after the user's own aliases and functions.
+    if [ "$__agentws_typed_agents" = 1 ] && [ -f "${BASH_SOURCE[0]%/*}/agentws-agents.sh" ]; then
+        . "${BASH_SOURCE[0]%/*}/agentws-agents.sh"
+    fi
 else
     unset __agentws_token
 fi
+unset __agentws_typed_agents

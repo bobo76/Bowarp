@@ -4,12 +4,16 @@
 //! prompt: `A` where the prompt starts, `B` where the command line starts (right after the
 //! prompt), `C` when a command is about to run (with the command line, `cmd=<hex>`) and `D`
 //! when it finished (with the shell's folder, `cwd=<hex>`, or for cmd.exe, which cannot print
-//! hex, `path=<text>` as the last parameter, a Windows path possibly holding `;`). zsh also
-//! reports the command line while it is edited: `L` with `cur=<characters before the
-//! cursor>;buf=<hex>`, plus `post=1` when zsh shows text after it (zsh-autosuggestions). The
-//! token is random per session ([`new_mark_token`]) and only the injected script knows it, so
-//! marks in a program's output (a `cat`ed file, a remote shell's integration over ssh) are
-//! ignored.
+//! hex, `path=<text>` as the last parameter, a Windows path possibly holding `;`; bash and zsh
+//! add the command's exit status, `exit=<n>`). zsh also reports the command line while it is
+//! edited: `L` with `cur=<characters before the cursor>;buf=<hex>`, plus `post=1` when zsh
+//! shows text after it (zsh-autosuggestions). `N` with `agent=<id>` (`claude`, `copilot`) says
+//! the running command is that agent, started with the tab's hooks: the tab shows its status
+//! until `X` (with the agent's `exit=<n>`), which the `claude` / `copilot` shell functions print
+//! when the agent exits, else until the command's `D`. The token is random per session
+//! ([`new_mark_token`]) and only the injected script knows it (it keeps it in a shell variable,
+//! not exported), so marks in a program's output (a `cat`ed file, a remote shell's integration
+//! over ssh) are ignored.
 //!
 //! The terminal emulator ignores these, so the pty reader looks for them with
 //! [`Osc133Scanner`], which keeps its state across reads so a mark split over two reads is
@@ -19,6 +23,8 @@
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::AgentId;
 
 /// The command line being edited, as the shell reported it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -41,8 +47,16 @@ pub enum PromptMark {
     /// send it (too long, or left out of the shell's own history).
     CommandExecuted(Option<String>),
     /// `D`: the command finished (or the prompt was redrawn without running one), with the
-    /// shell's folder when the script sent it.
-    CommandFinished(Option<PathBuf>),
+    /// shell's folder and the command's exit status when the script sent them.
+    CommandFinished {
+        folder: Option<PathBuf>,
+        exit: Option<i32>,
+    },
+    /// `N`: the running command is this agent, started with the tab's hooks.
+    AgentStarted(AgentId),
+    /// `X`: the agent the `N` mark named exited, with its exit status when the script sent it;
+    /// the command line may go on running other commands.
+    AgentFinished(Option<i32>),
     /// `L` (zsh): the command line as it is edited; `None` when it was too long to send.
     CommandLine(Option<CommandLine>),
 }
@@ -61,6 +75,8 @@ const FOLDER_KEY: &[u8] = b"cwd";
 const CURSOR_KEY: &[u8] = b"cur";
 const BUFFER_KEY: &[u8] = b"buf";
 const POST_KEY: &[u8] = b"post";
+const EXIT_KEY: &[u8] = b"exit";
+const AGENT_KEY: &[u8] = b"agent";
 /// Kept of a mark's payload: the scripts send command lines of up to 4096 bytes, hex-encoded.
 const MAX_PAYLOAD: usize = 8192 + 256;
 /// Kept of a CSI's parameters: enough for `?2026`.
@@ -221,6 +237,8 @@ struct Params<'a> {
     cursor: Option<&'a [u8]>,
     buffer: Option<&'a [u8]>,
     path: Option<&'a [u8]>,
+    exit: Option<&'a [u8]>,
+    agent: Option<&'a [u8]>,
     post: bool,
 }
 
@@ -258,8 +276,16 @@ impl<'a> Params<'a> {
             CURSOR_KEY => self.cursor = Some(value),
             BUFFER_KEY => self.buffer = Some(value),
             POST_KEY => self.post = value == b"1",
+            EXIT_KEY => self.exit = Some(value),
+            AGENT_KEY => self.agent = Some(value),
             _ => {}
         }
+    }
+
+    /// The `exit=<n>` status, when sent and a number.
+    fn exit(&self) -> Option<i32> {
+        self.exit
+            .and_then(|value| std::str::from_utf8(value).ok()?.parse().ok())
     }
 
     fn into_mark(self, letter: u8, truncated: bool) -> Option<PromptMark> {
@@ -279,8 +305,16 @@ impl<'a> Params<'a> {
                     .path
                     .filter(|path| !truncated && !path.is_empty())
                     .and_then(|path| String::from_utf8(path.to_vec()).ok());
-                PromptMark::CommandFinished(text(self.folder).or(path).map(PathBuf::from))
+                PromptMark::CommandFinished {
+                    folder: text(self.folder).or(path).map(PathBuf::from),
+                    exit: self.exit(),
+                }
             }
+            b'N' => {
+                let agent = std::str::from_utf8(self.agent?).ok()?;
+                PromptMark::AgentStarted(AgentId::from_cli_selector(agent)?)
+            }
+            b'X' => PromptMark::AgentFinished(self.exit()),
             b'L' => {
                 let cursor = self
                     .cursor

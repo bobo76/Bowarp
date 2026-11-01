@@ -5,6 +5,47 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Claude Code and Copilot CLI tabs show their running subagents: their count in a ring after the
+  tab name (turning while the list is folded in, orange while one waits for you) and their list
+  under the row (description or type, a warning mark while waiting); click the ring to fold the
+  list. The tab's own status is unchanged.
+
+
+## 0.2.57
+
+- Add the switch "Agent status for agents typed at the prompt" (Settings, Terminal, Agents at
+  the prompt; on by default): off, `claude` and `copilot` typed in bash, zsh and PowerShell
+  tabs run as plain programs, without agent status. Applies to newly started shells.
+
+## 0.2.56
+
+- Typing `claude` or `copilot` in a PowerShell or Windows PowerShell tab now runs the agent in
+  place with its status, attention and toasts, as in bash and zsh tabs. One-shot and piped
+  runs, and `claude --settings ...`, run unchanged; type `claude.exe` (or `.cmd`) to skip it.
+  An alias of yours that points at the agent program gets the status too; your own functions
+  are kept as they are.
+- PowerShell tabs now report each command's exit status, so the exit toast of an agent run in
+  place shows its code, and your own prompt (oh-my-posh, starship) sees the real last status.
+
+## 0.2.55
+
+- Typing `claude` or `copilot` at a bash or zsh tab's prompt now runs the agent in place with
+  its status, attention and toasts; the tab is a shell tab again as soon as the agent exits,
+  so `claude; make` shows `make` as a running command. Your own alias starting with `claude` /
+  `copilot` gets the status too; other aliases and functions are kept as they are.
+- One-shot and piped runs (`claude -p`, `--version`, `--help`, subcommands such as
+  `claude mcp`, `echo x | claude -p`), `claude --settings ...`, `command claude` and `\claude`
+  run unchanged, without agent status.
+
+## 0.2.54
+
+- Show agent status in place in bash and zsh tabs: Claude Code or Copilot CLI started with
+  the tab's hook settings after the agent mark (see README) gets the agent's icon, status,
+  hover card, attention and toasts; the tab is a plain shell tab again when the command ends.
+  Typing plain `claude` / `copilot` will do this in a later version.
+- Shell tabs now get the hook variables (`AGENTWS_CLAUDE_SETTINGS`,
+  `AGENTWS_COPILOT_PLUGIN`, ...) in their environment.
+
 ## 0.2.53
 
 - Down in "Search tabs..." now moves the keyboard into the tab list while a search is typed

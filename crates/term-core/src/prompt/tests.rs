@@ -185,14 +185,14 @@ fn running_commands_are_reported_from_start_to_finish() {
         [PromptEvent::Started(Some("sleep 5".into()))]
     );
     harness.feed(PROMPT.as_bytes());
-    assert_eq!(harness.take_running_events(), [PromptEvent::Finished]);
+    assert_eq!(harness.take_running_events(), [PromptEvent::Finished(None)]);
     // A command left out of the history runs without its command line.
     harness.feed(b" secret\r\n\x1b]133;C;aw=t0k\x07");
     assert_eq!(harness.take_running_events(), [PromptEvent::Started(None)]);
     harness.feed(PROMPT.as_bytes());
     // Another D mark without a command in between, as after Ctrl+C at the prompt.
     harness.feed(PROMPT.as_bytes());
-    assert_eq!(harness.take_running_events(), [PromptEvent::Finished]);
+    assert_eq!(harness.take_running_events(), [PromptEvent::Finished(None)]);
     // Two C marks (a pasted line, PowerShell's multi-line input), then one D mark.
     harness.feed(format!("{}{}", executed("a"), executed("b")).as_bytes());
     harness.feed(PROMPT.as_bytes());
@@ -201,7 +201,7 @@ fn running_commands_are_reported_from_start_to_finish() {
         [
             PromptEvent::Started(Some("a".into())),
             PromptEvent::Started(Some("b".into())),
-            PromptEvent::Finished,
+            PromptEvent::Finished(None),
         ]
     );
 }
@@ -215,7 +215,7 @@ fn a_command_before_the_first_prompt_runs_until_the_prompt() {
         [PromptEvent::Started(Some("make".into()))]
     );
     harness.feed(PROMPT.as_bytes());
-    assert_eq!(harness.take_running_events(), [PromptEvent::Finished]);
+    assert_eq!(harness.take_running_events(), [PromptEvent::Finished(None)]);
 }
 
 #[test]
@@ -226,10 +226,64 @@ fn a_prompt_without_a_d_mark_finishes_the_command() {
     harness.feed(format!("{PROMPT}sleep 5{}", executed("sleep 5")).as_bytes());
     harness.take_running_events();
     harness.feed(prompt.as_bytes());
-    assert_eq!(harness.take_running_events(), [PromptEvent::Finished]);
+    assert_eq!(harness.take_running_events(), [PromptEvent::Finished(None)]);
     // The next command line is tracked as usual.
     harness.feed(b"ls");
     assert_eq!(harness.input().map(|input| input.text), Some("ls".into()));
+}
+
+#[test]
+fn an_agent_mark_names_the_running_command_until_its_d_mark() {
+    use workspace_model::agents::CLAUDE;
+    const AGENT: &str = "\x1b]133;N;aw=t0k;agent=claude\x07";
+    let mut harness = Harness::new(40, 5);
+    // At the prompt no command runs: nothing to name.
+    harness.feed(format!("{PROMPT}{AGENT}").as_bytes());
+    assert!(harness.take_running_events().is_empty());
+    harness.feed(format!("claude{}{AGENT}", executed("claude")).as_bytes());
+    assert_eq!(
+        harness.take_running_events(),
+        [
+            PromptEvent::Started(Some("claude".into())),
+            PromptEvent::AgentStarted(CLAUDE),
+        ]
+    );
+    // Ctrl+C: the shell reports the status with its D mark.
+    harness.feed(b"\x1b]133;D;aw=t0k;exit=130\x07\x1b]133;A;aw=t0k\x07$ \x1b]133;B;aw=t0k\x07");
+    assert_eq!(
+        harness.take_running_events(),
+        [PromptEvent::Finished(Some(130))]
+    );
+    // A status on a D mark that ends no command is not reported.
+    harness.feed(b"\x1b]133;D;aw=t0k;exit=1\x07");
+    assert!(harness.take_running_events().is_empty());
+}
+
+#[test]
+fn an_agent_end_mark_is_reported_while_the_command_runs() {
+    use workspace_model::agents::CLAUDE;
+    const AGENT: &str = "\x1b]133;N;aw=t0k;agent=claude\x07";
+    const END: &str = "\x1b]133;X;aw=t0k;exit=3\x07";
+    let mut harness = Harness::new(40, 5);
+    // At the prompt no command runs: nothing ends.
+    harness.feed(format!("{PROMPT}{END}").as_bytes());
+    assert!(harness.take_running_events().is_empty());
+    let line = "claude; make";
+    harness.feed(format!("{line}{}{AGENT}{END}", executed(line)).as_bytes());
+    assert_eq!(
+        harness.take_running_events(),
+        [
+            PromptEvent::Started(Some(line.into())),
+            PromptEvent::AgentStarted(CLAUDE),
+            PromptEvent::AgentFinished(Some(3)),
+        ]
+    );
+    // `make` goes on until the command line's D mark.
+    harness.feed(b"\x1b]133;D;aw=t0k;exit=0\x07");
+    assert_eq!(
+        harness.take_running_events(),
+        [PromptEvent::Finished(Some(0))]
+    );
 }
 
 #[test]
@@ -239,7 +293,7 @@ fn the_folder_reported_at_each_prompt_is_kept() {
     // "/home" at the first prompt: news, though no command ran.
     harness.feed(b"\x1b]133;D;aw=t0k;cwd=2f686f6d65\x07");
     assert_eq!(harness.tracker.folder(), Some(PathBuf::from("/home")));
-    assert_eq!(harness.take_running_events(), [PromptEvent::Finished]);
+    assert_eq!(harness.take_running_events(), [PromptEvent::Finished(None)]);
     // The same folder again, or none sent: nothing to report, the folder stays.
     harness.feed(b"\x1b]133;D;aw=t0k;cwd=2f686f6d65\x07\x1b]133;D;aw=t0k\x07");
     assert!(harness.take_running_events().is_empty());
@@ -256,7 +310,7 @@ fn without_the_hold_commands_are_reported_but_not_the_prompt() {
         [PromptEvent::Started(Some("sleep 5".into()))]
     );
     harness.feed(PROMPT.as_bytes());
-    assert_eq!(harness.take_running_events(), [PromptEvent::Finished]);
+    assert_eq!(harness.take_running_events(), [PromptEvent::Finished(None)]);
     harness.feed(b"ls");
     assert_eq!(harness.input(), None);
     assert!(harness.commands().is_empty());

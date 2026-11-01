@@ -8,6 +8,7 @@ mod tab_card;
 mod tab_list;
 mod tab_search;
 
+use std::collections::HashSet;
 use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -266,6 +267,8 @@ pub struct WorkspaceView {
     /// then, in case a platform still draws a hidden window.
     window_visible: bool,
     spinner_clock: SpinnerClock,
+    /// Tabs whose subagent list the user folded in; others show it (not saved).
+    folded_subagents: HashSet<u64>,
     explorer: Entity<FileExplorer>,
     /// The "close busy tabs?" question is open (it is never asked twice at once).
     close_question_open: bool,
@@ -402,6 +405,7 @@ impl WorkspaceView {
             pulse_running: sidebar::pulse_allowed(window),
             window_visible: window.is_visible(),
             spinner_clock: SpinnerClock::default(),
+            folded_subagents: HashSet::new(),
             explorer,
             close_question_open: false,
             explorer_visible: false,
@@ -523,6 +527,9 @@ impl WorkspaceView {
     ) -> io::Result<(Entity<TerminalView>, [Subscription; 5])> {
         let session_id = self.next_session_id;
         let mut launch = spec.clone();
+        // First: a shell with integration also gets the agents' hooks.
+        let typed_agents = settings_file::settings(cx).typed_agent_status.is_on();
+        shell_integration::attach(&mut launch, typed_agents);
         let attachment = self.hooks.as_ref().map_or_else(Default::default, |hooks| {
             hooks.attach(session_id, &mut launch)
         });
@@ -533,7 +540,6 @@ impl WorkspaceView {
         };
         let diagnostics = attachment.diagnostics;
         let shell_key = launcher::shell_key(&self.launchers, spec);
-        shell_integration::attach(&mut launch);
         let view = TerminalView::spawn(session_id, &launch, reporting, shell_key, cx).inspect_err(
             |_| {
                 if let Some(hooks) = &self.hooks {
@@ -1027,6 +1033,7 @@ impl WorkspaceView {
 
     fn remove_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let tab = self.tabs.remove(index);
+        self.folded_subagents.remove(&tab.id);
         if let Some(hooks) = &self.hooks {
             hooks.remove_session(tab.view.read(cx).id());
         }

@@ -101,6 +101,9 @@ directly to model APIs.
 - Mark a tab that rang the bell, or whose long shell command finished (or failed), while
   it was not selected, until it is viewed.
 - Read agent status from the CLI's own hooks without changing the user's CLI settings.
+- Give an agent typed at a shell tab's prompt (`claude`, `copilot`) the status, attention and
+  notifications of an agent tab until it exits, then show the tab as a shell again (shell
+  integration).
 - Show aggregate status on collapsed groups, such as the number of working
   sessions, running shell commands and sessions needing attention.
 - Make sessions needing attention easy to locate and select.
@@ -141,6 +144,8 @@ directly to model APIs.
   file links in the terminal are offered to the system's own application instead.
 - Let the user turn off in-app notifications for agent events; status and attention badges
   stay, and a crashed agent, failures and warnings are still shown.
+- Let the user turn off agent status for `claude` / `copilot` typed at a shell prompt: shells
+  started afterwards run them unchanged (no wrappers), shells already running keep theirs.
 
 ## Optional Behavior
 

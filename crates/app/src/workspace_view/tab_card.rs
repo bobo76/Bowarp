@@ -10,7 +10,9 @@ use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::{
     Anchor, AnyElement, App, AppContext, Context, IntoElement, Styled, Task, Window, div,
 };
-use workspace_model::{TabCardField, display_path, lines_added, until_next_second};
+use workspace_model::{
+    TabCardField, display_path, in_place_kind_label, lines_added, until_next_second,
+};
 
 use super::WorkspaceView;
 use crate::launcher;
@@ -302,9 +304,13 @@ impl WorkspaceView {
                         .map(|_| view.name().to_string().into())
                 })
                 .flatten(),
-            kind: fields.keep(TabCardField::SessionKind, || view.kind()),
+            kind: fields.keep(TabCardField::SessionKind, || view.status_kind()),
             kind_label: fields.keep(TabCardField::SessionKind, || {
-                launcher::default_name(&tab.spec).into()
+                let name = launcher::default_name(&tab.spec);
+                match view.in_place_agent() {
+                    Some(agent) => in_place_kind_label(agent, &name).into(),
+                    None => name.into(),
+                }
             }),
             lines_added: fields
                 .keep(TabCardField::Changes, || {

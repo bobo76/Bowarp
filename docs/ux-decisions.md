@@ -71,12 +71,69 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
 - **Working spinner** (Copilot; Claude Code only while a custom name hides its animated
   title glyph, so never two animations): a rotating Lucide `LoaderCircle` in the attention
   triangle's slot, Working color, row only (cards, drag preview and collapsed groups stay
-  static); the title shifts like it does for the triangle. With "Activity animations" off it
+  static); the title shifts like it does for the triangle. Two animations in one row are
+  allowed (e.g. the working spinner and the subagent ring) [user, 2026-11-01, less annimations is better]. With "Activity animations" off it
   is the same icon, still. One shared `SpinnerClock` (`workspace_view/spinner_clock.rs`)
   steps it, and only while a turning spinner is drawn. [user: redraw rate and shared clock]
 - **"Status unavailable"** (agent hooks failed): Claude tabs only, replacing "No recent
   output"; "Recent output" stays. Looks and counts like Quiet (no badge, not in attention or
   group chips). Copilot tabs are unchanged (their status comes from the CLI). [UX agent]
+- **In-place agent in a shell tab** (agent mark until its end mark, which the typed `claude` /
+  `copilot` functions print when the agent exits, else the command's `D`): while it runs the
+  tab looks and notifies exactly like a `+` menu agent tab (agent icon, status chip with lap
+  time, Mode line, attention, toasts, bell ignored for Claude, idle agent closes without a
+  question, no teal Running badge or "Running for" line); the card's kind line names both
+  ("Claude Code in bash") since restore starts the shell. The name stays title-derived; at
+  the run's end the title from before the run comes back (agents may leave theirs, glyph
+  included) and the shell's own title, if it sets one, wins as usual. [UX agent]
+- **When the in-place run ends** (the end mark, else `D`, or the shell itself exiting) in a
+  background tab, the agent-tab exit toast fires with the same rule (code when unsuccessful,
+  none after a clean exit with a Ready for review pending); nothing while selected. A pending
+  Ready for review is kept until the tab is selected (the unread turn is still on screen),
+  while Needs attention from the agent (Waiting, bell) is cleared: nothing waits any more, the
+  toast says why. The shell exiting mid-run ends as a plain Exited shell tab (shell icon, hollow
+  ring), no other special state. Rejected: shell-style silence, which loses a crashed
+  agent in a background tab. A second agent mark in the same command switches to the new
+  agent silently, as a new turn would (no exit code exists between marks, the run's end
+  still toasts at `D`); the title from before the first agent is the one put back. With the
+  end mark, the rest of the line (`claude; make`) is a shell command again: teal Running once
+  it has run for the usual delay, timed from the end mark, and the later `D` neither toasts
+  nor changes anything else: the agent's time is already in its status lap, and counting
+  it would show a long-running `make` the instant the agent exits. A leftover Ready for
+  review outranks later shell activity (Running, Recent output) until the tab is selected, as
+  on an agent tab; a bell still outranks it. [UX agent]
+- **The user's own `claude` / `copilot` alias** is wrapped when its expansion starts with the
+  agent's own name (or `command` + name): that first word becomes the in-place function and
+  the rest is kept as written, so the common `alias claude='claude --some-flag'` gets the
+  status instead of silently losing it. Any other alias, and every user function, is kept
+  untouched (README says how to add the mark by hand). Rejected: rewriting arbitrary
+  expansions or function bodies (fragile), and a warning (scripts can't show one cheaply,
+  and wrapping fixes the common case). PowerShell follows the same rule: an alias whose
+  target is the agent program (its name, or a path to it) is wrapped and runs that target, and
+  user functions are kept, although `function claude { claude.exe --flag @args }` is the
+  PowerShell form of the flag alias: injecting hooks into a function body is the rejected
+  rewrite, so README gives a PowerShell form of the by-hand mark instead. [UX agent]
+- **PowerShell output captured from a typed agent** (`claude > f`, `$x = claude`) stays
+  wrapped and documented: the function can't see where its output goes, the one-shot cases
+  are already unwrapped by their arguments, and the rest (an interactive agent writing to a
+  file) is rare and its wrong status ends with the run. Rejected: parsing the command line
+  from the invocation (only the current line is available, multi-line and nested captures
+  defeat it) for a near-empty case. [UX agent]
+- **Running subagents** show as their count inside a ring after the name (and after the pin),
+  where the "▸ N" chip was. The spinner before the name is gone, so the space left of the name
+  is only for the tab's own status (working spinner, attention triangle). The ring turns with
+  the shared spinner clock, in the same direction as the working spinner, in the Working color.
+  When any subagent waits for the user it becomes a closed, still circle in the attention color:
+  a different shape, not only a different color. While the list is out the ring is a closed,
+  still circle in the Working color: the list's spinners show the activity [user]. With
+  animations off the ring stands still, keeping its gap. A muted chevron before the ring folds
+  the indented list under the row (open by default, as group chevrons do); the ring itself is
+  part of the same click target, and its tooltip gives the counts. Ring and count look the same
+  whether the list is open or folded except for turning, so nothing moves when it is toggled.
+  List rows keep a small spinner or attention triangle per subagent, at the detail icon size.
+  Rows only, like the working spinner. Rejected: a badge on the icon tile (too small for a
+  digit, and it clashes with the status badge); a still count pill (it shows nothing moving when
+  subagents run in the background while the agent is idle). [UX agent, from user feedback]
 - **Hover card under the cursor when a hold ends** (rename, menu, dialog, drag) stays hidden
   until the pointer leaves the row, like Windows/VS Code tooltips. [UX agent]
 

@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::Subscription;
 use term_core::Palette;
 use workspace_model::agents::{CLAUDE, COPILOT};
 
@@ -399,6 +400,72 @@ fn copilot_hooks_add_and_end_waiting_but_only_progress_controls_working_and_idle
     });
 }
 
+fn line(text: &str) -> AgentReport {
+    let mut fields = text.splitn(2, ' ');
+    let event_name = fields.next().unwrap().to_owned();
+    let mut report = AgentReport {
+        event_name,
+        ..AgentReport::default()
+    };
+    for field in fields.next().unwrap_or_default().split(' ') {
+        if let Some(id) = field.strip_prefix("agent=") {
+            report.subagent = Some(id.into());
+        } else if let Some(kind) = field.strip_prefix("kind=") {
+            report.subagent_kind = Some(kind.into());
+        } else if let Some(description) = field.strip_prefix("desc=") {
+            report.description = Some(description.into());
+        } else if !field.is_empty() {
+            report.detail = Some(field.into());
+        }
+    }
+    report
+}
+
+#[gpui::test]
+fn subagents_show_from_start_to_stop_and_end_with_the_agent(cx: &mut gpui_kit::TestAppContext) {
+    let view = copilot_view_with_mode_args(cx, &[]);
+    view.update(cx, |view, cx| {
+        view.apply_report(&line("PreToolUse desc=List"), 1, cx);
+        view.apply_report(&line("SubagentStart agent=a1 kind=explore"), 2, cx);
+        view.apply_report(&line("SubagentStart agent=a2 kind=explore"), 3, cx);
+        let labels: Vec<_> = view
+            .subagents()
+            .iter()
+            .map(|s| s.label().to_owned())
+            .collect();
+        assert_eq!(labels, ["List", "explore"]);
+        assert_eq!(
+            view.tab_status(),
+            TabStatus::Quiet,
+            "the main status stays its own"
+        );
+
+        view.apply_report(&line("PermissionRequest agent=a2"), 4, cx);
+        assert!(view.subagents()[1].waiting);
+        view.apply_report(&line("PostToolUse agent=a2"), 5, cx);
+        assert!(!view.subagents()[1].waiting);
+        view.apply_report(&line("SubagentStop agent=a1"), 6, cx);
+        assert_eq!(view.subagents().len(), 1);
+
+        view.on_session_event(SessionEvent::Exited(Some(1)), cx);
+        assert!(view.subagents().is_empty());
+        view.apply_report(&line("SubagentStart agent=a3"), 7, cx);
+        assert!(view.subagents().is_empty(), "nothing runs after the exit");
+    });
+}
+
+#[gpui::test]
+fn autopilot_subagents_do_not_wait_for_permissions(cx: &mut gpui_kit::TestAppContext) {
+    let view = copilot_view_with_mode_args(cx, &["--autopilot"]);
+    view.update(cx, |view, cx| {
+        view.apply_report(&line("SubagentStart agent=a1 kind=explore"), 1, cx);
+        view.apply_report(&line("PermissionRequest agent=a1"), 2, cx);
+        assert!(!view.subagents()[0].waiting);
+        view.apply_report(&line("Notification elicitation_dialog agent=a1"), 3, cx);
+        assert!(view.subagents()[0].waiting, "questions still wait");
+    });
+}
+
 fn copilot_view_with_mode_args(
     cx: &mut gpui_kit::TestAppContext,
     mode_args: &[&str],
@@ -708,4 +775,281 @@ fn a_quiet_claude_tab_without_hooks_shows_status_unavailable(cx: &mut gpui_kit::
             );
         });
     }
+}
+
+/// A shell tab whose environment carries the agents' hooks, hidden, with its notices
+/// collected.
+fn in_place_shell(
+    cx: &mut gpui_kit::TestAppContext,
+) -> (
+    Entity<TerminalView>,
+    std::rc::Rc<std::cell::RefCell<Vec<AgentNotice>>>,
+    Subscription,
+) {
+    in_place_shell_with_hooks(cx, &[CLAUDE, COPILOT])
+}
+
+/// [`in_place_shell`] with the hooks of only `hooked` in the environment.
+fn in_place_shell_with_hooks(
+    cx: &mut gpui_kit::TestAppContext,
+    hooked: &[AgentId],
+) -> (
+    Entity<TerminalView>,
+    std::rc::Rc<std::cell::RefCell<Vec<AgentNotice>>>,
+    Subscription,
+) {
+    #[cfg(windows)]
+    let (program, args) = ("cmd", vec!["/C", "exit 0"]);
+    #[cfg(not(windows))]
+    let (program, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+    let mut spec = LaunchSpec::new(
+        SessionKind::Shell,
+        Some(program.into()),
+        args.into_iter().map(String::from).collect(),
+        None,
+    );
+    for agent in hooked {
+        spec.env.insert(
+            agent.hook_artifact_plan().shell_env.into(),
+            "artifact".into(),
+        );
+    }
+    let session = Session::spawn(
+        5,
+        &spec,
+        TermDimensions::new(80, 24),
+        Palette::default(),
+        Arc::new(|_| {}),
+    )
+    .unwrap();
+    let view = cx.new(|cx| {
+        TerminalView::new(
+            session,
+            &spec,
+            StatusReporting::OutputActivity,
+            "sh".into(),
+            Task::ready(()),
+            cx,
+        )
+    });
+    let notices = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let captured = notices.clone();
+    let events = cx.update(|cx| {
+        cx.subscribe(&view, move |_, notice: &AgentNotice, _| {
+            captured.borrow_mut().push(*notice);
+        })
+    });
+    view.update(cx, |view, cx| {
+        view.on_session_event(SessionEvent::TitleChanged(Some("bash".into())), cx);
+        view.hide();
+    });
+    (view, notices, events)
+}
+
+fn report(name: &str) -> AgentReport {
+    AgentReport {
+        event_name: name.into(),
+        detail: None,
+        ..AgentReport::default()
+    }
+}
+
+#[gpui::test]
+fn an_in_place_claude_run_shows_agent_status_until_its_d_mark(cx: &mut gpui_kit::TestAppContext) {
+    let (view, notices, _events) = in_place_shell(cx);
+    view.update(cx, |view, cx| {
+        // Hooks before the mark are another program's: ignored.
+        view.apply_report(&report("UserPromptSubmit"), 1, cx);
+        assert_eq!(view.tab_status(), TabStatus::Quiet);
+        view.on_session_event(SessionEvent::CommandStarted(Some("claude".into())), cx);
+        view.on_session_event(SessionEvent::AgentStarted(CLAUDE), cx);
+        assert_eq!(view.status_kind(), SessionKind::Agent(CLAUDE));
+        assert_eq!(view.kind(), SessionKind::Shell, "saved as a shell");
+        assert_eq!(view.tab_status(), TabStatus::Idle);
+        assert_eq!(
+            view.busy_reason(),
+            None,
+            "an idle agent closes without asking"
+        );
+        view.on_session_event(SessionEvent::TitleChanged(Some("✳ Claude Code".into())), cx);
+        view.apply_report(&report("UserPromptSubmit"), 2, cx);
+        assert_eq!(view.tab_status(), TabStatus::Working);
+        assert_eq!(view.busy_reason(), Some(BusyReason::AgentWorking));
+        view.apply_report(&report("Stop"), 3, cx);
+        assert_eq!(view.tab_status(), TabStatus::ReadyForReview);
+        // Claude's hooks report attention: its bell is ignored.
+        view.on_session_event(SessionEvent::Bell, cx);
+        assert_eq!(view.tab_status(), TabStatus::ReadyForReview);
+        // Ctrl+C: the shell's D mark with status 130.
+        view.on_session_event(SessionEvent::CommandFinished(Some(130)), cx);
+        assert_eq!(view.status_kind(), SessionKind::Shell);
+        assert_eq!(view.name(), "bash", "the title from before the run");
+        assert_eq!(
+            view.tab_status(),
+            TabStatus::ReadyForReview,
+            "kept until seen"
+        );
+        // Hooks after the run are ignored again.
+        view.apply_report(&report("UserPromptSubmit"), 4, cx);
+        assert_eq!(view.tab_status(), TabStatus::ReadyForReview);
+        view.show(cx);
+        assert_eq!(view.tab_status(), TabStatus::Quiet);
+        assert_eq!(view.busy_reason(), None);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        *notices.borrow(),
+        [AgentNotice::Finished, AgentNotice::Exited(Some(130))]
+    );
+}
+
+#[gpui::test]
+fn the_end_of_an_in_place_run_clears_attention(cx: &mut gpui_kit::TestAppContext) {
+    let (view, notices, _events) = in_place_shell(cx);
+    view.update(cx, |view, cx| {
+        view.on_session_event(SessionEvent::CommandStarted(None), cx);
+        view.on_session_event(SessionEvent::AgentStarted(CLAUDE), cx);
+        view.apply_report(&report("PermissionRequest"), 1, cx);
+        assert_eq!(view.tab_status(), TabStatus::NeedsAttention);
+        assert_eq!(view.busy_reason(), Some(BusyReason::AgentWaiting));
+        view.on_session_event(SessionEvent::CommandFinished(Some(0)), cx);
+        assert_eq!(view.tab_status(), TabStatus::Quiet);
+        // A plain command afterwards is a shell command again.
+        view.on_session_event(SessionEvent::CommandStarted(Some("make".into())), cx);
+        assert_eq!(
+            view.busy_reason(),
+            Some(BusyReason::Command(Some("make".into())))
+        );
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        *notices.borrow(),
+        [
+            AgentNotice::NeedsAttention(Some(WaitReason::Permission)),
+            AgentNotice::Exited(Some(0))
+        ]
+    );
+}
+
+#[gpui::test]
+fn an_agent_end_mark_ends_the_run_before_the_command_line_does(cx: &mut gpui_kit::TestAppContext) {
+    let (view, notices, _events) = in_place_shell(cx);
+    view.update(cx, |view, cx| {
+        view.on_session_event(
+            SessionEvent::CommandStarted(Some("claude; make".into())),
+            cx,
+        );
+        view.on_session_event(SessionEvent::AgentStarted(CLAUDE), cx);
+        view.on_session_event(SessionEvent::TitleChanged(Some("✳ Claude Code".into())), cx);
+        view.apply_report(&report("UserPromptSubmit"), 1, cx);
+        assert_eq!(view.tab_status(), TabStatus::Working);
+        view.on_session_event(SessionEvent::AgentFinished(Some(3)), cx);
+        assert_eq!(view.status_kind(), SessionKind::Shell);
+        assert_eq!(view.name(), "bash", "the title from before the run");
+        // `make` runs on as a shell command.
+        assert_eq!(
+            view.busy_reason(),
+            Some(BusyReason::Command(Some("claude; make".into())))
+        );
+        // The command line's D mark ends nothing more.
+        view.on_session_event(SessionEvent::CommandFinished(Some(0)), cx);
+        assert_eq!(view.tab_status(), TabStatus::Quiet);
+        assert_eq!(view.busy_reason(), None);
+        // An end mark without a run is ignored.
+        view.on_session_event(SessionEvent::AgentFinished(Some(1)), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(*notices.borrow(), [AgentNotice::Exited(Some(3))]);
+}
+
+#[gpui::test]
+fn a_shell_exiting_mid_run_leaves_an_exited_shell_tab(cx: &mut gpui_kit::TestAppContext) {
+    let (view, notices, _events) = in_place_shell(cx);
+    view.update(cx, |view, cx| {
+        view.on_session_event(SessionEvent::CommandStarted(Some("copilot".into())), cx);
+        view.on_session_event(SessionEvent::AgentStarted(COPILOT), cx);
+        assert_eq!(view.status_kind(), SessionKind::Agent(COPILOT));
+        // Copilot's status starts with its first progress report; its bell still asks.
+        view.on_session_event(
+            SessionEvent::ProgressChanged {
+                state: ProgressState::Indeterminate,
+                at: 1,
+            },
+            cx,
+        );
+        assert_eq!(view.tab_status(), TabStatus::Working);
+        view.on_session_event(
+            SessionEvent::ProgressChanged {
+                state: ProgressState::Hidden,
+                at: 2,
+            },
+            cx,
+        );
+        assert_eq!(view.tab_status(), TabStatus::ReadyForReview);
+        view.on_session_event(SessionEvent::Exited(Some(1)), cx);
+        assert_eq!(view.status_kind(), SessionKind::Shell);
+        assert_eq!(view.tab_status(), TabStatus::Exited, "Exited wins");
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        *notices.borrow(),
+        [AgentNotice::Finished, AgentNotice::Exited(Some(1))]
+    );
+}
+
+#[gpui::test]
+fn a_second_agent_mark_in_one_run_starts_over_keeping_the_first_title(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let (view, _notices, _events) = in_place_shell(cx);
+    view.update(cx, |view, cx| {
+        view.on_session_event(
+            SessionEvent::CommandStarted(Some("claude; copilot".into())),
+            cx,
+        );
+        view.on_session_event(SessionEvent::AgentStarted(CLAUDE), cx);
+        view.on_session_event(SessionEvent::TitleChanged(Some("✳ Claude Code".into())), cx);
+        view.apply_report(&report("UserPromptSubmit"), 1, cx);
+        view.apply_report(&report("Stop"), 2, cx);
+        assert_eq!(view.tab_status(), TabStatus::ReadyForReview);
+        assert!(view.finished_unseen);
+
+        view.on_session_event(SessionEvent::AgentStarted(COPILOT), cx);
+        assert_eq!(view.status_kind(), SessionKind::Agent(COPILOT));
+        assert!(!view.finished_unseen, "the first agent's result is dropped");
+        assert!(
+            view.agent.is_none(),
+            "Copilot has no tracker before progress"
+        );
+        assert_ne!(view.tab_status(), TabStatus::ReadyForReview);
+
+        view.on_session_event(SessionEvent::CommandFinished(Some(0)), cx);
+        assert_eq!(view.name(), "bash", "the title from before the first mark");
+    });
+}
+
+#[gpui::test]
+fn an_agent_mark_after_the_shell_exited_is_ignored(cx: &mut gpui_kit::TestAppContext) {
+    let (view, _notices, _events) = in_place_shell(cx);
+    view.update(cx, |view, cx| {
+        view.on_session_event(SessionEvent::Exited(Some(0)), cx);
+        view.on_session_event(SessionEvent::AgentStarted(CLAUDE), cx);
+        assert_eq!(view.status_kind(), SessionKind::Shell);
+        assert_eq!(view.tab_status(), TabStatus::Exited);
+    });
+}
+
+#[gpui::test]
+fn an_in_place_claude_without_its_settings_has_no_status(cx: &mut gpui_kit::TestAppContext) {
+    let (view, _notices, _events) = in_place_shell_with_hooks(cx, &[COPILOT]);
+    view.update(cx, |view, cx| {
+        view.on_session_event(SessionEvent::CommandStarted(Some("claude".into())), cx);
+        view.on_session_event(SessionEvent::AgentStarted(CLAUDE), cx);
+        assert_eq!(view.status_kind(), SessionKind::Agent(CLAUDE));
+        assert!(view.agent.is_none());
+        assert_eq!(view.tab_status(), TabStatus::Unavailable);
+        // Its hooks, if any reached the tab, are not tracked.
+        view.apply_report(&report("UserPromptSubmit"), 1, cx);
+        assert_eq!(view.tab_status(), TabStatus::Unavailable);
+    });
 }

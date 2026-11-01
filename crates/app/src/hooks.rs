@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use agent_status::{AGENT_ENV, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, default_pipe_name};
 use term_core::LaunchSpec;
+use workspace_model::agents::HOOK_PROGRAM_ENV;
 use workspace_model::{ActivityPolicy, AgentId, HookArtifactKind, agents};
 
 use crate::processes;
@@ -133,9 +134,14 @@ impl AgentHooks {
         })
     }
 
-    /// Attach the provider's declared reporting artifact without changing user arguments.
+    /// Attach the provider's declared reporting artifact without changing user arguments. A
+    /// shell with integration (attach that first) gets every agent's hooks in its environment
+    /// instead ([`Self::attach_shell`]).
     pub fn attach(&self, session: u64, spec: &mut LaunchSpec) -> HookAttachment {
         let Some(agent) = spec.kind.agent() else {
+            if spec.mark_token.is_some() {
+                self.attach_shell(session, spec);
+            }
             return HookAttachment::default();
         };
         spec.env.insert(SESSION_ENV.into(), session.to_string());
@@ -149,11 +155,7 @@ impl AgentHooks {
                 self.hook_program.to_string_lossy().into_owned(),
             );
         }
-        let artifact = match agent.hook_artifact_kind() {
-            HookArtifactKind::SettingsFile => Ok(self.artifacts[&agent].clone()),
-            HookArtifactKind::PluginDirectory => self.plugin(agent, session),
-        };
-        let path = match artifact {
+        let path = match self.artifact(agent, session) {
             Ok(path) => path,
             Err(error) => {
                 self.remove_session(session);
@@ -184,6 +186,40 @@ impl AgentHooks {
         HookAttachment {
             reporting,
             diagnostics: Vec::new(),
+        }
+    }
+
+    /// What an agent tab gets, without the launch flag: the session, the socket, the hook
+    /// program and each agent's artifact path in its own variable (`shell_env`), for an agent
+    /// started at the prompt to run in place (its `N` mark). No agent variable: the hook program
+    /// reads the event name leniently. An artifact that could not be made is left out.
+    fn attach_shell(&self, session: u64, spec: &mut LaunchSpec) {
+        spec.env.insert(SESSION_ENV.into(), session.to_string());
+        spec.env
+            .insert(PIPE_ENV.into(), self.server.pipe_name().into());
+        spec.env.insert(
+            HOOK_PROGRAM_ENV.into(),
+            self.hook_program.to_string_lossy().into_owned(),
+        );
+        for &agent in self.artifacts.keys() {
+            match self.artifact(agent, session) {
+                Ok(path) => {
+                    spec.env.insert(
+                        agent.hook_artifact_plan().shell_env.into(),
+                        path.to_string_lossy().into_owned(),
+                    );
+                }
+                Err(error) => log::warn!("{} hooks unavailable in shells: {error}", agent.label()),
+            }
+        }
+    }
+
+    /// The agent's hook artifact for `session`: the shared settings file, or the session's own
+    /// plugin folder, made now.
+    fn artifact(&self, agent: AgentId, session: u64) -> io::Result<PathBuf> {
+        match agent.hook_artifact_kind() {
+            HookArtifactKind::SettingsFile => Ok(self.artifacts[&agent].clone()),
+            HookArtifactKind::PluginDirectory => self.plugin(agent, session),
         }
     }
 

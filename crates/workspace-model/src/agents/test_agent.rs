@@ -1,7 +1,7 @@
 use super::{
     ActivityPolicy, AgentDefinition, AgentIdentity, ArgumentSetting, BellPrecedence,
     HookArtifactKind, HookArtifactPlan, HookNamePolicy, HookProtocol, LaunchPlan, NoStatusPolicy,
-    Presentation, StatusPolicy, WorkingSpinner,
+    Presentation, StatusPolicy, SubagentHooks, WorkingSpinner,
 };
 
 pub(super) const DEFINITION: AgentDefinition = AgentDefinition {
@@ -30,6 +30,7 @@ pub(super) const DEFINITION: AgentDefinition = AgentDefinition {
         artifact: HookArtifactPlan {
             kind: HookArtifactKind::SettingsFile,
             launch_flag: "--settings",
+            shell_env: "AGENTWS_TEST_AGENT_SETTINGS",
             resource_suffix: "-test-agent-settings.json",
             events: &["PreToolUse"],
             timeout_secs: 5,
@@ -37,6 +38,10 @@ pub(super) const DEFINITION: AgentDefinition = AgentDefinition {
         },
         name_policy: HookNamePolicy::DirectOnly,
         decode: super::claude::decode_hook_event,
+        subagents: SubagentHooks {
+            spawn_tools: &[],
+            unnamed_start: false,
+        },
     },
     mode: None,
     status: StatusPolicy {

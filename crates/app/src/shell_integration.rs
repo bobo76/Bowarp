@@ -6,8 +6,11 @@
 //! scripts are written to `shell-integration/` in the config folder at the first launch;
 //! nothing is written to the user's own files. cmd.exe has no hooks: its `PROMPT` reports the
 //! folder (`D` with `path=`) and puts it in the title. A WSL distro whose login shell is bash
-//! gets the bash script (its token passed through `WSLENV`). fish, other WSL shells and shells
-//! started with arguments (except Git Bash's login shell and `wsl -d <distro>`) run unchanged.
+//! gets the bash script (its token passed through `WSLENV`). bash, zsh and PowerShell (and WSL)
+//! also get `AGENTWS_TYPED_AGENTS`: `1` defines the `claude` and `copilot` functions (agent
+//! status for agents typed at the prompt), anything else leaves those names alone. fish, other
+//! WSL shells and shells started with arguments (except Git Bash's login shell and
+//! `wsl -d <distro>`) run unchanged.
 
 use std::fs;
 use std::io;
@@ -23,15 +26,21 @@ use crate::window_bounds::config_file;
 const BASH_SCRIPT: &str = include_str!("../shell-integration/agentws.bash");
 const ZSH_ENV: &str = include_str!("../shell-integration/zsh/.zshenv");
 const PWSH_SCRIPT: &str = include_str!("../shell-integration/agentws.ps1");
+const AGENTS_SCRIPT: &str = include_str!("../shell-integration/agentws-agents.sh");
 
 const BASH_FILE: &str = "agentws.bash";
 const ZSH_DIR: &str = "zsh";
 const PWSH_FILE: &str = "agentws.ps1";
+/// The `claude` and `copilot` functions, sourced by the bash and zsh scripts from their folder.
+const AGENTS_FILE: &str = "agentws-agents.sh";
 /// zsh reads its startup files from `$ZDOTDIR`.
 const ZSH_DIR_ENV: &str = "ZDOTDIR";
 /// The user's own `ZDOTDIR`, for the injected `.zshenv` (unset: `$HOME`).
 const USER_ZDOTDIR_ENV: &str = "AGENTWS_USER_ZDOTDIR";
 const MARK_TOKEN_ENV: &str = "AGENTWS_MARK_TOKEN";
+/// `1` when the bash, zsh and PowerShell scripts define the `claude` and `copilot` functions
+/// (read and removed by the script, like the token).
+const TYPED_AGENTS_ENV: &str = "AGENTWS_TYPED_AGENTS";
 /// The file the zsh and PowerShell scripts' hidden cd key binding reads the folder from.
 pub const CD_FILE_ENV: &str = "AGENTWS_CD_FILE";
 /// The folder holding those files, one per session, named after its token.
@@ -51,7 +60,7 @@ const WSL_LAUNCH: &str = concat!(
     r#"shell=$(getent passwd "$(id -un)" | cut -d: -f7); "#,
     r#"case "${shell##*/}" in bash) "#,
     r#"AGENTWS_BASH_LOGIN=1 exec "$shell" --rcfile "$(wslpath -u "$1")" -i;; esac; "#,
-    r#"unset AGENTWS_MARK_TOKEN; exec "${shell:-/bin/sh}" -l"#,
+    r#"unset AGENTWS_MARK_TOKEN AGENTWS_TYPED_AGENTS; exec "${shell:-/bin/sh}" -l"#,
 );
 /// Files earlier versions wrote, and the completion cache zsh wrote next to them.
 const STALE_FILES: [&str; 3] = ["zsh/.zprofile", "zsh/.zshrc", "zsh/.zcompdump"];
@@ -81,10 +90,11 @@ impl Shell {
     }
 }
 
-/// Make a shell launch load the integration script. Other launches, shells started with their
-/// own arguments, and launches when the scripts could not be written are left unchanged;
-/// returns whether the script was attached.
-pub fn attach(spec: &mut LaunchSpec) -> bool {
+/// Make a shell launch load the integration script, with the `claude` and `copilot` functions
+/// when `typed_agents` is on. Other launches, shells started with their own arguments, and
+/// launches when the scripts could not be written are left unchanged; returns whether the
+/// script was attached.
+pub fn attach(spec: &mut LaunchSpec, typed_agents: bool) -> bool {
     let Some((shell, program)) = target(spec) else {
         return false;
     };
@@ -92,7 +102,7 @@ pub fn attach(spec: &mut LaunchSpec) -> bool {
         return false;
     };
     let token = new_mark_token();
-    shell.configure(spec, dir, &token);
+    shell.configure(spec, dir, &token, typed_agents);
     if shell.has_hidden_cd() {
         let file = dir.join(CD_DIR).join(&token);
         spec.env
@@ -110,7 +120,16 @@ impl Shell {
         matches!(self, Self::Zsh | Self::Pwsh)
     }
 
-    fn configure(self, spec: &mut LaunchSpec, dir: &Path, token: &str) {
+    fn has_agent_functions(self) -> bool {
+        // cmd.exe has no functions; WSL starts the bash script.
+        !matches!(self, Self::Cmd)
+    }
+
+    fn configure(self, spec: &mut LaunchSpec, dir: &Path, token: &str, typed_agents: bool) {
+        if self.has_agent_functions() {
+            let flag = if typed_agents { "1" } else { "0" };
+            spec.env.insert(TYPED_AGENTS_ENV.into(), flag.into());
+        }
         match self {
             Shell::Bash => {
                 let login = !spec.args.is_empty();
@@ -154,13 +173,20 @@ impl Shell {
                 spec.args.extend(
                     ["-e", "sh", "-c", WSL_LAUNCH, "sh", script.as_str()].map(String::from),
                 );
-                let wsl_env = match std::env::var(WSL_ENV) {
-                    Ok(names) if !names.is_empty() => format!("{names}:{MARK_TOKEN_ENV}"),
-                    _ => MARK_TOKEN_ENV.into(),
-                };
-                spec.env.insert(WSL_ENV.into(), wsl_env);
+                let names = std::env::var(WSL_ENV).unwrap_or_default();
+                spec.env.insert(WSL_ENV.into(), wsl_env(&names));
             }
         }
+    }
+}
+
+/// `WSLENV` (the user's `names`, possibly empty) with the variables the bash script reads.
+fn wsl_env(names: &str) -> String {
+    let ours = format!("{MARK_TOKEN_ENV}:{TYPED_AGENTS_ENV}");
+    if names.is_empty() {
+        ours
+    } else {
+        format!("{names}:{ours}")
     }
 }
 
@@ -233,6 +259,7 @@ fn write_scripts(dir: &Path) -> io::Result<()> {
         (BASH_FILE, BASH_SCRIPT),
         ("zsh/.zshenv", ZSH_ENV),
         (PWSH_FILE, PWSH_SCRIPT),
+        (AGENTS_FILE, AGENTS_SCRIPT),
     ];
     fs::create_dir_all(dir.join(ZSH_DIR))?;
     fs::create_dir_all(dir.join(CD_DIR))?;

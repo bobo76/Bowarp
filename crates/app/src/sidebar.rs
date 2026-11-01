@@ -5,12 +5,14 @@ use std::time::Duration;
 use agent_status::AgentMode;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Div, Hsla, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
-    Transformation, Window, div, percentage, pulsating_between, px, rgb,
+    Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Transformation, Window, div, percentage, pulsating_between,
+    px, rgb,
 };
 use workspace_model::{
     AgentId, Attention, LauncherIcon, SessionKind, TabColor, format_clock, format_lap,
@@ -35,6 +37,15 @@ const SESSION_ICON_SIZE: f32 = 18.;
 const DETAIL_ICON_SIZE: f32 = 11.;
 const KIND_ICON_SIZE: f32 = 12.;
 const ATTENTION_ICON_SIZE: f32 = 13.;
+/// The ring around a tab's subagent count.
+const SUBAGENT_RING_SIZE: f32 = 16.;
+const SUBAGENT_RING_BORDER: f32 = 1.5;
+/// The count in the ring: one digit, or the smaller two-digit size.
+const SUBAGENT_COUNT_SIZE: f32 = 10.;
+const SUBAGENT_LONG_COUNT_SIZE: f32 = 8.;
+const SUBAGENT_ROW_HEIGHT: f32 = 22.;
+/// Subagent rows start under the tab's name: the row's left padding, icon tile and gap.
+const SUBAGENT_LIST_INSET: f32 = 12. + ICON_TILE_SIZE + 12.;
 const GROUP_CHEVRON_SIZE: f32 = 14.;
 const GROUP_COLOR_SIZE: f32 = 8.;
 const STATUS_DOT_SIZE: f32 = 7.;
@@ -223,6 +234,9 @@ pub struct TabRow {
     /// The spinner left of the name, at its step out of `WORKING_SPIN_STEPS` (0 when still);
     /// see [`working_spinner`].
     pub spinner: Option<u8>,
+    /// The tab's running subagents, when it has any: their count in a ring after the name,
+    /// which folds their list in and out.
+    pub subagents: Option<SubagentChip>,
     pub selected: bool,
     /// The selected row while the tab list has the keyboard: drawn with a focus ring.
     pub focused: bool,
@@ -231,6 +245,29 @@ pub struct TabRow {
     pub color: Option<TabColor>,
     /// Shown in place of the name while the tab is being renamed.
     pub name_editor: Option<AnyElement>,
+}
+
+/// The chip on a tab row whose agent runs subagents.
+pub struct SubagentChip {
+    pub count: usize,
+    /// How many wait for the user.
+    pub waiting: usize,
+    /// The ring's step while it turns (0 when still); unused while one waits or the list
+    /// is out.
+    pub step: u8,
+    pub expanded: bool,
+    pub on_toggle: ToggleSubagents,
+}
+
+/// Folds a tab's subagent list out or in.
+pub type ToggleSubagents = Rc<dyn Fn(&mut Window, &mut App)>;
+
+/// One row of a tab's folded-out subagent list.
+pub struct SubagentItem {
+    pub label: SharedString,
+    /// The subagent's type, shown after a description.
+    pub kind: Option<SharedString>,
+    pub waiting: bool,
 }
 
 /// Whether an activity indicator (the Running badge, the working spinner) moves.
@@ -376,12 +413,151 @@ pub fn working_spinner(
 }
 
 /// The working spinner: a ring with a gap, turned `step` quarter turns.
-fn spinner_icon(step: u8, cx: &App) -> impl IntoElement {
+fn spinner_icon(step: u8, cx: &App) -> Icon {
     let turn = f32::from(step) / f32::from(WORKING_SPIN_STEPS);
     Icon::new(IconName::LoaderCircle)
         .size(px(ATTENTION_ICON_SIZE))
         .text_color(TabStatus::Working.color(cx))
         .transform(Transformation::rotate(percentage(turn)))
+}
+
+/// The ring around the subagent count: a closed orange circle while one waits for the user,
+/// else in the Working color, turning only while the list is folded in (the list's own
+/// spinners show the activity when it is out).
+fn subagent_ring(chip: &SubagentChip, cx: &App) -> impl IntoElement {
+    let waiting = chip.waiting > 0;
+    let color = if waiting {
+        attention_color(cx)
+    } else {
+        TabStatus::Working.color(cx)
+    };
+    let ring = if waiting || chip.expanded {
+        div()
+            .absolute()
+            .inset_0()
+            .rounded_full()
+            .border(px(SUBAGENT_RING_BORDER))
+            .border_color(color)
+            .into_any_element()
+    } else {
+        div()
+            .absolute()
+            .inset_0()
+            .child(spinner_icon(chip.step, cx).size(px(SUBAGENT_RING_SIZE)))
+            .into_any_element()
+    };
+    let count_size = if chip.count < 10 {
+        SUBAGENT_COUNT_SIZE
+    } else {
+        SUBAGENT_LONG_COUNT_SIZE
+    };
+    div()
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(SUBAGENT_RING_SIZE))
+        .child(ring)
+        .child(
+            div()
+                .text_size(px(count_size))
+                .line_height(px(count_size))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(color)
+                .child(chip.count.to_string()),
+        )
+}
+
+/// The chevron and the count in its ring: folds the tab's subagent list in or out.
+fn subagent_chip(chip: &SubagentChip, index: usize, muted: Hsla, cx: &App) -> impl IntoElement {
+    let theme = cx.theme();
+    let chevron = if chip.expanded {
+        IconName::ChevronDown
+    } else {
+        IconName::ChevronRight
+    };
+    let mut tooltip = match chip.count {
+        1 => "1 subagent running".to_string(),
+        count => format!("{count} subagents running"),
+    };
+    if chip.waiting > 0 {
+        tooltip.push_str(&format!(", {} waiting for you", chip.waiting));
+    }
+    tooltip.push_str(if chip.expanded {
+        "\nClick to hide the list"
+    } else {
+        "\nClick to show the list"
+    });
+    let tooltip = SharedString::from(tooltip);
+    let toggle = chip.on_toggle.clone();
+    let chevron_color = if chip.waiting > 0 {
+        attention_color(cx)
+    } else {
+        muted
+    };
+    div()
+        .id(("subagents", index))
+        .debug_selector(move || format!("sidebar-subagents-{index}"))
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(2.))
+        .px_1()
+        .rounded_sm()
+        .hover(|style| style.bg(theme.secondary))
+        .child(
+            Icon::new(chevron)
+                .size(px(DETAIL_ICON_SIZE))
+                .text_color(chevron_color),
+        )
+        .child(subagent_ring(chip, cx))
+        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            toggle(window, cx);
+        })
+}
+
+/// A tab's folded-out subagents, under its row; `step` turns their spinners.
+pub fn subagent_list(index: usize, items: Vec<SubagentItem>, step: u8, cx: &App) -> Stateful<Div> {
+    let muted = cx.theme().muted_foreground;
+    div()
+        .id(("subagent-list", index))
+        .debug_selector(move || format!("sidebar-subagent-list-{index}"))
+        .flex()
+        .flex_col()
+        .pl(px(SUBAGENT_LIST_INSET))
+        .pr_2()
+        .pb_1()
+        .text_xs()
+        .children(items.into_iter().map(|item| {
+            let mark = if item.waiting {
+                Icon::new(IconName::TriangleAlert)
+                    .size(px(DETAIL_ICON_SIZE))
+                    .text_color(attention_color(cx))
+            } else {
+                spinner_icon(step, cx).size(px(DETAIL_ICON_SIZE))
+            };
+            div()
+                .flex()
+                .items_center()
+                .gap_1p5()
+                .min_w_0()
+                .h(px(SUBAGENT_ROW_HEIGHT))
+                .child(div().flex_none().child(mark))
+                .child(single_line(item.label))
+                .children(item.kind.map(|kind| {
+                    div()
+                        .flex_none()
+                        .max_w(px(SIDEBAR_WIDTH / 3.))
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .text_color(muted)
+                        .child(kind)
+                }))
+        }))
 }
 
 /// Whether Running badges may pulse in `window`: not on a software-emulated GPU (a VM, remote
@@ -523,6 +699,11 @@ fn name_line(row: &mut TabRow, muted: Hsla, cx: &App) -> impl IntoElement {
                     .text_color(muted),
             )
         })
+        .children(
+            row.subagents
+                .as_ref()
+                .map(|chip| subagent_chip(chip, row.index, muted, cx)),
+        )
 }
 
 pub fn tab_row(

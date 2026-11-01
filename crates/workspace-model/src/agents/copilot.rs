@@ -7,7 +7,7 @@ use super::{
     ActivityPolicy, AgentDefinition, AgentId, AgentIdentity, AgentMode, ArgumentSetting,
     ArtifactFile, BellPrecedence, HOOK_PROGRAM_ENV, HookArtifactKind, HookArtifactPlan,
     HookNamePolicy, HookProtocol, LaunchPlan, ModeReporting, NoStatusPolicy, Presentation,
-    StatusPolicy, WorkingSpinner, copilot_hooks_json,
+    StatusPolicy, SubagentHooks, WorkingSpinner, copilot_hooks_json,
 };
 
 const HOOK_EVENTS: &[&str] = &[
@@ -16,6 +16,8 @@ const HOOK_EVENTS: &[&str] = &[
     "PreToolUse",
     "PostToolUse",
     "PostToolUseFailure",
+    "SubagentStart",
+    "SubagentStop",
 ];
 const HOOK_TIMEOUT_SECS: u64 = 5;
 /// Name of the per-session Copilot plugin carrying the hooks.
@@ -50,6 +52,7 @@ pub const DEFINITION: AgentDefinition = AgentDefinition {
         artifact: HookArtifactPlan {
             kind: HookArtifactKind::PluginDirectory,
             launch_flag: "--plugin-dir",
+            shell_env: "AGENTWS_COPILOT_PLUGIN",
             resource_suffix: "-copilot",
             events: HOOK_EVENTS,
             timeout_secs: HOOK_TIMEOUT_SECS,
@@ -57,6 +60,11 @@ pub const DEFINITION: AgentDefinition = AgentDefinition {
         },
         name_policy: HookNamePolicy::PascalCaseFallback,
         decode: decode_hook_event,
+        subagents: SubagentHooks {
+            // `task` is the tool's own name; PascalCase hooks report it as `Agent`.
+            spawn_tools: &["Agent", "task"],
+            unnamed_start: true,
+        },
     },
     mode: Some(ModeReporting {
         event_name: "CopilotMode",

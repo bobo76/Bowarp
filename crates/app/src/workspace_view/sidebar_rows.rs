@@ -21,7 +21,7 @@ use crate::settings_file;
 use crate::shortcuts;
 use crate::sidebar::{
     self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, RunningPulse, SIDEBAR_WIDTH,
-    TabDetail, TabRow,
+    SubagentChip, SubagentItem, TabDetail, TabRow,
 };
 use crate::tab_menu;
 use crate::workspace_view::{NewTab, NextAttention};
@@ -152,11 +152,65 @@ impl WorkspaceView {
         &self,
         id: u64,
         list_focused: bool,
-        style: impl FnOnce(Stateful<Div>) -> Stateful<Div>,
+        style: impl Fn(Stateful<Div>) -> Stateful<Div>,
         cx: &mut Context<Self>,
     ) -> Option<SidebarRow> {
-        let row = self.render_tab_row(id, list_focused, cx)?;
-        Some((Some(id), style(row).into_any_element()))
+        let row = style(self.render_tab_row(id, list_focused, cx)?);
+        let Some(list) = self.render_subagent_list(id, cx) else {
+            return Some((Some(id), row.into_any_element()));
+        };
+        // One entry, so no divider between the tab and its subagents.
+        let entry = div().flex().flex_col().child(row).child(style(list));
+        Some((Some(id), entry.into_any_element()))
+    }
+
+    /// Tab `id`'s subagent list, while it runs some and the list is not folded in.
+    fn render_subagent_list(&self, id: u64, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        if self.folded_subagents.contains(&id) {
+            return None;
+        }
+        let index = self.tab_index(id)?;
+        let subagents = self.tabs[index].view.read(cx).subagents();
+        if subagents.is_empty() {
+            return None;
+        }
+        let items = subagents
+            .iter()
+            .map(|subagent| SubagentItem {
+                label: subagent.label().to_owned().into(),
+                kind: subagent
+                    .description
+                    .as_ref()
+                    .and(subagent.kind.clone())
+                    .map(Into::into),
+                waiting: subagent.waiting,
+            })
+            .collect();
+        // Only turning spinners need the clock: none while every subagent waits.
+        let step = if subagents.iter().any(|subagent| !subagent.waiting) {
+            self.subagent_step(cx)
+        } else {
+            0
+        };
+        Some(sidebar::subagent_list(index, items, step, cx))
+    }
+
+    /// The step subagent spinners draw at: turning when animations may run, else still.
+    fn subagent_step(&self, cx: &App) -> u8 {
+        let may_animate =
+            self.pulse_running && self.window_visible && settings_file::activity_animations(cx);
+        if may_animate {
+            self.spinner_clock.drawn_step()
+        } else {
+            0
+        }
+    }
+
+    fn toggle_subagents(&mut self, id: u64, cx: &mut Context<Self>) {
+        if !self.folded_subagents.remove(&id) {
+            self.folded_subagents.insert(id);
+        }
+        cx.notify();
     }
 
     fn sidebar_group_rows(
@@ -275,7 +329,7 @@ impl WorkspaceView {
         let name_editor = self.name_editor(RenameTarget::Tab(id), cx);
         let view = tab.view.read(cx);
         let name = SharedString::from(Self::tab_name(tab, cx));
-        let kind = view.kind();
+        let kind = view.status_kind();
         let may_animate =
             self.pulse_running && self.window_visible && settings_file::activity_animations(cx);
         let status = view.tab_status();
@@ -299,6 +353,7 @@ impl WorkspaceView {
                 RunningPulse::Animated => self.spinner_clock.drawn_step(),
                 RunningPulse::Still => 0,
             }),
+            subagents: self.subagent_chip(id, workspace.clone(), cx),
             selected,
             focused: selected && list_focused,
             pinned: self.layout.is_pinned(id),
@@ -350,6 +405,38 @@ impl WorkspaceView {
                 },
             ));
         Some(slot)
+    }
+
+    /// The chip of tab `id` while its agent runs subagents.
+    fn subagent_chip(
+        &self,
+        id: u64,
+        workspace: WeakEntity<Self>,
+        cx: &mut Context<Self>,
+    ) -> Option<SubagentChip> {
+        let index = self.tab_index(id)?;
+        let subagents = self.tabs[index].view.read(cx).subagents();
+        if subagents.is_empty() {
+            return None;
+        }
+        let count = subagents.len();
+        let waiting = subagents.iter().filter(|subagent| subagent.waiting).count();
+        let expanded = !self.folded_subagents.contains(&id);
+        Some(SubagentChip {
+            count,
+            waiting,
+            // Only a turning ring keeps the clock running: not while one waits or the list is
+            // out.
+            step: if waiting == 0 && !expanded {
+                self.subagent_step(cx)
+            } else {
+                0
+            },
+            expanded,
+            on_toggle: Rc::new(move |_, cx| {
+                let _ = workspace.update(cx, |workspace, cx| workspace.toggle_subagents(id, cx));
+            }),
+        })
     }
 
     /// A group header: the upper half drops above the group, the lower half into it. While

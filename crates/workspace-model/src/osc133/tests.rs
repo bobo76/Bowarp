@@ -73,23 +73,77 @@ fn command_lines_are_decoded() {
 fn folders_are_decoded() {
     assert_eq!(
         kinds(&[b"\x1b]133;D;aw=t0k;cwd=433a5cc3a9\x07"]),
-        [PromptMark::CommandFinished(Some(PathBuf::from(
-            "C:\\\u{e9}"
-        )))]
+        [PromptMark::CommandFinished {
+            folder: Some(PathBuf::from("C:\\\u{e9}")),
+            exit: None
+        }]
     );
     assert_eq!(
         kinds(&[b"\x1b]133;D;aw=t0k;cwd=zz\x07"]),
-        [PromptMark::CommandFinished(None)]
+        [PromptMark::CommandFinished {
+            folder: None,
+            exit: None
+        }]
     );
+}
+
+#[test]
+fn exit_statuses_are_decoded() {
+    assert_eq!(
+        kinds(&[b"\x1b]133;D;aw=t0k;exit=130;cwd=2f\x07"]),
+        [PromptMark::CommandFinished {
+            folder: Some(PathBuf::from("/")),
+            exit: Some(130),
+        }]
+    );
+    // Not a number: the mark counts, without its status.
+    assert_eq!(
+        kinds(&[b"\x1b]133;D;aw=t0k;exit=x\x07"]),
+        [PromptMark::CommandFinished {
+            folder: None,
+            exit: None,
+        }]
+    );
+}
+
+#[test]
+fn agent_marks_name_a_registered_agent() {
+    use crate::agents::{CLAUDE, COPILOT};
+    assert_eq!(
+        kinds(&[b"\x1b]133;N;aw=t0k;agent=claude\x07\x1b]133;N;aw=t0k;agent=copilot\x1b\\"]),
+        [
+            PromptMark::AgentStarted(CLAUDE),
+            PromptMark::AgentStarted(COPILOT)
+        ]
+    );
+    // An unknown or missing agent, or no token: no mark.
+    assert!(kinds(&[b"\x1b]133;N;aw=t0k;agent=vim\x07"]).is_empty());
+    assert!(kinds(&[b"\x1b]133;N;aw=t0k\x07"]).is_empty());
+    assert!(kinds(&[b"\x1b]133;N;agent=claude\x07"]).is_empty());
+    assert!(kinds(&[b"\x1b]133;N;aw=bad;agent=claude\x07"]).is_empty());
+}
+
+#[test]
+fn agent_end_marks_carry_the_exit_status() {
+    assert_eq!(
+        kinds(&[b"\x1b]133;X;aw=t0k;exit=3\x07\x1b]133;X;aw=t0k\x07"]),
+        [
+            PromptMark::AgentFinished(Some(3)),
+            PromptMark::AgentFinished(None)
+        ]
+    );
+    assert!(kinds(&[b"\x1b]133;X;exit=0\x07"]).is_empty());
+    assert!(kinds(&[b"\x1b]133;X;aw=bad;exit=0\x07"]).is_empty());
 }
 
 #[test]
 fn text_paths_run_to_the_end_of_the_mark() {
     assert_eq!(
         kinds(&[b"\x1b]133;D;aw=t0k;path=C:\\a;b=c\x1b\\"]),
-        [PromptMark::CommandFinished(Some(PathBuf::from(
-            "C:\\a;b=c"
-        )))]
+        [PromptMark::CommandFinished {
+            folder: Some(PathBuf::from("C:\\a;b=c")),
+            exit: None
+        }]
     );
     // The token must come before the path.
     assert!(kinds(&[b"\x1b]133;D;path=C:\\;aw=t0k\x07"]).is_empty());
@@ -100,7 +154,17 @@ fn mark_split_across_reads_is_found_where_it_ends() {
     let found = marks(&[b"text\x1b]13", b"3;B;aw=", b"t0k\x07rest"]);
     assert_eq!(found, vec![(2, 4, PromptMark::CommandStart)]);
     let found = marks(&[b"\x1b]133;D;aw=t0k\x1b", b"\\"]);
-    assert_eq!(found, vec![(1, 1, PromptMark::CommandFinished(None))]);
+    assert_eq!(
+        found,
+        vec![(
+            1,
+            1,
+            PromptMark::CommandFinished {
+                folder: None,
+                exit: None
+            }
+        )]
+    );
 }
 
 #[test]
