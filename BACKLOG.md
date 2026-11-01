@@ -188,6 +188,52 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
+UX review, Tier 1 ([reviews/ux-review.md](reviews/ux-review.md), numbers are its items):
+
+- Start failures open the window (#15): bad arguments (`main.rs:58`), a folder that isn't a
+  directory (`main.rs:108`) and the shell plus its fallback failing (`main.rs:315`) print to
+  stderr and exit, so on Windows the app seems not to start. A missing folder opens the tab in
+  the home folder with an error toast naming it; a total start failure or bad arguments open
+  the window with an error panel in the terminal area (message or usage, "Open settings",
+  Retry). Keep the stderr lines.
+- Viewer width from the free space (#2): `viewer_width` takes `fraction * row` of the whole
+  window and the terminal keeps only 240 px (`pane_width.rs`), ~28 columns with the sidebar and
+  explorer open. Take the fraction of `row - fixed` and raise `MIN_TERMINAL_WIDTH` to ~60
+  columns (480 px); the viewer minimum (240) still wins in a window too narrow for both. Pure
+  function, unit-tested; saved `file_viewer_fraction` values keep loading.
+- Ask the OS for attention (#11, needs the user's yes): when a tab turns Needs attention or
+  Ready for review while the window isn't active (Settings shown counts as background), call
+  `Window::request_attention` (Windows taskbar flash, X11 urgency; nothing on Wayland). Follows
+  the "In-app notifications" switch; cleared when the window activates. A system notification
+  (`show_system_notification`) is left for later.
+- Restart an exited tab (#17): a "Restart" button on the exit bar, and Enter while the tab has
+  the keyboard, start the same launch spec in the tab's last folder through
+  `replace_tab_session` (as `fall_back_to_shell` does); the tab keeps name, color, group and
+  place, scrollback is cleared (say so in the tooltip), agents restart with their saved
+  arguments (no `--continue`). Hide the cursor on a dead grid.
+- Window title follows the selected tab (#12): "<tab name> — Agent Workspace", prefixed
+  "(N) " while N tabs need attention, "Settings — Agent Workspace" while Settings shows. Set
+  only on selection, rename and status change (today fixed at `workspace_view.rs:385`).
+- Failed exit on the row (#6): Exited is the Quiet grey ring whatever the code
+  (`sidebar.rs:107`). A nonzero or unknown code gets a red ring with a small `×` and
+  "Exited (3)" in the hover card; code 0 keeps the grey ring, raised to >= 3:1 contrast.
+
+UX review, Tier 2 (small polish, one batch):
+
+- Shortcut hints and wording (#29, #28, #8): "Close tab" shows Ctrl+Shift+W
+  (`tab_menu.rs:116`); "Copy pane title" becomes "Copy title" (`tab_menu.rs:94`); "Close
+  explorer" tooltip shows its key (`file_explorer.rs:793`); "Search tabs..." gets a tooltip
+  with Ctrl+Shift+S; all through `shortcuts::with_shortcut` / `menu_label_with_hint`.
+  "Bowarp's history" becomes "the command history" (`settings_page.rs:478`, `:514`); the
+  inline suggestions description (`settings_page.rs:503`) says the last session's command is
+  accepted with Right or End only (Tab doesn't take it, `history_popup.rs:174`); the
+  Keyboard page's '"Copy" in settings.json.' line moves to a tooltip. The hover card's bare
+  "+5" (`sidebar.rs:747`) reads "+5 lines".
+- Settings layout (#25): `SettingsView::sidebar_width(px(200.))` (`settings_page.rs:85`) and
+  a max width on text inputs so the Font family field stays inside the content column.
+- "Hold Shift to select" hint (#19): on the first drag in a mouse-reporting tab per run, an
+  info toast "Hold Shift to select text". One flag.
+
 - Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - PowerShell: after an app restart, a restored PowerShell tab doesn't show its last command
   (the restored-tab suggestion that bash, zsh and Git Bash tabs get). Find whether the
