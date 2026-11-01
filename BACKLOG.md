@@ -188,6 +188,10 @@ behavior"); items below name their switch where they need one.
   - Switch "Agent status for agents typed at the prompt" (Terminal page, on): when off, the
     functions aren't defined (the app passes a flag with the token) and typed `claude` /
     `copilot` run as today. Applies to newly started shells.
+- Drag group headers to reorder groups (the group menu's Move up / down does it for now).
+- PowerShell: after an app restart, a restored PowerShell tab doesn't show its last command
+  (the restored-tab suggestion that bash, zsh and Git Bash tabs get). Find whether the
+  command is never saved for PowerShell tabs or saved but not offered on restore.
 - Hiding the sidebar (Ctrl+Shift+B) while the search field or a tab name editor has the
   keyboard leaves focus on an element no longer drawn (only the tab list itself hands the
   keyboard back, `toggle_sidebar` checks `is_focused`): check the whole sidebar
@@ -228,7 +232,6 @@ behavior"); items below name their switch where they need one.
   (`$BUFFER`, `.zshenv` `__agentws_report_line`) excludes it, so the Backspaces leave the
   accepted rest in front of the new command. Send a key that doesn't accept it, or clear
   `POSTDISPLAY` first.
-- Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - Zoom with Ctrl+scroll, like Windows Terminal: Ctrl+wheel up / down over the terminal makes
   the font bigger / smaller one point per notch (clamped, e.g. 6-48 pt), also Ctrl+= / Ctrl+-
   and Ctrl+0 to reset. Build on the existing terminal font-size setting, re-measuring cells
@@ -285,9 +288,6 @@ behavior"); items below name their switch where they need one.
 - PowerShell: the integration writes the `C` mark on Enter even when PSReadLine only adds a
   line to an unfinished command (`if ($x) {`), so the tab shows Running while typing; write it
   only for accepted lines (needs a machine with pwsh to check).
-- PowerShell: after an app restart, a restored PowerShell tab doesn't show its last command
-  (the restored-tab suggestion that bash, zsh and Git Bash tabs get). Find whether the
-  command is never saved for PowerShell tabs or saved but not offered on restore.
 - Configurable terminal icon: the icon for each launcher entry, picked from the bundled
   `LauncherIcon` set (Bash, PowerShell, Command Prompt, Zsh, Fish, Ubuntu, ...) and saved in
   the settings file (settings page row); it shows in the new-tab menu and on the sidebar row
