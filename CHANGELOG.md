@@ -5,6 +5,16 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.55
+
+- Typing `claude` or `copilot` at a bash or zsh tab's prompt now runs the agent in place with
+  its status, attention and toasts; the tab is a shell tab again as soon as the agent exits,
+  so `claude; make` shows `make` as a running command. Your own alias starting with `claude` /
+  `copilot` gets the status too; other aliases and functions are kept as they are.
+- One-shot and piped runs (`claude -p`, `--version`, `--help`, subcommands such as
+  `claude mcp`, `echo x | claude -p`), `claude --settings ...`, `command claude` and `\claude`
+  run unchanged, without agent status.
+
 ## 0.2.54
 
 - Show agent status in place in bash and zsh tabs: Claude Code or Copilot CLI started with

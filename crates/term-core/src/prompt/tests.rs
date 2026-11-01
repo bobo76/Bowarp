@@ -260,6 +260,33 @@ fn an_agent_mark_names_the_running_command_until_its_d_mark() {
 }
 
 #[test]
+fn an_agent_end_mark_is_reported_while_the_command_runs() {
+    use workspace_model::agents::CLAUDE;
+    const AGENT: &str = "\x1b]133;N;aw=t0k;agent=claude\x07";
+    const END: &str = "\x1b]133;X;aw=t0k;exit=3\x07";
+    let mut harness = Harness::new(40, 5);
+    // At the prompt no command runs: nothing ends.
+    harness.feed(format!("{PROMPT}{END}").as_bytes());
+    assert!(harness.take_running_events().is_empty());
+    let line = "claude; make";
+    harness.feed(format!("{line}{}{AGENT}{END}", executed(line)).as_bytes());
+    assert_eq!(
+        harness.take_running_events(),
+        [
+            PromptEvent::Started(Some(line.into())),
+            PromptEvent::AgentStarted(CLAUDE),
+            PromptEvent::AgentFinished(Some(3)),
+        ]
+    );
+    // `make` goes on until the command line's D mark.
+    harness.feed(b"\x1b]133;D;aw=t0k;exit=0\x07");
+    assert_eq!(
+        harness.take_running_events(),
+        [PromptEvent::Finished(Some(0))]
+    );
+}
+
+#[test]
 fn the_folder_reported_at_each_prompt_is_kept() {
     let mut harness = Harness::new(40, 5);
     assert_eq!(harness.tracker.folder(), None);

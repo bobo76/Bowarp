@@ -328,15 +328,22 @@ while you are on another tab shows Needs attention until you select it. Claude C
 hooks, and Claude Code running in place in a shell tab, ignore the bell, since their hooks
 already report it.
 
-An agent can also run in place in a bash or zsh tab: the tab's environment carries the status
-hooks, and an agent started with them after printing the agent mark in the same command line
-gets the status, attention, toasts and mode of a tab from the `+` menu, for example
-`printf '\e]133;N;aw=%s;agent=claude\a' "$__agentws_token"; claude --settings
-"$AGENTWS_CLAUDE_SETTINGS"` (Copilot: `agent=copilot`, `ConEmuANSI=ON copilot --plugin-dir
-"$AGENTWS_COPILOT_PLUGIN"`). Typing plain `claude` / `copilot` will do this by itself in a
-later version. While it runs, the row shows the agent's icon and the hover card names both
-("Claude Code in bash"); when it exits, the tab is a shell tab again with its earlier title,
-and it is saved, restored and duplicated as the shell.
+An agent can also run in place in a bash or zsh tab: `claude` or `copilot` typed at the
+prompt starts with the tab's status hooks and gets the status, attention, toasts and mode of a
+tab from the `+` menu. While it runs, the row shows the agent's icon and the hover card names
+both ("Claude Code in bash"); when it exits, the tab is a shell tab again with its earlier
+title (a command after it on the same line, as in `claude; make`, shows as a running shell
+command), and it is saved, restored and duplicated as the shell. One-shot runs (`claude -p`,
+`--version`, `--help`, subcommands such as `claude mcp` or `copilot login`), runs whose input
+or output isn't the terminal (`claude -p hi | less`), Claude runs with your own `--settings`,
+and `command claude` or `\claude` run the program unchanged. An alias of your own that starts
+with the agent (`alias claude='claude --dangerously-skip-permissions'`) gets the
+status too; other `claude` / `copilot` aliases and functions of your own are kept as they are;
+to give them the status, start the agent in them after the agent mark, with the hooks:
+`printf '\e]133;N;aw=%s;agent=claude\a' "$__agentws_token"; command claude --settings
+"$AGENTWS_CLAUDE_SETTINGS"` (Copilot: `agent=copilot`, `ConEmuANSI=ON command copilot
+--plugin-dir "$AGENTWS_COPILOT_PLUGIN"`); the status then lasts until the command line ends.
+PowerShell tabs will get the same in a later version.
 
 Background Claude Code and Copilot tabs, and agents running in place in a shell tab, show an
 in-app toast when they need attention, finish a turn, or exit (an unsuccessful exit includes

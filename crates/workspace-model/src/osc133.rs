@@ -9,9 +9,11 @@
 //! edited: `L` with `cur=<characters before the cursor>;buf=<hex>`, plus `post=1` when zsh
 //! shows text after it (zsh-autosuggestions). `N` with `agent=<id>` (`claude`, `copilot`) says
 //! the running command is that agent, started with the tab's hooks: the tab shows its status
-//! until the command's `D`. The token is random per session ([`new_mark_token`]) and only the
-//! injected script knows it (it keeps it in a shell variable, not exported), so marks in a
-//! program's output (a `cat`ed file, a remote shell's integration over ssh) are ignored.
+//! until `X` (with the agent's `exit=<n>`), which the `claude` / `copilot` shell functions print
+//! when the agent exits, else until the command's `D`. The token is random per session
+//! ([`new_mark_token`]) and only the injected script knows it (it keeps it in a shell variable,
+//! not exported), so marks in a program's output (a `cat`ed file, a remote shell's integration
+//! over ssh) are ignored.
 //!
 //! The terminal emulator ignores these, so the pty reader looks for them with
 //! [`Osc133Scanner`], which keeps its state across reads so a mark split over two reads is
@@ -52,6 +54,9 @@ pub enum PromptMark {
     },
     /// `N`: the running command is this agent, started with the tab's hooks.
     AgentStarted(AgentId),
+    /// `X`: the agent the `N` mark named exited, with its exit status when the script sent it;
+    /// the command line may go on running other commands.
+    AgentFinished(Option<i32>),
     /// `L` (zsh): the command line as it is edited; `None` when it was too long to send.
     CommandLine(Option<CommandLine>),
 }
@@ -277,6 +282,12 @@ impl<'a> Params<'a> {
         }
     }
 
+    /// The `exit=<n>` status, when sent and a number.
+    fn exit(&self) -> Option<i32> {
+        self.exit
+            .and_then(|value| std::str::from_utf8(value).ok()?.parse().ok())
+    }
+
     fn into_mark(self, letter: u8, truncated: bool) -> Option<PromptMark> {
         // A cut payload may end in the middle of the text.
         let text = |value: Option<&[u8]>| {
@@ -294,18 +305,16 @@ impl<'a> Params<'a> {
                     .path
                     .filter(|path| !truncated && !path.is_empty())
                     .and_then(|path| String::from_utf8(path.to_vec()).ok());
-                let exit = self
-                    .exit
-                    .and_then(|value| std::str::from_utf8(value).ok()?.parse().ok());
                 PromptMark::CommandFinished {
                     folder: text(self.folder).or(path).map(PathBuf::from),
-                    exit,
+                    exit: self.exit(),
                 }
             }
             b'N' => {
                 let agent = std::str::from_utf8(self.agent?).ok()?;
                 PromptMark::AgentStarted(AgentId::from_cli_selector(agent)?)
             }
+            b'X' => PromptMark::AgentFinished(self.exit()),
             b'L' => {
                 let cursor = self
                     .cursor

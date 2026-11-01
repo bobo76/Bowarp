@@ -1,9 +1,10 @@
 //! An agent run in place in a shell tab. An agent started at a shell prompt with the tab's
 //! hooks (the variables the tab's shell gets) announces itself with an `N` mark
-//! ([`crate::PromptMark::AgentStarted`]) once its command runs. From then until the command's
-//! `D` mark, or the shell exiting, the tab follows that agent's status policy like a tab
-//! opened from the `+` menu; afterwards it is a shell tab again. The tab's saved kind stays the
-//! shell, so restoring or duplicating it starts the shell.
+//! ([`crate::PromptMark::AgentStarted`]) once its command runs. From then until the agent's end
+//! mark ([`crate::PromptMark::AgentFinished`], printed by the `claude` / `copilot` shell
+//! functions), else the command's `D` mark, or the shell exiting, the tab follows that agent's
+//! status policy like a tab opened from the `+` menu; afterwards it is a shell tab again. The
+//! tab's saved kind stays the shell, so restoring or duplicating it starts the shell.
 
 use crate::{AgentId, SessionKind};
 
@@ -23,8 +24,8 @@ struct Run {
 /// How an in-place run ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunEnd {
-    /// The command's `D` mark (the agent exited, was interrupted or crashed), with the exit
-    /// status the shell reported.
+    /// The agent's end mark, else the command's `D` mark (the agent exited, was interrupted or
+    /// crashed), with the exit status the shell reported.
     CommandFinished(Option<i32>),
     /// The shell itself exited before the `D` mark, with its exit code.
     ShellExited(Option<i32>),

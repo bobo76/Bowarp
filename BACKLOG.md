@@ -20,6 +20,12 @@ Agent running in place in a shell tab (from its `N` mark until the command's `D`
   permission prompt, Mode line from the extension; Claude Code in Plan mode via hooks.
 - zsh: the same as bash (mark by hand, status, title back at `D`, exit toast code from
   `exit=`).
+- Typed `claude` / `copilot` (bash, zsh with oh-my-zsh, Git Bash on Windows): the real agents
+  run in place with status (Copilot's Working spinner needs the `ConEmuANSI=ON` the function
+  sets); `claude; sleep 5` shows teal Running for `sleep` once Claude exits, and a background
+  tab gets one exit toast, at the agent's exit; `claude -p hi`, `claude --version`,
+  `claude mcp list`, `copilot login`, `claude -p hi | cat`, `\claude` and `command claude`
+  run unchanged; a `claude` alias in `~/.bashrc` / `~/.zshrc` is kept.
 
 Down enters the tab list during a search:
 
@@ -167,27 +173,15 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- `claude` / `copilot` typed at a shell prompt get agent status in place: today the agent
-  runs in place only when started by hand after printing the `N` mark, with the hooks from the
-  tab's environment (`$AGENTWS_CLAUDE_SETTINGS`, `$AGENTWS_COPILOT_PLUGIN`). Shell functions and
-  switch:
-  - Shell functions (bash, zsh, PowerShell): `claude` and `copilot` print the agent mark
-    (`ESC ] 133;N;aw=<token>;agent=claude BEL`), then run the real program (`command claude`)
-    with `--settings <path>` / `--plugin-dir <path>` put before the user's arguments, and
-    return its exit code. Copilot also needs `ConEmuANSI=ON` in its environment for progress
-    reports (agent tabs get it from `session_env`). PowerShell's `D` mark sends no exit status
-    yet (`exit=`), which the exit toast's code needs.
-  - End mark: the functions print an end-of-agent mark after `command claude` /
-    `command copilot` returns (new `PromptMark` variant, ending the run with the function's
-    exit code), so `claude; make` shows Running for `make` instead of the agent's status.
-  - Run unwrapped (no mark, no hooks, as today): the non-interactive forms (`-p` /
-    `--print`, `--version`, `--help`, subcommands such as `claude mcp ...` /
-    `claude update`), stdin or stdout not a terminal (`echo x | claude -p`),
-    `command claude` / `\claude`, an agent not on `PATH` (the shell prints its own
-    "command not found"), nested shells and cmd tabs (no functions).
-  - Switch "Agent status for agents typed at the prompt" (Terminal page, on): when off, the
-    functions aren't defined (the app passes a flag with the token) and typed `claude` /
-    `copilot` run as today. Applies to newly started shells.
+- `claude` / `copilot` typed at a shell prompt get agent status in place: bash and zsh tabs do
+  (`crates/app/shell-integration/agentws-agents.sh`: alias of a function that prints the `N`
+  mark, runs the agent with its hooks, then the `X` end mark; one-shot runs, pipes and
+  `\claude` unwrapped). Still to do, in order:
+  1. PowerShell functions, same rules as bash and zsh (unit-tested only: no pwsh here).
+     PowerShell's `D` mark sends no exit status yet (`exit=`), which the exit toast's code needs.
+  2. Switch "Agent status for agents typed at the prompt" (Terminal page, on): when off, the
+     functions aren't defined (the app passes a flag with the token) and typed `claude` /
+     `copilot` run as today. Applies to newly started shells.
 - Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - PowerShell: after an app restart, a restored PowerShell tab doesn't show its last command
   (the restored-tab suggestion that bash, zsh and Git Bash tabs get). Find whether the

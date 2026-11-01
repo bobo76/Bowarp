@@ -220,7 +220,8 @@ pub struct TerminalView {
     /// The agent finished a turn while the tab was hidden; cleared when it is shown. Kept
     /// after an in-place agent's run ends (the shell tab shows Ready for review).
     finished_unseen: bool,
-    /// An agent running in place in this shell tab (its `N` mark until the command's `D`).
+    /// An agent running in place in this shell tab (its `N` mark until its `X` end mark, else
+    /// the command's `D`).
     in_place: InPlaceAgent,
     /// The agents whose hooks this shell tab's environment carries (`shell_env`): with full
     /// activity hooks, their in-place status comes from hooks from the start.
@@ -771,6 +772,7 @@ impl TerminalView {
                 }
             }
             SessionEvent::AgentStarted(agent) => self.start_in_place(agent, cx),
+            SessionEvent::AgentFinished(exit) => self.on_agent_finished(exit, cx),
             SessionEvent::ProgressChanged { state, at } => self.apply_progress(state, at, cx),
             SessionEvent::ClipboardStore(clipboard, text) => {
                 self.on_clipboard_store(clipboard, text, cx);
@@ -875,6 +877,25 @@ impl TerminalView {
         self.mode = AgentModeState::default();
         self.finished_unseen = false;
         cx.emit(TabChanged);
+    }
+
+    /// The in-place agent's end mark: the run ends as at the command's `D`, which then ends
+    /// nothing more. The rest of the command line (`claude; make`) is a shell command again,
+    /// timed from now, so it shows Running only once it has run for [`RUNNING_AFTER`] itself.
+    fn on_agent_finished(&mut self, exit: Option<i32>, cx: &mut Context<Self>) {
+        let tab = self.tab_at_end();
+        let Some(outcome) = self.in_place.end(RunEnd::CommandFinished(exit), tab) else {
+            return;
+        };
+        self.finish_in_place(outcome, cx);
+        if self.running_command.is_some() {
+            let reveal = self.reveal_running(cx);
+            if let Some(running) = self.running_command.as_mut() {
+                running.started = Instant::now();
+                running._reveal = reveal;
+            }
+        }
+        self.refresh_location_and_notify(cx);
     }
 
     /// The tab as an ending in-place run sees it.

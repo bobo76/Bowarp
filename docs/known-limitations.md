@@ -47,10 +47,24 @@ entry when the limitation is lifted.
   mark carries no exit status, so a background agent's exit toast there says "without an exit
   code". The agent's title is put back to the shell's when the `D` mark is read, so a title the
   agent sets in its very last output, read together with the mark, can stay until the shell
-  sets one. One command line running two agents (`claude; copilot`) switches to the second at
-  its mark without an exit toast for the first; a command after the agent on the same line
-  (`claude; make`) runs under the agent's icon and status, without a Running badge or a close
-  question, until the line's `D` mark.
+  sets one. With the mark printed by hand (no end mark), one command line running two agents
+  switches to the second at its mark without an exit toast for the first, and a command after
+  the agent on the same line (`claude; make`) runs under the agent's icon and status, without
+  a Running badge or a close question, until the line's `D` mark. The same holds when the
+  agent is killed by a signal (bash and zsh then abort the rest of the line, end mark included).
+  An agent suspended with Ctrl+Z ends its run (bash goes on with the line); `fg` resumes it as
+  a plain shell command, without the agent's status.
+- Typed `claude` / `copilot` (bash and zsh): only an interactive run at the prompt gets the
+  hooks. Not wrapped: a user function of the same name, or a user alias that doesn't start with
+  the agent's name (they win: put the hooks in them by hand; a function defined later at the
+  prompt, e.g. by re-sourcing `~/.zshrc`, needs `unalias claude` first: zsh refuses it),
+  `sudo claude`, `env claude`, `xargs claude` and scripts (only the typed word is an alias),
+  and an agent started from another program. A Claude run with its own `--settings` (typed or
+  in an alias) runs unwrapped, without the status; Copilot's `--plugin-dir` can be repeated, so
+  it is wrapped. Which runs are one-shot is decided from
+  the arguments: a subcommand first, or `-p`/`--print`/`--prompt`, `-v`/`--version`,
+  `-h`/`--help` anywhere before `--` (an option value equal to one of these counts too); a
+  subcommand added by a later agent version runs in place until the list is updated.
 - An agent tab going on as a shell starts in the agent's last known folder: on Linux its
   `/proc` folder as of its last title change or hook event, elsewhere the folder it started in.
 - Window opacity: on X11 without a compositor the window can't be see-through, and the

@@ -124,6 +124,19 @@ fn agent_marks_name_a_registered_agent() {
 }
 
 #[test]
+fn agent_end_marks_carry_the_exit_status() {
+    assert_eq!(
+        kinds(&[b"\x1b]133;X;aw=t0k;exit=3\x07\x1b]133;X;aw=t0k\x07"]),
+        [
+            PromptMark::AgentFinished(Some(3)),
+            PromptMark::AgentFinished(None)
+        ]
+    );
+    assert!(kinds(&[b"\x1b]133;X;exit=0\x07"]).is_empty());
+    assert!(kinds(&[b"\x1b]133;X;aw=bad;exit=0\x07"]).is_empty());
+}
+
+#[test]
 fn text_paths_run_to_the_end_of_the_mark() {
     assert_eq!(
         kinds(&[b"\x1b]133;D;aw=t0k;path=C:\\a;b=c\x1b\\"]),

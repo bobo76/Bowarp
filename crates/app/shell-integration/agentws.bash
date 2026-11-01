@@ -4,8 +4,8 @@
 # A prompt start, B command start (end of PS1), C command executed (PS0, with the command line
 # as bash saved it to its history), D command finished (with its exit status and the shell's
 # folder). Each mark carries the session's token (AGENTWS_MARK_TOKEN), so the app ignores marks
-# printed by programs; it stays in $__agentws_token, which an agent's N mark (printed before
-# running it with the tab's hooks) needs too. Needs bash 4.4 (PS0). With AGENTWS_BASH_LOGIN set
+# printed by programs; it stays in $__agentws_token, which the `claude` and `copilot` functions
+# (agentws-agents.sh) need for their marks too. Needs bash 4.4 (PS0). With AGENTWS_BASH_LOGIN set
 # (Git Bash, whose shortcut starts a login shell, which ignores --rcfile, and WSL, which starts
 # one too) it loads the login files instead of ~/.bashrc.
 
@@ -114,6 +114,10 @@ if [ -z "${__agentws_loaded-}" ] && [ -n "$__agentws_token" ] &&
     fi
     # PS0 is printed after a command line is read, before it runs.
     PS0='$(__agentws_ps0)'"${PS0-}"
+    # `claude` and `copilot` with the tab's hooks, after the user's own aliases and functions.
+    if [ -f "${BASH_SOURCE[0]%/*}/agentws-agents.sh" ]; then
+        . "${BASH_SOURCE[0]%/*}/agentws-agents.sh"
+    fi
 else
     unset __agentws_token
 fi

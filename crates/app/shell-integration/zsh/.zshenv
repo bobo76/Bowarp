@@ -6,8 +6,8 @@
 # (preexec, with the command line), D command finished (precmd, with the exit status and the
 # folder), and L, the command line being edited (zle). Each mark carries the session's token
 # (AGENTWS_MARK_TOKEN), so the app ignores marks printed by programs; it stays in
-# $__agentws_token, which an agent's N mark (printed before running it with the tab's hooks)
-# needs too. Text is sent hex-encoded.
+# $__agentws_token, which the `claude` and `copilot` functions (../agentws-agents.sh, defined
+# with the hooks after the startup files) need for their marks too. Text is sent hex-encoded.
 if [[ -n ${AGENTWS_USER_ZDOTDIR+x} ]]; then
     ZDOTDIR=$AGENTWS_USER_ZDOTDIR
 else
@@ -22,6 +22,8 @@ fi
 
 if [[ -o interactive && -n $__agentws_token && -z ${__agentws_loaded-} ]]; then
     __agentws_loaded=1
+    # The folder this file was written to, with ../agentws-agents.sh.
+    __agentws_dir=${${(%):-%x}:h:h}
     __agentws_a=$'%{\e]133;A;aw='$__agentws_token$'\a%}'
     __agentws_b=$'%{\e]133;B;aw='$__agentws_token$'\a%}'
 
@@ -121,6 +123,11 @@ if [[ -o interactive && -n $__agentws_token && -z ${__agentws_loaded-} ]]; then
             done
         fi
         __agentws_wrap_ps1
+        # `claude` and `copilot` with the tab's hooks, after the user's own aliases and
+        # functions.
+        if [[ -f $__agentws_dir/agentws-agents.sh ]]; then
+            source "$__agentws_dir/agentws-agents.sh"
+        fi
     }
 
     autoload -Uz add-zsh-hook

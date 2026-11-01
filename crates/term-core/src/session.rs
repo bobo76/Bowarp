@@ -48,6 +48,9 @@ pub enum SessionEvent {
     CommandFinished(Option<i32>),
     /// The running command is this agent, started with the tab's hooks (`N` mark).
     AgentStarted(AgentId),
+    /// The agent the `N` mark named exited (`X` mark), with its exit status; the command it
+    /// ran in may go on until `CommandFinished`.
+    AgentFinished(Option<i32>),
     /// The program reported progress (OSC 9;4), including repeated states.
     ProgressChanged {
         state: ProgressState,
@@ -133,6 +136,7 @@ impl Shared {
                 PromptEvent::Executed(command) => SessionEvent::CommandExecuted(command),
                 PromptEvent::Finished(exit) => SessionEvent::CommandFinished(exit),
                 PromptEvent::AgentStarted(agent) => SessionEvent::AgentStarted(agent),
+                PromptEvent::AgentFinished(exit) => SessionEvent::AgentFinished(exit),
             });
         }));
         Self {

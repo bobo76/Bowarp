@@ -99,6 +99,9 @@ pub enum PromptEvent {
     /// The running command is this agent, started with the tab's hooks (`N` mark); ignored
     /// when no command runs.
     AgentStarted(AgentId),
+    /// The agent the `N` mark named exited (`X` mark), with its exit status; the command line
+    /// may go on with other commands. Ignored when no command runs.
+    AgentFinished(Option<i32>),
 }
 
 /// What the user typed at the prompt, as the shell reported it (zsh) or read from the grid.
@@ -202,6 +205,7 @@ impl TrackerState {
                 (self.finish_command(folder, exit), None)
             }
             PromptMark::AgentStarted(agent) => (self.name_agent(agent), None),
+            PromptMark::AgentFinished(exit) => (self.finish_agent(exit), None),
             PromptMark::CommandLine(line) => {
                 self.reports_line = line.is_some();
                 self.line = line;
@@ -253,6 +257,14 @@ impl TrackerState {
             return Vec::new();
         }
         vec![PromptEvent::AgentStarted(agent)]
+    }
+
+    /// The running command's agent exited; ignored when no command runs.
+    fn finish_agent(&self, exit: Option<i32>) -> Vec<PromptEvent> {
+        if self.phase != Phase::Running {
+            return Vec::new();
+        }
+        vec![PromptEvent::AgentFinished(exit)]
     }
 
     fn finish_command(&mut self, folder: Option<PathBuf>, exit: Option<i32>) -> Vec<PromptEvent> {

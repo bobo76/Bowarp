@@ -23,10 +23,13 @@ use crate::window_bounds::config_file;
 const BASH_SCRIPT: &str = include_str!("../shell-integration/agentws.bash");
 const ZSH_ENV: &str = include_str!("../shell-integration/zsh/.zshenv");
 const PWSH_SCRIPT: &str = include_str!("../shell-integration/agentws.ps1");
+const AGENTS_SCRIPT: &str = include_str!("../shell-integration/agentws-agents.sh");
 
 const BASH_FILE: &str = "agentws.bash";
 const ZSH_DIR: &str = "zsh";
 const PWSH_FILE: &str = "agentws.ps1";
+/// The `claude` and `copilot` functions, sourced by the bash and zsh scripts from their folder.
+const AGENTS_FILE: &str = "agentws-agents.sh";
 /// zsh reads its startup files from `$ZDOTDIR`.
 const ZSH_DIR_ENV: &str = "ZDOTDIR";
 /// The user's own `ZDOTDIR`, for the injected `.zshenv` (unset: `$HOME`).
@@ -233,6 +236,7 @@ fn write_scripts(dir: &Path) -> io::Result<()> {
         (BASH_FILE, BASH_SCRIPT),
         ("zsh/.zshenv", ZSH_ENV),
         (PWSH_FILE, PWSH_SCRIPT),
+        (AGENTS_FILE, AGENTS_SCRIPT),
     ];
     fs::create_dir_all(dir.join(ZSH_DIR))?;
     fs::create_dir_all(dir.join(CD_DIR))?;

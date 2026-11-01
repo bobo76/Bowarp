@@ -865,6 +865,37 @@ fn the_end_of_an_in_place_run_clears_attention(cx: &mut gpui_kit::TestAppContext
 }
 
 #[gpui::test]
+fn an_agent_end_mark_ends_the_run_before_the_command_line_does(cx: &mut gpui_kit::TestAppContext) {
+    let (view, notices, _events) = in_place_shell(cx);
+    view.update(cx, |view, cx| {
+        view.on_session_event(
+            SessionEvent::CommandStarted(Some("claude; make".into())),
+            cx,
+        );
+        view.on_session_event(SessionEvent::AgentStarted(CLAUDE), cx);
+        view.on_session_event(SessionEvent::TitleChanged(Some("✳ Claude Code".into())), cx);
+        view.apply_report(&report("UserPromptSubmit"), 1, cx);
+        assert_eq!(view.tab_status(), TabStatus::Working);
+        view.on_session_event(SessionEvent::AgentFinished(Some(3)), cx);
+        assert_eq!(view.status_kind(), SessionKind::Shell);
+        assert_eq!(view.name(), "bash", "the title from before the run");
+        // `make` runs on as a shell command.
+        assert_eq!(
+            view.busy_reason(),
+            Some(BusyReason::Command(Some("claude; make".into())))
+        );
+        // The command line's D mark ends nothing more.
+        view.on_session_event(SessionEvent::CommandFinished(Some(0)), cx);
+        assert_eq!(view.tab_status(), TabStatus::Quiet);
+        assert_eq!(view.busy_reason(), None);
+        // An end mark without a run is ignored.
+        view.on_session_event(SessionEvent::AgentFinished(Some(1)), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(*notices.borrow(), [AgentNotice::Exited(Some(3))]);
+}
+
+#[gpui::test]
 fn a_shell_exiting_mid_run_leaves_an_exited_shell_tab(cx: &mut gpui_kit::TestAppContext) {
     let (view, notices, _events) = in_place_shell(cx);
     view.update(cx, |view, cx| {
