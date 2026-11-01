@@ -43,7 +43,7 @@ fn bash_configuration_preserves_login_startup() {
         BASH_LOGIN_ARGS.map(String::from).to_vec(),
         None,
     );
-    Shell::Bash.configure(&mut spec, Path::new("scripts"), "token");
+    Shell::Bash.configure(&mut spec, Path::new("scripts"), "token", true);
     assert_eq!(
         spec.args,
         [
@@ -53,6 +53,26 @@ fn bash_configuration_preserves_login_startup() {
         ]
     );
     assert_eq!(spec.env.get(BASH_LOGIN_ENV).map(String::as_str), Some("1"));
+}
+
+#[test]
+fn typed_agents_flag_goes_to_shells_with_agent_functions() {
+    let flag = |shell: Shell, on: bool| {
+        let mut spec = LaunchSpec::new(SessionKind::Shell, Some("sh".into()), vec![], None);
+        shell.configure(&mut spec, Path::new("scripts"), "token", on);
+        spec.env.get(TYPED_AGENTS_ENV).cloned()
+    };
+    for shell in [Shell::Bash, Shell::Zsh, Shell::Pwsh, Shell::Wsl] {
+        assert_eq!(flag(shell, true).as_deref(), Some("1"), "{shell:?}");
+        assert_eq!(flag(shell, false).as_deref(), Some("0"), "{shell:?}");
+    }
+    assert_eq!(flag(Shell::Cmd, true), None);
+    assert_eq!(wsl_env(""), "AGENTWS_MARK_TOKEN:AGENTWS_TYPED_AGENTS");
+    assert_eq!(
+        wsl_env("USERPROFILE/p"),
+        "USERPROFILE/p:AGENTWS_MARK_TOKEN:AGENTWS_TYPED_AGENTS"
+    );
+    assert!(WSL_LAUNCH.contains("unset AGENTWS_MARK_TOKEN AGENTWS_TYPED_AGENTS;"));
 }
 
 #[test]
@@ -78,7 +98,7 @@ fn other_launches_are_left_alone() {
         workspace_model::AgentId::from_cli_selector("claude").unwrap(),
         None,
     );
-    assert!(!attach(&mut claude));
+    assert!(!attach(&mut claude, true));
     assert!(claude.args.is_empty() && claude.env.is_empty());
     let mut bash_script = LaunchSpec::new(
         SessionKind::Shell,
@@ -86,10 +106,10 @@ fn other_launches_are_left_alone() {
         vec!["build.sh".into()],
         None,
     );
-    assert!(!attach(&mut bash_script));
+    assert!(!attach(&mut bash_script, true));
     assert_eq!(bash_script.args, ["build.sh"]);
     let mut fish = LaunchSpec::new(SessionKind::Shell, Some("fish".into()), vec![], None);
-    assert!(!attach(&mut fish));
+    assert!(!attach(&mut fish, true));
     assert_eq!(fish.program.as_deref(), Some("fish"));
 }
 
@@ -140,6 +160,7 @@ fn run_shell(
         .args(["-c", "exec \"$@\" 2>&1", "sh", program])
         .args(args)
         .env(MARK_TOKEN_ENV, "t0k")
+        .env(TYPED_AGENTS_ENV, "1")
         // With a real terminal type (xterm-256color from the caller's shell), bash's
         // readline loses the prompt when stdin is a pipe, and with it the A and B marks.
         .env("TERM", "dumb")
@@ -298,6 +319,7 @@ fn run_in_terminal(
         .args(["-qec", command, "/dev/null"])
         .env("SHELL", "/bin/sh")
         .env(MARK_TOKEN_ENV, "t0k")
+        .env(TYPED_AGENTS_ENV, "1")
         .env("TERM", "dumb")
         .env("AGENTWS_CLAUDE_SETTINGS", "/hooks/settings.json")
         .env("AGENTWS_COPILOT_PLUGIN", "/hooks/plugin")
@@ -468,6 +490,18 @@ const USER_SETTINGS_INPUT: &str = "claude y\nexit\n";
 #[cfg(unix)]
 const TYPED_SETTINGS_INPUT: &str = "claude --settings z.json\nclaude --settings=w.json\nexit\n";
 
+/// With the switch off, the user's alias of the agent and the agents run unchanged, and the
+/// flag doesn't reach the commands.
+#[cfg(unix)]
+const SWITCH_OFF_INPUT: &str = "claude x\ncopilot\necho flag=${AGENTWS_TYPED_AGENTS-unset}\nexit\n";
+
+#[cfg(unix)]
+const SWITCH_OFF_OUTPUT: &[&str] = &[
+    "claude-argv:--user-flag x|",
+    "copilot-argv:--banner|conemu:unset",
+    "flag=unset",
+];
+
 #[cfg(unix)]
 fn check_no_agent_marks(marks: &[workspace_model::PromptMark], output: &str, expected: &[&str]) {
     use workspace_model::PromptMark::*;
@@ -515,6 +549,10 @@ fn bash_agent_functions_run_interactive_agents_in_place() {
             "claude-argv:--settings=w.json|",
         ],
     );
+    fs::write(home.join(".bashrc"), USER_WRAPPED).unwrap();
+    let off = [env[0], env[1], (TYPED_AGENTS_ENV, Path::new("0"))];
+    let (marks, output) = run_in_terminal("bash", &command, &off, SWITCH_OFF_INPUT).unwrap();
+    check_no_agent_marks(&marks, &output, SWITCH_OFF_OUTPUT);
     fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -557,6 +595,10 @@ fn zsh_agent_functions_run_interactive_agents_in_place() {
             "claude-argv:--settings=w.json|",
         ],
     );
+    fs::write(home.join(".zshrc"), USER_WRAPPED).unwrap();
+    let off = [env[0], env[1], env[2], (TYPED_AGENTS_ENV, Path::new("0"))];
+    let (marks, output) = run_in_terminal("zsh", "zsh -i", &off, SWITCH_OFF_INPUT).unwrap();
+    check_no_agent_marks(&marks, &output, SWITCH_OFF_OUTPUT);
     fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -674,6 +716,7 @@ fn run_powershell(
         .arg("-File")
         .arg(&test_file)
         .env(MARK_TOKEN_ENV, "t0k")
+        .env(TYPED_AGENTS_ENV, "1")
         .output()
         .unwrap();
     let mut scanner = workspace_model::Osc133Scanner::new("t0k");
@@ -850,6 +893,45 @@ fn powershell_prompt_gives_the_users_prompt_the_last_status() {
         assert!(
             output.contains("user-ok=True|code=3|"),
             "{program}: {output}"
+        );
+    }
+}
+
+#[test]
+fn powershell_agent_functions_are_not_defined_when_switched_off() {
+    let user = concat!(
+        "$env:AGENTWS_TYPED_AGENTS = '0'\n",
+        "$target = (Get-Command claude -CommandType Application -TotalCount 1).Source\n",
+        "Set-Alias -Name claude -Value $target -Scope Global\n",
+    );
+    let test = concat!(
+        "claude x\n",
+        "copilot\n",
+        "\"flag=$env:AGENTWS_TYPED_AGENTS|\"\n",
+        "\"alias=$((Get-Alias claude -ErrorAction Ignore).Name)|\"\n",
+        "$functions = Get-Command claude, copilot -CommandType Function -ErrorAction Ignore\n",
+        "\"functions=$(@($functions).Count)|\"\n",
+    );
+    for program in POWERSHELLS {
+        let Some((marks, output)) = run_powershell(program, "pwsh-agents-off", user, test) else {
+            continue;
+        };
+        for expected in [
+            "claude-argv:x|",
+            "copilot-argv:|conemu:unset",
+            "flag=|",
+            "alias=claude|",
+            "functions=0|",
+        ] {
+            assert!(output.contains(expected), "{program}: {expected}: {output}");
+        }
+        assert!(
+            !marks.iter().any(|mark| matches!(
+                mark,
+                workspace_model::PromptMark::AgentStarted(_)
+                    | workspace_model::PromptMark::AgentFinished(_)
+            )),
+            "{program}: {marks:?}"
         );
     }
 }

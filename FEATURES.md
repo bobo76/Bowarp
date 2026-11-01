@@ -144,6 +144,8 @@ directly to model APIs.
   file links in the terminal are offered to the system's own application instead.
 - Let the user turn off in-app notifications for agent events; status and attention badges
   stay, and a crashed agent, failures and warnings are still shown.
+- Let the user turn off agent status for `claude` / `copilot` typed at a shell prompt: shells
+  started afterwards run them unchanged (no wrappers), shells already running keep theirs.
 
 ## Optional Behavior
 

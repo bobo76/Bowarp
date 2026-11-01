@@ -36,6 +36,11 @@ Agent running in place in a shell tab (from its `N` mark until the command's `D`
   `ConEmuANSI` restored); a background tab's exit toast code; D's `exit=` after a failed
   program, a failed cmdlet and success; an oh-my-posh / starship prompt still shows the
   failure of the last command (`$?` restored before the user's prompt).
+- Switch "Agent status for agents typed at the prompt" off (Settings → Terminal), then a new
+  zsh (oh-my-zsh), PowerShell (pwsh 7 and 5.1), Git Bash and WSL bash tab: typed `claude` /
+  `copilot` run unchanged with no agent icon, a `claude` alias of your own is untouched,
+  `$AGENTWS_TYPED_AGENTS` / `$env:AGENTWS_TYPED_AGENTS` is unset in the shell; switched back
+  on, the next new tab wraps them again and tabs already open keep their behavior.
 
 Down enters the tab list during a search:
 
@@ -183,13 +188,6 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- `claude` / `copilot` typed at a shell prompt get agent status in place: bash, zsh and
-  PowerShell tabs do (`crates/app/shell-integration/agentws-agents.sh`, functions in
-  `agentws.ps1`: print the `N` mark, run the agent with its hooks, then the `X` end mark;
-  one-shot runs, pipes and `\claude` unwrapped). Still to do:
-  1. Switch "Agent status for agents typed at the prompt" (Terminal page, on): when off, the
-     functions aren't defined (the app passes a flag with the token) and typed `claude` /
-     `copilot` run as today. Applies to newly started shells.
 - Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - PowerShell: after an app restart, a restored PowerShell tab doesn't show its last command
   (the restored-tab suggestion that bash, zsh and Git Bash tabs get). Find whether the

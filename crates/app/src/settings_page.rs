@@ -293,10 +293,30 @@ fn terminal_groups(launchers: Rc<[Launcher]>) -> Vec<SettingGroup> {
             .item(default_shell_row(launchers.clone())),
         command_history_group(),
         agent_arguments_group(&launchers),
+        typed_agents_group(),
         SettingGroup::new()
             .title("Clipboard")
             .item(clipboard_writes_row()),
     ]
+}
+
+/// The `typed_agent_status` switch: `claude` and `copilot` typed at a shell prompt get status.
+fn typed_agents_group() -> SettingGroup {
+    SettingGroup::new().title("Agents at the prompt").item(
+        switch_row(
+            "Agent status for agents typed at the prompt",
+            "Claude Code and Copilot CLI started by typing claude or copilot in a bash, zsh or \
+             PowerShell tab show their status on the tab, as in their own tabs. Off: they run \
+             as typed, without status. Applies to newly started shells.",
+            SettingsField::new(
+                |settings| settings.typed_agent_status.is_on(),
+                |settings, value| settings.typed_agent_status = FeatureSwitch::new(value),
+            ),
+        )
+        .keywords([
+            "claude", "copilot", "agent", "status", "shell", "hooks", "typed",
+        ]),
+    )
 }
 
 /// The `ui_theme` setting: the dark or the light UI.

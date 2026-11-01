@@ -59,6 +59,11 @@ pub struct Settings {
     pub claude_args: String,
     #[serde(deserialize_with = "lenient")]
     pub copilot_args: String,
+    /// Whether `claude` and `copilot` typed at a bash, zsh or PowerShell prompt run in place
+    /// with the tab's status hooks (the shell integration defines functions for them). Off:
+    /// they run unchanged. Read when a shell starts, so it applies to newly started shells.
+    #[serde(deserialize_with = "lenient")]
+    pub typed_agent_status: FeatureSwitch<true>,
     /// What happens when a program writes the clipboard (OSC 52): ask (the default), allow
     /// or deny, in every tab.
     #[serde(deserialize_with = "lenient")]

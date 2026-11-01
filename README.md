@@ -200,13 +200,13 @@ PowerShell profile and then marks the prompt (OSC 133); the scripts live in `she
 in the config folder. zsh reads your `.zprofile` and `.zshrc` itself, from your own `ZDOTDIR`.
 The marks carry a per-session token, so output that merely contains such marks (a file you
 `cat`, a remote shell over ssh) is not tracked. The bash, zsh and PowerShell scripts also define
-`claude` and `copilot`, which run the agent in place (below). bash needs 4.4 or later;
-PowerShell needs PSReadLine. Git Bash's login shell gets the script too, which then loads your
-login files (`/etc/profile`, then `~/.bash_profile`) instead of `~/.bashrc`; so does a WSL
-distro whose login shell is bash (it reports Linux folders as `\\wsl.localhost\<distro>\...`).
-cmd gets no script: its `PROMPT` (yours, else `$P$G`) is prefixed with a mark that reports the
-folder and puts it in the title, so cmd tabs get the folder but no history and no Running
-status.
+`claude` and `copilot` (unless switched off), which run the agent in place (below). bash needs
+4.4 or later; PowerShell needs PSReadLine. Git Bash's login shell gets the script too, which
+then loads your login files (`/etc/profile`, then `~/.bash_profile`) instead of `~/.bashrc`; so
+does a WSL distro whose login shell is bash (it reports Linux folders as
+`\\wsl.localhost\<distro>\...`). cmd gets no script: its `PROMPT` (yours, else `$P$G`) is
+prefixed with a mark that reports the folder and puts it in the title, so cmd tabs get the
+folder but no history and no Running status.
 
 The scroll bar sits in the right margin and shows while you scroll or hover it. Drag the
 thumb, or click the track to jump there. It is hidden when there is no history, as on a
@@ -355,6 +355,10 @@ agent in them after the agent mark, with the hooks:
 `$env:ConEmuANSI = 'ON'`, `copilot.exe --plugin-dir $env:AGENTWS_COPILOT_PLUGIN`). To run
 the program unchanged, type its file name (`claude.exe`,
 `claude.cmd`) or `& (Get-Command claude -CommandType Application -TotalCount 1)`.
+Settings → Terminal → "Agent status for agents typed at the prompt" (on by default) turns
+this off: shells started afterwards don't get the `claude` and `copilot` wrappers, so typed
+agents run unchanged, without status, and your own aliases are left alone; shells already
+running keep what they started with.
 
 Background Claude Code and Copilot tabs, and agents running in place in a shell tab, show an
 in-app toast when they need attention, finish a turn, or exit (an unsuccessful exit includes
@@ -579,6 +583,12 @@ These words follow the app's own arguments, including Claude's hooks `--settings
 explorer agent launches always use the current setting (Ctrl+Shift+T still opens the default
 shell). Existing, duplicated and restored tabs keep their original argument vector, saved
 in `tabs.json`; changing the setting only affects new launches.
+
+The Terminal page's "Agent status for agents typed at the prompt" switch
+(`typed_agent_status`, on by default) decides whether `claude` and `copilot` typed in a bash,
+zsh or PowerShell tab run in place with the tab's status (see Tab rows). It applies to
+shells started after the change; tabs already open keep their shell's behavior until they are
+restarted.
 
 Hover-card settings are saved as independent booleans, for example:
 

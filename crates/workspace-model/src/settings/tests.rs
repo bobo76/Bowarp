@@ -763,16 +763,19 @@ fn feature_switches_default_on_and_round_trip() {
     let settings = Settings::default();
     assert!(settings.group_hover_cards.is_on());
     assert!(settings.activity_animations.is_on());
+    assert!(settings.typed_agent_status.is_on());
 
     let off = Settings {
         group_hover_cards: FeatureSwitch::new(false),
         activity_animations: FeatureSwitch::new(false),
+        typed_agent_status: FeatureSwitch::new(false),
         ..Settings::default()
     };
     let json = off.to_json().unwrap();
     let value: Value = serde_json::from_str(&json).unwrap();
     assert_eq!(value["group_hover_cards"], Value::Bool(false));
     assert_eq!(value["activity_animations"], Value::Bool(false));
+    assert_eq!(value["typed_agent_status"], Value::Bool(false));
     assert_eq!(Settings::from_json(&json).unwrap(), off);
 }
 
@@ -780,11 +783,13 @@ fn feature_switches_default_on_and_round_trip() {
 fn feature_switches_with_a_wrong_type_use_their_default() {
     for wrong in ["\"false\"", "0", "null", "[]", "{}"] {
         let settings = Settings::from_json(&format!(
-            r#"{{"group_hover_cards": {wrong}, "activity_animations": {wrong}, "font_size": 20}}"#
+            r#"{{"group_hover_cards": {wrong}, "activity_animations": {wrong},
+                "typed_agent_status": {wrong}, "font_size": 20}}"#
         ))
         .unwrap();
         assert!(settings.group_hover_cards.is_on(), "{wrong}");
         assert!(settings.activity_animations.is_on(), "{wrong}");
+        assert!(settings.typed_agent_status.is_on(), "{wrong}");
         assert_eq!(settings.font_size.points(), 20.);
     }
     let one_off = Settings::from_json(r#"{"group_hover_cards": false}"#).unwrap();

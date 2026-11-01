@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.57
+
+- Add the switch "Agent status for agents typed at the prompt" (Settings, Terminal, Agents at
+  the prompt; on by default): off, `claude` and `copilot` typed in bash, zsh and PowerShell
+  tabs run as plain programs, without agent status. Applies to newly started shells.
+
 ## 0.2.56
 
 - Typing `claude` or `copilot` in a PowerShell or Windows PowerShell tab now runs the agent in

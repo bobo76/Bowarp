@@ -524,7 +524,8 @@ impl WorkspaceView {
         let session_id = self.next_session_id;
         let mut launch = spec.clone();
         // First: a shell with integration also gets the agents' hooks.
-        shell_integration::attach(&mut launch);
+        let typed_agents = settings_file::settings(cx).typed_agent_status.is_on();
+        shell_integration::attach(&mut launch, typed_agents);
         let attachment = self.hooks.as_ref().map_or_else(Default::default, |hooks| {
             hooks.attach(session_id, &mut launch)
         });

@@ -7,7 +7,8 @@
 # folder), and L, the command line being edited (zle). Each mark carries the session's token
 # (AGENTWS_MARK_TOKEN), so the app ignores marks printed by programs; it stays in
 # $__agentws_token, which the `claude` and `copilot` functions (../agentws-agents.sh, defined
-# with the hooks after the startup files) need for their marks too. Text is sent hex-encoded.
+# with the hooks after the startup files when AGENTWS_TYPED_AGENTS is 1) need for their marks
+# too. Text is sent hex-encoded.
 if [[ -n ${AGENTWS_USER_ZDOTDIR+x} ]]; then
     ZDOTDIR=$AGENTWS_USER_ZDOTDIR
 else
@@ -15,7 +16,8 @@ else
 fi
 __agentws_token=${AGENTWS_MARK_TOKEN-}
 __agentws_cd_file=${AGENTWS_CD_FILE-}
-unset AGENTWS_USER_ZDOTDIR AGENTWS_MARK_TOKEN AGENTWS_CD_FILE
+__agentws_typed_agents=${AGENTWS_TYPED_AGENTS-}
+unset AGENTWS_USER_ZDOTDIR AGENTWS_MARK_TOKEN AGENTWS_CD_FILE AGENTWS_TYPED_AGENTS
 if [[ -f ${ZDOTDIR:-$HOME}/.zshenv ]]; then
     source "${ZDOTDIR:-$HOME}/.zshenv"
 fi
@@ -125,13 +127,14 @@ if [[ -o interactive && -n $__agentws_token && -z ${__agentws_loaded-} ]]; then
         __agentws_wrap_ps1
         # `claude` and `copilot` with the tab's hooks, after the user's own aliases and
         # functions.
-        if [[ -f $__agentws_dir/agentws-agents.sh ]]; then
+        if [[ $__agentws_typed_agents == 1 && -f $__agentws_dir/agentws-agents.sh ]]; then
             source "$__agentws_dir/agentws-agents.sh"
         fi
+        unset __agentws_typed_agents
     }
 
     autoload -Uz add-zsh-hook
     add-zsh-hook precmd __agentws_install
 else
-    unset __agentws_token
+    unset __agentws_token __agentws_typed_agents
 fi

@@ -4,12 +4,15 @@
 # executed (Enter, with the command line hex-encoded), D command finished (with its exit status
 # and the folder, when the location is one). Each mark carries the session's token
 # (AGENTWS_MARK_TOKEN), so the app ignores marks printed by programs. Needs PSReadLine, which
-# reports Enter. Also defines the `claude` and `copilot` functions (see below). Keep it Windows
-# PowerShell 5.1 syntax: no `&&`, `||`, `??` or ternary. Not verified yet.
+# reports Enter. Also defines the `claude` and `copilot` functions (see below) when
+# AGENTWS_TYPED_AGENTS is 1. Keep it Windows PowerShell 5.1 syntax: no `&&`, `||`, `??` or
+# ternary. Not verified yet.
 $global:__agentws_token = $env:AGENTWS_MARK_TOKEN
 $global:__agentws_cd_file = $env:AGENTWS_CD_FILE
+$__agentws_typed_agents = $env:AGENTWS_TYPED_AGENTS -eq '1'
 Remove-Item Env:AGENTWS_MARK_TOKEN -ErrorAction SilentlyContinue
 Remove-Item Env:AGENTWS_CD_FILE -ErrorAction SilentlyContinue
+Remove-Item Env:AGENTWS_TYPED_AGENTS -ErrorAction SilentlyContinue
 
 if (-not $global:__agentws_loaded -and $global:__agentws_token -and (Get-Module PSReadLine)) {
     $global:__agentws_loaded = $true
@@ -192,18 +195,22 @@ if (-not $global:__agentws_loaded -and $global:__agentws_token -and (Get-Module 
         [Console]::Write("$([char]27)]133;X;aw=$global:__agentws_token;exit=$code$([char]7)")
     }
 
-    __agentws_take_alias 'claude'
-    if (-not (Get-Command -Name claude -CommandType Alias, Function -ErrorAction Ignore)) {
-        function global:claude {
-            __agentws_run_agent 'claude' $env:AGENTWS_CLAUDE_SETTINGS '--settings' `
-                $MyInvocation $input $args
+    # Off (AGENTWS_TYPED_AGENTS not 1): the names and the user's aliases are left alone.
+    if ($__agentws_typed_agents) {
+        __agentws_take_alias 'claude'
+        if (-not (Get-Command -Name claude -CommandType Alias, Function -ErrorAction Ignore)) {
+            function global:claude {
+                __agentws_run_agent 'claude' $env:AGENTWS_CLAUDE_SETTINGS '--settings' `
+                    $MyInvocation $input $args
+            }
         }
-    }
-    __agentws_take_alias 'copilot'
-    if (-not (Get-Command -Name copilot -CommandType Alias, Function -ErrorAction Ignore)) {
-        function global:copilot {
-            __agentws_run_agent 'copilot' $env:AGENTWS_COPILOT_PLUGIN '--plugin-dir' `
-                $MyInvocation $input $args
+        __agentws_take_alias 'copilot'
+        if (-not (Get-Command -Name copilot -CommandType Alias, Function -ErrorAction Ignore)) {
+            function global:copilot {
+                __agentws_run_agent 'copilot' $env:AGENTWS_COPILOT_PLUGIN '--plugin-dir' `
+                    $MyInvocation $input $args
+            }
         }
     }
 }
+Remove-Variable __agentws_typed_agents -ErrorAction SilentlyContinue
