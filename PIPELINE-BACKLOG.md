@@ -118,6 +118,8 @@ Before launching the next agent, I check that:
 - `pipeline/log.txt` has the agent's `begin` and `end` lines.
 - after a UX/UI agent: `docs/ux-decisions.md` has a short entry per question (see the rule at its top), and the log has a `ux` line per question.
 
+**Windows CI before review** (when the step changes code that only runs on Windows or under PowerShell, which this machine can't run): after agent 1's gate (and again after agent 3's), push HEAD to a temporary branch (`git push origin HEAD:refs/heads/ci/<slug>`), start `gh workflow run windows.yml --ref ci/<slug>`, wait for it in the background while the UX/UI agent runs, give the reviewer the result (and the failing test, if any), then delete the branch (`git push origin --delete ci/<slug>`). The run's commits stay unpushed on `<branch>`, so the squash is unaffected. Tell such agents that downloading tools (e.g. pwsh) is blocked.
+
 Then I append `<time> | <slug> | <agent> | usage | <tokens> tokens, <tool uses> tool uses, <duration>` to `pipeline/log.txt`, from the agent's completion notice, so the retros of later runs can compare costs.
 
 If any check fails, including agent 1 being unable to run a needed UI check, I stop the pipeline, append `<time> | <slug> | pipeline | end | stopped: <reason>`, and report what failed instead of launching the next agent.
