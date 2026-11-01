@@ -26,6 +26,16 @@ Agent running in place in a shell tab (from its `N` mark until the command's `D`
   tab gets one exit toast, at the agent's exit; `claude -p hi`, `claude --version`,
   `claude mcp list`, `copilot login`, `claude -p hi | cat`, `\claude` and `command claude`
   run unchanged; a `claude` alias in `~/.bashrc` / `~/.zshrc` is kept.
+- Typed `claude` / `copilot` in PowerShell (pwsh 7 and Windows PowerShell 5.1, Windows and
+  Linux; the pwsh tests only run where pwsh is installed, e.g. the Windows CI): the real
+  `claude.exe`, npm's `claude.ps1` / `claude.cmd` shims and `copilot` run in place with status
+  and see the terminal (a native program run from a function keeps the console); which of
+  `claude.ps1` / `claude.cmd` `Get-Command` picks first; `claude -p hi`, `'hi' | claude -p`,
+  `claude | Out-String`, `claude.exe`, `claude mcp list` run unchanged; a `claude` function
+  in the profile is kept; Ctrl+C in Claude and Copilot (the X mark or the `D` ends the run,
+  `ConEmuANSI` restored); a background tab's exit toast code; D's `exit=` after a failed
+  program, a failed cmdlet and success; an oh-my-posh / starship prompt still shows the
+  failure of the last command (`$?` restored before the user's prompt).
 
 Down enters the tab list during a search:
 
@@ -173,13 +183,11 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- `claude` / `copilot` typed at a shell prompt get agent status in place: bash and zsh tabs do
-  (`crates/app/shell-integration/agentws-agents.sh`: alias of a function that prints the `N`
-  mark, runs the agent with its hooks, then the `X` end mark; one-shot runs, pipes and
-  `\claude` unwrapped). Still to do, in order:
-  1. PowerShell functions, same rules as bash and zsh (unit-tested only: no pwsh here).
-     PowerShell's `D` mark sends no exit status yet (`exit=`), which the exit toast's code needs.
-  2. Switch "Agent status for agents typed at the prompt" (Terminal page, on): when off, the
+- `claude` / `copilot` typed at a shell prompt get agent status in place: bash, zsh and
+  PowerShell tabs do (`crates/app/shell-integration/agentws-agents.sh`, functions in
+  `agentws.ps1`: print the `N` mark, run the agent with its hooks, then the `X` end mark;
+  one-shot runs, pipes and `\claude` unwrapped). Still to do:
+  1. Switch "Agent status for agents typed at the prompt" (Terminal page, on): when off, the
      functions aren't defined (the app passes a flag with the token) and typed `claude` /
      `copilot` run as today. Applies to newly started shells.
 - Drag group headers to reorder groups (the group menu's Move up / down does it for now).

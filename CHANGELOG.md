@@ -5,6 +5,16 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.56
+
+- Typing `claude` or `copilot` in a PowerShell or Windows PowerShell tab now runs the agent in
+  place with its status, attention and toasts, as in bash and zsh tabs. One-shot and piped
+  runs, and `claude --settings ...`, run unchanged; type `claude.exe` (or `.cmd`) to skip it.
+  An alias of yours that points at the agent program gets the status too; your own functions
+  are kept as they are.
+- PowerShell tabs now report each command's exit status, so the exit toast of an agent run in
+  place shows its code, and your own prompt (oh-my-posh, starship) sees the real last status.
+
 ## 0.2.55
 
 - Typing `claude` or `copilot` at a bash or zsh tab's prompt now runs the agent in place with

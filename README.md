@@ -196,10 +196,11 @@ On Unix, every write makes `tabs.json` owner-only (`0600`); on Windows it inheri
 folder's permissions.
 
 These tabs start with a small script that loads your own `~/.bashrc` / zsh startup files /
-PowerShell profile and then marks the prompt (OSC 133); the scripts live in
-`shell-integration/` in the config folder. zsh reads your `.zprofile` and `.zshrc` itself, from
-your own `ZDOTDIR`. The marks carry a per-session token, so output that merely contains such
-marks (a file you `cat`, a remote shell over ssh) is not tracked. bash needs 4.4 or later;
+PowerShell profile and then marks the prompt (OSC 133); the scripts live in `shell-integration/`
+in the config folder. zsh reads your `.zprofile` and `.zshrc` itself, from your own `ZDOTDIR`.
+The marks carry a per-session token, so output that merely contains such marks (a file you
+`cat`, a remote shell over ssh) is not tracked. The bash, zsh and PowerShell scripts also define
+`claude` and `copilot`, which run the agent in place (below). bash needs 4.4 or later;
 PowerShell needs PSReadLine. Git Bash's login shell gets the script too, which then loads your
 login files (`/etc/profile`, then `~/.bash_profile`) instead of `~/.bashrc`; so does a WSL
 distro whose login shell is bash (it reports Linux folders as `\\wsl.localhost\<distro>\...`).
@@ -328,22 +329,32 @@ while you are on another tab shows Needs attention until you select it. Claude C
 hooks, and Claude Code running in place in a shell tab, ignore the bell, since their hooks
 already report it.
 
-An agent can also run in place in a bash or zsh tab: `claude` or `copilot` typed at the
-prompt starts with the tab's status hooks and gets the status, attention, toasts and mode of a
-tab from the `+` menu. While it runs, the row shows the agent's icon and the hover card names
-both ("Claude Code in bash"); when it exits, the tab is a shell tab again with its earlier
-title (a command after it on the same line, as in `claude; make`, shows as a running shell
-command), and it is saved, restored and duplicated as the shell. One-shot runs (`claude -p`,
-`--version`, `--help`, subcommands such as `claude mcp` or `copilot login`), runs whose input
-or output isn't the terminal (`claude -p hi | less`), Claude runs with your own `--settings`,
-and `command claude` or `\claude` run the program unchanged. An alias of your own that starts
-with the agent (`alias claude='claude --dangerously-skip-permissions'`) gets the
-status too; other `claude` / `copilot` aliases and functions of your own are kept as they are;
-to give them the status, start the agent in them after the agent mark, with the hooks:
-`printf '\e]133;N;aw=%s;agent=claude\a' "$__agentws_token"; command claude --settings
-"$AGENTWS_CLAUDE_SETTINGS"` (Copilot: `agent=copilot`, `ConEmuANSI=ON command copilot
---plugin-dir "$AGENTWS_COPILOT_PLUGIN"`); the status then lasts until the command line ends.
-PowerShell tabs will get the same in a later version.
+An agent can also run in place in a bash, zsh or PowerShell tab: `claude` or `copilot` typed at
+the prompt starts with the tab's status hooks and gets the status, attention, toasts and mode of
+a tab from the `+` menu. While it runs, the row shows the agent's icon and the hover card names
+both ("Claude Code in bash"); when it exits, the tab is a shell tab again with its earlier title
+(a command after it on the same line, as in `claude; make`, shows as a running shell command),
+and it is saved, restored and duplicated as the shell. One-shot runs (`claude -p`, `--version`,
+`--help`, subcommands such as `claude mcp` or `copilot login`), runs whose input or output isn't
+the terminal (`claude -p hi | less`), Claude runs with your own `--settings`, and `command
+claude` or `\claude` run the program unchanged. An alias of your own that starts with the agent
+(`alias claude='claude --dangerously-skip-permissions'`) gets the status too; other `claude` /
+`copilot` aliases and functions of your own are kept as they are; to give them the status, start
+the agent in them after the agent mark, with the hooks: `printf '\e]133;N;aw=%s;agent=claude\a'
+"$__agentws_token"; command claude --settings "$AGENTWS_CLAUDE_SETTINGS"` (Copilot:
+`agent=copilot`, `ConEmuANSI=ON command copilot --plugin-dir "$AGENTWS_COPILOT_PLUGIN"`); the
+status then lasts until the command line ends. In PowerShell, `claude` and `copilot` are
+functions that run the program PowerShell finds on PATH (`claude.exe`, or npm's `claude.ps1` /
+`claude.cmd`); the same runs are left unchanged (pipeline input such as `'hi' | claude -p`
+included), the exit status stays in `$LASTEXITCODE`, and an alias of your own that points at
+the agent (`Set-Alias claude C:\tools\claude.exe`) gets the status too, running its target.
+Other aliases and functions from your profile are kept; to give them the status, start the
+agent in them after the agent mark, with the hooks:
+`[Console]::Write("$([char]27)]133;N;aw=$__agentws_token;agent=claude$([char]7)"); claude.exe
+--settings $env:AGENTWS_CLAUDE_SETTINGS @args` (Copilot: `agent=copilot`,
+`$env:ConEmuANSI = 'ON'`, `copilot.exe --plugin-dir $env:AGENTWS_COPILOT_PLUGIN`). To run
+the program unchanged, type its file name (`claude.exe`,
+`claude.cmd`) or `& (Get-Command claude -CommandType Application -TotalCount 1)`.
 
 Background Claude Code and Copilot tabs, and agents running in place in a shell tab, show an
 in-app toast when they need attention, finish a turn, or exit (an unsuccessful exit includes

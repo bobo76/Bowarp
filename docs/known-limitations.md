@@ -42,18 +42,17 @@ entry when the limitation is lifted.
 - With no tab open (the empty state), the file explorer is hidden and can't be used to pick a
   folder first; the next tab starts in the last closed tab's folder, which is kept in memory
   only: after a restart with no tab saved, the first tab starts in the app's working folder.
-- An agent running in place in a shell tab: WSL tabs get the hook variables but don't pass
-  them into the distro (no `WSLENV` entry), and cmd tabs can't print the mark. PowerShell's `D`
-  mark carries no exit status, so a background agent's exit toast there says "without an exit
-  code". The agent's title is put back to the shell's when the `D` mark is read, so a title the
-  agent sets in its very last output, read together with the mark, can stay until the shell
-  sets one. With the mark printed by hand (no end mark), one command line running two agents
-  switches to the second at its mark without an exit toast for the first, and a command after
-  the agent on the same line (`claude; make`) runs under the agent's icon and status, without
-  a Running badge or a close question, until the line's `D` mark. The same holds when the
-  agent is killed by a signal (bash and zsh then abort the rest of the line, end mark included).
-  An agent suspended with Ctrl+Z ends its run (bash goes on with the line); `fg` resumes it as
-  a plain shell command, without the agent's status.
+- An agent running in place in a shell tab: WSL tabs get the hook variables but don't pass them
+  into the distro (no `WSLENV` entry), and cmd tabs can't print the mark. The agent's title is
+  put back to the shell's when the `D` mark is read, so a title the agent sets in its very last
+  output, read together with the mark, can stay until the shell sets one. With the mark printed
+  by hand (no end mark), one command line running two agents switches to the second at its mark
+  without an exit toast for the first, and a command after the agent on the same line (`claude;
+  make`) runs under the agent's icon and status, without a Running badge or a close question,
+  until the line's `D` mark. The same holds when the agent is killed by a signal (bash and zsh
+  then abort the rest of the line, end mark included). An agent suspended with Ctrl+Z ends its
+  run (bash goes on with the line); `fg` resumes it as a plain shell command, without the
+  agent's status.
 - Typed `claude` / `copilot` (bash and zsh): only an interactive run at the prompt gets the
   hooks. Not wrapped: a user function of the same name, or a user alias that doesn't start with
   the agent's name (they win: put the hooks in them by hand; a function defined later at the
@@ -65,6 +64,17 @@ entry when the limitation is lifted.
   the arguments: a subcommand first, or `-p`/`--print`/`--prompt`, `-v`/`--version`,
   `-h`/`--help` anywhere before `--` (an option value equal to one of these counts too); a
   subcommand added by a later agent version runs in place until the list is updated.
+- Typed `claude` / `copilot` (PowerShell): the same rules, with these differences. The
+  functions apply wherever PowerShell runs them, scripts run in the tab included. Output
+  redirected to a file or assigned to a variable (`claude > out.txt`, `$x = claude`) isn't
+  detected: such a run gets the agent mark and status until it exits. After Ctrl+C stops the
+  command line, no end mark is printed: the prompt's `D` mark ends the run. PowerShell's `D`
+  mark reports 0 on success, else the last program's exit code, else 1; after a failed cmdlet
+  it repeats the code of a program that failed earlier (`$LASTEXITCODE` isn't reset), and a
+  function (the agent functions included) counts as a success whatever its programs returned.
+  `--` may be removed by PowerShell before the function sees it. A function of your own that
+  starts the agent by hand (see the README) has the status until the line's `D` mark, and the
+  program's exit code isn't reported: the line counts as a success.
 - An agent tab going on as a shell starts in the agent's last known folder: on Linux its
   `/proc` folder as of its last title change or hook event, elsewhere the folder it started in.
 - Window opacity: on X11 without a compositor the window can't be see-through, and the

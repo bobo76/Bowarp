@@ -107,7 +107,17 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   status instead of silently losing it. Any other alias, and every user function, is kept
   untouched (README says how to add the mark by hand). Rejected: rewriting arbitrary
   expansions or function bodies (fragile), and a warning (scripts can't show one cheaply,
-  and wrapping fixes the common case). [UX agent]
+  and wrapping fixes the common case). PowerShell follows the same rule: an alias whose
+  target is the agent program (its name, or a path to it) is wrapped and runs that target, and
+  user functions are kept, although `function claude { claude.exe --flag @args }` is the
+  PowerShell form of the flag alias: injecting hooks into a function body is the rejected
+  rewrite, so README gives a PowerShell form of the by-hand mark instead. [UX agent]
+- **PowerShell output captured from a typed agent** (`claude > f`, `$x = claude`) stays
+  wrapped and documented: the function can't see where its output goes, the one-shot cases
+  are already unwrapped by their arguments, and the rest (an interactive agent writing to a
+  file) is rare and its wrong status ends with the run. Rejected: parsing the command line
+  from the invocation (only the current line is available, multi-line and nested captures
+  defeat it) for a near-empty case. [UX agent]
 - **Hover card under the cursor when a hold ends** (rename, menu, dialog, drag) stays hidden
   until the pointer leaves the row, like Windows/VS Code tooltips. [UX agent]
 
