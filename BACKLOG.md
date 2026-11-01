@@ -10,6 +10,17 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Agent running in place in a shell tab (from its `N` mark until the command's `D`):
+
+- Windows (Git Bash, PowerShell, WSL): `env` shows `AGENTWS_SESSION`, `AGENTWS_PIPE`,
+  `AGENTWS_HOOK`, `AGENTWS_CLAUDE_SETTINGS`, `AGENTWS_COPILOT_PLUGIN` (WSL: not passed in);
+  the plugin folder goes away when the tab closes.
+- Linux and Windows: real Copilot CLI in place (`ConEmuANSI=ON copilot --plugin-dir
+  "$AGENTWS_COPILOT_PLUGIN"` after the mark): Working spinner from progress, Waiting on a
+  permission prompt, Mode line from the extension; Claude Code in Plan mode via hooks.
+- zsh: the same as bash (mark by hand, status, title back at `D`, exit toast code from
+  `exit=`).
+
 Down enters the tab list during a search:
 
 - Linux and Windows: type a search, press Down: the ring shows on the match and F2 renames
@@ -156,34 +167,24 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- `claude` / `copilot` typed at a shell prompt get agent status in place: today they run in
-  the shell tab without hooks and show only "Running for", unlike a tab from the `+` menu.
-  Instead, the agent keeps running in the same shell tab, with the same hooks, status
-  (Working / Waiting / Ready for review), attention target, notifications and mode reporting
-  as a `+` menu agent tab; when it exits, the tab goes back to being a plain shell tab. Steps:
-  1. Environment: a shell tab with shell integration gets what `Hooks::attach`
-     (`app/src/hooks.rs`) gives an agent tab, without the launch flag: `AGENTWS_SESSION`,
-     `AGENTWS_PIPE`, `AGENTWS_HOOK`, plus the Claude settings file path and the tab's
-     Copilot plugin folder (created with the tab, removed with it like an agent tab's) in new
-     variables. Hook events from that session id must reach the shell tab (today only agent
-     tabs use them).
-  2. Shell functions (bash, zsh, PowerShell): `claude` and `copilot` print a tokened mark,
-     e.g. `ESC ] 133;N;aw=<token>;agent=claude BEL`, then run the real program (`command
-     claude`) with `--settings <path>` / `--plugin-dir <path>` put before the user's
-     arguments, and return its exit code. `Osc133Scanner` accepts the mark, `PromptTracker`
-     reports it as a new `PromptEvent`, and the tab switches to that agent's status policy
-     (full hooks for Claude, progress plus attention hooks for Copilot) until the command's
-     `D` mark; then it is a shell tab again (status, last-command tracking, busy-close as
-     today).
-  3. Sidebar while it runs: the agent's icon and status on the row and hover card; the tab's
-     saved kind stays shell, so restore and duplicate start a shell (the last-command
-     suggestion can offer `claude --resume`). Unit-test the switch in and out of agent status
-     (`workspace-model`), including an agent killed with Ctrl+C and a shell exiting mid-run.
-  - Run unwrapped (no hooks, as today): the non-interactive forms (`-p` / `--print`,
-    `--version`, `--help`, subcommands such as `claude mcp ...` / `claude update`), stdin or
-    stdout not a terminal (`echo x | claude -p`), `command claude` / `\claude`, an agent not on
-    `PATH` (the shell prints its own "command not found"), nested shells and cmd tabs (no
-    functions).
+- `claude` / `copilot` typed at a shell prompt get agent status in place: today the agent
+  runs in place only when started by hand after printing the `N` mark, with the hooks from the
+  tab's environment (`$AGENTWS_CLAUDE_SETTINGS`, `$AGENTWS_COPILOT_PLUGIN`). Shell functions and
+  switch:
+  - Shell functions (bash, zsh, PowerShell): `claude` and `copilot` print the agent mark
+    (`ESC ] 133;N;aw=<token>;agent=claude BEL`), then run the real program (`command claude`)
+    with `--settings <path>` / `--plugin-dir <path>` put before the user's arguments, and
+    return its exit code. Copilot also needs `ConEmuANSI=ON` in its environment for progress
+    reports (agent tabs get it from `session_env`). PowerShell's `D` mark sends no exit status
+    yet (`exit=`), which the exit toast's code needs.
+  - End mark: the functions print an end-of-agent mark after `command claude` /
+    `command copilot` returns (new `PromptMark` variant, ending the run with the function's
+    exit code), so `claude; make` shows Running for `make` instead of the agent's status.
+  - Run unwrapped (no mark, no hooks, as today): the non-interactive forms (`-p` /
+    `--print`, `--version`, `--help`, subcommands such as `claude mcp ...` /
+    `claude update`), stdin or stdout not a terminal (`echo x | claude -p`),
+    `command claude` / `\claude`, an agent not on `PATH` (the shell prints its own
+    "command not found"), nested shells and cmd tabs (no functions).
   - Switch "Agent status for agents typed at the prompt" (Terminal page, on): when off, the
     functions aren't defined (the app passes a flag with the token) and typed `claude` /
     `copilot` run as today. Applies to newly started shells.

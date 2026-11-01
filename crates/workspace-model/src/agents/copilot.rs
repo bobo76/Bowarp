@@ -50,6 +50,7 @@ pub const DEFINITION: AgentDefinition = AgentDefinition {
         artifact: HookArtifactPlan {
             kind: HookArtifactKind::PluginDirectory,
             launch_flag: "--plugin-dir",
+            shell_env: "AGENTWS_COPILOT_PLUGIN",
             resource_suffix: "-copilot",
             events: HOOK_EVENTS,
             timeout_secs: HOOK_TIMEOUT_SECS,

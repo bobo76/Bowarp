@@ -77,6 +77,25 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
 - **"Status unavailable"** (agent hooks failed): Claude tabs only, replacing "No recent
   output"; "Recent output" stays. Looks and counts like Quiet (no badge, not in attention or
   group chips). Copilot tabs are unchanged (their status comes from the CLI). [UX agent]
+- **In-place agent in a shell tab** (agent mark until the command's `D`): while it runs the
+  tab looks and notifies exactly like a `+` menu agent tab (agent icon, status chip with lap
+  time, Mode line, attention, toasts, bell ignored for Claude, idle agent closes without a
+  question, no teal Running badge or "Running for" line); the card's kind line names both
+  ("Claude Code in bash") since restore starts the shell. The name stays title-derived; at
+  `D` the title from before the run comes back (agents may leave theirs, glyph included) and
+  the shell's own title, if it sets one, wins as usual. [UX agent]
+- **When the in-place run ends** (`D`, or the shell itself exiting) in a background tab, the
+  agent-tab exit toast fires with the same rule (code when unsuccessful, none after a clean
+  exit with a Ready for review pending); nothing while selected. A pending Ready for review
+  is kept until the tab is selected (the unread turn is still on screen), while Needs
+  attention from the agent (Waiting, bell) is cleared: nothing waits any more, the toast
+  says why. The shell exiting mid-run ends as a plain Exited shell tab (shell icon, hollow
+  ring), no other special state. Rejected: shell-style silence, which loses a crashed
+  agent in a background tab. A second agent mark in the same command switches to the new
+  agent silently, as a new turn would (no exit code exists between marks, the run's end
+  still toasts at `D`); the title from before the first agent is the one put back. A
+  leftover Ready for review outranks later shell activity (Running, Recent output) until
+  the tab is selected, as on an agent tab; a bell still outranks it. [UX agent]
 - **Hover card under the cursor when a hold ends** (rename, menu, dialog, drag) stays hidden
   until the pointer leaves the row, like Windows/VS Code tooltips. [UX agent]
 

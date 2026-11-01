@@ -5,6 +5,15 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.54
+
+- Show agent status in place in bash and zsh tabs: Claude Code or Copilot CLI started with
+  the tab's hook settings after the agent mark (see README) gets the agent's icon, status,
+  hover card, attention and toasts; the tab is a plain shell tab again when the command ends.
+  Typing plain `claude` / `copilot` will do this in a later version.
+- Shell tabs now get the hook variables (`AGENTWS_CLAUDE_SETTINGS`,
+  `AGENTWS_COPILOT_PLUGIN`, ...) in their environment.
+
 ## 0.2.53
 
 - Down in "Search tabs..." now moves the keyboard into the tab list while a search is typed

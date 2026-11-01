@@ -22,7 +22,7 @@ use workspace_model::ProgressState;
 use crate::launch::LaunchSpec;
 use crate::palette::Palette;
 use crate::prompt::{ExecutedCommand, MarkedPty, PromptEvent, PromptInput, PromptTracker};
-use workspace_model::{SessionKind, apply_environment};
+use workspace_model::{AgentId, SessionKind, apply_environment};
 
 /// How long a closed session's child has to exit after SIGHUP before it is killed.
 const EXIT_GRACE: Duration = Duration::from_secs(2);
@@ -42,9 +42,12 @@ pub enum SessionEvent {
     CommandStarted(Option<String>),
     /// A shell with integration is about to run this command line typed at its prompt.
     CommandExecuted(ExecutedCommand),
-    /// The command a shell with integration ran finished: the prompt is back. Also sent when
-    /// the shell reports a new folder at a prompt without a command before it.
-    CommandFinished,
+    /// The command a shell with integration ran finished: the prompt is back, with the
+    /// command's exit status when the shell sent it. Also sent when the shell reports a new
+    /// folder at a prompt without a command before it.
+    CommandFinished(Option<i32>),
+    /// The running command is this agent, started with the tab's hooks (`N` mark).
+    AgentStarted(AgentId),
     /// The program reported progress (OSC 9;4), including repeated states.
     ProgressChanged {
         state: ProgressState,
@@ -128,7 +131,8 @@ impl Shared {
             prompt_callback(match event {
                 PromptEvent::Started(command) => SessionEvent::CommandStarted(command),
                 PromptEvent::Executed(command) => SessionEvent::CommandExecuted(command),
-                PromptEvent::Finished => SessionEvent::CommandFinished,
+                PromptEvent::Finished(exit) => SessionEvent::CommandFinished(exit),
+                PromptEvent::AgentStarted(agent) => SessionEvent::AgentStarted(agent),
             });
         }));
         Self {

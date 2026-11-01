@@ -42,6 +42,15 @@ entry when the limitation is lifted.
 - With no tab open (the empty state), the file explorer is hidden and can't be used to pick a
   folder first; the next tab starts in the last closed tab's folder, which is kept in memory
   only: after a restart with no tab saved, the first tab starts in the app's working folder.
+- An agent running in place in a shell tab: WSL tabs get the hook variables but don't pass
+  them into the distro (no `WSLENV` entry), and cmd tabs can't print the mark. PowerShell's `D`
+  mark carries no exit status, so a background agent's exit toast there says "without an exit
+  code". The agent's title is put back to the shell's when the `D` mark is read, so a title the
+  agent sets in its very last output, read together with the mark, can stay until the shell
+  sets one. One command line running two agents (`claude; copilot`) switches to the second at
+  its mark without an exit toast for the first; a command after the agent on the same line
+  (`claude; make`) runs under the agent's icon and status, without a Running badge or a close
+  question, until the line's `D` mark.
 - An agent tab going on as a shell starts in the agent's last known folder: on Linux its
   `/proc` folder as of its last title change or hook event, elsewhere the folder it started in.
 - Window opacity: on X11 without a compositor the window can't be see-through, and the

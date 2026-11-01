@@ -35,9 +35,10 @@ use term_core::{
 };
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
-    AgentActivity, BusyReason, COMMAND_LABEL_CHARS, ClipboardGuard, Location, ProgressState,
-    RUNNING_AFTER, RunningBadge, Shortcut, TabActivity, WorkspaceFeatures, command_label,
-    running_badge,
+    ActivityPolicy, AgentActivity, AgentId, BusyReason, COMMAND_LABEL_CHARS, ClipboardGuard,
+    InPlaceAgent, Leftover, Location, ProgressState, RUNNING_AFTER, RunEnd, RunEndOutcome,
+    RunningBadge, Shortcut, TabActivity, TabAtEnd, WorkspaceFeatures, agents, command_label,
+    running_badge, shows_exit_toast,
 };
 
 use self::agent_tracker::AgentTracker;
@@ -213,11 +214,17 @@ pub struct TerminalView {
     /// How the program parses typed paths.
     pub(crate) shell: ShellSyntax,
     /// Agent status from hooks or progress reports once the provider sends its first one;
-    /// `None` for sessions without either.
+    /// `None` for sessions without either. In a shell tab, only while an agent runs in place.
     agent: Option<AgentTracker>,
     mode: AgentModeState,
-    /// The agent finished a turn while the tab was hidden; cleared when it is shown.
+    /// The agent finished a turn while the tab was hidden; cleared when it is shown. Kept
+    /// after an in-place agent's run ends (the shell tab shows Ready for review).
     finished_unseen: bool,
+    /// An agent running in place in this shell tab (its `N` mark until the command's `D`).
+    in_place: InPlaceAgent,
+    /// The agents whose hooks this shell tab's environment carries (`shell_env`): with full
+    /// activity hooks, their in-place status comes from hooks from the start.
+    in_place_hooks: Vec<AgentId>,
     /// The program rang the bell (BEL) while the tab was hidden; cleared when it is shown.
     bell_unseen: bool,
     /// Clipboard writes (OSC 52) waiting for Allow or Deny, and "Always for this tab".
@@ -353,6 +360,8 @@ impl TerminalView {
                     AgentModeState::from_agent_args(agent, &spec.args)
                 }),
             finished_unseen: false,
+            in_place: InPlaceAgent::default(),
+            in_place_hooks: in_place_hooks(spec),
             bell_unseen: false,
             clipboard: ClipboardGuard::default(),
             visible: true,
@@ -417,8 +426,20 @@ impl TerminalView {
         self.session.id()
     }
 
+    /// The kind the session was started (and is saved) as.
     pub fn kind(&self) -> SessionKind {
         self.session.kind()
+    }
+
+    /// The kind whose status policy, icon and notifications apply now: the agent while one
+    /// runs in place in this shell tab, else [`Self::kind`].
+    pub fn status_kind(&self) -> SessionKind {
+        self.in_place.status_kind(self.kind())
+    }
+
+    /// The agent running in place in this shell tab, if any.
+    pub fn in_place_agent(&self) -> Option<AgentId> {
+        self.in_place.agent()
     }
 
     /// Whether the shell waits at its prompt: no command runs per the shell integration marks
@@ -438,7 +459,8 @@ impl TerminalView {
         TabActivity {
             exited: self.process != ProcessState::Running,
             agent,
-            command_running: self.running_command.is_some(),
+            // An agent running in place is the command; its status decides.
+            command_running: self.running_command.is_some() && self.in_place.agent().is_none(),
             command: self
                 .running_command
                 .as_ref()
@@ -505,16 +527,19 @@ impl TerminalView {
         }
         match self.process {
             ProcessState::Exited(_) => TabStatus::Exited,
+            // Left by an in-place agent's run until the tab is selected.
+            ProcessState::Running if self.finished_unseen => TabStatus::ReadyForReview,
             ProcessState::Running
-                if self
-                    .running_command
-                    .as_ref()
-                    .is_some_and(|running| running.badge() != RunningBadge::Hidden) =>
+                if self.in_place.agent().is_none()
+                    && self
+                        .running_command
+                        .as_ref()
+                        .is_some_and(|running| running.badge() != RunningBadge::Hidden) =>
             {
                 TabStatus::Running
             }
             ProcessState::Running if self.activity_task.is_some() => TabStatus::Active,
-            ProcessState::Running if self.kind().unavailable_without_hooks() => {
+            ProcessState::Running if self.status_kind().unavailable_without_hooks() => {
                 TabStatus::Unavailable
             }
             ProcessState::Running => TabStatus::Quiet,
@@ -619,7 +644,11 @@ impl TerminalView {
 
     /// Apply a raw report from this session's hooks, as its agent integration decodes it.
     pub fn apply_report(&mut self, report: &AgentReport, at: u64, cx: &mut Context<Self>) {
-        let Some(event) = self.kind().agent().and_then(|agent| report.decode(agent)) else {
+        let Some(event) = self
+            .status_kind()
+            .agent()
+            .and_then(|agent| report.decode(agent))
+        else {
             return;
         };
         self.apply_hook_event(event, at, cx);
@@ -630,13 +659,14 @@ impl TerminalView {
         if self.process != ProcessState::Running {
             return;
         }
-        let Some(agent_id) = self.kind().agent() else {
+        let kind = self.status_kind();
+        let Some(agent_id) = kind.agent() else {
             return;
         };
         match event {
             AgentEvent::Hook(event) => self.apply_status_hook(agent_id, event, at, cx),
             AgentEvent::ModeChanged(mode)
-                if self.kind().has_mode_reporting() && self.mode.apply(mode, at) =>
+                if kind.has_mode_reporting() && self.mode.apply(mode, at) =>
             {
                 cx.emit(TabChanged);
             }
@@ -658,7 +688,7 @@ impl TerminalView {
         };
         // Permission hooks can arrive before the first terminal progress report.
         if self.agent.is_none()
-            && self.kind().has_progress_status()
+            && self.status_kind().has_progress_status()
             && matches!(event, agent_status::HookEvent::InputRequested(_))
         {
             self.agent = Some(AgentTracker::new(Instant::now()));
@@ -671,7 +701,7 @@ impl TerminalView {
     /// Apply a progress report. Its first one switches the tab from output activity to agent
     /// status; a provider that never reports progress keeps the former.
     fn apply_progress(&mut self, state: ProgressState, at: u64, cx: &mut Context<Self>) {
-        if !self.kind().has_progress_status() {
+        if !self.status_kind().has_progress_status() {
             return;
         }
         let adopted = self.agent.is_none();
@@ -729,13 +759,18 @@ impl TerminalView {
                 self.history_popup = None;
                 self.record_executed(command, cx);
             }
-            SessionEvent::CommandFinished => {
+            SessionEvent::CommandFinished(exit) => {
                 self.running_command = None;
+                let tab = self.tab_at_end();
+                if let Some(outcome) = self.in_place.end(RunEnd::CommandFinished(exit), tab) {
+                    self.finish_in_place(outcome, cx);
+                }
                 if self.agent.is_none() {
                     // The command may have changed the folder or the branch.
                     self.refresh_location_and_notify(cx);
                 }
             }
+            SessionEvent::AgentStarted(agent) => self.start_in_place(agent, cx),
             SessionEvent::ProgressChanged { state, at } => self.apply_progress(state, at, cx),
             SessionEvent::ClipboardStore(clipboard, text) => {
                 self.on_clipboard_store(clipboard, text, cx);
@@ -760,12 +795,13 @@ impl TerminalView {
     }
 
     fn on_bell(&mut self, cx: &mut Context<Self>) -> bool {
-        let hooked = self.agent.is_some() && self.kind().hooks_precede_bell();
+        let kind = self.status_kind();
+        let hooked = self.agent.is_some() && kind.hooks_precede_bell();
         if self.visible || self.bell_unseen || hooked {
             return false;
         }
         self.bell_unseen = true;
-        if !self.kind().is_shell() {
+        if !kind.is_shell() {
             // A bell replaces the tab's toast: keep the reason a pending request gave.
             let wait_reason = self.agent.as_ref().and_then(AgentTracker::wait_reason);
             cx.emit(AgentNotice::NeedsAttention(wait_reason));
@@ -821,10 +857,61 @@ impl TerminalView {
         cx.emit(TabChanged);
     }
 
-    fn on_exited(&mut self, code: Option<i32>, cx: &mut Context<Self>) {
-        if !self.kind().is_shell() && !self.visible && (code != Some(0) || !self.finished_unseen) {
+    /// An agent's `N` mark while a command runs in this shell tab: the tab shows that agent's
+    /// status, as an agent tab of its kind would, until the command's `D` mark.
+    fn start_in_place(&mut self, agent: AgentId, cx: &mut Context<Self>) {
+        if self.process != ProcessState::Running || !self.kind().is_shell() {
+            return;
+        }
+        self.in_place.start(agent, self.title.clone());
+        // Like an agent tab: full hooks report from the start, when they were attached;
+        // progress-driven status starts with the first report.
+        let hooked =
+            agent.activity() == ActivityPolicy::FullHooks && self.in_place_hooks.contains(&agent);
+        self.agent = hooked.then(|| AgentTracker::new(Instant::now()));
+        if hooked {
+            self.activity_task = None;
+        }
+        self.mode = AgentModeState::default();
+        self.finished_unseen = false;
+        cx.emit(TabChanged);
+    }
+
+    /// The tab as an ending in-place run sees it.
+    fn tab_at_end(&self) -> TabAtEnd {
+        TabAtEnd {
+            visible: self.visible,
+            finished_unseen: self.finished_unseen,
+        }
+    }
+
+    /// The in-place agent's run ended: back to a shell tab, keeping only a Ready for review.
+    /// The caller tells the sidebar.
+    fn finish_in_place(&mut self, outcome: RunEndOutcome, cx: &mut Context<Self>) {
+        if let Some(code) = outcome.exit_toast {
             cx.emit(AgentNotice::Exited(code));
         }
+        self.title = outcome.title;
+        self.agent = None;
+        self.mode = AgentModeState::default();
+        self.finished_unseen = outcome.leftover == Leftover::ReadyForReview;
+        self.bell_unseen = false;
+    }
+
+    /// The exit toast, for an in-place run the shell's exit ends or for an agent tab.
+    fn notify_exit(&mut self, code: Option<i32>, cx: &mut Context<Self>) {
+        let tab = self.tab_at_end();
+        if let Some(outcome) = self.in_place.end(RunEnd::ShellExited(code), tab) {
+            self.finish_in_place(outcome, cx);
+            return;
+        }
+        if !self.kind().is_shell() && shows_exit_toast(code, tab) {
+            cx.emit(AgentNotice::Exited(code));
+        }
+    }
+
+    fn on_exited(&mut self, code: Option<i32>, cx: &mut Context<Self>) {
+        self.notify_exit(code, cx);
         self.process = ProcessState::Exited(code);
         self.running_command = None;
         // Nobody is left to ask on behalf of.
@@ -851,7 +938,7 @@ impl TerminalView {
                 cx.background_executor().timer(left).await;
             }
             let _ = this.update(cx, |view, cx| {
-                if view.agent.is_none() {
+                if view.agent.is_none() && view.in_place.agent().is_none() {
                     cx.emit(TabChanged);
                 }
             });
@@ -1285,6 +1372,16 @@ impl EntityInputHandler for TerminalView {
     ) -> Option<usize> {
         None
     }
+}
+
+/// The agents whose hooks a shell tab's environment carries (`shell_env`); none for other tabs.
+fn in_place_hooks(spec: &LaunchSpec) -> Vec<AgentId> {
+    if !spec.kind.is_shell() {
+        return Vec::new();
+    }
+    agents()
+        .filter(|agent| spec.env.contains_key(agent.hook_artifact_plan().shell_env))
+        .collect()
 }
 
 /// Whether a status change is a turn ending (Working -> Idle) on a tab the user is not looking

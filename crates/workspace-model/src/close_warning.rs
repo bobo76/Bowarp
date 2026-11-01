@@ -36,7 +36,8 @@ pub enum BusyReason {
 
 impl TabActivity {
     /// Why closing the tab would stop work, or `None` when it can close silently. An agent's
-    /// status decides for agent tabs.
+    /// status decides when there is one, also for an agent running in place in a shell tab,
+    /// whose command an idle agent is.
     pub fn busy_reason(&self) -> Option<BusyReason> {
         if self.exited {
             return None;

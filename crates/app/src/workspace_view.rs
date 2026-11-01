@@ -523,6 +523,8 @@ impl WorkspaceView {
     ) -> io::Result<(Entity<TerminalView>, [Subscription; 5])> {
         let session_id = self.next_session_id;
         let mut launch = spec.clone();
+        // First: a shell with integration also gets the agents' hooks.
+        shell_integration::attach(&mut launch);
         let attachment = self.hooks.as_ref().map_or_else(Default::default, |hooks| {
             hooks.attach(session_id, &mut launch)
         });
@@ -533,7 +535,6 @@ impl WorkspaceView {
         };
         let diagnostics = attachment.diagnostics;
         let shell_key = launcher::shell_key(&self.launchers, spec);
-        shell_integration::attach(&mut launch);
         let view = TerminalView::spawn(session_id, &launch, reporting, shell_key, cx).inspect_err(
             |_| {
                 if let Some(hooks) = &self.hooks {

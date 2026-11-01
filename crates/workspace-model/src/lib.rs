@@ -28,6 +28,7 @@ mod git;
 mod history;
 mod history_features;
 mod history_shells;
+mod in_place_agent;
 mod instance_lock;
 mod keymap;
 mod lap;
@@ -79,6 +80,9 @@ pub use history::{
 pub use history_features::{HistoryFeatures, HistoryKey};
 pub use history_shells::{
     KnownShell, ShellChip, history_chips, shell_key, shell_name, switch_chip,
+};
+pub use in_place_agent::{
+    InPlaceAgent, Leftover, RunEnd, RunEndOutcome, TabAtEnd, in_place_kind_label, shows_exit_toast,
 };
 pub use instance_lock::{held_by_other, lock_pid, lock_text};
 pub use keymap::{

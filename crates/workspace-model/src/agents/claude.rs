@@ -61,6 +61,7 @@ pub const DEFINITION: AgentDefinition = AgentDefinition {
         artifact: HookArtifactPlan {
             kind: HookArtifactKind::SettingsFile,
             launch_flag: "--settings",
+            shell_env: "AGENTWS_CLAUDE_SETTINGS",
             resource_suffix: "-claude-settings.json",
             events: HOOK_EVENTS,
             timeout_secs: HOOK_TIMEOUT_SECS,

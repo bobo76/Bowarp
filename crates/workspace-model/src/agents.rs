@@ -343,6 +343,9 @@ pub struct HookArtifactPlan {
     pub kind: HookArtifactKind,
     /// Flag that passes the artifact's path on the agent's command line.
     pub launch_flag: &'static str,
+    /// Variable holding the artifact's path in a shell tab's environment, for an agent started
+    /// there to run in place with the tab's hooks.
+    pub shell_env: &'static str,
     /// Ends the artifact's name after `agentws-<pid>`; tells an instance's leftovers apart.
     pub resource_suffix: &'static str,
     pub events: &'static [&'static str],

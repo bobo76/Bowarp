@@ -310,7 +310,7 @@ Run the extension's tests with `node --test .\crates\app\copilot-extension\bridg
 | orange, plus a warning triangle before the title | Needs attention |
 | green with a check | Ready for review: finished while you were on another tab (until you select it) |
 | green | Idle |
-| teal, pulsing for the first 10 s | Running: a command typed at the prompt of a bash, zsh or PowerShell tab has run for half a second; the card shows it and how long it has run (`Running for 2:14`, ticking while the card is open; no pulse on a software-rendered GPU) |
+| teal, pulsing for the first 10 s | Running: a command typed at the prompt of a bash, zsh or PowerShell tab has run for half a second (not an agent running in place, which shows its own status); the card shows it and how long it has run (`Running for 2:14`, ticking while the card is open; no pulse on a software-rendered GPU) |
 | light grey | Recent output (shell or Copilot) |
 | none | No recent output |
 | none | Status unavailable (agent status off): a quiet Claude Code tab while the status hooks could not start |
@@ -320,14 +320,28 @@ Ready for review marks an unread Working-to-Idle transition, not confirmation th
 agent's work is correct. Selecting the tab acknowledges it and restores Idle; a turn that
 finishes in the selected tab stays Idle. New Working or Needs attention reports replace
 the unread status. The sidebar, tab hover card, group totals and completion toast use the
-same status; there is no extra completion notice.
+same status; there is no extra completion notice. When an agent running in place in a shell
+tab exits, a pending Ready for review stays until you select the tab.
 
 A tab whose program rings the bell (BEL: Copilot, scripts, anything without status hooks)
 while you are on another tab shows Needs attention until you select it. Claude Code tabs with
-hooks ignore the bell, since their hooks already report it.
+hooks, and Claude Code running in place in a shell tab, ignore the bell, since their hooks
+already report it.
 
-Background Claude Code and Copilot tabs show an in-app toast when they need attention, finish
-a turn, or exit (an unsuccessful exit includes its code when available). An attention toast
+An agent can also run in place in a bash or zsh tab: the tab's environment carries the status
+hooks, and an agent started with them after printing the agent mark in the same command line
+gets the status, attention, toasts and mode of a tab from the `+` menu, for example
+`printf '\e]133;N;aw=%s;agent=claude\a' "$__agentws_token"; claude --settings
+"$AGENTWS_CLAUDE_SETTINGS"` (Copilot: `agent=copilot`, `ConEmuANSI=ON copilot --plugin-dir
+"$AGENTWS_COPILOT_PLUGIN"`). Typing plain `claude` / `copilot` will do this by itself in a
+later version. While it runs, the row shows the agent's icon and the hover card names both
+("Claude Code in bash"); when it exits, the tab is a shell tab again with its earlier title,
+and it is saved, restored and duplicated as the shell.
+
+Background Claude Code and Copilot tabs, and agents running in place in a shell tab, show an
+in-app toast when they need attention, finish a turn, or exit (an unsuccessful exit includes
+its code when available; for an agent in place, the shell exiting mid-run counts as its
+exit). An attention toast
 says what the agent waits for: "Waiting for permission", "Waiting for your reply", or "Needs
 attention" after a bell; hovering its text shows the key that goes to the next tab needing
 attention (nothing while that action has no key). Background means the terminal is hidden:
@@ -347,9 +361,9 @@ as the agent's own name for the conversation), move up / down, close, and a colo
 Closing a busy tab asks first: one where a shell command or a program started at the prompt
 (such as vim) still runs, or whose agent is Working or waiting for an answer. Closing several
 tabs (a group's, other tabs, tabs below) or the window asks once, listing every busy tab.
-Close (Enter) goes ahead, Cancel (Escape) keeps everything open. Idle prompts, idle agents and
-exited programs close without a question. The question is a safeguard, not a notification:
-no setting turns it off.
+Close (Enter) goes ahead, Cancel (Escape) keeps everything open. Idle prompts, idle agents
+(also one running in place in a shell tab) and exited programs close without a question. The
+question is a safeguard, not a notification: no setting turns it off.
 
 ## Search and attention
 

@@ -275,7 +275,7 @@ impl WorkspaceView {
         let name_editor = self.name_editor(RenameTarget::Tab(id), cx);
         let view = tab.view.read(cx);
         let name = SharedString::from(Self::tab_name(tab, cx));
-        let kind = view.kind();
+        let kind = view.status_kind();
         let may_animate =
             self.pulse_running && self.window_visible && settings_file::activity_animations(cx);
         let status = view.tab_status();

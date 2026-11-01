@@ -30,6 +30,7 @@ pub(super) const DEFINITION: AgentDefinition = AgentDefinition {
         artifact: HookArtifactPlan {
             kind: HookArtifactKind::SettingsFile,
             launch_flag: "--settings",
+            shell_env: "AGENTWS_TEST_AGENT_SETTINGS",
             resource_suffix: "-test-agent-settings.json",
             events: &["PreToolUse"],
             timeout_secs: 5,

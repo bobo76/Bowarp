@@ -2,11 +2,12 @@
 # Loads the user's ~/.bashrc first (as bash would without --rcfile), then marks the prompt with
 # OSC 133 so the app knows where the command line starts and when a command runs:
 # A prompt start, B command start (end of PS1), C command executed (PS0, with the command line
-# as bash saved it to its history), D command finished (with the shell's folder). Each mark
-# carries the session's token (AGENTWS_MARK_TOKEN), so the app ignores marks printed by
-# programs. Needs bash 4.4 (PS0). With AGENTWS_BASH_LOGIN set (Git Bash, whose shortcut starts
-# a login shell, which ignores --rcfile, and WSL, which starts one too) it loads the login files
-# instead of ~/.bashrc.
+# as bash saved it to its history), D command finished (with its exit status and the shell's
+# folder). Each mark carries the session's token (AGENTWS_MARK_TOKEN), so the app ignores marks
+# printed by programs; it stays in $__agentws_token, which an agent's N mark (printed before
+# running it with the tab's hooks) needs too. Needs bash 4.4 (PS0). With AGENTWS_BASH_LOGIN set
+# (Git Bash, whose shortcut starts a login shell, which ignores --rcfile, and WSL, which starts
+# one too) it loads the login files instead of ~/.bashrc.
 
 __agentws_token=${AGENTWS_MARK_TOKEN-}
 __agentws_login=${AGENTWS_BASH_LOGIN-}
@@ -74,7 +75,7 @@ if [ -z "${__agentws_loaded-}" ] && [ -n "$__agentws_token" ] &&
         if [ "$PWD" != "${__agentws_pwd-}" ]; then
             __agentws_update_cwd
         fi
-        printf '\e]133;D;aw=%s%s\a' "$__agentws_token" "$__agentws_cwd"
+        printf '\e]133;D;aw=%s;exit=%s%s\a' "$__agentws_token" "$status" "$__agentws_cwd"
         __agentws_histcmd=$HISTCMD
         return "$status"
     }

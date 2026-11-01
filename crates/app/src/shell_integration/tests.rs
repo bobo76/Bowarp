@@ -204,20 +204,34 @@ fn check_marks(marks: &[workspace_model::PromptMark], output: &str) {
         "{marks:?}"
     );
     assert!(
-        marks
-            .iter()
-            .any(|mark| matches!(mark, CommandFinished(Some(folder)) if folder.is_absolute())),
+        marks.iter().any(
+            |mark| matches!(mark, CommandFinished { folder: Some(folder), .. }
+                if folder.is_absolute())
+        ),
         "{marks:?}"
     );
-    // The planted marks have the wrong token; only the printf command itself counts.
-    assert_eq!(commands.len(), 2, "{marks:?}");
+    // The planted marks have the wrong token; only the printf commands themselves count.
+    assert_eq!(commands.len(), 4, "{marks:?}");
     assert!(commands[1].starts_with("printf"), "{marks:?}");
+    assert!(
+        marks.contains(&AgentStarted(workspace_model::agents::CLAUDE)),
+        "{marks:?}"
+    );
+    assert!(
+        marks
+            .iter()
+            .any(|mark| matches!(mark, CommandFinished { exit: Some(3), .. })),
+        "{marks:?}"
+    );
 }
 
 #[cfg(unix)]
 const SCRIPT_INPUT: &str = concat!(
     "echo token=${AGENTWS_MARK_TOKEN-unset}\n",
     "printf '\\033]133;C;aw=bad;cmd=6c73\\007\\033]133;C;cmd=6c73\\007\\n'\n",
+    // An agent's mark, printed by hand with the token the script keeps.
+    "printf '\\033]133;N;aw=%s;agent=claude\\007' \"$__agentws_token\"\n",
+    "(exit 3)\n",
 );
 
 #[cfg(unix)]

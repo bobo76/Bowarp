@@ -3,9 +3,11 @@
 # meaning $HOME) and loads the user's .zshenv; zsh then reads their .zprofile, .zshrc and
 # .zlogin itself, in the usual order. The OSC 133 marks are set up on the first prompt, once
 # every startup file ran: A prompt start, B command start (end of PS1), C command executed
-# (preexec, with the command line), D command finished (precmd, with the folder), and L, the
-# command line being edited (zle). Each mark carries the session's token (AGENTWS_MARK_TOKEN),
-# so the app ignores marks printed by programs. Text is sent hex-encoded.
+# (preexec, with the command line), D command finished (precmd, with the exit status and the
+# folder), and L, the command line being edited (zle). Each mark carries the session's token
+# (AGENTWS_MARK_TOKEN), so the app ignores marks printed by programs; it stays in
+# $__agentws_token, which an agent's N mark (printed before running it with the tab's hooks)
+# needs too. Text is sent hex-encoded.
 if [[ -n ${AGENTWS_USER_ZDOTDIR+x} ]]; then
     ZDOTDIR=$AGENTWS_USER_ZDOTDIR
 else
@@ -47,11 +49,13 @@ if [[ -o interactive && -n $__agentws_token && -z ${__agentws_loaded-} ]]; then
     }
 
     # Runs last, so it sees the PS1 that prompt themes set in their own precmd.
+    # zsh gives each precmd hook the command's status in $?.
     __agentws_precmd() {
+        local code=$?
         if __agentws_hex "$PWD"; then
-            __agentws_mark D ";cwd=$REPLY"
+            __agentws_mark D ";exit=$code;cwd=$REPLY"
         else
-            __agentws_mark D
+            __agentws_mark D ";exit=$code"
         fi
         __agentws_wrap_ps1
         if [[ ${precmd_functions[-1]} != __agentws_precmd ]]; then
