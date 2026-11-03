@@ -1,12 +1,19 @@
 # Linux build and tests on a Windows machine
 
-A native Windows build needs the MSVC linker (Visual Studio Build Tools, "Desktop development
-with C++"). Without it `cargo` finds Git's `link.exe` and fails on the first build script
-(`linking with link.exe failed`). The Linux build runs instead in Docker or in WSL Ubuntu,
-with the same packages as `.github/workflows/ubuntu.yml`.
+## Native Windows build
 
-Either way the build is a Linux one: `#[cfg(windows)]` code is not compiled. The Windows CI
-job (`windows.yml`) is what checks it; see [Windows code from Linux](#windows-code-from-linux).
+With the MSVC linker installed (Visual Studio Build Tools, "Desktop development with C++") and
+rustup's `~\.cargo\bin` on `PATH`, every command of the [README](../README.md#build-and-run)
+runs natively: `cargo build`, `cargo test`, `cargo clippy --workspace --all-targets -- -D
+warnings` and `cargo fmt --all --check` all passed from PowerShell on 2026-11-03. This is the
+only local way to compile and lint `#[cfg(windows)]` code; it caught an import used only by a
+`#[cfg(unix)]` test, which the Ubuntu Clippy job cannot see.
+
+Without the Build Tools, `cargo` finds Git's `link.exe` and fails on the first build script
+(`linking with link.exe failed`). The Linux build then runs in Docker or in WSL Ubuntu, with
+the same packages as `.github/workflows/ubuntu.yml`. That build is a Linux one:
+`#[cfg(windows)]` code is not compiled, and the Windows CI job (`windows.yml`) is what checks
+it; see [Windows code from Linux](#windows-code-from-linux).
 
 ## Docker
 
