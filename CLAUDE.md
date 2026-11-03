@@ -90,7 +90,8 @@ Cargo workspace, `crates/*`:
   (e.g. `launcher/tests/unix.rs`). Integration tests in a crate's `tests/` use only public API;
   don't make private items public just for tests. See docs/code-quality.md.
 - Windows-specific path logic: write pure functions taking a `windows: bool` so it is unit-tested
-  on Linux (no Windows clippy cross-check available locally).
+  on Linux too. `#[cfg(windows)]` code is only compiled and linted by a native Windows build
+  (works with the Visual Studio Build Tools, see docs/linux-build-on-windows.md) or Windows CI.
 - Bytes typed into the PTY (`TerminalView::type_text`) are raw; paths go through
   `file_tree::quote_path` / `cd_command`.
 - BACKLOG.md: remove items once fully done and verified; implemented-but-unchecked items go under

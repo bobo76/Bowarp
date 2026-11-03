@@ -1,5 +1,4 @@
 use super::*;
-use workspace_model::agents::CLAUDE;
 
 use std::time::{Duration, Instant};
 
@@ -1384,6 +1383,8 @@ fn test_launcher(id: &str, kind: SessionKind, installed: bool) -> Launcher {
 fn closing_the_last_tab_keeps_the_window_its_groups_and_the_explorer_state(
     cx: &mut gpui_kit::TestAppContext,
 ) {
+    use workspace_model::agents::CLAUDE;
+
     let launchers: Rc<[Launcher]> = Rc::from([
         test_launcher("one", SessionKind::Shell, true),
         test_launcher("two", SessionKind::Shell, true),

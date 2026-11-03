@@ -23,9 +23,6 @@ Subagent list (Claude Code 2.1.316, Copilot CLI 1.0.105):
 
 Agent running in place in a shell tab (from its `N` mark until the command's `D`):
 
-- Windows (Git Bash, PowerShell, WSL): `env` shows `AGENTWS_SESSION`, `AGENTWS_PIPE`,
-  `AGENTWS_HOOK`, `AGENTWS_CLAUDE_SETTINGS`, `AGENTWS_COPILOT_PLUGIN` (WSL: not passed in);
-  the plugin folder goes away when the tab closes.
 - Linux and Windows: real Copilot CLI in place (`ConEmuANSI=ON copilot --plugin-dir
   "$AGENTWS_COPILOT_PLUGIN"` after the mark): Working spinner from progress, Waiting on a
   permission prompt, Mode line from the extension; Claude Code in Plan mode via hooks.
@@ -62,14 +59,17 @@ Wine test runner:
 
 - Linux with Wine: run `scripts/test-windows.sh`; the app tests finish serially with only
   `duplicate_shortcut_does_not_send_eof_to_the_original_terminal` skipped. Other crates run
-  normally. On real Windows, that test still runs without the Wine workaround.
+  normally.
 
 Copilot Autopilot permission hooks:
 
-- Capture one real Autopilot `PermissionRequest` payload and the following tool hooks. Check
-  that Autopilot stays Working without a Waiting triangle, toast or attention shortcut target,
-  while a real question still waits. Check mode changes with the optional extension, and
-  `--mode autopilot` / `--autopilot` launches without it; `--yolo` alone is not Autopilot.
+- Interactive Autopilot without `--allow-all`: check whether Copilot still asks the user. In
+  `-p` mode (1.0.105) it sends `PermissionRequest` then a `permission_prompt` Notification and
+  denies the tool ("no one to approve"); the app hides both under Autopilot, so a real prompt
+  there would show no Waiting. Otherwise check that Autopilot stays Working without a Waiting
+  triangle, toast or attention shortcut target, while a real question still waits. Check mode
+  changes with the optional extension, and `--mode autopilot` / `--autopilot` launches
+  without it; `--yolo` alone is not Autopilot.
 
 Sidebar and explorer opacity:
 
@@ -81,10 +81,10 @@ Sidebar and explorer opacity:
 
 Windows Mica client area:
 
-- Build on Windows with the MSVC tools, then on Windows 11 build 26100 check Mica below
-  100 % at startup and when selected live: the client area must show the material. Switch
-  Mica -> None / Acrylic / 100 % and back, including a restart; the previous material must
-  disappear. Check the persistent warning if a DWM operation fails.
+- Windows 11 build 26100: check Mica below 100 % at startup and when selected live: the
+  client area must show the material. Switch Mica -> None / Acrylic / 100 % and back,
+  including a restart; the previous material must disappear. Check the persistent warning if
+  a DWM operation fails.
 - Check Windows 10's Acrylic fallback. Add a restart-only Mica caption/known limitation only
   if the live Windows check actually shows it cannot be removed.
 
@@ -125,8 +125,6 @@ Dimmed git-ignored entries in the file explorer:
 
 Agent status off shows in the UI:
 
-- Windows: without `agentws-hook.exe` next to the app, the warning names
-  `agentws-hook.exe`; a quiet Claude Code tab reads "Status unavailable".
 - The status listener failing to start (e.g. a socket/pipe that can't be created) shows "could
   not start the status listener (...). Restart the app to retry."; with a broken default shell
   too, both warnings show, agent status first.
