@@ -6,6 +6,7 @@
 
 use std::io::{self, Read, Write};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -66,7 +67,7 @@ pub fn serve(name: &str, idle_exit: Option<Duration>) -> io::Result<()> {
                 let spawned = thread::Builder::new()
                     .name("agentws-connection".into())
                     .spawn(move || {
-                        let (reader, writer) = stream.split();
+                        let (reader, writer) = halves(stream);
                         server.serve_connection(reader, writer);
                     });
                 if let Err(err) = spawned {
@@ -155,10 +156,36 @@ fn detach(command: &mut Command) {
 #[cfg(not(any(unix, windows)))]
 fn detach(_command: &mut Command) {}
 
+/// One end of a local socket connection, shared by its reading and writing threads: `&Stream`
+/// reads and writes. Dropping one does not shut the connection down; dropping both closes it.
+pub struct StreamHalf(Arc<Stream>);
+
+impl Read for StreamHalf {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        (&*self.0).read(buf)
+    }
+}
+
+impl Write for StreamHalf {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        (&*self.0).write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        (&*self.0).flush()
+    }
+}
+
+/// A reader and a writer for `stream`, for two threads.
+pub fn halves(stream: Stream) -> (StreamHalf, StreamHalf) {
+    let shared = Arc::new(stream);
+    (StreamHalf(shared.clone()), StreamHalf(shared))
+}
+
 /// Relay stdin to the daemon and the daemon to stdout until either side ends.
 pub fn proxy(name: &str, server_program: &std::path::Path) -> io::Result<()> {
     let stream = connect_or_start(name, server_program)?;
-    let (mut from_daemon, mut to_daemon) = stream.split();
+    let (mut from_daemon, mut to_daemon) = halves(stream);
     let downstream = thread::spawn(move || {
         let mut stdout = io::stdout().lock();
         relay(&mut from_daemon, &mut stdout)

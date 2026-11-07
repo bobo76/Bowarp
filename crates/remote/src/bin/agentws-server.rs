@@ -11,7 +11,6 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use agentws_remote::{Client, transport};
-use interprocess::local_socket::prelude::*;
 
 const DEFAULT_IDLE_EXIT: Duration = Duration::from_secs(60);
 
@@ -56,9 +55,9 @@ fn main() -> ExitCode {
 
 /// A client of the running server; an error when none runs.
 fn client(name: &str) -> std::io::Result<Client> {
-    let (reader, writer) = transport::connect(name)
-        .map_err(|err| std::io::Error::new(err.kind(), format!("no server running: {err}")))?
-        .split();
+    let stream = transport::connect(name)
+        .map_err(|err| std::io::Error::new(err.kind(), format!("no server running: {err}")))?;
+    let (reader, writer) = transport::halves(stream);
     Client::connect(reader, writer, Box::new(|_| {}))
 }
 
