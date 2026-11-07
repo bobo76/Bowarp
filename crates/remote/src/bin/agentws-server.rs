@@ -4,15 +4,19 @@
 //!   (starting it when none runs) and relays stdin and stdout to it.
 //! - `agentws-server serve [--idle-exit <seconds>]`: run the server in the foreground. It
 //!   exits after the given time (default 60, 0 = never) with no session and no connection.
+//! - `agentws-server list`: the sessions this user's server runs.
+//! - `agentws-server close <id>`: end one of them.
 
 use std::process::ExitCode;
 use std::time::Duration;
 
-use agentws_remote::transport;
+use agentws_remote::{Client, transport};
+use interprocess::local_socket::prelude::*;
 
 const DEFAULT_IDLE_EXIT: Duration = Duration::from_secs(60);
 
-const USAGE: &str = "usage: agentws-server proxy | serve [--idle-exit <seconds>] | --version";
+const USAGE: &str = "usage: agentws-server proxy | serve [--idle-exit <seconds>] | list | \
+                     close <id> | --version";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -24,6 +28,11 @@ fn main() -> ExitCode {
         ["serve", "--idle-exit", seconds] => match seconds.parse::<u64>() {
             Ok(0) => transport::serve(&name, None),
             Ok(seconds) => transport::serve(&name, Some(Duration::from_secs(seconds))),
+            Err(_) => return usage(),
+        },
+        ["list"] => list(&name),
+        ["close", id] => match id.parse::<u64>() {
+            Ok(id) => close(&name, id),
             Err(_) => return usage(),
         },
         ["--version"] => {
@@ -43,6 +52,46 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// A client of the running server; an error when none runs.
+fn client(name: &str) -> std::io::Result<Client> {
+    let (reader, writer) = transport::connect(name)
+        .map_err(|err| std::io::Error::new(err.kind(), format!("no server running: {err}")))?
+        .split();
+    Client::connect(reader, writer, Box::new(|_| {}))
+}
+
+fn list(name: &str) -> std::io::Result<()> {
+    for info in client(name)?.list()? {
+        let kind = if info.kind.is_empty() {
+            "shell"
+        } else {
+            &info.kind
+        };
+        let state = match info.exit {
+            None => "running".to_owned(),
+            Some(Some(code)) => format!("exited ({code})"),
+            Some(None) => "exited".to_owned(),
+        };
+        let title = info.title.as_deref().unwrap_or("");
+        println!("{}\t{kind}\t{state}\t{title}", info.id);
+    }
+    Ok(())
+}
+
+fn close(name: &str, id: u64) -> std::io::Result<()> {
+    let client = client(name)?;
+    if !client.list()?.iter().any(|info| info.id == id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("no session {id}"),
+        ));
+    }
+    client.close(id)?;
+    // The list answers after the close: the close was handled.
+    client.list()?;
+    Ok(())
 }
 
 fn usage() -> ExitCode {

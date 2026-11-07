@@ -2,18 +2,23 @@
 //!
 //! A connection is any byte stream to `agentws-server proxy`, usually the stdin and stdout of
 //! `ssh <host> agentws-server proxy` ([`Client::over_command`], [`crate::ssh_command`]). Each
-//! [`RemoteSession`] shows its session in a [`Mirror`] fed by the connection's reader thread.
+//! remote session is a [`Session::remote`] fed by the connection's reader thread; what it
+//! sends goes through a writer thread, so typing never blocks on the network.
 
 use std::collections::HashMap;
-use std::io::{self, BufReader, ErrorKind, Read, Write};
+use std::io::{self, BufReader, BufWriter, ErrorKind, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use term_core::{EventCallback, Mirror, SessionEvent, TermDimensions};
+use term_core::{
+    EventCallback, LaunchSpec, Palette, RemoteLink, Session, SessionFeed, SessionKind,
+    TermDimensions,
+};
+use workspace_model::AgentId;
 
 use crate::protocol::{
     ClientMessage, PROTOCOL_VERSION, ServerMessage, SessionInfo, SpawnSpec, read_frame, write_frame,
@@ -27,24 +32,43 @@ const MAX_STDERR: usize = 4096;
 /// Called once when the connection ends, with the reason.
 pub type DisconnectCallback = Box<dyn FnOnce(String) + Send>;
 
+/// A session started or attached on the server, shown here.
+pub struct RemoteSession {
+    /// Dropping it ends the program on the server.
+    pub session: Session,
+    /// The session as the server described it when this client attached.
+    pub info: SessionInfo,
+}
+
+/// How a session shows here: its local id (the app's tab id), colors and event callback.
+pub struct LocalView {
+    pub id: u64,
+    pub palette: Palette,
+    /// Gets the session's events on the connection's reader thread.
+    pub callback: EventCallback,
+}
+
 /// A connection to a server.
 pub struct Client {
     inner: Arc<Inner>,
 }
 
 struct Inner {
-    writer: Mutex<Box<dyn Write + Send>>,
+    outgoing: Mutex<Option<Sender<ClientMessage>>>,
     pending: Mutex<HashMap<u32, Pending>>,
-    sessions: Mutex<HashMap<u64, Arc<Remote>>>,
+    /// The attached sessions, by server session id.
+    feeds: Mutex<HashMap<u64, SessionFeed>>,
     next_request: AtomicU32,
     connected: AtomicBool,
     child: Mutex<Option<Child>>,
 }
 
+type AttachReply = mpsc::Sender<Result<RemoteSession, String>>;
+
 enum Pending {
     Attach {
-        callback: EventCallback,
-        reply: mpsc::Sender<Result<Arc<Remote>, String>>,
+        view: LocalView,
+        reply: AttachReply,
     },
     List {
         reply: mpsc::Sender<Result<Vec<SessionInfo>, String>>,
@@ -60,18 +84,34 @@ impl Pending {
     }
 }
 
-/// The client's side of one remote session.
-struct Remote {
-    info: SessionInfo,
-    mirror: Mirror,
-    callback: EventCallback,
-    exit: Mutex<Option<Option<i32>>>,
-    connected: AtomicBool,
+impl SpawnSpec {
+    /// What to start on the server for a launch made here.
+    pub fn from_launch(spec: &LaunchSpec) -> Self {
+        let mut env: Vec<(String, String)> = spec
+            .env
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        env.sort();
+        Self {
+            kind: spec
+                .kind
+                .agent()
+                .map_or_else(String::new, |agent| agent.cli_selector().to_owned()),
+            program: spec.program.clone(),
+            args: spec.args.clone(),
+            cwd: spec
+                .cwd
+                .as_ref()
+                .map(|cwd| cwd.to_string_lossy().into_owned()),
+            env,
+        }
+    }
 }
 
 impl Client {
     /// Start `command` (e.g. [`crate::ssh_command`]) and speak to the server on its stdin and
-    /// stdout. The command is killed when the client is dropped; the sessions go on running.
+    /// stdout. The command is killed when the client is dropped.
     pub fn over_command(
         mut command: Command,
         on_disconnect: DisconnectCallback,
@@ -93,7 +133,7 @@ impl Client {
         let stderr = child.stderr.take().expect("piped stderr");
         let errors = Arc::new(Mutex::new(Vec::new()));
         let collected = errors.clone();
-        thread::spawn(move || collect_stderr(stderr, &collected));
+        let stderr_reader = thread::spawn(move || collect_stderr(stderr, &collected));
         match Self::connect(stdout, stdin, on_disconnect) {
             Ok(client) => {
                 *client.inner.child.lock().unwrap() = Some(child);
@@ -102,15 +142,16 @@ impl Client {
             Err(err) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                // The stderr reader ends with the child; give it a moment to see it all.
-                thread::sleep(Duration::from_millis(50));
+                // It ends with the child: then it has read everything.
+                let _ = stderr_reader.join();
                 let stderr = String::from_utf8_lossy(&errors.lock().unwrap())
                     .trim()
                     .to_string();
+                // What ssh said explains it better than the stream ending.
                 Err(if stderr.is_empty() {
                     err
                 } else {
-                    io::Error::new(err.kind(), format!("{err}: {stderr}"))
+                    io::Error::new(err.kind(), stderr)
                 })
             }
         }
@@ -144,23 +185,27 @@ impl Client {
                 ));
             }
         }
+        let (outgoing, queue) = mpsc::channel();
+        thread::Builder::new()
+            .name("agentws-remote-writer".into())
+            .spawn(move || write_messages(writer, &queue))?;
         let inner = Arc::new(Inner {
-            writer: Mutex::new(Box::new(writer)),
+            outgoing: Mutex::new(Some(outgoing)),
             pending: Mutex::new(HashMap::new()),
-            sessions: Mutex::new(HashMap::new()),
+            feeds: Mutex::new(HashMap::new()),
             next_request: AtomicU32::new(1),
             connected: AtomicBool::new(true),
             child: Mutex::new(None),
         });
         let reading = inner.clone();
         thread::Builder::new()
-            .name("agentws-remote".into())
+            .name("agentws-remote-reader".into())
             .spawn(move || {
                 let reason = match reading.read_messages(&mut reader) {
                     Ok(reason) => reason,
                     Err(err) => format!("connection lost: {err}"),
                 };
-                reading.disconnected();
+                reading.disconnected(&reason);
                 on_disconnect(reason);
             })?;
         Ok(Self { inner })
@@ -180,15 +225,19 @@ impl Client {
         wait(&answer)
     }
 
-    /// Start a session on the server and attach to it. `callback` gets the mirror's events
-    /// and [`SessionEvent::Exited`]; it is called on the connection's reader thread.
+    /// End a session on the server, attached here or not.
+    pub fn close(&self, session: u64) -> io::Result<()> {
+        self.inner.send(ClientMessage::Close { session })
+    }
+
+    /// Start a session on the server and show it here.
     pub fn spawn(
         &self,
         spec: SpawnSpec,
         size: TermDimensions,
-        callback: EventCallback,
+        view: LocalView,
     ) -> io::Result<RemoteSession> {
-        self.attach_with(callback, |request| ClientMessage::Spawn {
+        self.attach_with(view, |request| ClientMessage::Spawn {
             request,
             spec,
             size,
@@ -200,9 +249,9 @@ impl Client {
         &self,
         session: u64,
         size: TermDimensions,
-        callback: EventCallback,
+        view: LocalView,
     ) -> io::Result<RemoteSession> {
-        self.attach_with(callback, |request| ClientMessage::Attach {
+        self.attach_with(view, |request| ClientMessage::Attach {
             request,
             session,
             size,
@@ -211,18 +260,13 @@ impl Client {
 
     fn attach_with(
         &self,
-        callback: EventCallback,
+        view: LocalView,
         message: impl FnOnce(u32) -> ClientMessage,
     ) -> io::Result<RemoteSession> {
         let (reply, answer) = mpsc::channel();
         self.inner
-            .request(Pending::Attach { callback, reply }, message)?;
-        let remote = wait(&answer)?;
-        Ok(RemoteSession {
-            remote,
-            client: self.inner.clone(),
-            closed: false,
-        })
+            .request(Pending::Attach { view, reply }, message)?;
+        wait(&answer)
     }
 }
 
@@ -235,7 +279,7 @@ impl Drop for Client {
     }
 }
 
-fn wait<T>(answer: &mpsc::Receiver<Result<T, String>>) -> io::Result<T> {
+fn wait<T>(answer: &Receiver<Result<T, String>>) -> io::Result<T> {
     match answer.recv_timeout(REPLY_TIMEOUT) {
         Ok(Ok(value)) => Ok(value),
         Ok(Err(message)) => Err(io::Error::other(message)),
@@ -243,11 +287,15 @@ fn wait<T>(answer: &mpsc::Receiver<Result<T, String>>) -> io::Result<T> {
             ErrorKind::TimedOut,
             "the server did not answer",
         )),
-        Err(RecvTimeoutError::Disconnected) => Err(io::Error::new(
-            ErrorKind::NotConnected,
-            "the connection to the server ended",
-        )),
+        Err(RecvTimeoutError::Disconnected) => Err(not_connected()),
     }
+}
+
+fn not_connected() -> io::Error {
+    io::Error::new(
+        ErrorKind::NotConnected,
+        "the connection to the server ended",
+    )
 }
 
 fn collect_stderr(mut stderr: impl Read, errors: &Mutex<Vec<u8>>) {
@@ -262,17 +310,35 @@ fn collect_stderr(mut stderr: impl Read, errors: &Mutex<Vec<u8>>) {
     }
 }
 
-impl Inner {
-    fn send(&self, message: &ClientMessage) -> io::Result<()> {
-        if !self.connected.load(Ordering::Acquire) {
-            return Err(io::Error::new(
-                ErrorKind::NotConnected,
-                "the connection to the server ended",
-            ));
+/// Send queued messages until the queue closes or the connection fails; flushes once the
+/// queue is empty, so a burst of keystrokes goes out in one write.
+fn write_messages(writer: impl Write, queue: &Receiver<ClientMessage>) {
+    let mut writer = BufWriter::new(writer);
+    while let Ok(message) = queue.recv() {
+        let mut next = Some(message);
+        while let Some(message) = next.take() {
+            if write_frame(&mut writer, &message.encode()).is_err() {
+                return;
+            }
+            next = queue.try_recv().ok();
         }
-        let mut writer = self.writer.lock().unwrap();
-        write_frame(&mut *writer, &message.encode())?;
-        writer.flush()
+        if writer.flush().is_err() {
+            return;
+        }
+    }
+}
+
+impl Inner {
+    /// Queue a message; never blocks.
+    fn send(&self, message: ClientMessage) -> io::Result<()> {
+        if !self.connected.load(Ordering::Acquire) {
+            return Err(not_connected());
+        }
+        let outgoing = self.outgoing.lock().unwrap();
+        match outgoing.as_ref() {
+            Some(sender) => sender.send(message).map_err(|_| not_connected()),
+            None => Err(not_connected()),
+        }
     }
 
     fn request(
@@ -282,7 +348,7 @@ impl Inner {
     ) -> io::Result<()> {
         let request = self.next_request.fetch_add(1, Ordering::AcqRel);
         self.pending.lock().unwrap().insert(request, pending);
-        let sent = self.send(&message(request));
+        let sent = self.send(message(request));
         if sent.is_err() {
             self.pending.lock().unwrap().remove(&request);
         }
@@ -290,7 +356,7 @@ impl Inner {
     }
 
     /// Handle the server's messages until the connection ends; returns why it ended.
-    fn read_messages(&self, reader: &mut impl Read) -> io::Result<String> {
+    fn read_messages(self: &Arc<Self>, reader: &mut impl Read) -> io::Result<String> {
         while let Some(frame) = read_frame(reader)? {
             match ServerMessage::decode(&frame)? {
                 ServerMessage::Failed {
@@ -303,7 +369,7 @@ impl Inner {
         Ok("the server closed the connection".into())
     }
 
-    fn handle(&self, message: ServerMessage) {
+    fn handle(self: &Arc<Self>, message: ServerMessage) {
         match message {
             ServerMessage::Hello { .. } => {}
             ServerMessage::Attached {
@@ -311,30 +377,12 @@ impl Inner {
                 info,
                 snapshot,
             } => {
-                let Some(Pending::Attach { callback, reply }) =
+                let Some(Pending::Attach { view, reply }) =
                     self.pending.lock().unwrap().remove(&request)
                 else {
                     return;
                 };
-                let remote = Arc::new(Remote {
-                    mirror: Mirror::new(info.size, callback.clone()),
-                    exit: Mutex::new(info.exit),
-                    info,
-                    callback,
-                    connected: AtomicBool::new(true),
-                });
-                remote.mirror.feed(&snapshot);
-                self.sessions
-                    .lock()
-                    .unwrap()
-                    .insert(remote.info.id, remote.clone());
-                if reply.send(Ok(remote.clone())).is_err() {
-                    // Nobody waits for it any more (timed out): don't keep it attached.
-                    self.sessions.lock().unwrap().remove(&remote.info.id);
-                    let _ = self.send(&ClientMessage::Detach {
-                        session: remote.info.id,
-                    });
-                }
+                self.attached(view, reply, info, &snapshot);
             }
             ServerMessage::Sessions { request, sessions } => {
                 if let Some(Pending::List { reply }) = self.pending.lock().unwrap().remove(&request)
@@ -343,19 +391,18 @@ impl Inner {
                 }
             }
             ServerMessage::Output { session, bytes } => {
-                if let Some(remote) = self.remote(session) {
-                    remote.mirror.feed(&bytes);
+                if let Some(feed) = self.feeds.lock().unwrap().get(&session) {
+                    feed.output(&bytes);
                 }
             }
             ServerMessage::Resized { session, size } => {
-                if let Some(remote) = self.remote(session) {
-                    remote.mirror.resize(size);
+                if let Some(feed) = self.feeds.lock().unwrap().get(&session) {
+                    feed.resized(size);
                 }
             }
             ServerMessage::Exited { session, code } => {
-                if let Some(remote) = self.remote(session) {
-                    *remote.exit.lock().unwrap() = Some(code);
-                    (remote.callback)(SessionEvent::Exited(code));
+                if let Some(feed) = self.feeds.lock().unwrap().get(&session) {
+                    feed.exited(code);
                 }
             }
             ServerMessage::Failed { request, message } => {
@@ -366,104 +413,98 @@ impl Inner {
         }
     }
 
-    fn remote(&self, session: u64) -> Option<Arc<Remote>> {
-        self.sessions.lock().unwrap().get(&session).cloned()
+    fn attached(
+        self: &Arc<Self>,
+        view: LocalView,
+        reply: AttachReply,
+        info: SessionInfo,
+        snapshot: &[u8],
+    ) {
+        let kind =
+            AgentId::from_cli_selector(&info.kind).map_or(SessionKind::Shell, SessionKind::Agent);
+        let link = Link {
+            client: self.clone(),
+            session: info.id,
+        };
+        let (session, feed) = Session::remote(
+            view.id,
+            kind,
+            info.size,
+            view.palette,
+            view.callback,
+            Box::new(link),
+        );
+        feed.output(snapshot);
+        if let Some(code) = info.exit {
+            feed.exited(code);
+        }
+        self.feeds.lock().unwrap().insert(info.id, feed);
+        let id = info.id;
+        if let Err(mpsc::SendError(Ok(unwanted))) = reply.send(Ok(RemoteSession { session, info }))
+        {
+            // Nobody waits for it any more (timed out): detach instead of ending it.
+            self.feeds.lock().unwrap().remove(&id);
+            drop(unwanted);
+            let _ = self.send(ClientMessage::Detach { session: id });
+        }
     }
 
-    fn disconnected(&self) {
+    fn disconnected(&self, reason: &str) {
         self.connected.store(false, Ordering::Release);
+        // The writer thread ends once its queue closes.
+        self.outgoing.lock().unwrap().take();
         // Dropping the reply senders wakes the waiters with "connection ended".
         self.pending.lock().unwrap().clear();
-        for remote in self.sessions.lock().unwrap().values() {
-            remote.connected.store(false, Ordering::Release);
+        let notice = format!("\r\n\x1b[0;2m[connection to the server lost: {reason}]\x1b[0m\r\n");
+        for feed in self.feeds.lock().unwrap().drain().map(|(_, feed)| feed) {
+            if !feed.has_exited() {
+                feed.output(notice.as_bytes());
+            }
+            feed.exited(None);
         }
     }
 }
 
-/// A session running on the server, shown here. Dropping it detaches: the session goes on
-/// running on the server; [`RemoteSession::close`] ends it.
-pub struct RemoteSession {
-    remote: Arc<Remote>,
+/// A remote session's way to its server.
+struct Link {
     client: Arc<Inner>,
-    closed: bool,
+    session: u64,
 }
 
-impl RemoteSession {
-    pub fn id(&self) -> u64 {
-        self.remote.info.id
-    }
-
-    /// The session as it was when this client attached.
-    pub fn info(&self) -> &SessionInfo {
-        &self.remote.info
-    }
-
-    /// The terminal showing the session's output.
-    pub fn mirror(&self) -> &Mirror {
-        &self.remote.mirror
-    }
-
-    /// Type into the session's program.
-    pub fn write(&self, bytes: impl Into<Vec<u8>>) {
+impl RemoteLink for Link {
+    fn write(&self, bytes: std::borrow::Cow<'static, [u8]>) {
         let message = ClientMessage::Input {
-            session: self.id(),
-            bytes: bytes.into(),
+            session: self.session,
+            bytes: bytes.into_owned(),
         };
-        if let Err(err) = self.client.send(&message) {
+        if let Err(err) = self.client.send(message) {
             log::debug!("remote input dropped: {err}");
         }
     }
 
-    /// Resize the mirror and the session's pty.
-    pub fn resize(&self, size: TermDimensions) {
-        if self.remote.mirror.size() == size {
-            return;
-        }
-        self.remote.mirror.resize(size);
+    fn resize(&self, size: TermDimensions) {
         let message = ClientMessage::Resize {
-            session: self.id(),
+            session: self.session,
             size,
         };
-        if let Err(err) = self.client.send(&message) {
+        if let Err(err) = self.client.send(message) {
             log::debug!("remote resize dropped: {err}");
         }
     }
 
-    pub fn has_exited(&self) -> bool {
-        self.remote.exit.lock().unwrap().is_some()
-    }
-
-    pub fn exit_code(&self) -> Option<i32> {
-        self.remote.exit.lock().unwrap().flatten()
-    }
-
-    /// Whether the connection this session is shown through is still up.
-    pub fn is_connected(&self) -> bool {
-        self.remote.connected.load(Ordering::Acquire)
-    }
-
-    /// End the session on the server.
-    pub fn close(mut self) {
-        self.closed = true;
-        self.forget();
-        let _ = self
+    fn close(&self) {
+        // Gone already when it was never handed out, or the connection ended.
+        if self
             .client
-            .send(&ClientMessage::Close { session: self.id() });
-    }
-
-    fn forget(&self) {
-        self.client.sessions.lock().unwrap().remove(&self.id());
-    }
-}
-
-impl Drop for RemoteSession {
-    fn drop(&mut self) {
-        if self.closed {
-            return;
+            .feeds
+            .lock()
+            .unwrap()
+            .remove(&self.session)
+            .is_some()
+        {
+            let _ = self.client.send(ClientMessage::Close {
+                session: self.session,
+            });
         }
-        self.forget();
-        let _ = self
-            .client
-            .send(&ClientMessage::Detach { session: self.id() });
     }
 }

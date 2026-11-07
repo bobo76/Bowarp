@@ -4,8 +4,7 @@
 //!
 //! - [`protocol`]: the messages and their encoding.
 //! - [`Server`]: runs the sessions and streams them to attached clients.
-//! - [`Client`] / [`RemoteSession`]: the app's side, showing each session in a
-//!   [`term_core::Mirror`].
+//! - [`Client`]: the app's side, showing each session in a [`term_core::Session::remote`].
 //! - [`transport`]: the per-user daemon socket, `agentws-server proxy` and the ssh command.
 
 // Long test scenarios are exempt from the function length limit (docs/code-quality.md).
@@ -16,7 +15,7 @@ pub mod protocol;
 mod server;
 pub mod transport;
 
-pub use client::{Client, DisconnectCallback, RemoteSession};
+pub use client::{Client, DisconnectCallback, LocalView, RemoteSession};
 pub use protocol::{SessionInfo, SpawnSpec};
 pub use server::Server;
 pub use transport::ssh_command;

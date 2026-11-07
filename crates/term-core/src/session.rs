@@ -16,6 +16,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{self, ClipboardType, Term, TermMode};
 use alacritty_terminal::tty;
+use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
 use parking_lot::MutexGuard;
 use workspace_model::ProgressState;
 
@@ -116,6 +117,8 @@ struct Shared {
     /// Replaced when the user picks other terminal colors (`Session::set_palette`).
     palette: Mutex<Palette>,
     sender: OnceLock<EventLoopSender>,
+    /// Set for a session whose program runs elsewhere ([`Session::remote`]).
+    link: Option<Box<dyn RemoteLink>>,
     size: Mutex<TermDimensions>,
     wakeup_pending: AtomicBool,
     started_at: Instant,
@@ -130,7 +133,12 @@ struct Shared {
 }
 
 impl Shared {
-    fn new(size: TermDimensions, palette: Palette, callback: EventCallback) -> Self {
+    fn new(
+        size: TermDimensions,
+        palette: Palette,
+        callback: EventCallback,
+        link: Option<Box<dyn RemoteLink>>,
+    ) -> Self {
         let prompt_callback = callback.clone();
         let prompt = Arc::new(PromptTracker::new(move |event| {
             prompt_callback(match event {
@@ -145,6 +153,7 @@ impl Shared {
             callback,
             palette: Mutex::new(palette),
             sender: OnceLock::new(),
+            link,
             size: Mutex::new(size),
             wakeup_pending: AtomicBool::new(false),
             started_at: Instant::now(),
@@ -171,12 +180,33 @@ impl Shared {
     }
 
     fn write(&self, bytes: Cow<'static, [u8]>) {
+        if let Some(link) = &self.link {
+            link.write(bytes);
+            return;
+        }
         let Some(sender) = self.sender.get() else {
             return;
         };
         if let Err(err) = sender.send(Msg::Input(bytes)) {
             log::debug!("pty write dropped: {err}");
         }
+    }
+
+    /// The terminal's answer to a query in the output. A remote session's server already
+    /// answered it from its own terminal.
+    fn reply(&self, bytes: String) {
+        if self.link.is_none() {
+            self.write(Cow::Owned(bytes.into_bytes()));
+        }
+    }
+
+    /// The program exited: report it after its output.
+    fn exit(&self) {
+        self.wake();
+        let code = *self.exit_code.lock().unwrap();
+        (self.callback)(SessionEvent::Exited(code));
+        // After the callback: `has_exited()` then means no event is left to deliver.
+        self.exited.store(true, Ordering::Release);
     }
 }
 
@@ -199,27 +229,21 @@ impl EventListener for SessionListener {
             // that drain is only announced by a `Wakeup` sent after `Exit`. Report the exit on
             // `Exit` and wake first, so the renderer sees all output before `Exited`.
             Event::ChildExit(status) => *shared.exit_code.lock().unwrap() = status.code(),
-            Event::Exit => {
-                shared.wake();
-                let code = *shared.exit_code.lock().unwrap();
-                (shared.callback)(SessionEvent::Exited(code));
-                // After the callback: `has_exited()` then means no event is left to deliver.
-                shared.exited.store(true, Ordering::Release);
-            }
+            Event::Exit => shared.exit(),
             Event::PtyWrite(text) => {
                 if !shared.prompt.on_tag_reply(&text) {
-                    shared.write(Cow::Owned(text.into_bytes()));
+                    shared.reply(text);
                 }
             }
             Event::TextAreaSizeRequest(format) => {
                 let size = *shared.size.lock().unwrap();
-                shared.write(Cow::Owned(format(size.window_size()).into_bytes()));
+                shared.reply(format(size.window_size()));
             }
             // Answered from the palette defaults: this runs under the terminal lock, so runtime
             // overrides in `Term::colors` cannot be read here.
             Event::ColorRequest(index, format) => {
                 let color = shared.palette.lock().unwrap().default_color(index);
-                shared.write(Cow::Owned(format(color).into_bytes()));
+                shared.reply(format(color));
             }
             Event::ClipboardStore(clipboard, text) => {
                 (shared.callback)(SessionEvent::ClipboardStore(clipboard, text));
@@ -227,6 +251,68 @@ impl EventListener for SessionListener {
             // Clipboard reads (OSC 52 `?`) are refused by `Osc52::OnlyCopy`, the default.
             other => log::trace!("unhandled terminal event: {other:?}"),
         }
+    }
+}
+
+/// Where a remote session sends what the user does: the connection to the server that runs
+/// its program. Called on the UI thread: it must not block on the network.
+pub trait RemoteLink: Send + Sync {
+    fn write(&self, bytes: Cow<'static, [u8]>);
+    fn resize(&self, size: TermDimensions);
+    /// The session was dropped (its tab closed): end the program.
+    fn close(&self);
+}
+
+/// Brings a remote session's output and exit, from the connection to its server.
+pub struct SessionFeed {
+    term: Arc<FairMutex<Term<SessionListener>>>,
+    parser: Mutex<Processor<StdSyncHandler>>,
+    shared: Arc<Shared>,
+}
+
+impl SessionFeed {
+    /// Show output of the program.
+    pub fn output(&self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        {
+            let mut parser = self.parser.lock().unwrap();
+            let mut term = self.term.lock();
+            parser.advance(&mut *term, bytes);
+        }
+        self.shared.record_output();
+        self.shared.wake();
+    }
+
+    /// The server resized the program's pty (another client did): follow it.
+    pub fn resized(&self, size: TermDimensions) {
+        {
+            let mut current = self.shared.size.lock().unwrap();
+            if *current == size {
+                return;
+            }
+            *current = size;
+        }
+        self.term.lock().resize(size);
+        self.shared.wake();
+    }
+
+    /// The program exited (`None`: without a code, or the connection was lost). Only the first
+    /// call counts.
+    pub fn exited(&self, code: Option<i32>) {
+        {
+            let mut exit_code = self.shared.exit_code.lock().unwrap();
+            if self.shared.exited.load(Ordering::Acquire) {
+                return;
+            }
+            *exit_code = code;
+        }
+        self.shared.exit();
+    }
+
+    pub fn has_exited(&self) -> bool {
+        self.shared.exited.load(Ordering::Acquire)
     }
 }
 
@@ -264,7 +350,7 @@ impl Session {
         callback: EventCallback,
         tap: Option<OutputTap>,
     ) -> io::Result<Self> {
-        let shared = Arc::new(Shared::new(size, palette, callback));
+        let shared = Arc::new(Shared::new(size, palette, callback, None));
         let listener = SessionListener(shared.clone());
         let term = Arc::new(FairMutex::new(Term::new(
             term::Config::default(),
@@ -304,6 +390,39 @@ impl Session {
             shared,
             io_thread: Some(io_thread),
         })
+    }
+
+    /// A session whose program runs elsewhere, on a remote server: what the user types and
+    /// resizes goes to `link`, and the returned [`SessionFeed`] brings the program's output
+    /// and exit. Terminal queries in the output are not answered here: the server answers them.
+    pub fn remote(
+        id: u64,
+        kind: SessionKind,
+        size: TermDimensions,
+        palette: Palette,
+        callback: EventCallback,
+        link: Box<dyn RemoteLink>,
+    ) -> (Self, SessionFeed) {
+        let shared = Arc::new(Shared::new(size, palette, callback, Some(link)));
+        let term = Arc::new(FairMutex::new(Term::new(
+            term::Config::default(),
+            &size,
+            SessionListener(shared.clone()),
+        )));
+        let feed = SessionFeed {
+            term: term.clone(),
+            parser: Mutex::new(Processor::new()),
+            shared: shared.clone(),
+        };
+        let session = Self {
+            id,
+            kind,
+            child_pid: None,
+            term,
+            shared,
+            io_thread: None,
+        };
+        (session, feed)
     }
 
     pub fn id(&self) -> u64 {
@@ -433,7 +552,9 @@ impl Session {
             *current = size;
         }
         self.term.lock().resize(size);
-        if let Some(sender) = self.shared.sender.get() {
+        if let Some(link) = &self.shared.link {
+            link.resize(size);
+        } else if let Some(sender) = self.shared.sender.get() {
             let _ = sender.send(Msg::Resize(size.window_size()));
         }
     }
@@ -476,6 +597,9 @@ pub(crate) fn screen_text<L>(term: &Term<L>) -> Vec<String> {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        if let Some(link) = &self.shared.link {
+            link.close();
+        }
         if let Some(sender) = self.shared.sender.get() {
             let _ = sender.send(Msg::Shutdown);
         }
@@ -563,6 +687,73 @@ fn session_env(kind: SessionKind, extra: &HashMap<String, String>) -> HashMap<St
             .map(|(key, value)| (key.clone(), value.clone())),
     );
     env
+}
+
+#[cfg(test)]
+mod remote_tests {
+    use super::*;
+
+    /// What the session sent to its server.
+    #[derive(Default)]
+    struct FakeLink(Arc<Mutex<Vec<String>>>);
+
+    impl RemoteLink for FakeLink {
+        fn write(&self, bytes: Cow<'static, [u8]>) {
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            self.0.lock().unwrap().push(format!("write {text}"));
+        }
+
+        fn resize(&self, size: TermDimensions) {
+            let entry = format!("resize {}x{}", size.columns, size.lines);
+            self.0.lock().unwrap().push(entry);
+        }
+
+        fn close(&self) {
+            self.0.lock().unwrap().push("close".into());
+        }
+    }
+
+    #[test]
+    fn a_remote_session_shows_its_feed_and_sends_input_to_its_link() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let seen = events.clone();
+        let (session, feed) = Session::remote(
+            7,
+            SessionKind::Shell,
+            TermDimensions::new(20, 3),
+            Palette::default(),
+            Arc::new(move |event| seen.lock().unwrap().push(event)),
+            Box::new(FakeLink(sent.clone())),
+        );
+        assert_eq!(session.id(), 7);
+        // A device attributes query: the server answers it, not this terminal.
+        feed.output(b"hello\x1b[c\r\nworld");
+        assert_eq!(session.visible_text(), ["hello", "world", ""]);
+        assert!(session.last_output().is_some());
+        session.write(b"ls\r".as_slice());
+        session.resize(TermDimensions::new(30, 4));
+        // The server resizing it (for another client) is not sent back.
+        feed.resized(TermDimensions::new(25, 5));
+        assert_eq!(session.size(), TermDimensions::new(25, 5));
+        assert_eq!(session.lock_term().columns(), 25);
+        assert_eq!(*sent.lock().unwrap(), ["write ls\r", "resize 30x4"]);
+        assert!(!session.has_exited());
+        feed.exited(Some(2));
+        feed.exited(None);
+        assert!(session.has_exited());
+        assert_eq!(session.exit_code(), Some(2));
+        assert_eq!(session.current_dir(), None);
+        let exits = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| matches!(event, SessionEvent::Exited(_)))
+            .count();
+        assert_eq!(exits, 1);
+        drop(session);
+        assert_eq!(sent.lock().unwrap().last().unwrap(), "close");
+    }
 }
 
 #[cfg(all(test, unix))]

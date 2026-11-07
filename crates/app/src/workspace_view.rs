@@ -527,12 +527,18 @@ impl WorkspaceView {
     ) -> io::Result<(Entity<TerminalView>, [Subscription; 5])> {
         let session_id = self.next_session_id;
         let mut launch = spec.clone();
+        // Shell integration and hooks are files and a socket on this machine: a remote tab
+        // has neither yet (docs/remote.md).
+        let remote = launch.host.is_some();
         // First: a shell with integration also gets the agents' hooks.
         let typed_agents = settings_file::settings(cx).typed_agent_status.is_on();
-        shell_integration::attach(&mut launch, typed_agents);
-        let attachment = self.hooks.as_ref().map_or_else(Default::default, |hooks| {
-            hooks.attach(session_id, &mut launch)
-        });
+        if !remote {
+            shell_integration::attach(&mut launch, typed_agents);
+        }
+        let attachment = match &self.hooks {
+            Some(hooks) if !remote => hooks.attach(session_id, &mut launch),
+            _ => Default::default(),
+        };
         let reporting = if attachment.reports_full_activity() {
             StatusReporting::Hooks
         } else {
@@ -821,7 +827,11 @@ impl WorkspaceView {
         }
         let active = self.active_tab().map(|tab| tab.id);
         let (layout, selected) = self.layout.save_selected(active, |id| {
-            let tab = self.tabs.iter().find(|tab| tab.id == id)?;
+            // Remote tabs are not reopened yet (docs/remote.md).
+            let tab = self
+                .tabs
+                .iter()
+                .find(|tab| tab.id == id && tab.spec.host.is_none())?;
             let folder = tab.view.read(cx).current_folder();
             let mut saved = tabs_file::saved_tab(&tab.spec, folder, tab.meta.clone());
             saved.last_command = tab.view.read(cx).last_command().map(str::to_owned);

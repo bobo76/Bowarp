@@ -29,9 +29,16 @@ and the app can attach to them again, like tmux.
   every attached client, both under the session's fan-out lock. Attaching takes a
   `term_core::snapshot` of that mirror and subscribes under the same lock, so the client gets
   the screen and then exactly the output after it, with no gap and nothing twice.
-- **Client.** `agentws_remote::Client` holds one connection; each `RemoteSession` shows its
-  session in a `Mirror` (a `Term` fed with bytes, which never writes back: the server's
-  session already answered). Dropping a `RemoteSession` detaches; `close()` ends it.
+- **Client.** `agentws_remote::Client` holds one connection and hands out plain
+  `term_core::Session`s built with `Session::remote`: the app drives them like local ones.
+  Their output comes through a `SessionFeed` on the connection's reader thread; typing and
+  resizing go to a `RemoteLink` that queues them for a writer thread, so the UI never waits on
+  the network. A remote session never answers terminal queries: the server's session did.
+  Dropping the session (closing the tab) ends it on the server; losing the connection leaves
+  it running there, and the tab shows why it stopped.
+- **App.** A `LaunchSpec` with a `host` runs there (`remote_hosts.rs`: one connection per
+  host, opened again when a tab starts after it was lost). Remote tabs get no shell
+  integration or hooks and are not saved in `tabs.json`.
 - **Snapshot** (`term_core::snapshot`): escape sequences that recreate the scrollback, screen,
   colors and attributes, hyperlinks, cursor (position, pending wrap, style) and modes (keypad,
   mouse, bracketed paste, focus) in a fresh terminal of the same size.
@@ -40,14 +47,27 @@ and the app can attach to them again, like tmux.
 - **Protocol** (`agentws_remote::protocol`): length-prefixed binary frames, a version in the
   hello; both sides must run the same protocol version.
 
+## Trying it
+
+1. On the server (Linux): build and install `agentws-server` (`cargo build --release -p
+   agentws-remote`), on the `PATH` of non-interactive ssh logins, or set
+   `AGENTWS_REMOTE_SERVER` on the app's machine to its path there (e.g.
+   `~/.cargo/bin/agentws-server`).
+2. On the app's machine: `ssh <host> agentws-server --version` must work without asking
+   anything (a key or an agent).
+3. `agent-workspace --remote <host> [shell|claude|copilot] [folder on the host]` opens the
+   remote tab after the usual local one. `agentws-server list` / `close <id>` on the server
+   show and end its sessions.
+
 ## Status
 
-Done (milestone 1, no UI): protocol, server, daemon and proxy (`agentws-server`), client,
-snapshot and mirror, with tests over socket pairs and through the real binary.
+Done: protocol, server, daemon and proxy (`agentws-server`, with `list` and `close`),
+client, snapshot, and remote sessions in the app's tabs from the command line
+(`--remote <host>`).
 
 Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 
-## Limitations (milestone 1)
+## Limitations
 
 - Several clients on one session share the pty size: the latest resize wins, and the other
   clients' mirrors follow it.
@@ -56,6 +76,14 @@ Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 - A snapshot does not keep the scroll region, tab stops, charsets, OSC 4/10/11 color changes
   or kitty keyboard modes.
 - Terminal queries are answered with the server's default palette, not the app's colors.
-- Remote tabs have no shell integration, agent status, working folder, git sidebar or file
-  explorer yet.
+- Remote tabs have no shell integration, agent status, working folder, git sidebar, file
+  explorer or command history yet, and are not reopened at the next start. Links to files in
+  their output open on this machine.
+- Remote tabs open only from the command line; "New tab" opens local programs.
+- Connecting runs ssh on the UI thread (up to its 10 s connect timeout), and starting a
+  remote session waits one round trip there.
+- A session whose connection was lost keeps running on the server, but the app cannot attach
+  to it again yet: `agentws-server list` and `close <id>` on the server reach it.
+- Closing the app ends its remote sessions, like local ones.
+- A lost connection shows as "Process exited" on the tab, after a line saying why.
 - An exited session stays listed until a client closes it.

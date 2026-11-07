@@ -7,8 +7,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use agentws_remote::transport::SOCKET_ENV;
-use agentws_remote::{Client, RemoteSession, SpawnSpec};
-use term_core::TermDimensions;
+use agentws_remote::{Client, LocalView, RemoteSession, SpawnSpec};
+use term_core::{Palette, TermDimensions};
 
 const SERVER: &str = env!("CARGO_BIN_EXE_agentws-server");
 
@@ -26,9 +26,17 @@ fn proxy(socket: &str) -> Client {
     Client::over_command(command, Box::new(|_| {})).unwrap()
 }
 
-fn screen_contains(session: &RemoteSession, text: &str) -> bool {
-    session
-        .mirror()
+fn quiet(id: u64) -> LocalView {
+    LocalView {
+        id,
+        palette: Palette::default(),
+        callback: Arc::new(|_| {}),
+    }
+}
+
+fn screen_contains(remote: &RemoteSession, text: &str) -> bool {
+    remote
+        .session
         .visible_text()
         .iter()
         .any(|line| line.contains(text))
@@ -49,11 +57,13 @@ fn sessions_survive_the_proxy_and_reattach() {
     };
     let id = {
         let client = proxy(&socket);
-        let session = client.spawn(spec, size, Arc::new(|_| {})).unwrap();
-        session.write(b"echo remote-$((40 + 2))\n".to_vec());
-        wait_until("the output", || screen_contains(&session, "remote-42"));
-        session.id()
-        // Dropping the client kills its proxy; the daemon keeps the session.
+        let remote = client.spawn(spec, size, quiet(1)).unwrap();
+        remote.session.write(b"echo remote-$((40 + 2))\n".to_vec());
+        wait_until("the output", || screen_contains(&remote, "remote-42"));
+        // Killing the proxy is losing the connection: the daemon keeps the session.
+        drop(client);
+        wait_until("the disconnect", || remote.session.has_exited());
+        remote.info.id
     };
     let client = proxy(&socket);
     let sessions = client.list().unwrap();
@@ -61,9 +71,9 @@ fn sessions_survive_the_proxy_and_reattach() {
         sessions.iter().map(|info| info.id).collect::<Vec<_>>(),
         [id]
     );
-    let session = client.attach(id, size, Arc::new(|_| {})).unwrap();
-    assert!(screen_contains(&session, "remote-42"));
-    session.close();
+    let remote = client.attach(id, size, quiet(2)).unwrap();
+    assert!(screen_contains(&remote, "remote-42"));
+    drop(remote);
     wait_until("the close", || client.list().unwrap().is_empty());
 }
 

@@ -10,6 +10,13 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in for ssh:
+
+- Windows app to a Linux host over real ssh (`ssh.exe` with a key): the tab opens without a
+  console window flashing up, typing, resizing, colors and Claude Code's full screen work;
+  pulling the network shows the lost-connection line, and `agentws-server list` on the host
+  still shows the session.
+
 Subagent list (Claude Code 2.1.316, Copilot CLI 1.0.105):
 
 - Real Claude Code: a background subagent (`run_in_background`) shows under the tab with its
@@ -396,15 +403,13 @@ UX review, Tier 2 (small polish, one batch):
 ### Remote sessions
 
 Tabs whose programs run on another machine through `agentws-server` over ssh; design and
-limitations in [docs/remote.md](docs/remote.md). Milestone 1 (protocol, server, daemon, client,
-snapshot) is built; next steps, in order:
+limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the command line
+(`--remote <host>`); next steps, in order:
 
-- Session abstraction in the app: `TerminalView` drives a local `Session` or a
-  `RemoteSession` (its `Mirror`) through one type: grid lock, write, resize, scroll,
-  selection, search, exit state. Remote input, resize and close are sent off the UI thread.
 - Hosts and the remote tab: a `remote_hosts` setting (name, ssh destination, server program
   path), a `+` menu entry per host listing its shells and agents, connection errors in the UI
-  (ssh's message), a "disconnected" state on the tab with Reconnect, which attaches again.
+  (ssh's message, kept until dismissed), a "disconnected" state on the tab with Reconnect,
+  which attaches again; ssh connects off the UI thread.
 - Restore: `tabs.json` saves a remote tab's host and session id; on start, attach to it again
   (or offer to start a new one when it is gone); a host's running sessions not shown in a tab
   are listed to attach.

@@ -5,7 +5,8 @@
 //! produces a single [`SessionEvent::Wakeup`] until the renderer calls [`Session::ack_wakeup`].
 //!
 //! For remote sessions, [`Session::spawn_with_tap`] shows the raw output to a server, which
-//! sends a [`snapshot`] and then that output to clients, each showing it in a [`Mirror`].
+//! keeps a [`Mirror`] of it and sends clients a [`snapshot`] and then the output; a client
+//! shows it in a [`Session::remote`], fed through its [`SessionFeed`].
 
 // Long test scenarios are exempt from the function length limit (docs/code-quality.md).
 #![cfg_attr(test, allow(clippy::too_many_lines))]
@@ -24,6 +25,8 @@ pub use mirror::{Mirror, MirrorListener};
 pub use palette::{Palette, dim};
 pub use prompt::{ExecutedCommand, OutputTap, PromptEvent, PromptInput};
 pub use search::TerminalSearch;
-pub use session::{EventCallback, Session, SessionEvent, SessionListener, TermDimensions};
+pub use session::{
+    EventCallback, RemoteLink, Session, SessionEvent, SessionFeed, SessionListener, TermDimensions,
+};
 pub use snapshot::snapshot;
 pub use workspace_model::SessionKind;

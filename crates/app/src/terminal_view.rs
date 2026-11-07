@@ -50,6 +50,7 @@ use crate::history_popup::HistoryPopup;
 use crate::keymap;
 use crate::keys;
 use crate::launcher;
+use crate::remote_hosts;
 use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
 use crate::settings_file::{self, AppSettings};
 use crate::shell_integration;
@@ -287,13 +288,12 @@ impl TerminalView {
         colored_spec
             .env
             .insert("COLORFGBG".into(), palette.colorfgbg().into());
-        let session = Session::spawn(
-            id,
-            &colored_spec,
-            TermDimensions::new(INITIAL_TERMINAL_COLUMNS, INITIAL_TERMINAL_LINES),
-            palette,
-            callback,
-        )?;
+        let size = TermDimensions::new(INITIAL_TERMINAL_COLUMNS, INITIAL_TERMINAL_LINES);
+        let session = if colored_spec.host.is_some() {
+            remote_hosts::spawn(id, &colored_spec, size, palette, callback, cx)?
+        } else {
+            Session::spawn(id, &colored_spec, size, palette, callback)?
+        };
 
         Ok(cx.new(|cx| {
             let session_events = cx.spawn(async move |this, cx| {
@@ -351,8 +351,13 @@ impl TerminalView {
             workspace_features: settings_file::workspace_features(cx),
             session,
             name: launcher::default_name(spec),
-            launch_folder: spec.cwd.clone(),
-            location: spec.cwd.clone().map(Location::read),
+            // A remote tab's folder is on its host: nothing here reads it.
+            launch_folder: spec.cwd.clone().filter(|_| spec.host.is_none()),
+            location: spec
+                .cwd
+                .clone()
+                .filter(|_| spec.host.is_none())
+                .map(Location::read),
             shell: launcher::shell_syntax(spec),
             agent: (reporting == StatusReporting::Hooks).then(|| AgentTracker::new(Instant::now())),
             subagents: Subagents::default(),
