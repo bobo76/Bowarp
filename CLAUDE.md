@@ -70,6 +70,11 @@ Cargo workspace, `crates/*`:
   right tab.
 - **`agentws-hook`** — tiny binary that forwards hook JSON to the owning session; always exits 0
   silently for Claude hooks. Tested by running the binary (`tests/round_trip.rs`).
+- **`remote`** (package `agentws-remote`, binary `agentws-server`) — no UI. Remote sessions
+  over ssh (docs/remote.md): wire `protocol`, a `Server` running `term-core` sessions and
+  streaming their tapped output to clients, the per-user daemon and its `proxy`, and the
+  `Client` whose `RemoteSession`s show output in a `term_core::Mirror` (a `snapshot` on attach,
+  then the live bytes). Not wired into the app yet.
 - **`app`** (package `agent-workspace`) — the GPUI UI (`gpui-kit`). `workspace_view.rs` is the
   root view (sidebar, tab cards, settings pane, file explorer/viewer, dividers); it embeds the
   active `TerminalView` uncached, so any notify on it re-renders the terminal. `terminal_view.rs`

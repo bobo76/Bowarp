@@ -393,6 +393,32 @@ UX review, Tier 2 (small polish, one batch):
   back to the terminal; a fresh start idles at 0-2). Find what keeps notifying (cursor blink of
   the unfocused input?) and stop it.
 
+### Remote sessions
+
+Tabs whose programs run on another machine through `agentws-server` over ssh; design and
+limitations in [docs/remote.md](docs/remote.md). Milestone 1 (protocol, server, daemon, client,
+snapshot) is built; next steps, in order:
+
+- Session abstraction in the app: `TerminalView` drives a local `Session` or a
+  `RemoteSession` (its `Mirror`) through one type: grid lock, write, resize, scroll,
+  selection, search, exit state. Remote input, resize and close are sent off the UI thread.
+- Hosts and the remote tab: a `remote_hosts` setting (name, ssh destination, server program
+  path), a `+` menu entry per host listing its shells and agents, connection errors in the UI
+  (ssh's message), a "disconnected" state on the tab with Reconnect, which attaches again.
+- Restore: `tabs.json` saves a remote tab's host and session id; on start, attach to it again
+  (or offer to start a new one when it is gone); a host's running sessions not shown in a tab
+  are listed to attach.
+- Shell integration and status on the server: the server writes the integration scripts and
+  sets the mark token, forwards `CommandStarted/Finished/Executed`, `AgentStarted/Finished`
+  and progress as protocol events; agents get their hook settings and the server's own
+  `HookServer`, whose reports are forwarded to the app.
+- Working folder, git sidebar and file explorer for remote tabs: requests to the server
+  (folder from the session, `workspace-model` git and file tree run there), or hidden for
+  remote tabs.
+- Server on Windows: build and test `agentws-server` there (named pipe, detached start).
+- Packaging: ship `agentws-server` in the Linux release and document installing it on the
+  server (README); a version check that names both versions when they differ.
+
 ### Git
 
 - Safety rule: avoid actions that can cause conflicts. Block working-tree-changing actions

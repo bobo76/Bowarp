@@ -788,6 +788,28 @@ impl Wake {
 /// Called on the I/O thread with each new progress state the program reports.
 pub(crate) type ProgressCallback = Box<dyn Fn(ProgressState) + Send>;
 
+/// Called on the I/O thread with each chunk read from the pty, before the terminal parses it
+/// and before shell integration filters it.
+pub type OutputTap = Box<dyn FnMut(&[u8]) + Send>;
+
+/// Reads through `inner`, showing what it reads to the tap.
+struct Tapped<'a, R> {
+    inner: &'a mut R,
+    tap: &'a mut Option<OutputTap>,
+}
+
+impl<R: Read> Read for Tapped<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let count = self.inner.read(buf)?;
+        if let Some(tap) = self.tap.as_mut()
+            && count > 0
+        {
+            tap(&buf[..count]);
+        }
+        Ok(count)
+    }
+}
+
 /// A pty whose output is read through a [`MarkFilter`]. Without shell integration (or without
 /// a [`Wake`]) output passes through unchanged and no marks are tracked. Progress reports are
 /// looked for in all output.
@@ -796,6 +818,7 @@ pub(crate) struct MarkedPty<T, L: EventListener> {
     filter: MarkFilter<L>,
     progress: ProgressScanner,
     on_progress: ProgressCallback,
+    tap: Option<OutputTap>,
     #[cfg(unix)]
     wake: Option<Wake>,
     /// Set when the event loop registers the pty, for shells with integration.
@@ -813,6 +836,7 @@ impl<T, L: EventListener> MarkedPty<T, L> {
         tracker: Arc<PromptTracker>,
         token: Option<&str>,
         on_progress: ProgressCallback,
+        tap: Option<OutputTap>,
     ) -> Self {
         #[cfg(unix)]
         let wake = token.and_then(|_| {
@@ -825,6 +849,7 @@ impl<T, L: EventListener> MarkedPty<T, L> {
             filter: MarkFilter::new(term, tracker, token.unwrap_or_default(), PROMPT_TRACKING),
             progress: ProgressScanner::new(),
             on_progress,
+            tap,
             #[cfg(unix)]
             wake,
             #[cfg(windows)]
@@ -846,11 +871,15 @@ impl<T, L: EventListener> MarkedPty<T, L> {
 impl<T: EventedReadWrite, L: EventListener> MarkedPty<T, L> {
     #[cfg(unix)]
     fn read_marked(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let mut reader = Tapped {
+            inner: self.pty.reader(),
+            tap: &mut self.tap,
+        };
         let Some(wake) = self.wake.as_mut() else {
-            return self.pty.reader().read(buf);
+            return reader.read(buf);
         };
         wake.clear();
-        let result = self.filter.read(self.pty.reader(), buf);
+        let result = self.filter.read(&mut reader, buf);
         let blocked = matches!(&result, Err(err) if err.kind() == ErrorKind::WouldBlock);
         if blocked && self.filter.holds_input() {
             wake.set();
@@ -860,10 +889,14 @@ impl<T: EventedReadWrite, L: EventListener> MarkedPty<T, L> {
 
     #[cfg(windows)]
     fn read_marked(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let Some(wake) = self.wake.as_ref() else {
-            return self.pty.reader().read(buf);
+        let mut reader = Tapped {
+            inner: self.pty.reader(),
+            tap: &mut self.tap,
         };
-        let result = self.filter.read(self.pty.reader(), buf);
+        let Some(wake) = self.wake.as_ref() else {
+            return reader.read(buf);
+        };
+        let result = self.filter.read(&mut reader, buf);
         if matches!(&result, Err(err) if err.kind() == ErrorKind::WouldBlock) {
             wake.set();
         }

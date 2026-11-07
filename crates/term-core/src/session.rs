@@ -21,7 +21,9 @@ use workspace_model::ProgressState;
 
 use crate::launch::LaunchSpec;
 use crate::palette::Palette;
-use crate::prompt::{ExecutedCommand, MarkedPty, PromptEvent, PromptInput, PromptTracker};
+use crate::prompt::{
+    ExecutedCommand, MarkedPty, OutputTap, PromptEvent, PromptInput, PromptTracker,
+};
 use workspace_model::{AgentId, SessionKind, apply_environment};
 
 /// How long a closed session's child has to exit after SIGHUP before it is killed.
@@ -249,6 +251,19 @@ impl Session {
         palette: Palette,
         callback: EventCallback,
     ) -> io::Result<Self> {
+        Self::spawn_with_tap(id, spec, size, palette, callback, None)
+    }
+
+    /// Like [`Session::spawn`], and `tap` sees everything the program writes, as it is read
+    /// from the pty: what a remote server streams to its clients.
+    pub fn spawn_with_tap(
+        id: u64,
+        spec: &LaunchSpec,
+        size: TermDimensions,
+        palette: Palette,
+        callback: EventCallback,
+        tap: Option<OutputTap>,
+    ) -> io::Result<Self> {
         let shared = Arc::new(Shared::new(size, palette, callback));
         let listener = SessionListener(shared.clone());
         let term = Arc::new(FairMutex::new(Term::new(
@@ -275,6 +290,7 @@ impl Session {
                     .map_or(0, |elapsed| elapsed.as_micros() as u64);
                 progress_callback(SessionEvent::ProgressChanged { state, at });
             }),
+            tap,
         );
         let event_loop = EventLoop::new(term.clone(), listener, pty, options.drain_on_exit, false)?;
         let _ = shared.sender.set(event_loop.channel());
@@ -442,16 +458,20 @@ impl Session {
 
     /// The visible screen as text, one string per line with trailing blanks trimmed.
     pub fn visible_text(&self) -> Vec<String> {
-        let term = self.term.lock();
-        let grid = term.grid();
-        (0..grid.screen_lines())
-            .map(|line| {
-                let row = &grid[Line(line as i32)];
-                let text: String = (0..grid.columns()).map(|col| row[Column(col)].c).collect();
-                text.trim_end().to_string()
-            })
-            .collect()
+        screen_text(&self.term.lock())
     }
+}
+
+/// The visible screen as text, one string per line with trailing blanks trimmed.
+pub(crate) fn screen_text<L>(term: &Term<L>) -> Vec<String> {
+    let grid = term.grid();
+    (0..grid.screen_lines())
+        .map(|line| {
+            let row = &grid[Line(line as i32)];
+            let text: String = (0..grid.columns()).map(|col| row[Column(col)].c).collect();
+            text.trim_end().to_string()
+        })
+        .collect()
 }
 
 impl Drop for Session {

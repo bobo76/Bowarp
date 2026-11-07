@@ -152,6 +152,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentws-remote"
+version = "0.2.57"
+dependencies = [
+ "interprocess",
+ "libc",
+ "log",
+ "term-core",
+ "workspace-model",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
