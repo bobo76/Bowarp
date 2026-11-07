@@ -36,9 +36,13 @@ and the app can attach to them again, like tmux.
   the network. A remote session never answers terminal queries: the server's session did.
   Dropping the session (closing the tab) ends it on the server; losing the connection leaves
   it running there, and the tab shows why it stopped.
-- **App.** A `LaunchSpec` with a `host` runs there (`remote_hosts.rs`: one connection per
-  host, opened again when a tab starts after it was lost). Remote tabs get no shell
-  integration or hooks and are not saved in `tabs.json`.
+- **App.** Hosts are the `remote_hosts` setting (name, ssh destination, server program),
+  edited on the settings page; each gets a `+` submenu. A `LaunchSpec` with a `host` runs
+  there (`remote_hosts.rs`: one connection per host, opened again when a tab starts after it
+  was lost). Connecting and starting the session run on a thread of their own; the tab opens
+  once the session runs, or an error toast says why (kept until dismissed). Tabs starting
+  together on a host wait for one connection. Remote tabs get no shell integration or hooks
+  and are not saved in `tabs.json`.
 - **Folder.** After each output chunk the server reads the program's folder
   (`Session::folder_probe`: `/proc/<pid>/cwd`, one syscall) and sends `FolderChanged` when it
   differs; `SessionInfo` carries it on attach. The client keeps it in
@@ -56,19 +60,21 @@ and the app can attach to them again, like tmux.
 ## Trying it
 
 1. On the server (Linux): build and install `agentws-server` (`cargo build --release -p
-   agentws-remote`), on the `PATH` of non-interactive ssh logins, or set
-   `AGENTWS_REMOTE_SERVER` on the app's machine to its path there (e.g.
-   `~/.cargo/bin/agentws-server`).
+   agentws-remote`), on the `PATH` of non-interactive ssh logins, or give its path there
+   (e.g. `~/.cargo/bin/agentws-server`) as the host's server program in the settings (for a
+   host not in the settings: `AGENTWS_REMOTE_SERVER` on the app's machine).
 2. On the app's machine: `ssh <host> agentws-server --version` must work without asking
    anything (a key or an agent). `command not found` with the binary in `~/.cargo/bin`:
    Ubuntu's `~/.bashrc` returns early for non-interactive shells, before rustup's
    `. "$HOME/.cargo/env"` line. On the server, source it above that early return:
    `sed -i '1i . "$HOME/.cargo/env"' ~/.bashrc`. `AGENTWS_REMOTE_SERVER` only changes what
    the app runs, not a hand-typed `ssh` command.
-3. `agent-workspace --remote <host> [shell|claude|copilot] [folder on the host]` opens the
-   remote tab after the usual local one. `agentws-server list` / `close <id>` on the server
-   show and end its sessions. With the remote tab selected, Claude Code or Copilot CLI in the
-   `+` menu, "New tab" and Duplicate open on that host, in the folder the tab is in there.
+3. Add the host on the settings page (Remote hosts) and open a tab from its `+` submenu, or
+   run `agent-workspace --remote <host> [shell|claude|copilot] [folder on the host]` (a
+   destination or a host's name) to open the remote tab after the usual local one.
+   `agentws-server list` / `close <id>` on the server show and end its sessions. With the
+   remote tab selected, Claude Code or Copilot CLI in the `+` menu, "New tab" and Duplicate
+   open on that host, in the folder the tab is in there.
 4. Optional: to keep the daemon running instead of starting it on the first connection, install
    the systemd user unit `crates/remote/systemd/agentws-server.service` (steps in its header).
 
@@ -105,9 +111,9 @@ Build the app and `agentws-server` from the same commit: a protocol version mism
 ## Status
 
 Done: protocol, server, daemon and proxy (`agentws-server`, with `list` and `close`),
-client, snapshot, remote sessions in the app's tabs from the command line
-(`--remote <host>`), and the remote folder: shown on the tab, and where agents and new tabs
-opened from it start.
+client, snapshot, remote sessions in the app's tabs, from the `+` menu's host submenus
+(hosts set on the settings page) or the command line (`--remote <host>`), and the remote
+folder: shown on the tab, and where agents and new tabs opened from it start.
 
 Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 
@@ -125,11 +131,13 @@ Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
   this machine.
 - The folder shown for a remote tab is the full path (not shortened to `~`), and is known only
   on a Linux server (read from `/proc`).
-- The first remote tab opens only from the command line. From a remote tab, a shell picked by
-  name in the `+` menu opens on this machine (its programs are this machine's); "New tab" opens
-  the host's default shell.
-- Connecting runs ssh on the UI thread (up to its 10 s connect timeout), and starting a
-  remote session waits one round trip there.
+- A host's submenu always lists its default shell, Claude Code and Copilot CLI: an agent not
+  installed there fails when started, with the server's message. The settings' agent launch
+  arguments don't apply to remote agents (they may name files on this machine).
+- Tabs opened from a host's submenu start in its home folder. From a remote tab, a shell picked
+  by name in the `+` menu opens on this machine (its programs are this machine's); "New tab"
+  opens the host's default shell.
+- A remote agent that exits cleanly keeps its last screen: its tab doesn't go on as a shell.
 - A session whose connection was lost keeps running on the server, but the app cannot attach
   to it again yet: `agentws-server list` and `close <id>` on the server reach it.
 - Closing the app ends its remote sessions, like local ones.

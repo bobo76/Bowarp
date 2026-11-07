@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Remote tabs (docs/remote.md): shells, Claude Code and Copilot CLI running on another
+  machine through `agentws-server` over ssh, and still running there when the connection
+  drops. Hosts are set on the new settings page Remote hosts (name, ssh destination, server
+  program) and each gets a submenu in the `+` menu; `agent-workspace --remote <host>` opens one
+  from the command line. Connecting doesn't block the window: a toast shows meanwhile, and
+  ssh's error stays on screen until dismissed when it fails.
 - Claude Code and Copilot CLI tabs show their running subagents: their count in a ring after the
   tab name (turning while the list is folded in, orange while one waits for you) and their list
   under the row (description or type, a warning mark while waiting); click the ring to fold the

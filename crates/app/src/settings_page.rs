@@ -7,7 +7,7 @@
 //! [`slider_row`], [`dropdown_row`]) applies a change live and saves it once per gesture, and
 //! offers "Reset to default" while the value differs from the default. Rows go into the page
 //! functions below ([`appearance_groups`], [`terminal_groups`]); the Keyboard page is in
-//! `keyboard`.
+//! `keyboard`, the Remote hosts page in `remote_hosts`.
 
 use std::rc::Rc;
 use std::sync::LazyLock;
@@ -47,6 +47,7 @@ use crate::terminal_element::DEFAULT_FONT_FAMILY;
 use crate::window_background;
 
 mod keyboard;
+mod remote_hosts;
 
 #[cfg(test)]
 mod tests;
@@ -87,6 +88,7 @@ pub fn render(
                     page("Terminal", terminal_groups(launchers)),
                     page("Workspace", workspace_groups()),
                     page("Notifications", notification_groups()),
+                    page("Remote hosts", remote_hosts::remote_host_groups(cx)),
                     page("Keyboard", keyboard::keyboard_groups(cx)),
                     page("About", about_groups(cx)),
                 ])),

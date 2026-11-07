@@ -116,7 +116,7 @@ fn read_tells_missing_loaded_and_broken_apart() {
     fs::write(&path, r#"{"a": true}"#).unwrap();
     assert_eq!(
         SettingsLoad::read(&path),
-        SettingsLoad::Loaded(with_extra("a", Value::Bool(true)))
+        SettingsLoad::Loaded(Box::new(with_extra("a", Value::Bool(true))))
     );
     fs::write(&path, "{").unwrap();
     assert!(matches!(SettingsLoad::read(&path), SettingsLoad::Broken(_)));
@@ -146,7 +146,7 @@ fn missing_file_loads_defaults_and_save_creates_it() {
     assert!(!temp_path(&path).exists());
     assert_eq!(
         SettingsLoad::read(&path),
-        SettingsLoad::Loaded(Settings::default())
+        SettingsLoad::Loaded(Box::default())
     );
 }
 
@@ -158,7 +158,7 @@ fn create_if_missing_writes_only_a_missing_file() {
     assert!(file.create_if_missing().unwrap());
     assert_eq!(
         SettingsLoad::read(&path),
-        SettingsLoad::Loaded(Settings::default())
+        SettingsLoad::Loaded(Box::default())
     );
     // An existing file keeps its text, broken or not.
     fs::write(&path, r#"{"a": 1}"#).unwrap();
@@ -209,7 +209,7 @@ fn broken_file_is_kept_until_the_first_save_moves_it_aside() {
     assert_eq!(fs::read_to_string(&backup).unwrap(), "{ broken");
     assert_eq!(
         SettingsLoad::read(&path),
-        SettingsLoad::Loaded(Settings::default())
+        SettingsLoad::Loaded(Box::default())
     );
     // Later saves keep the backup.
     file.update(|settings| {
@@ -267,7 +267,7 @@ fn update_unless_broken_leaves_a_broken_file_alone() {
     );
     assert_eq!(
         SettingsLoad::read(&path),
-        SettingsLoad::Loaded(file.settings().clone())
+        SettingsLoad::Loaded(Box::new(file.settings().clone()))
     );
     assert_eq!(file.settings().file_viewer_fraction, narrow);
 }
@@ -323,7 +323,10 @@ fn set_unsaved_changes_memory_only_until_the_update_saves() {
     let mut expected = with_extra("a", Value::from(3));
     expected.extra.insert("b".into(), Value::from(2));
     assert_eq!(file.settings(), &expected);
-    assert_eq!(SettingsLoad::read(&path), SettingsLoad::Loaded(expected));
+    assert_eq!(
+        SettingsLoad::read(&path),
+        SettingsLoad::Loaded(Box::new(expected))
+    );
 }
 
 #[test]
@@ -381,7 +384,10 @@ fn update_keeps_changes_made_on_disk_since_the_load() {
     expected.extra.insert("b".into(), Value::from(2));
     expected.extra.insert("c".into(), Value::from(3));
     assert_eq!(file.settings(), &expected);
-    assert_eq!(SettingsLoad::read(&path), SettingsLoad::Loaded(expected));
+    assert_eq!(
+        SettingsLoad::read(&path),
+        SettingsLoad::Loaded(Box::new(expected))
+    );
 }
 
 #[test]
@@ -400,7 +406,10 @@ fn file_fixed_by_hand_before_the_update_is_not_moved_aside() {
     assert!(!settings_backup_path(&path).exists());
     let mut expected = with_extra("a", Value::from(1));
     expected.extra.insert("b".into(), Value::from(2));
-    assert_eq!(SettingsLoad::read(&path), SettingsLoad::Loaded(expected));
+    assert_eq!(
+        SettingsLoad::read(&path),
+        SettingsLoad::Loaded(Box::new(expected))
+    );
 }
 
 #[test]
@@ -425,7 +434,10 @@ fn broken_file_saved_by_another_instance_keeps_its_backup() {
     assert_eq!(fs::read_to_string(&backup).unwrap(), "{ broken");
     let mut expected = with_extra("a", Value::from(1));
     expected.extra.insert("b".into(), Value::from(2));
-    assert_eq!(SettingsLoad::read(&path), SettingsLoad::Loaded(expected));
+    assert_eq!(
+        SettingsLoad::read(&path),
+        SettingsLoad::Loaded(Box::new(expected))
+    );
 }
 
 #[test]
@@ -451,7 +463,10 @@ fn file_broken_after_the_load_is_moved_aside_at_the_next_change() {
     // The last good settings plus the change.
     let mut expected = with_extra("a", Value::from(1));
     expected.extra.insert("b".into(), Value::from(2));
-    assert_eq!(SettingsLoad::read(&path), SettingsLoad::Loaded(expected));
+    assert_eq!(
+        SettingsLoad::read(&path),
+        SettingsLoad::Loaded(Box::new(expected))
+    );
 }
 
 #[test]

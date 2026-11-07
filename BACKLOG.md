@@ -12,6 +12,17 @@ Built with automated coverage on Linux; the manual checks below are still to do.
 
 Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in for ssh:
 
+- Settings → Remote hosts: Add host, type the three fields (the row title and "Connects with"
+  line follow), Remove host on a middle host (the fields below show the right values); a host
+  edited by hand in `settings.json` shows on the page. Linux and Windows.
+- `+` menu: a submenu per host with a destination, none for a host without one; Shell, Claude
+  Code and Copilot CLI open on the host in its home folder, named "Shell (host)"; the window
+  stays responsive while connecting (toast "Connecting to ..."), and two tabs started quickly
+  on a host share one ssh connection.
+- An unreachable host (wrong name, refused key, missing server program): the error toast
+  shows ssh's message and stays until closed; `--remote <unreachable>` the same, after the
+  local tab opens.
+
 - Windows app to a Linux host over real ssh (`ssh.exe` with a key): the tab opens without a
   console window flashing up, typing, resizing, colors and Claude Code's full screen work;
   pulling the network shows the lost-connection line, and `agentws-server list` on the host
@@ -410,10 +421,9 @@ Tabs whose programs run on another machine through `agentws-server` over ssh; de
 limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the command line
 (`--remote <host>`); next steps, in order:
 
-- Hosts and the remote tab: a `remote_hosts` setting (name, ssh destination, server program
-  path), a `+` menu entry per host listing its shells and agents, connection errors in the UI
-  (ssh's message, kept until dismissed), a "disconnected" state on the tab with Reconnect,
-  which attaches again; ssh connects off the UI thread.
+- Disconnected remote tab: a "disconnected" state on the tab (instead of "Process exited")
+  with Reconnect, which attaches to the same server session again; a remote agent exiting
+  cleanly goes on as a shell on its host.
 - Restore: `tabs.json` saves a remote tab's host and session id; on start, attach to it again
   (or offer to start a new one when it is gone); a host's running sessions not shown in a tab
   are listed to attach.

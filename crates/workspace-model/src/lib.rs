@@ -42,6 +42,7 @@ mod osc133;
 pub mod pane_width;
 mod platform;
 mod progress;
+mod remote_hosts;
 mod running;
 mod search;
 mod settings;
@@ -102,6 +103,9 @@ pub use notification_features::{NotificationFeatures, ToastKind, exit_toast_kind
 pub use osc133::{CommandLine, Osc133Scanner, PromptMark, new_mark_token};
 pub use platform::Platform;
 pub use progress::{ProgressScanner, ProgressState};
+pub use remote_hosts::{
+    DEFAULT_SERVER_PROGRAM, RemoteHost, RemoteHostField, RemoteHosts, host_part,
+};
 pub use running::{
     COMMAND_LABEL_CHARS, RUNNING_AFTER, RUNNING_PULSE_FOR, RunningBadge, command_label,
     format_clock, running_badge,

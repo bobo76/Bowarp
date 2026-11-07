@@ -17,7 +17,7 @@ use agent_status::{
 };
 
 use futures::StreamExt;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
@@ -30,8 +30,8 @@ use gpui_kit::{
 use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::term::TermMode;
 use term_core::{
-    EventCallback, ExecutedCommand, LaunchSpec, Session, SessionEvent, SessionKind, TermDimensions,
-    TerminalSearch,
+    EventCallback, ExecutedCommand, LaunchSpec, Palette, Session, SessionEvent, SessionKind,
+    TermDimensions, TerminalSearch,
 };
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
@@ -268,8 +268,45 @@ pub struct TerminalView {
     _session_events: Task<()>,
 }
 
+/// A remote session being started, or why it could not be (see
+/// [`TerminalView::start_remote`]).
+pub type RemoteStarted = oneshot::Receiver<io::Result<Session>>;
+
+/// Where a session's events go until its view takes them (they queue meanwhile), and what the
+/// session starts with: the launch with the terminal colors' environment, size and palette.
+pub struct SessionEvents {
+    callback: EventCallback,
+    receiver: mpsc::UnboundedReceiver<SessionEvent>,
+    spec: LaunchSpec,
+    size: TermDimensions,
+    palette: Palette,
+}
+
+impl SessionEvents {
+    fn new(spec: &LaunchSpec, cx: &App) -> Self {
+        let (sender, receiver) = mpsc::unbounded();
+        let callback: EventCallback = Arc::new(move |event| {
+            let _ = sender.unbounded_send(event);
+        });
+        let palette = settings_file::terminal_palette(cx);
+        // Tells programs that read it at start whether the background is dark or light; it
+        // goes stale if the terminal colors change later (OSC 11 answers follow).
+        let mut spec = spec.clone();
+        spec.env
+            .insert("COLORFGBG".into(), palette.colorfgbg().into());
+        Self {
+            callback,
+            receiver,
+            spec,
+            size: TermDimensions::new(INITIAL_TERMINAL_COLUMNS, INITIAL_TERMINAL_LINES),
+            palette,
+        }
+    }
+}
+
 impl TerminalView {
-    /// Start `spec` as session `id`, tracking hook status when hooks were installed.
+    /// Start `spec` as session `id` on this machine, tracking hook status when hooks were
+    /// installed.
     pub fn spawn(
         id: u64,
         spec: &LaunchSpec,
@@ -277,25 +314,56 @@ impl TerminalView {
         shell_key: String,
         cx: &mut App,
     ) -> io::Result<Entity<Self>> {
-        let (sender, mut receiver) = mpsc::unbounded();
-        let callback: EventCallback = Arc::new(move |event| {
-            let _ = sender.unbounded_send(event);
-        });
-        let palette = settings_file::terminal_palette(cx);
-        // Tells programs that read it at start whether the background is dark or light; it
-        // goes stale if the terminal colors change later (OSC 11 answers follow).
-        let mut colored_spec = spec.clone();
-        colored_spec
-            .env
-            .insert("COLORFGBG".into(), palette.colorfgbg().into());
-        let size = TermDimensions::new(INITIAL_TERMINAL_COLUMNS, INITIAL_TERMINAL_LINES);
-        let session = if colored_spec.host.is_some() {
-            remote_hosts::spawn(id, &colored_spec, size, palette, callback, cx)?
-        } else {
-            Session::spawn(id, &colored_spec, size, palette, callback)?
-        };
+        if spec.host.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a remote launch starts with start_remote",
+            ));
+        }
+        let events = SessionEvents::new(spec, cx);
+        let session = Session::spawn(
+            id,
+            &events.spec,
+            events.size,
+            events.palette,
+            events.callback.clone(),
+        )?;
+        Ok(Self::with_session(
+            session, events, spec, reporting, shell_key, cx,
+        ))
+    }
 
-        Ok(cx.new(|cx| {
+    /// Start `spec` as session `id` on its host (docs/remote.md), off this thread: the
+    /// session arrives on the receiver, to be shown with [`TerminalView::with_session`] and
+    /// the returned events.
+    pub fn start_remote(
+        id: u64,
+        spec: &LaunchSpec,
+        cx: &mut App,
+    ) -> io::Result<(SessionEvents, RemoteStarted)> {
+        let events = SessionEvents::new(spec, cx);
+        let started = remote_hosts::start(
+            id,
+            &events.spec,
+            events.size,
+            events.palette,
+            events.callback.clone(),
+            cx,
+        )?;
+        Ok((events, started))
+    }
+
+    /// The view of `session`, started from `spec` with `events`' callback.
+    pub fn with_session(
+        session: Session,
+        events: SessionEvents,
+        spec: &LaunchSpec,
+        reporting: StatusReporting,
+        shell_key: String,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let mut receiver = events.receiver;
+        cx.new(|cx| {
             let session_events = cx.spawn(async move |this, cx| {
                 while let Some(event) = receiver.next().await {
                     if this
@@ -307,7 +375,7 @@ impl TerminalView {
                 }
             });
             Self::new(session, spec, reporting, shell_key, session_events, cx)
-        }))
+        })
     }
 
     fn new(

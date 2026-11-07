@@ -293,8 +293,8 @@ fn restore_or_open_first_tab(
     window: &mut Window,
     cx: &mut Context<WorkspaceView>,
 ) {
-    // A remote tab opens after a local one: when its host cannot be reached, the window keeps
-    // a tab and shows why.
+    // A remote tab opens after a local one, once connected: when its host cannot be reached,
+    // the window keeps a tab and a notification says why.
     let (requested, remote) = match initial.requested {
         Some(spec) if spec.host.is_some() => (None, Some(spec)),
         requested => (requested, None),
@@ -315,7 +315,7 @@ fn restore_or_open_first_tab(
         );
     }
     if let Some(spec) = remote {
-        // Once the notification layer exists, for a connection error.
+        // Deferred: the notification layer exists once the window is built.
         cx.defer_in(window, move |workspace, window, cx| {
             workspace.open_requested_tab(spec, window, cx);
         });

@@ -567,8 +567,8 @@ impl WorkspaceView {
             .into_any_element()
     }
 
-    /// The `+` menu: the default shell (with its shortcut), the other shells, then the agent
-    /// CLIs.
+    /// The `+` menu: the default shell (with its shortcut), the other shells, the agent CLIs,
+    /// then a submenu per remote host (settings `remote_hosts`) with its shell and agents.
     fn new_tab_button(&self, workspace: WeakEntity<Self>, cx: &App) -> impl IntoElement + use<> {
         let launchers = self.launchers.clone();
         Button::new("new-tab")
@@ -576,7 +576,7 @@ impl WorkspaceView {
             .ghost()
             .xsmall()
             .tooltip(shortcuts::with_shortcut("New tab", &NewTab, cx))
-            .dropdown_menu(move |mut menu, _, cx| {
+            .dropdown_menu(move |mut menu, window, cx| {
                 OpenMenu::track(&workspace, |workspace| &mut workspace.menu, cx);
                 let open = |launcher: &Launcher| {
                     let launcher = launcher.clone();
@@ -619,6 +619,34 @@ impl WorkspaceView {
                                 .on_click(open(launcher)),
                         );
                     }
+                }
+                let hosts: Vec<_> = settings_file::settings(cx)
+                    .remote_hosts
+                    .usable()
+                    .map(|(host, destination)| (host.label().to_owned(), destination.to_owned()))
+                    .collect();
+                if !hosts.is_empty() {
+                    menu = menu.separator();
+                }
+                for (label, destination) in hosts {
+                    let workspace = workspace.clone();
+                    menu = menu.submenu(label, window, cx, move |mut submenu, _, _| {
+                        for launch in launcher::remote_launches(&destination) {
+                            let workspace = workspace.clone();
+                            let spec = launch.spec;
+                            submenu = submenu.item(
+                                PopupMenuItem::new(launch.label)
+                                    .icon(sidebar::launcher_icon(launch.icon))
+                                    .on_click(move |_, window, cx| {
+                                        let spec = spec.clone();
+                                        let _ = workspace.update(cx, |workspace, cx| {
+                                            workspace.open_tab_or_notify(spec, window, cx)
+                                        });
+                                    }),
+                            );
+                        }
+                        submenu
+                    });
                 }
                 menu
             })
