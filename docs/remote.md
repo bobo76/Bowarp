@@ -72,6 +72,36 @@ and the app can attach to them again, like tmux.
 4. Optional: to keep the daemon running instead of starting it on the first connection, install
    the systemd user unit `crates/remote/systemd/agentws-server.service` (steps in its header).
 
+### App on Windows, server on Linux
+
+On the Linux server:
+
+1. Install the ssh server (`sudo apt install openssh-server`). It must listen on the network:
+   `ss -tln | grep ':22 '` shows `0.0.0.0:22`. A `ListenAddress 127.0.0.1` in
+   `/etc/ssh/sshd_config.d/` makes Windows get `connection refused`; after changing it, run
+   `sudo systemctl daemon-reload && sudo systemctl restart ssh.socket` (Ubuntu 24.04+ builds
+   `ssh.socket` from it). A connection that times out instead means a firewall
+   (`sudo ufw allow ssh`).
+2. Note its address: `hostname -I` (e.g. `192.168.1.79`).
+
+On Windows, in PowerShell (the OpenSSH client comes with Windows 10 and 11):
+
+3. Make a key and put it on the server (there is no `ssh-copy-id`):
+   ```powershell
+   ssh-keygen -t ed25519
+   type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh bobo@192.168.1.79 "cat >> ~/.ssh/authorized_keys"
+   ```
+   Use no passphrase, or load the key in ssh-agent: the app's ssh cannot prompt.
+4. `ssh bobo@192.168.1.79 agentws-server --version` must print the version without asking
+   anything (the first `ssh` asks once to accept the host key). The host for the app is that
+   ssh destination, `bobo@192.168.1.79`, or an alias from `%USERPROFILE%\.ssh\config` (for a
+   port or key file: the host cannot hold ssh options).
+5. Optional, once the key works: turn off password logins on the server with
+   `PasswordAuthentication no` in `/etc/ssh/sshd_config.d/no-password.conf`, then
+   `sudo systemctl restart ssh`.
+
+Build the app and `agentws-server` from the same commit: a protocol version mismatch is refused.
+
 ## Status
 
 Done: protocol, server, daemon and proxy (`agentws-server`, with `list` and `close`),
