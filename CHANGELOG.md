@@ -9,6 +9,10 @@ omitted unless they affect how the app is used.
   tab name (turning while the list is folded in, orange while one waits for you) and their list
   under the row (description or type, a warning mark while waiting); click the ring to fold the
   list. The tab's own status is unchanged.
+- Remote sessions: a systemd user unit (`crates/remote/systemd/agentws-server.service`) keeps
+  `agentws-server` running on the server instead of starting it on the first connection, and
+  docs/remote.md explains the `command not found` an ssh login gives when `~/.cargo/bin` is
+  only added by rustup's line at the end of Ubuntu's `~/.bashrc`.
 
 
 ## 0.2.57

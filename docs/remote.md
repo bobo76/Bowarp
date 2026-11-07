@@ -54,10 +54,16 @@ and the app can attach to them again, like tmux.
    `AGENTWS_REMOTE_SERVER` on the app's machine to its path there (e.g.
    `~/.cargo/bin/agentws-server`).
 2. On the app's machine: `ssh <host> agentws-server --version` must work without asking
-   anything (a key or an agent).
+   anything (a key or an agent). `command not found` with the binary in `~/.cargo/bin`:
+   Ubuntu's `~/.bashrc` returns early for non-interactive shells, before rustup's
+   `. "$HOME/.cargo/env"` line. On the server, source it above that early return:
+   `sed -i '1i . "$HOME/.cargo/env"' ~/.bashrc`. `AGENTWS_REMOTE_SERVER` only changes what
+   the app runs, not a hand-typed `ssh` command.
 3. `agent-workspace --remote <host> [shell|claude|copilot] [folder on the host]` opens the
    remote tab after the usual local one. `agentws-server list` / `close <id>` on the server
    show and end its sessions.
+4. Optional: to keep the daemon running instead of starting it on the first connection, install
+   the systemd user unit `crates/remote/systemd/agentws-server.service` (steps in its header).
 
 ## Status
 
