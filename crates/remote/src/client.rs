@@ -405,6 +405,11 @@ impl Inner {
                     feed.exited(code);
                 }
             }
+            ServerMessage::FolderChanged { session, folder } => {
+                if let Some(feed) = self.feeds.lock().unwrap().get(&session) {
+                    feed.folder_changed(folder);
+                }
+            }
             ServerMessage::Failed { request, message } => {
                 if let Some(pending) = self.pending.lock().unwrap().remove(&request) {
                     pending.fail(message);
@@ -435,6 +440,9 @@ impl Inner {
             Box::new(link),
         );
         feed.output(snapshot);
+        if let Some(folder) = info.folder.clone() {
+            feed.folder_changed(folder);
+        }
         if let Some(code) = info.exit {
             feed.exited(code);
         }

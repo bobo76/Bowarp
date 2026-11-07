@@ -13,6 +13,11 @@ omitted unless they affect how the app is used.
   `agentws-server` running on the server instead of starting it on the first connection, and
   docs/remote.md explains the `command not found` an ssh login gives when `~/.cargo/bin` is
   only added by rustup's line at the end of Ubuntu's `~/.bashrc`.
+- Remote tabs show their folder on the server, and follow `cd`. With a remote tab selected,
+  Claude Code or Copilot CLI in the `+` menu, "New tab" and Duplicate open on the same server
+  in that folder (they opened on this machine before), and an agent that exits in a remote tab
+  falls back to the server's shell. The app and `agentws-server` must be updated together
+  (protocol version 2).
 
 
 ## 0.2.57

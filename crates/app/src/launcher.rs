@@ -65,6 +65,29 @@ impl Launcher {
     }
 }
 
+/// What `kind` starts as on `host`, in `folder` there (`None`: the home folder): an agent by
+/// its command name with the user's arguments for it, a shell as the host's default shell.
+/// This machine's program paths and shells do not apply there.
+pub fn remote_spec(
+    kind: SessionKind,
+    host: &str,
+    folder: Option<&str>,
+    settings: &Settings,
+) -> Result<LaunchSpec, shell_words::ParseError> {
+    let cwd = folder.map(PathBuf::from);
+    let mut spec = match kind.agent() {
+        Some(agent) => {
+            let mut spec = LaunchSpec::agent(agent, cwd);
+            spec.args
+                .extend(shell_words::split(settings.agent_arguments(agent))?);
+            spec
+        }
+        None => LaunchSpec::shell(cwd),
+    };
+    spec.host = Some(host.to_owned());
+    Ok(spec)
+}
+
 /// Shells offered when found on `PATH`: (program, label). The program name is also the
 /// launcher's [`Launcher::id`], saved in settings.json: don't rename it.
 #[cfg(unix)]

@@ -39,6 +39,12 @@ and the app can attach to them again, like tmux.
 - **App.** A `LaunchSpec` with a `host` runs there (`remote_hosts.rs`: one connection per
   host, opened again when a tab starts after it was lost). Remote tabs get no shell
   integration or hooks and are not saved in `tabs.json`.
+- **Folder.** After each output chunk the server reads the program's folder
+  (`Session::folder_probe`: `/proc/<pid>/cwd`, one syscall) and sends `FolderChanged` when it
+  differs; `SessionInfo` carries it on attach. The client keeps it in
+  `Session::remote_folder`, apart from `current_folder` (a path on this machine). From a remote
+  tab, agents, "New tab" and Duplicate start on the same host in that folder
+  (`launcher::remote_spec`), and the tab shows it.
 - **Snapshot** (`term_core::snapshot`): escape sequences that recreate the scrollback, screen,
   colors and attributes, hyperlinks, cursor (position, pending wrap, style) and modes (keypad,
   mouse, bracketed paste, focus) in a fresh terminal of the same size.
@@ -61,15 +67,17 @@ and the app can attach to them again, like tmux.
    the app runs, not a hand-typed `ssh` command.
 3. `agent-workspace --remote <host> [shell|claude|copilot] [folder on the host]` opens the
    remote tab after the usual local one. `agentws-server list` / `close <id>` on the server
-   show and end its sessions.
+   show and end its sessions. With the remote tab selected, Claude Code or Copilot CLI in the
+   `+` menu, "New tab" and Duplicate open on that host, in the folder the tab is in there.
 4. Optional: to keep the daemon running instead of starting it on the first connection, install
    the systemd user unit `crates/remote/systemd/agentws-server.service` (steps in its header).
 
 ## Status
 
 Done: protocol, server, daemon and proxy (`agentws-server`, with `list` and `close`),
-client, snapshot, and remote sessions in the app's tabs from the command line
-(`--remote <host>`).
+client, snapshot, remote sessions in the app's tabs from the command line
+(`--remote <host>`), and the remote folder: shown on the tab, and where agents and new tabs
+opened from it start.
 
 Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 
@@ -82,10 +90,14 @@ Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 - A snapshot does not keep the scroll region, tab stops, charsets, OSC 4/10/11 color changes
   or kitty keyboard modes.
 - Terminal queries are answered with the server's default palette, not the app's colors.
-- Remote tabs have no shell integration, agent status, working folder, git sidebar, file
-  explorer or command history yet, and are not reopened at the next start. Links to files in
-  their output open on this machine.
-- Remote tabs open only from the command line; "New tab" opens local programs.
+- Remote tabs have no shell integration, agent status, git branch, file explorer or command
+  history yet, and are not reopened at the next start. Links to files in their output open on
+  this machine.
+- The folder shown for a remote tab is the full path (not shortened to `~`), and is known only
+  on a Linux server (read from `/proc`).
+- The first remote tab opens only from the command line. From a remote tab, a shell picked by
+  name in the `+` menu opens on this machine (its programs are this machine's); "New tab" opens
+  the host's default shell.
 - Connecting runs ssh on the UI thread (up to its 10 s connect timeout), and starting a
   remote session waits one round trip there.
 - A session whose connection was lost keeps running on the server, but the app cannot attach

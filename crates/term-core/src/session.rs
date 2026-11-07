@@ -62,6 +62,9 @@ pub enum SessionEvent {
     },
     /// The program wrote text to the clipboard or the primary selection (OSC 52).
     ClipboardStore(ClipboardType, String),
+    /// A remote session's program is in another folder on its host now
+    /// ([`Session::remote_folder`]).
+    RemoteFolderChanged,
 }
 
 /// Called on the session's I/O thread, sometimes while it holds the terminal lock: it must
@@ -130,6 +133,8 @@ struct Shared {
     /// Writes to the program so far, and how many of them came before the latest output.
     inputs: AtomicU64,
     inputs_before_output: AtomicU64,
+    /// A remote session's folder on its host, as its server last reported it.
+    remote_folder: Mutex<Option<String>>,
 }
 
 impl Shared {
@@ -163,6 +168,7 @@ impl Shared {
             prompt,
             inputs: AtomicU64::new(0),
             inputs_before_output: AtomicU64::new(0),
+            remote_folder: Mutex::new(None),
         }
     }
 
@@ -314,6 +320,38 @@ impl SessionFeed {
     pub fn has_exited(&self) -> bool {
         self.shared.exited.load(Ordering::Acquire)
     }
+
+    /// The program is in `folder` on the server now: reported as
+    /// [`SessionEvent::RemoteFolderChanged`] when it differs from the last one.
+    pub fn folder_changed(&self, folder: String) {
+        {
+            let mut current = self.shared.remote_folder.lock().unwrap();
+            if current.as_deref() == Some(folder.as_str()) {
+                return;
+            }
+            *current = Some(folder);
+        }
+        (self.shared.callback)(SessionEvent::RemoteFolderChanged);
+    }
+}
+
+/// Reads a session's current folder from any thread, e.g. from its output tap.
+#[derive(Clone)]
+pub struct FolderProbe(Arc<Shared>);
+
+impl FolderProbe {
+    /// As [`Session::current_dir`].
+    pub fn folder(&self) -> Option<PathBuf> {
+        current_dir(&self.0)
+    }
+}
+
+fn current_dir(shared: &Shared) -> Option<PathBuf> {
+    // The pid of an exited child may already belong to another process.
+    if shared.exited.load(Ordering::Acquire) {
+        return None;
+    }
+    shared.prompt.folder()
 }
 
 /// A running child process attached to a pty and a terminal emulator.
@@ -437,11 +475,18 @@ impl Session {
     /// cannot be known: the child exited, or (off Linux) the shell has no integration script
     /// to report it.
     pub fn current_dir(&self) -> Option<PathBuf> {
-        // The pid of an exited child may already belong to another process.
-        if self.has_exited() {
-            return None;
-        }
-        self.shared.prompt.folder()
+        current_dir(&self.shared)
+    }
+
+    /// A handle reading [`Session::current_dir`] without the session.
+    pub fn folder_probe(&self) -> FolderProbe {
+        FolderProbe(self.shared.clone())
+    }
+
+    /// A remote session's folder on its host, as its server last reported it; `None` for a
+    /// local session.
+    pub fn remote_folder(&self) -> Option<String> {
+        self.shared.remote_folder.lock().unwrap().clone()
     }
 
     pub fn palette(&self) -> Palette {

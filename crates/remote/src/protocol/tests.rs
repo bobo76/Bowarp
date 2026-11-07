@@ -16,6 +16,7 @@ fn info() -> SessionInfo {
         size: size(),
         title: Some("vim — é".into()),
         exit: Some(Some(-2)),
+        folder: Some("/home/me/é project".into()),
     }
 }
 
@@ -76,6 +77,7 @@ fn server_messages() -> Vec<ServerMessage> {
                 SessionInfo {
                     title: None,
                     exit: None,
+                    folder: None,
                     ..info()
                 },
                 SessionInfo {
@@ -103,6 +105,10 @@ fn server_messages() -> Vec<ServerMessage> {
         ServerMessage::Exited {
             session: 1,
             code: None,
+        },
+        ServerMessage::FolderChanged {
+            session: 1,
+            folder: "/srv/app".into(),
         },
         ServerMessage::Failed {
             request: 4,

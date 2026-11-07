@@ -286,6 +286,7 @@ impl WorkspaceView {
                 .keep(TabCardField::Location, || {
                     location
                         .map(|location| display_path(&location.folder, self.home.as_deref()).into())
+                        .or_else(|| view.remote_folder().map(Into::into))
                 })
                 .flatten(),
             branch: fields

@@ -12,7 +12,7 @@ use std::io::{self, ErrorKind, Read, Write};
 use term_core::TermDimensions;
 
 /// Bumped on any change to the messages: both sides must speak the same version.
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 
 /// No frame is longer: a peer that sends one is broken (or not speaking this protocol).
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -41,6 +41,8 @@ pub struct SessionInfo {
     pub title: Option<String>,
     /// `Some` once the program exited, with its exit code when there is one.
     pub exit: Option<Option<i32>>,
+    /// The program's current folder on the server, when it can be read.
+    pub folder: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,6 +113,11 @@ pub enum ServerMessage {
         session: u64,
         code: Option<i32>,
     },
+    /// The session's program is in another folder now (`cd` in a shell).
+    FolderChanged {
+        session: u64,
+        folder: String,
+    },
     /// The request failed; `request` 0 is about the connection itself.
     Failed {
         request: u32,
@@ -134,6 +141,7 @@ mod tag {
     pub const RESIZED: u8 = 68;
     pub const EXITED: u8 = 69;
     pub const FAILED: u8 = 70;
+    pub const FOLDER_CHANGED: u8 = 71;
 }
 
 impl ClientMessage {
@@ -253,6 +261,9 @@ impl ServerMessage {
             Self::Resized { session, size } => out.tag(tag::RESIZED).u64(*session).size(*size),
             Self::Exited { session, code } => out.tag(tag::EXITED).u64(*session).opt_i32(*code),
             Self::Failed { request, message } => out.tag(tag::FAILED).u32(*request).str(message),
+            Self::FolderChanged { session, folder } => {
+                out.tag(tag::FOLDER_CHANGED).u64(*session).str(folder)
+            }
         };
         out.finish()
     }
@@ -287,6 +298,10 @@ impl ServerMessage {
             tag::FAILED => Self::Failed {
                 request: input.u32()?,
                 message: input.str()?,
+            },
+            tag::FOLDER_CHANGED => Self::FolderChanged {
+                session: input.u64()?,
+                folder: input.str()?,
             },
             other => return Err(invalid(format!("unknown server message {other}"))),
         };
@@ -400,13 +415,11 @@ impl Encoder {
         match info.exit {
             Some(code) => {
                 self.0.push(1);
-                self.opt_i32(code)
+                self.opt_i32(code);
             }
-            None => {
-                self.0.push(0);
-                self
-            }
+            None => self.0.push(0),
         }
+        self.opt_str(info.folder.as_deref())
     }
 }
 
@@ -509,6 +522,7 @@ impl Decoder<'_> {
             } else {
                 None
             },
+            folder: self.opt_str()?,
         })
     }
 }

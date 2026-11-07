@@ -3,6 +3,7 @@
 
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::sync::mpsc::Receiver;
 
 use super::*;
@@ -281,4 +282,45 @@ fn the_server_is_idle_only_without_connections_and_sessions() {
     thread::sleep(Duration::from_millis(50));
     assert!(server.idle_for().is_none());
     drop(remote);
+}
+
+/// Reading a program's folder needs `/proc`.
+#[cfg(target_os = "linux")]
+#[test]
+fn clients_hear_the_folder_a_shell_moves_to() {
+    let base = std::env::temp_dir().join(format!("agentws-folder-{}", std::process::id()));
+    let (start, next) = (base.join("start"), base.join("next"));
+    std::fs::create_dir_all(&start).unwrap();
+    std::fs::create_dir_all(&next).unwrap();
+    let (start, next) = (start.canonicalize().unwrap(), next.canonicalize().unwrap());
+    let text = |path: &Path| path.to_string_lossy().into_owned();
+
+    let server = Server::new();
+    let (client, _, _) = connect(&server);
+    let (callback, seen) = events();
+    let spec = SpawnSpec {
+        cwd: Some(text(&start)),
+        ..shell(None)
+    };
+    let remote = client.spawn(spec, size(80, 6), view(callback)).unwrap();
+    assert_eq!(remote.info.folder, Some(text(&start)));
+    assert_eq!(remote.session.remote_folder(), Some(text(&start)));
+
+    remote
+        .session
+        .write(format!("cd '{}' && echo moved\n", text(&next)).into_bytes());
+    wait_until("the new folder", || {
+        remote.session.remote_folder() == Some(text(&next))
+    });
+    assert!(
+        seen.lock()
+            .unwrap()
+            .contains(&SessionEvent::RemoteFolderChanged)
+    );
+    // A client attaching later starts with it.
+    let (other, _, _) = connect(&server);
+    let again = other.attach(remote.info.id, size(80, 6), quiet()).unwrap();
+    assert_eq!(again.session.remote_folder(), Some(text(&next)));
+    drop((remote, again));
+    let _ = std::fs::remove_dir_all(&base);
 }

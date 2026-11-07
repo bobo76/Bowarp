@@ -655,15 +655,7 @@ impl WorkspaceView {
         if let Some(hooks) = &self.hooks {
             hooks.remove_session(self.tabs[index].view.read(cx).id());
         }
-        let Some(shell) =
-            launcher::default_shell(&self.launchers, settings_file::settings(cx).default_shell())
-                .cloned()
-        else {
-            return;
-        };
-        // The child is gone: the last folder it reported, else the one it started in.
-        let folder = self.tabs[index].view.read(cx).current_folder();
-        let Some(spec) = shell.spec(folder) else {
+        let Some(spec) = self.fallback_shell_spec(index, cx) else {
             return;
         };
         if let Err(err) = self.replace_tab_session(index, spec.clone(), window, cx) {
@@ -673,6 +665,21 @@ impl WorkspaceView {
                 cx,
             );
         }
+    }
+
+    /// The default shell in tab `index`'s folder, on its host for a remote tab.
+    fn fallback_shell_spec(&self, index: usize, cx: &App) -> Option<LaunchSpec> {
+        let tab = &self.tabs[index];
+        let view = tab.view.read(cx);
+        let settings = settings_file::settings(cx);
+        if let Some(host) = &tab.spec.host {
+            let folder = view.remote_folder();
+            return launcher::remote_spec(SessionKind::Shell, host, folder.as_deref(), settings)
+                .ok();
+        }
+        let shell = launcher::default_shell(&self.launchers, settings.default_shell())?;
+        // The child is gone: the last folder it reported, else the one it started in.
+        shell.spec(view.current_folder())
     }
 
     fn replace_tab_session(
@@ -910,9 +917,43 @@ impl WorkspaceView {
             .or_else(|| std::env::current_dir().ok())
     }
 
+    /// The selected tab's host and its folder there, when it runs on another machine: agents
+    /// and new shells opened from it start there too.
+    fn remote_origin(&self, cx: &App) -> Option<(String, Option<String>)> {
+        let tab = self.active_tab()?;
+        let host = tab.spec.host.clone()?;
+        Some((host, tab.view.read(cx).remote_folder()))
+    }
+
     fn open_launcher(&mut self, launcher: &Launcher, window: &mut Window, cx: &mut Context<Self>) {
+        // A shell picked by name is this machine's program: it opens here.
+        if launcher.kind.agent().is_some()
+            && let Some((host, folder)) = self.remote_origin(cx)
+        {
+            self.open_remote(launcher, &host, folder.as_deref(), window, cx);
+            return;
+        }
         let folder = self.new_tab_folder(cx);
         self.open_launcher_in(launcher, folder, window, cx);
+    }
+
+    /// Open what `launcher` starts on `host`, in `folder` there.
+    fn open_remote(
+        &mut self,
+        launcher: &Launcher,
+        host: &str,
+        folder: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let settings = settings_file::settings(cx);
+        match launcher::remote_spec(launcher.kind, host, folder, settings) {
+            Ok(spec) => self.open_tab_or_notify(spec, window, cx),
+            Err(error) => window.push_notification(
+                Notification::error(format!("{} arguments: {error}", launcher.label)),
+                cx,
+            ),
+        }
     }
 
     fn open_launcher_in(
@@ -933,7 +974,18 @@ impl WorkspaceView {
     }
 
     /// Open the default shell (the `+` menu's first entry) in the selected tab's folder.
+    /// From a remote tab: the host's default shell, in that tab's folder there.
     fn open_default_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((host, folder)) = self.remote_origin(cx) {
+            let settings = settings_file::settings(cx);
+            // A shell takes no user arguments: this cannot fail.
+            if let Ok(spec) =
+                launcher::remote_spec(SessionKind::Shell, &host, folder.as_deref(), settings)
+            {
+                self.open_tab_or_notify(spec, window, cx);
+            }
+            return;
+        }
         self.open_default_shell_in(self.new_tab_folder(cx), window, cx);
     }
 
@@ -961,7 +1013,16 @@ impl WorkspaceView {
             return;
         };
         let (mut spec, id) = (tab.spec.clone(), tab.id);
-        spec.cwd = self.tab_folder(index, cx);
+        spec.cwd = if spec.host.is_some() {
+            // A folder on the host, where the copy runs too.
+            tab.view
+                .read(cx)
+                .remote_folder()
+                .map(PathBuf::from)
+                .or(spec.cwd)
+        } else {
+            self.tab_folder(index, cx)
+        };
         self.open_tab_in_or_notify(spec, NewTabPlace::After(id), window, cx);
     }
 

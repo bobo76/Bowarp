@@ -18,7 +18,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use term_core::{LaunchSpec, Mirror, Palette, Session, SessionEvent, SessionKind, TermDimensions};
+use term_core::{
+    FolderProbe, LaunchSpec, Mirror, Palette, Session, SessionEvent, SessionKind, TermDimensions,
+};
 use workspace_model::AgentId;
 
 use crate::protocol::{
@@ -58,9 +60,33 @@ struct Fanout {
     clients: HashMap<u64, Outbox>,
     title: Option<String>,
     exit: Option<Option<i32>>,
+    /// The program's folder as last read, and how to read it (set once it started).
+    folder: Option<String>,
+    probe: Option<FolderProbe>,
 }
 
 impl Fanout {
+    /// Read the program's folder again; clients hear when it changed. Called after each
+    /// output chunk: a shell prints its prompt after a `cd`, and reading it is one syscall.
+    fn refresh_folder(&mut self, session: u64) {
+        let Some(folder) = self
+            .probe
+            .as_ref()
+            .and_then(FolderProbe::folder)
+            .map(|folder| folder.to_string_lossy().into_owned())
+        else {
+            return;
+        };
+        if self.folder.as_ref() == Some(&folder) {
+            return;
+        }
+        self.folder = Some(folder.clone());
+        self.broadcast(|| ServerMessage::FolderChanged {
+            session,
+            folder: folder.clone(),
+        });
+    }
+
     fn broadcast(&mut self, message: impl Fn() -> ServerMessage) {
         self.clients.retain(|_, outbox| outbox.send(message()));
     }
@@ -266,6 +292,8 @@ impl Server {
             clients: HashMap::new(),
             title: None,
             exit: None,
+            folder: None,
+            probe: None,
         }));
         let events = fanout.clone();
         let callback = Arc::new(move |event| match event {
@@ -285,9 +313,15 @@ impl Server {
                 session: id,
                 bytes: bytes.to_vec(),
             });
+            fanout.refresh_folder(id);
         });
         let session =
             Session::spawn_with_tap(id, &launch, size, Palette::default(), callback, Some(tap))?;
+        {
+            let mut fanout = fanout.lock().unwrap();
+            fanout.probe = Some(session.folder_probe());
+            fanout.refresh_folder(id);
+        }
         let hosted = Arc::new(Hosted {
             id,
             kind: spec.kind.clone(),
@@ -312,6 +346,7 @@ impl Server {
         let mut fanout = hosted.fanout.lock().unwrap();
         let resized = fanout.mirror.size() != size;
         fanout.mirror.resize(size);
+        fanout.refresh_folder(hosted.id);
         let snapshot = fanout.mirror.snapshot();
         let info = hosted.info_locked(&fanout);
         let exit = fanout.exit;
@@ -376,6 +411,7 @@ impl Hosted {
             size: fanout.mirror.size(),
             title: fanout.title.clone(),
             exit: fanout.exit,
+            folder: fanout.folder.clone(),
         }
     }
 

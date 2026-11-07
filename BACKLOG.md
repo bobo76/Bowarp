@@ -16,6 +16,10 @@ Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in
   console window flashing up, typing, resizing, colors and Claude Code's full screen work;
   pulling the network shows the lost-connection line, and `agentws-server list` on the host
   still shows the session.
+- Remote folder (rebuild app and server: protocol 2): `cd` in a remote shell tab updates the
+  folder on its card and row; with it selected, Claude Code from the `+` menu, "New tab"
+  (Ctrl+T) and Duplicate open on the host in that folder; a shell picked by name opens here;
+  `/exit` in a remote Claude tab falls back to the host's shell in the same folder.
 
 Subagent list (Claude Code 2.1.316, Copilot CLI 1.0.105):
 
@@ -417,9 +421,9 @@ limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the comma
   sets the mark token, forwards `CommandStarted/Finished/Executed`, `AgentStarted/Finished`
   and progress as protocol events; agents get their hook settings and the server's own
   `HookServer`, whose reports are forwarded to the app.
-- Working folder, git sidebar and file explorer for remote tabs: requests to the server
-  (folder from the session, `workspace-model` git and file tree run there), or hidden for
-  remote tabs.
+- Git branch and file explorer for remote tabs: requests to the server (`workspace-model`
+  git and file tree run there), or hidden for remote tabs. The folder is known already
+  (`Session::remote_folder`); show it shortened to `~` with the server's home folder.
 - Server on Windows: build and test `agentws-server` there (named pipe, detached start).
 - Packaging: ship `agentws-server` in the Linux release and document installing it on the
   server (README); a version check that names both versions when they differ.

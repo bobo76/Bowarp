@@ -340,7 +340,11 @@ impl WorkspaceView {
             name: name.clone(),
             detail: view
                 .location()
-                .map(|location| tab_detail(location, self.home.as_deref())),
+                .map(|location| tab_detail(location, self.home.as_deref()))
+                .or_else(|| {
+                    let folder = view.remote_folder()?;
+                    Some(TabDetail::Folder(folder.into()))
+                }),
             status,
             pulse: sidebar::running_pulse(may_animate, view.running_pulses()),
             spinner: sidebar::working_spinner(

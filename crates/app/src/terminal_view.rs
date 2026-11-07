@@ -513,6 +513,12 @@ impl TerminalView {
             .or_else(|| self.launch_folder.clone())
     }
 
+    /// A remote tab's folder on its host, as its server last reported it; `None` for a local
+    /// tab. Not a path on this machine: keep it out of [`Self::current_folder`].
+    pub fn remote_folder(&self) -> Option<String> {
+        self.session.remote_folder()
+    }
+
     /// The program's title, or the session's default name.
     pub fn name(&self) -> &str {
         self.title.as_deref().unwrap_or(&self.name)
@@ -819,6 +825,7 @@ impl TerminalView {
                 return;
             }
             SessionEvent::Exited(code) => self.on_exited(code, cx),
+            SessionEvent::RemoteFolderChanged => cx.emit(TabChanged),
         }
         self.refresh_history(cx);
         cx.notify();

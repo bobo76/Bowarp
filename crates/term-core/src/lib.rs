@@ -26,7 +26,8 @@ pub use palette::{Palette, dim};
 pub use prompt::{ExecutedCommand, OutputTap, PromptEvent, PromptInput};
 pub use search::TerminalSearch;
 pub use session::{
-    EventCallback, RemoteLink, Session, SessionEvent, SessionFeed, SessionListener, TermDimensions,
+    EventCallback, FolderProbe, RemoteLink, Session, SessionEvent, SessionFeed, SessionListener,
+    TermDimensions,
 };
 pub use snapshot::snapshot;
 pub use workspace_model::SessionKind;

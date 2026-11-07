@@ -80,6 +80,38 @@ fn quoted_or_escaped_windows_paths_survive_agent_argument_parsing() {
 }
 
 #[test]
+fn remote_launches_run_the_agent_by_name_in_the_hosts_folder() {
+    let settings = Settings {
+        claude_args: "--model opus".into(),
+        ..Settings::default()
+    };
+    let claude = remote_spec(
+        SessionKind::Agent(CLAUDE),
+        "me@box",
+        Some("/srv/app"),
+        &settings,
+    )
+    .unwrap();
+    assert_eq!(claude.host.as_deref(), Some("me@box"));
+    assert_eq!(claude.kind, SessionKind::Agent(CLAUDE));
+    assert_eq!(claude.program.as_deref(), Some(CLAUDE.executable()));
+    assert_eq!(claude.args, ["--model", "opus"]);
+    assert_eq!(claude.cwd, Some(PathBuf::from("/srv/app")));
+
+    // The host's default shell, in its home folder.
+    let shell = remote_spec(SessionKind::Shell, "box", None, &settings).unwrap();
+    assert_eq!(shell.host.as_deref(), Some("box"));
+    assert_eq!((shell.program, shell.cwd), (None, None));
+    assert!(shell.args.is_empty());
+
+    let broken = Settings {
+        claude_args: "'unclosed".into(),
+        ..Settings::default()
+    };
+    assert!(remote_spec(SessionKind::Agent(CLAUDE), "box", None, &broken).is_err());
+}
+
+#[test]
 fn history_shell_key_prefers_the_matching_launcher() {
     let git_bash = git_bash_launcher(PathBuf::from(r"D:\Tools\PortableGit\bin\bash.exe"));
     let ubuntu = wsl_launcher(Path::new(r"C:\Windows\System32\wsl.exe"), "Ubuntu");
