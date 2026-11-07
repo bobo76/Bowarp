@@ -153,7 +153,7 @@ fn last_command_events_and_history_deletion_are_flushed_with_the_final_snapshot(
 pub(super) struct PanesHarness {
     pub(super) cx: gpui_kit::VisualTestContext,
     pub(super) workspace: Entity<WorkspaceView>,
-    folder: PathBuf,
+    pub(super) folder: PathBuf,
     file: PathBuf,
 }
 

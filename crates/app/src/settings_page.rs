@@ -4,16 +4,17 @@
 //! for the settings file's load or save error and an "Open settings file" button.
 //!
 //! A row bound to a field of `Settings` ([`bound_row`], [`switch_row`], [`text_row`],
-//! [`slider_row`], [`dropdown_row`]) applies a change live and saves it once per gesture, and
-//! offers "Reset to default" while the value differs from the default. Rows go into the page
-//! functions below ([`appearance_groups`], [`terminal_groups`]); the Keyboard page is in
-//! `keyboard`.
+//! [`slider_row`], [`dropdown_row`], [`color_row`]) applies a change live and saves it once
+//! per gesture, and offers "Reset to default" while the value differs from the default. Rows
+//! go into the page functions below ([`appearance_groups`], [`terminal_groups`]); the Keyboard
+//! page is in `keyboard`.
 
 use std::rc::Rc;
 use std::sync::LazyLock;
 
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
+use gpui_kit::component::color_picker::{ColorPickerEvent, ColorPickerState, ColorSelect};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::link::Link;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
@@ -32,12 +33,13 @@ use gpui_kit::{
     Styled, Subscription, Window, div, px,
 };
 use workspace_model::{
-    BlurControl, ClipboardPolicy, DependentState, FeatureSwitch, FontSize, Settings,
-    TerminalColors, UiTheme, WindowBlur, WindowOpacity, blur_options, shown_blur,
+    BlurControl, ClipboardPolicy, DependentState, DiffColors, FeatureSwitch, FontSize, RgbaColor,
+    Settings, TerminalColors, UiTheme, WindowBlur, WindowOpacity, blur_options, shown_blur,
 };
 
 use crate::about;
 use crate::assets::CODE_ICON;
+use crate::color::{from_hsla, to_hsla};
 use crate::history;
 use crate::keymap;
 use crate::launcher::{self, Launcher};
@@ -87,6 +89,7 @@ pub fn render(
                     page("Terminal", terminal_groups(launchers)),
                     page("Workspace", workspace_groups()),
                     page("Notifications", notification_groups()),
+                    page("Git", git_groups()),
                     page("Keyboard", keyboard::keyboard_groups(cx)),
                     page("About", about_groups(cx)),
                 ])),
@@ -186,6 +189,54 @@ fn appearance_groups() -> Vec<SettingGroup> {
             )
             .keywords(["motion", "pulse", "working", "spinner", "sidebar"]),
         ),
+    ]
+}
+
+/// The Git page: the diff's colors.
+fn git_groups() -> Vec<SettingGroup> {
+    vec![
+        SettingGroup::new().title("Diff colors").items([
+            color_row(
+                "Diff background",
+                "The background of the Git page's diff. Empty: the theme's background.",
+                None,
+                SettingsField::new(
+                    |settings| settings.git_diff_colors.background.clone(),
+                    |settings, color| settings.git_diff_colors.background = color,
+                ),
+            )
+            .keywords(["git", "diff", "color", "background"]),
+            color_row(
+                "Diff text",
+                "The color of the diff's lines. Empty: the theme's text color.",
+                None,
+                SettingsField::new(
+                    |settings| settings.git_diff_colors.text.clone(),
+                    |settings, color| settings.git_diff_colors.text = color,
+                ),
+            )
+            .keywords(["git", "diff", "color", "font", "foreground"]),
+            color_row(
+                "Added lines",
+                "The background of added lines; a selected line shows it lighter.",
+                Some(DiffColors::DEFAULT_ADDED),
+                SettingsField::new(
+                    |settings| settings.git_diff_colors.added.clone(),
+                    |settings, color| settings.git_diff_colors.added = color,
+                ),
+            )
+            .keywords(["git", "diff", "color", "green", "insertion"]),
+            color_row(
+                "Removed lines",
+                "The background of removed lines; a selected line shows it lighter.",
+                Some(DiffColors::DEFAULT_REMOVED),
+                SettingsField::new(
+                    |settings| settings.git_diff_colors.removed.clone(),
+                    |settings, color| settings.git_diff_colors.removed = color,
+                ),
+            )
+            .keywords(["git", "diff", "color", "red", "deletion"]),
+        ]),
     ]
 }
 
@@ -1110,6 +1161,100 @@ fn text_field(
         input.update(cx, |input, cx| input.set_value(value, window, cx));
     }
     Input::new(&input).small().w_64().into_any_element()
+}
+
+/// A color row for a hex `String` field of `Settings` (see [`bound_row`]), empty for the
+/// default: `default` is shown then, or "Theme" without one. A color picked while the picker is
+/// open (a slider dragged) applies live; it is saved once the picker closes.
+pub fn color_row(
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
+    default: Option<RgbaColor>,
+    field: SettingsField<String>,
+) -> SettingItem {
+    bound_row(
+        title,
+        description,
+        field,
+        Rc::new(move |value, binding, window, cx| {
+            let shown = RgbaColor::parse(&value).or(default);
+            color_field(shown, binding, window, cx)
+        }),
+    )
+}
+
+/// A color picker's state, kept across renders (see [`Binding::state_key`]).
+struct ColorField {
+    picker: Entity<ColorPickerState>,
+    /// A color applied live while the picker is open, saved when it closes.
+    unsaved: Option<String>,
+    _subscriptions: [Subscription; 2],
+}
+
+fn color_field(
+    shown: Option<RgbaColor>,
+    binding: &Binding<String>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let state = window.use_keyed_state(binding.state_key("color"), cx, |window, cx| {
+        let picker = cx.new(|cx| {
+            let picker = ColorPickerState::new(window, cx);
+            match shown {
+                Some(color) => picker.default_value(to_hsla(color)),
+                None => picker,
+            }
+        });
+        // Removing the page drops this keyed state before the picker can close.
+        let save = binding.clone();
+        cx.on_release(move |state: &mut ColorField, cx| {
+            if let Some(color) = state.unsaved.take() {
+                save.save(color, cx);
+            }
+        })
+        .detach();
+        let apply = binding.clone();
+        let changes = cx.subscribe(
+            &picker,
+            move |state: &mut ColorField, _, event: &ColorPickerEvent, cx| {
+                let ColorPickerEvent::Change(Some(color)) = event else {
+                    return;
+                };
+                let color = from_hsla(*color).to_hex();
+                apply.apply(color.clone(), cx);
+                state.unsaved = Some(color);
+            },
+        );
+        let save = binding.clone();
+        let closes = cx.observe(&picker, move |state: &mut ColorField, picker, cx| {
+            if picker.read(cx).is_open() {
+                return;
+            }
+            if let Some(color) = state.unsaved.take() {
+                save.save(color, cx);
+            }
+        });
+        ColorField {
+            picker,
+            unsaved: None,
+            _subscriptions: [changes, closes],
+        }
+    });
+    let field = state.read(cx);
+    let picker = field.picker.clone();
+    // A value changed elsewhere (reset, the file reloaded) shows, unless one is being picked.
+    let picking = field.unsaved.is_some() || picker.read(cx).is_open();
+    if !picking && picker.read(cx).value().map(from_hsla) != shown {
+        picker.update(cx, |picker, cx| match shown {
+            Some(color) => picker.set_value(to_hsla(color), window, cx),
+            None => picker.clear_value(window, cx),
+        });
+    }
+    ColorSelect::new(&picker)
+        .placeholder("Theme")
+        .small()
+        .w_64()
+        .into_any_element()
 }
 
 /// A slider's bounds and step (see [`slider_row`]).

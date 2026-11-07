@@ -5,10 +5,19 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+
+## 0.3.0
+
 - Claude Code and Copilot CLI tabs show their running subagents: their count in a ring after the
   tab name (turning while the list is folded in, orange while one waits for you) and their list
   under the row (description or type, a warning mark while waiting); click the ring to fold the
   list. The tab's own status is unchanged.
+- Git page (title bar button): see what changed in the repositories the tabs are in, stage or
+  unstage files, hunks or single lines from the diff, and commit with a message (Ctrl+Enter);
+  hooks run, and a failure shows git's message. The page never changes your files.
+- Settings has a Git page to choose the Git diff's colors: background, text, added and
+  removed lines. Added and removed lines now default
+  to `#14803D` and `#7F1D1D`, and a selected line shows lighter.
 
 
 ## 0.2.57

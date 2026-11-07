@@ -140,6 +140,7 @@ impl WorkspaceView {
         if matches.is_some() && rows.is_empty() {
             rows.push((None, sidebar::no_matches_hint(cx).into_any_element()));
         }
+        rows.extend(self.render_git_row(list_focused, cx).map(|row| (None, row)));
         rows.extend(
             self.render_settings_row(list_focused, cx)
                 .map(|row| (None, row)),
@@ -333,7 +334,7 @@ impl WorkspaceView {
         let may_animate =
             self.pulse_running && self.window_visible && settings_file::activity_animations(cx);
         let status = view.tab_status();
-        let selected = index == self.active && !self.settings.shows_page();
+        let selected = index == self.active && !self.shows_page();
         let row = TabRow {
             index,
             kind,
@@ -450,10 +451,10 @@ impl WorkspaceView {
     ) -> AnyElement {
         let workspace = cx.entity().downgrade();
         let id = group.id;
-        // The settings page hides the selected tab: no group holds the selection then.
+        // A page (settings, Git) hides the selected tab: no group holds the selection then.
         let active_id = self
             .active_tab()
-            .filter(|_| !self.settings.shows_page())
+            .filter(|_| !self.shows_page())
             .map(|tab| tab.id);
         let row = GroupRow {
             slot,

@@ -21,10 +21,11 @@ pub mod agents;
 mod attention;
 mod clipboard_guard;
 mod close_warning;
+mod diff_colors;
 mod file_pane_features;
 pub mod file_tree;
 pub mod file_view;
-mod git;
+pub mod git;
 mod history;
 mod history_features;
 mod history_shells;
@@ -71,6 +72,7 @@ pub use clipboard_guard::{
 pub use close_warning::{
     AgentActivity, BusyReason, BusyTab, CloseTarget, CloseWarning, TabActivity, close_warning,
 };
+pub use diff_colors::{DiffColors, RgbaColor};
 pub use file_pane_features::{
     FileLinkAction, FilePaneFeatures, PaneChange, PaneEntry, pane_change,
 };

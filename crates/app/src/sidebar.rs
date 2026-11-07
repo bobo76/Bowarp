@@ -930,8 +930,19 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
         )
 }
 
-/// The Settings row under the tabs, with a "Settings" heading: like a tab row, selected while
-/// the settings page shows, with a close button on hover or while selected.
+/// A page's row under the tabs (Settings, Git): a heading, then a row like a tab's, selected
+/// while its page shows, with a close button on hover or while selected.
+pub struct PageRow {
+    /// Element id, debug selector and hover group of the row.
+    pub id: &'static str,
+    pub heading: &'static str,
+    pub label: SharedString,
+    pub icon: Icon,
+    pub selected: bool,
+    pub focused: bool,
+}
+
+/// The Settings row under the tabs.
 pub fn settings_row(
     selected: bool,
     focused: bool,
@@ -939,6 +950,31 @@ pub fn settings_row(
     on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     cx: &App,
 ) -> impl IntoElement {
+    let row = PageRow {
+        id: "settings-row",
+        heading: "Settings",
+        label: "Settings".into(),
+        icon: Icon::new(IconName::Settings),
+        selected,
+        focused,
+    };
+    page_row(row, on_select, on_close, cx)
+}
+
+pub fn page_row(
+    row: PageRow,
+    on_select: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &App,
+) -> impl IntoElement {
+    let PageRow {
+        id,
+        heading,
+        label,
+        icon,
+        selected,
+        focused,
+    } = row;
     let theme = cx.theme();
     let (background, foreground, hovered) = row_colors(selected, cx);
     let heading = div()
@@ -953,11 +989,11 @@ pub fn settings_row(
         ))
         .text_xs()
         .text_color(theme.muted_foreground)
-        .child("Settings");
+        .child(heading);
     let row = div()
-        .id("settings-row")
-        .debug_selector(|| "settings-row".into())
-        .group("settings-row")
+        .id(id)
+        .debug_selector(move || id.into())
+        .group(id)
         .flex()
         .items_center()
         .gap_3()
@@ -977,18 +1013,25 @@ pub fn settings_row(
                 .size(px(ICON_TILE_SIZE))
                 .rounded_md()
                 .bg(theme.secondary)
-                .child(Icon::new(IconName::Settings).size(px(SESSION_ICON_SIZE))),
+                .child(icon.size(px(SESSION_ICON_SIZE))),
         )
-        .child(div().flex_1().min_w_0().text_sm().child("Settings"))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_sm()
+                .child(label),
+        )
         .child(
             div()
                 .when(!selected, |buttons| {
-                    buttons
-                        .invisible()
-                        .group_hover("settings-row", |style| style.visible())
+                    buttons.invisible().group_hover(id, |style| style.visible())
                 })
                 .child(
-                    Button::new("close-settings")
+                    Button::new(SharedString::from(format!("close-{id}")))
                         .icon(IconName::Close)
                         .ghost()
                         .xsmall()

@@ -10,6 +10,45 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Git page, page and file staging:
+
+- Two tabs in different repositories and one outside any: the picker lists the two, the
+  selected tab's first. Stage and unstage a modified, a deleted and an untracked file, and
+  Stage all / Unstage all; `git status` in a shell tab agrees.
+- Edit a file in a shell tab while the page shows: the list updates (on a `git add` at once,
+  on a plain edit at the latest on Refresh). Hide the page: the CPU is idle. On Windows, no
+  console window flashes.
+
+Git page, diff view:
+
+- Modified, added, deleted, renamed (staged), untracked, binary and CRLF files show right in
+  the dark and light themes.
+- An agent editing the selected file updates the diff without losing the scroll; Up/Down
+  through many files stays responsive; the CPU is idle with the page shown and nothing
+  changing.
+
+Git page, commit:
+
+- Commit from the page with the button and with Ctrl+Enter, then check `git log` in a shell
+  tab; Enter adds a line, Tab moves to the list, Esc goes to the list.
+- A failing hook in a real project (e.g. a lint hook): its output shows, the message and the
+  staged files are kept.
+- A commit with signing turned on (note how it behaves on Windows and Linux), and one while an
+  agent tab is running in the same repository.
+- The message grows to six lines, then scrolls; each repository keeps its draft when switching
+  in the picker.
+
+Git page, line and hunk staging:
+
+- Stage a single line, a range across two hunks (Shift+click, drag) and a hunk, then compare
+  with `git diff --cached` in a shell tab; unstage them again from the Staged diff.
+- A CRLF file, a file without a final newline, a deleted file (staging part of it keeps the
+  file in the index) and a new staged file (unstaging part of it).
+- With an agent editing and staging the file meanwhile: no wrong lines are staged, an error
+  shows instead.
+- Keys in the diff: Up/Down over changed lines only, Shift+Up/Down, `S`/`U`, Shift+`S`/`U`,
+  Escape twice; the right-click menu and the selection bar.
+
 Subagent list (Claude Code 2.1.316, Copilot CLI 1.0.105):
 
 - Real Claude Code: a background subagent (`run_in_background`) shows under the tab with its
@@ -398,14 +437,22 @@ UX review, Tier 2 (small polish, one batch):
 - Safety rule: avoid actions that can cause conflicts. Block working-tree-changing actions
   (branch switching, pull, merge/rebase) while uncommitted changes exist, including staged,
   unstaged and untracked files. Explain the block; never auto-stash or discard changes.
-- Git workflow analysis first: review the existing Git UI and common needs (status and diff,
-  local and remote branches, fetch, pull, push, staging and commits, stash, merge/rebase,
-  worktrees and remotes). Define the scope, entry points and safe defaults before
-  implementation, including authentication, dirty working trees, conflicts, remote tracking
-  and repositories shared by running tabs or agents.
-- Switch branch from the app: select a local branch or check out a remote-tracking branch.
-  Depends on the workflow analysis above and requires a clean working tree; define safeguards
-  for active agents and refresh branch/status information for all affected tabs after a switch.
+- The Git page is the entry point for the items below. Its v1 defaults hold for them: the page
+  never changes the working tree unless the action says so, actions run one at a time (no two
+  `git` race for the index lock), and the repository's hooks run.
+- Discard a file, hunk or line from the working tree, with a confirmation naming what is lost.
+  The first action that changes the working tree.
+- Switch branch from the Git page: select a local branch or check out a remote-tracking
+  branch. Requires a clean working tree (safety rule above); define safeguards for active
+  agents and refresh branch/status information for all affected tabs after a switch.
+- Fetch / pull / push: authentication without a prompt (`GIT_TERMINAL_PROMPT=0`; rely on
+  credential helpers), the safety rule for pull, conflicts, remote tracking; refresh every tab
+  in the repository afterwards.
+- Open the Git page on a tab's repository from its hover card's `+N`.
+- Git page diff: syntax highlighting (the file viewer's tree-sitter highlighting could provide
+  it), word-level highlights inside changed lines, and a side-by-side view.
+- Git page, smaller items: stash, amend, a key to open the page, line staging of untracked
+  files (intent-to-add), cancelling a long commit hook.
 
 ## Parked ideas
 
@@ -423,11 +470,6 @@ Not committed to; not in [FEATURES.md](FEATURES.md) until picked.
   - Saved: what `tabs.json` holds (kind, folder, names, groups, order, launch arguments),
     plus each tab's file open in the viewer and the viewer and explorer widths. Not the
     scrollback.
-- Diff panel: the selected tab's working-tree changes (`git diff` against `HEAD`, untracked
-  files included) in the file viewer pane, one collapsible section per file with added and
-  removed lines colored, opened from the hover card's `+N` or a title bar button, and
-  refreshed when the file watcher sees a change. Shows what an agent changed without leaving
-  the app; read-only (no staging or reverting).
 - Git worktree and pull request on the sidebar row: a worktree marker when the tab's folder is
   a linked worktree (`.git` is a file), with the main repository in the hover card; the open
   PR's number and state for the branch, from `gh pr view --json` run off the UI thread and

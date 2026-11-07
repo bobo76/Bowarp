@@ -74,7 +74,9 @@ impl WorkspaceView {
         self.settings.open = true;
         if !self.settings.shown {
             self.settings.shown = true;
-            if let Some(tab) = self.active_tab() {
+            if self.git.shows_page() {
+                self.git.hide_page(cx);
+            } else if let Some(tab) = self.active_tab() {
                 tab.view.update(cx, |view, _| view.hide());
             }
         }

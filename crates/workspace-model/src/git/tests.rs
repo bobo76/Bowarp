@@ -1,3 +1,4 @@
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
@@ -25,7 +26,7 @@ impl Drop for TempDir {
     }
 }
 
-fn write(path: &Path, content: &str) {
+pub fn write(path: &Path, content: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, content).unwrap();
 }
@@ -95,7 +96,7 @@ fn counts_lines_of_text_files_only() {
     assert_eq!(count_lines(b"text\0with a nul\n"), 0);
 }
 
-fn git(dir: &Path, args: &[&str]) -> bool {
+pub fn git(dir: &Path, args: &[&str]) -> bool {
     Command::new("git")
         .args(["-c", "user.name=test", "-c", "user.email=test@example.com"])
         .args([
@@ -110,6 +111,37 @@ fn git(dir: &Path, args: &[&str]) -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+/// A new repository with a local identity, no signing, no hooks and no line-ending
+/// conversion, whatever the machine's git config says; `None` when git is missing.
+pub fn init_repo() -> Option<TempDir> {
+    let repo = TempDir::new();
+    if !git(&repo.0, &["init", "-q", "-b", "main"]) {
+        eprintln!("git not available, skipping");
+        return None;
+    }
+    for (key, value) in [
+        ("user.name", "test"),
+        ("user.email", "test@example.com"),
+        ("commit.gpgsign", "false"),
+        ("core.autocrlf", "false"),
+        ("core.hooksPath", ".no-hooks"),
+    ] {
+        assert!(git(&repo.0, &["config", key, value]));
+    }
+    Some(repo)
+}
+
+/// What the index holds for `path`, `None` when it is not in the index.
+pub fn index_content(repo: &Path, path: &str) -> Option<Vec<u8>> {
+    let output = Command::new("git")
+        .args(["show", &format!(":{path}")])
+        .current_dir(repo)
+        .stderr(Stdio::null())
+        .output()
+        .unwrap();
+    output.status.success().then_some(output.stdout)
 }
 
 #[test]

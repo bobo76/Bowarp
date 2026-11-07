@@ -510,6 +510,47 @@ Opening another file or closing the panel with unsaved edits asks before droppin
 the file changes on disk (an agent edits it), the panel reloads it where it was scrolled to,
 unless it has unsaved edits, which are kept.
 
+## Git page
+
+The branch button in the title bar (before the gear) opens the Git page in place of the
+selected tab and adds a Git row under the tabs, like the Settings page; the two take turns.
+Select a tab to go back, select the row to return, and close the row with its × or
+Ctrl+Shift+W. Clicking the button again while the page has the keyboard closes it.
+
+The header's repository picker lists every repository the open tabs are in, the selected
+tab's first, with the current branch and a Refresh button. The page refreshes by itself when
+the index, HEAD or a changed file's folder changes.
+
+- **Commit box** (top of the list): a message that grows to six lines, then scrolls, and a
+  Commit button, enabled once something is staged and the message has text. Ctrl+Enter
+  (Cmd+Enter on macOS) commits; Enter adds a line. The repository's hooks run. On success the
+  message empties and git's summary shows; on failure git's message shows and the message
+  and staged files are kept. Each repository keeps its own unsent message while the app runs.
+- **Staged Changes / Changes**: each changed file with its status letter (M modified, A added,
+  D deleted, R renamed, C copied, T type changed, U untracked, ! conflicted); a file changed
+  on both sides is in both. Hover a file for + (stage) or − (unstage),
+  or a group header for Stage all / Unstage all. Click a header to fold its group.
+- **Diff** (right): the selected file's diff for its group, staged or unstaged; an untracked
+  file shows as all added. Each hunk header has Stage hunk / Unstage hunk on hover. Click a
+  changed line to select it, Shift+click or drag for a range, Ctrl+click to add or remove one;
+  a "Stage N lines" bar then shows at the top right, and right-clicking offers the same.
+
+The page only changes the index and makes commits: it never changes your files.
+
+| Where | Keys | Action |
+|---|---|---|
+| Page | Tab / Shift+Tab | Move between the commit message, the file list and the diff |
+| Commit message | Ctrl+Enter | Commit |
+| Commit message | Esc | Back to the file list |
+| File list | Up / Down | Move between files |
+| File list | Space | Stage or unstage the selected file |
+| Diff | Up / Down | Move between changed lines |
+| Diff | Shift+Up / Shift+Down | Extend the selection |
+| Diff | `S` / `U` | Stage / unstage the selected lines (else the cursor's line) |
+| Diff | Shift+S / Shift+U | Stage / unstage the cursor's hunk |
+| Diff | PageUp / PageDown, Home / End | Scroll |
+| Diff | Esc | Clear the selection, then back to the file list |
+
 ## Settings
 
 The gear button in the title bar (after the `i` button) opens the settings page in place of the
@@ -560,6 +601,12 @@ Appearance → Window sets the terminal, sidebar and explorer background opacity
   elsewhere (GNOME, X11) the opacity still applies and the dropdown is disabled ("Not
   available on this system"). A saved `"mica"` means Blur on Linux. It needs an opacity
   below 100 %.
+
+The Git page sets the Git diff's colors (`"git_diff_colors"`: `"background"`, `"text"`,
+`"added"`, `"removed"`, each a hex color `#RRGGBB` or `#RRGGBBAA`). Empty uses the default:
+the theme's background and text, `#14803D` (green) for added lines and `#7F1D1D` (red) for
+removed ones. A selected line shows its color lighter (and twice as opaque). The picker
+applies a color live and saves it when it closes.
 
 The Terminal page sets the default shell: the one the `+` menu lists first and Ctrl+Shift+T,
 "Open in new tab" and an agent tab that quits open, and the first tab when no tabs are saved.

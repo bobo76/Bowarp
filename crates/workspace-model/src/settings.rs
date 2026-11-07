@@ -16,6 +16,7 @@ use serde_json::{Map, Value};
 
 use crate::AgentId;
 use crate::clipboard_guard::ClipboardPolicy;
+use crate::diff_colors::DiffColors;
 use crate::keymap::KeybindingOverlay;
 use crate::pane_width::{ExplorerWidth, ViewerFraction};
 use crate::window_background::{WindowBlur, WindowOpacity};
@@ -118,6 +119,9 @@ pub struct Settings {
     /// action name binds the key, `null` unbinds it. Kept as written, unusable entries too.
     #[serde(deserialize_with = "lenient")]
     pub keybindings: KeybindingOverlay,
+    /// The Git page diff's colors; empty ones use their defaults.
+    #[serde(deserialize_with = "lenient")]
+    pub git_diff_colors: DiffColors,
     /// Fields this version doesn't know, written back as they were.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -388,7 +392,7 @@ impl<'de> Deserialize<'de> for FontSize {
 
 /// `deserialize_with` for every `Settings` field: a value of the wrong type (or `null`) gives
 /// `T::default()` and is dropped at the next save. Fails only on invalid JSON.
-fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+pub(crate) fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
     T: DeserializeOwned + Default,
@@ -402,7 +406,7 @@ where
 pub enum SettingsLoad {
     /// No file yet: the defaults apply.
     Missing,
-    Loaded(Settings),
+    Loaded(Box<Settings>),
     /// The file can't be read or isn't valid settings; the error says why.
     Broken(String),
 }
@@ -411,7 +415,7 @@ impl SettingsLoad {
     pub fn read(path: &Path) -> Self {
         match fs::read_to_string(path) {
             Ok(text) => match Settings::from_json(&text) {
-                Ok(settings) => Self::Loaded(settings),
+                Ok(settings) => Self::Loaded(Box::new(settings)),
                 Err(err) => Self::Broken(err.to_string()),
             },
             Err(err) if err.kind() == io::ErrorKind::NotFound => Self::Missing,
@@ -482,7 +486,7 @@ impl SettingsFile {
         match SettingsLoad::read(path) {
             SettingsLoad::Missing => self.load_error = None,
             SettingsLoad::Loaded(settings) => {
-                self.settings = settings;
+                self.settings = *settings;
                 self.load_error = None;
                 self.unsaved = false;
             }
