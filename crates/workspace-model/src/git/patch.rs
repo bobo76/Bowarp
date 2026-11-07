@@ -30,46 +30,63 @@ pub struct LineRef {
 ///
 /// Selecting every change gives the diff back as it is, so a new or deleted file is added or
 /// removed. Otherwise the patch edits the file in place, except that unstaging part of a
-/// staged deletion puts the file back in the index with those lines. Where the end of the file has no
-/// newline, a selection that would leave the marker in the middle of a side takes in the rest
-/// of that change, as git cannot apply it otherwise.
+/// staged deletion puts the file back in the index with those lines. Where the end of the file
+/// has no newline, a selection that would leave the marker in the middle of a side takes in the
+/// rest of that change, as git cannot apply it otherwise.
 pub fn partial_patch(
     path: &str,
     diff: &TextDiff,
     selected: &BTreeSet<LineRef>,
     side: DiffSide,
 ) -> Option<Vec<u8>> {
-    let is_selected = |hunk: usize, line: usize| selected.contains(&LineRef { hunk, line });
-    let mut changed = diff.changed_lines();
-    let total = changed.len();
-    changed.retain(|line| is_selected(line.hunk, line.line));
-    if changed.is_empty() {
+    let changed = diff.changed_lines();
+    let picked = changed
+        .iter()
+        .filter(|line| selected.contains(line))
+        .count();
+    if picked == 0 {
         return None;
     }
     // Unstaging part of a staged deletion recreates the file in the index: the patch must stay
     // a deletion (`+++ /dev/null`, its mode), as reversed it then creates the file.
     let recreates = side == DiffSide::Staged && diff.deletes_file();
-    let mut patch = if changed.len() == total || recreates {
+    let mut patch = if picked == changed.len() || recreates {
         diff.header.clone()
     } else {
         file_header(path)
     };
+    write_hunks(&mut patch, diff, selected, side);
+    Some(patch)
+}
+
+/// Write each hunk of `diff` with a `selected` line to `patch`, keeping only those lines.
+fn write_hunks(patch: &mut Vec<u8>, diff: &TextDiff, selected: &BTreeSet<LineRef>, side: DiffSide) {
     // How much longer the side being changed is than the side matching the index, so far.
     let mut delta = 0i64;
     for (index, hunk) in diff.hunks.iter().enumerate() {
-        if !changed.iter().any(|line| line.hunk == index) {
+        if diff.hunk_lines(index).is_disjoint(selected) {
             continue;
         }
-        let mut lines = select_lines(hunk, side, |line| is_selected(index, line));
-        if !markers_at_ends(&lines) {
-            let tail = no_newline_changes(hunk);
-            lines = select_lines(hunk, side, |line| {
-                is_selected(index, line) || tail.contains(&line)
-            });
-        }
-        write_hunk(&mut patch, hunk, &lines, side, &mut delta);
+        let lines = hunk_patch_lines(hunk, side, |line| {
+            selected.contains(&LineRef { hunk: index, line })
+        });
+        write_hunk(patch, hunk, &lines, side, &mut delta);
     }
-    Some(patch)
+}
+
+/// The lines of `hunk` its patch keeps: the `is_selected` ones, and the rest of a change at an
+/// end without a newline when the selection would split it.
+fn hunk_patch_lines(
+    hunk: &Hunk,
+    side: DiffSide,
+    is_selected: impl Fn(usize) -> bool,
+) -> Vec<(LineKind, &DiffLine)> {
+    let lines = select_lines(hunk, side, &is_selected);
+    if markers_at_ends(&lines) {
+        return lines;
+    }
+    let tail = no_newline_changes(hunk);
+    select_lines(hunk, side, |line| is_selected(line) || tail.contains(&line))
 }
 
 /// The lines of `hunk` the patch keeps, each with the kind it gets.

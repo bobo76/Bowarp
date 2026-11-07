@@ -18,12 +18,16 @@ pub use self::actions::{
     RepoEntry, apply_patch, commit, commit_failure, commit_message_ready, missing_identity,
     repos_of, stage, stage_all, unstage, unstage_all,
 };
-pub use self::diff::{DiffLine, DiffRow, FileDiff, Hunk, LineKind, TextDiff, read_diff};
+pub use self::diff::{
+    DiffLine, DiffRow, FileDiff, Hunk, LineKind, MAX_DIFF_BYTES, TextDiff, read_diff,
+};
 pub use self::patch::{LineRef, partial_patch};
 pub use self::runner::GitError;
 use self::runner::{Access, execute, run_git};
 pub use self::selection::{LineSelection, line_index};
-pub use self::status::{Change, DiffSide, FileStatus, RepoStatus, StatusRow, read_status};
+pub use self::status::{
+    Change, DiffSide, FileStatus, Head, MAX_STATUS_FILES, RepoStatus, StatusRow, read_status,
+};
 use crate::file_tree::DirEntry;
 
 /// Length of the abbreviated commit id shown for a detached HEAD.

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::runner::{Access, GitError, execute};
-use super::status::{DiffSide, FileStatus};
+use super::status::{DiffSide, FileStatus, Head};
 
 /// How long staging and unstaging wait for `git`.
 const STAGE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -98,12 +98,12 @@ pub fn stage(root: &Path, files: &[&FileStatus]) -> Result<(), GitError> {
     run_write(root, &args, None, STAGE_TIMEOUT)
 }
 
-/// Unstage `files` whole (both paths of a rename), keeping their working-tree changes.
-/// `has_commits`: HEAD has a commit (in a new repository files are taken out of the index).
-pub fn unstage(root: &Path, files: &[&FileStatus], has_commits: bool) -> Result<(), GitError> {
+/// Unstage `files` whole (both paths of a rename), keeping their working-tree changes. With an
+/// unborn `head` (a new repository) they are taken out of the index.
+pub fn unstage(root: &Path, files: &[&FileStatus], head: Head) -> Result<(), GitError> {
     let paths = paths_of(files);
     let mut args = vec!["--literal-pathspecs"];
-    args.extend(unstage_command(has_commits));
+    args.extend(unstage_command(head));
     args.push("--");
     args.extend(paths.iter().map(String::as_str));
     run_write(root, &args, None, STAGE_TIMEOUT)
@@ -115,8 +115,8 @@ pub fn stage_all(root: &Path) -> Result<(), GitError> {
 }
 
 /// Unstage everything, keeping the working tree as it is.
-pub fn unstage_all(root: &Path, has_commits: bool) -> Result<(), GitError> {
-    let mut args = unstage_command(has_commits).to_vec();
+pub fn unstage_all(root: &Path, head: Head) -> Result<(), GitError> {
+    let mut args = unstage_command(head).to_vec();
     args.extend(["--", ":/"]);
     run_write(root, &args, None, STAGE_TIMEOUT)
 }
@@ -181,11 +181,10 @@ pub fn commit_failure(error: &GitError) -> String {
 /// `git restore --staged`, or `git rm --cached` before the first commit (there is no HEAD to
 /// restore from). `-f`: without it git refuses a file changed since it was staged; with
 /// `--cached` it only lets the staged content go, the working tree is never touched.
-fn unstage_command(has_commits: bool) -> &'static [&'static str] {
-    if has_commits {
-        &["restore", "--staged"]
-    } else {
-        &["rm", "--cached", "-r", "-q", "-f"]
+fn unstage_command(head: Head) -> &'static [&'static str] {
+    match head {
+        Head::Born => &["restore", "--staged"],
+        Head::Unborn => &["rm", "--cached", "-r", "-q", "-f"],
     }
 }
 

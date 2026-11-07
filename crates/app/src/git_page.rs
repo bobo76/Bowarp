@@ -26,8 +26,10 @@ use gpui_kit::{
 use notify::event::ModifyKind;
 use notify::{Event, EventKind};
 use workspace_model::git::{
-    self, Change, DiffSide, FileDiff, FileStatus, LineSelection, RepoEntry, RepoStatus, StatusRow,
+    self, Change, DiffSide, FileDiff, FileStatus, Head, LineSelection, MAX_STATUS_FILES, RepoEntry,
+    RepoStatus, StatusRow,
 };
+use workspace_model::layout::Direction;
 
 use self::commit_box::{COMMIT_CONTEXT, CommitDone};
 use self::diff_view::ShownDiff;
@@ -40,6 +42,10 @@ use crate::sidebar;
 const ROW_HEIGHT: f32 = 26.;
 /// Width of the list of changes.
 const LIST_WIDTH: f32 = 340.;
+/// The widest a file's name gets in its row (its folder takes the rest).
+const FILE_NAME_MAX_WIDTH: f32 = LIST_WIDTH * 0.6;
+/// Width of a file row's status letter.
+const CHANGE_LETTER_WIDTH: f32 = 12.;
 /// Height of the page's header.
 const HEADER_HEIGHT: f32 = 40.;
 /// At most this many folders of changed files are watched (besides the top and git folders).
@@ -97,8 +103,8 @@ enum Op {
 /// The repository an [`Op::Change`] is for, as the page showed it when it was asked.
 struct Target {
     root: PathBuf,
-    /// Whether its HEAD had a commit (unstaging works differently before the first).
-    has_commits: bool,
+    /// What its HEAD pointed at (unstaging works differently before the first commit).
+    head: Head,
 }
 
 /// How an [`Op::Change`] changes the index.
@@ -325,42 +331,61 @@ impl GitPage {
     }
 
     fn finish(&mut self, outcome: Outcome, window: &mut Window, cx: &mut Context<Self>) {
+        let Outcome {
+            repos,
+            error,
+            status,
+            diff,
+            commit,
+        } = outcome;
         self.running = false;
-        if let Some(repos) = outcome.repos {
-            self.repos = repos;
-            self.searched = true;
+        self.take_repos(repos);
+        if let Some(read) = status {
+            self.take_status(read, window, cx);
         }
-        if let Some(read) = outcome.status {
-            let from = self.repo.as_ref().map(|repo| repo.root.clone());
-            let to = read.repo.as_ref().map(|repo| repo.root.clone());
-            if from != to {
-                self.swap_draft(from.as_deref(), to.as_deref(), window, cx);
-            }
-            // Found in the old rows while they still index the old status.
-            let old_row = self.selected_row();
-            self.repo = read.repo;
-            self.status = read.status;
-            self.to_watch = read.watch;
-            self.rebuild_rows(old_row);
-            self.sync_watches();
-            self.sync_placeholder(window, cx);
-        }
-        if let Some(message) = outcome.error {
+        if let Some(message) = error {
             window.push_notification(Notification::error(message), cx);
         }
-        if let Some(done) = outcome.commit {
+        if let Some(done) = commit {
             self.finish_commit(done, window, cx);
         }
-        // A late read for a file no longer selected is dropped.
-        if let Some(read) = outcome
-            .diff
-            .filter(|read| self.is_selected(read.side, &read.path))
-        {
-            self.show_diff(read);
-        }
+        self.take_diff(diff);
         self.sync_diff(window, cx);
         cx.notify();
         self.run_next(window, cx);
+    }
+
+    /// Keep the repositories an op listed.
+    fn take_repos(&mut self, repos: Option<Vec<RepoEntry>>) {
+        if let Some(repos) = repos {
+            self.repos = repos;
+            self.searched = true;
+        }
+    }
+
+    /// Show the repository and status an op read: its draft, rows, watches and placeholder.
+    fn take_status(&mut self, read: StatusRead, window: &mut Window, cx: &mut Context<Self>) {
+        let from = self.repo.as_ref().map(|repo| repo.root.clone());
+        let to = read.repo.as_ref().map(|repo| repo.root.clone());
+        if from != to {
+            self.swap_draft(from.as_deref(), to.as_deref(), window, cx);
+        }
+        // Found in the old rows while they still index the old status.
+        let old_row = self.selected_row();
+        self.repo = read.repo;
+        self.status = read.status;
+        self.to_watch = read.watch;
+        self.rebuild_rows();
+        self.reselect_near(old_row);
+        self.sync_watches();
+        self.sync_placeholder(window, cx);
+    }
+
+    /// Show the diff an op read, unless its file is no longer selected (a late read).
+    fn take_diff(&mut self, diff: Option<DiffRead>) {
+        if let Some(read) = diff.filter(|read| self.is_selected(read.side, &read.path)) {
+            self.show_diff(read);
+        }
     }
 
     /// The selection and its current status, for an op about to start.
@@ -436,18 +461,21 @@ impl GitPage {
         self.status.as_ref()?.as_ref().ok()
     }
 
-    /// Rebuild the rows from the status; a selected file that left its group gives the
-    /// selection to the row now at its place. `old_index`: the selected file's row before,
-    /// found while the rows still matched the status they were built from.
-    fn rebuild_rows(&mut self, old_index: Option<usize>) {
+    /// Rebuild the rows from the status.
+    fn rebuild_rows(&mut self) {
         self.rows = self
             .status()
             .map(|status| status.rows(&self.collapsed))
             .unwrap_or_default();
+    }
+
+    /// After the rows were rebuilt: a selected file that left its group gives the selection to
+    /// the file row now at `old_row` (its row before), else to the last file row.
+    fn reselect_near(&mut self, old_row: Option<usize>) {
         if self.selected_row().is_some() {
             return;
         }
-        self.selected = old_index.and_then(|index| {
+        self.selected = old_row.and_then(|index| {
             let files = self.file_rows();
             let row = files
                 .iter()
@@ -515,7 +543,8 @@ impl GitPage {
             self.collapsed.insert(side);
         }
         let old_row = self.selected_row();
-        self.rebuild_rows(old_row);
+        self.rebuild_rows();
+        self.reselect_near(old_row);
         self.sync_diff(window, cx);
         cx.notify();
     }
@@ -562,7 +591,7 @@ impl GitPage {
         let repo = self.repo.as_ref()?;
         Some(Target {
             root: repo.root.clone(),
-            has_commits: self.status().is_none_or(|status| status.has_commits),
+            head: self.status().map(|status| status.head).unwrap_or_default(),
         })
     }
 
@@ -577,8 +606,8 @@ impl GitPage {
             return;
         }
         match keystroke.key.as_str() {
-            "up" => self.step_selection(false, window, cx),
-            "down" => self.step_selection(true, window, cx),
+            "up" => self.step_selection(Direction::Up, window, cx),
+            "down" => self.step_selection(Direction::Down, window, cx),
             "space" => {
                 let Some(StatusRow::File { side, index }) =
                     self.selected_row().map(|row| self.rows[row])
@@ -593,16 +622,16 @@ impl GitPage {
     }
 
     fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
-        self.cycle_focus(true, window, cx);
+        self.cycle_focus(Direction::Down, window, cx);
     }
 
     fn focus_previous(&mut self, _: &FocusPrevious, window: &mut Window, cx: &mut Context<Self>) {
-        self.cycle_focus(false, window, cx);
+        self.cycle_focus(Direction::Up, window, cx);
     }
 
-    /// Move the keyboard to the next (or previous) of the commit message (when it shows), the
-    /// list and the diff, around; from elsewhere to the list.
-    fn cycle_focus(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// Move the keyboard to the next (Down) or previous (Up) of the commit message (when it
+    /// shows), the list and the diff, around; from elsewhere to the list.
+    fn cycle_focus(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
         let mut stops = Vec::with_capacity(3);
         if self.repo.is_some() {
             stops.push(self.message_focus(cx));
@@ -610,21 +639,29 @@ impl GitPage {
         stops.push(self.focus.clone());
         stops.push(self.diff_focus.clone());
         let count = stops.len();
-        let next = match stops.iter().position(|stop| stop.is_focused(window)) {
-            Some(at) if forward => (at + 1) % count,
-            Some(at) => (at + count - 1) % count,
-            None => count - 2,
+        let next = match (
+            stops.iter().position(|stop| stop.is_focused(window)),
+            direction,
+        ) {
+            (Some(at), Direction::Down) => (at + 1) % count,
+            (Some(at), Direction::Up) => (at + count - 1) % count,
+            (None, _) => count - 2,
         };
         window.focus(&stops[next], cx);
     }
 
-    fn step_selection(&mut self, down: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn step_selection(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let files = self.file_rows();
-        let next = match self.selected_row() {
-            None if down => files.first(),
-            None => files.last(),
-            Some(row) if down => files.iter().find(|&&file| file > row),
-            Some(row) => files.iter().rev().find(|&&file| file < row),
+        let next = match (self.selected_row(), direction) {
+            (None, Direction::Down) => files.first(),
+            (None, Direction::Up) => files.last(),
+            (Some(row), Direction::Down) => files.iter().find(|&&file| file > row),
+            (Some(row), Direction::Up) => files.iter().rev().find(|&&file| file < row),
         };
         let Some(&row) = next else {
             return;
@@ -749,7 +786,9 @@ impl GitPage {
                     .p_2()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child("Only the first 10,000 changed files are listed.")
+                    .child(format!(
+                        "Only the first {MAX_STATUS_FILES} changed files are listed."
+                    ))
             }))
             .into_any_element()
     }
@@ -872,7 +911,7 @@ impl GitPage {
             .child(
                 div()
                     .flex_none()
-                    .max_w(px(LIST_WIDTH * 0.6))
+                    .max_w(px(FILE_NAME_MAX_WIDTH))
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
@@ -910,7 +949,7 @@ impl GitPage {
             .child(
                 div()
                     .flex_none()
-                    .w(px(12.))
+                    .w(px(CHANGE_LETTER_WIDTH))
                     .text_xs()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(change_color(change, cx))
@@ -961,55 +1000,95 @@ impl Render for GitPage {
     }
 }
 
+/// What [`run_op`] did.
+struct OpDone {
+    /// The new list of repositories, when the op listed them.
+    repos: Option<Vec<RepoEntry>>,
+    /// The repository to read the status of afterwards.
+    repo: Option<RepoEntry>,
+    error: Option<String>,
+    commit: Option<CommitDone>,
+}
+
 /// Run `op`, then read the status of `repo` (or of the one `op` picks) and the diff of
-/// `selection`. Off the UI thread.
+/// `selection`; for [`Op::ReadDiff`], the diff only. Off the UI thread.
 fn perform(op: Op, repo: Option<RepoEntry>, selection: Option<Selection>) -> Outcome {
     if matches!(op, Op::ReadDiff) {
-        let diff = repo.zip(selection).map(|(repo, selection)| {
-            let Selection { side, path, file } = selection;
-            match file {
-                Some(file) => read_file_diff(&repo.root, &file, side),
-                None => DiffRead {
-                    side,
-                    path,
-                    orig_path: None,
-                    by_line: false,
-                    result: Err(NO_LONGER_CHANGED.to_string()),
-                },
-            }
+        return Outcome::diff_only(read_selection_diff(repo, selection));
+    }
+    let done = run_op(op, repo);
+    let read = read_state(done.repo);
+    let diff = selection.and_then(|selection| read_listed_diff(&read, selection));
+    Outcome {
+        repos: done.repos,
+        error: done.error,
+        status: Some(read),
+        diff,
+        commit: done.commit,
+    }
+}
+
+/// Run what `op` asks of git, `repo` being the repository shown when it started.
+fn run_op(op: Op, repo: Option<RepoEntry>) -> OpDone {
+    let mut done = OpDone {
+        repos: None,
+        repo,
+        error: None,
+        commit: None,
+    };
+    match op {
+        Op::FindRepos(folders) => done.find_repos(&folders),
+        Op::Choose(chosen) => done.repo = Some(chosen),
+        Op::Refresh | Op::ReadDiff => {}
+        Op::Change(target, change) => {
+            done.error = change_index(&target, change)
+                .err()
+                .map(|err| err.to_string());
+        }
+        Op::Commit(target, message) => done.commit(target, &message),
+    }
+    done
+}
+
+impl OpDone {
+    /// List the repositories of `folders`, keeping the one shown when still listed, else the
+    /// first.
+    fn find_repos(&mut self, folders: &[PathBuf]) {
+        let found = git::repos_of(folders);
+        let kept = self
+            .repo
+            .take()
+            .filter(|repo| found.iter().any(|entry| entry.root == repo.root));
+        self.repo = kept.or_else(|| found.first().cloned());
+        self.repos = Some(found);
+    }
+
+    /// Commit what is staged in `target` with `message`.
+    fn commit(&mut self, target: Target, message: &str) {
+        let committed = git::commit(&target.root, message);
+        self.error = committed.as_ref().err().map(git::commit_failure);
+        self.commit = Some(CommitDone {
+            root: target.root,
+            summary: committed.ok(),
         });
-        return Outcome {
+    }
+}
+
+impl Outcome {
+    /// What an [`Op::ReadDiff`] gives: the diff only.
+    fn diff_only(diff: Option<DiffRead>) -> Self {
+        Self {
             repos: None,
             error: None,
             status: None,
             diff,
             commit: None,
-        };
-    }
-    let mut repos = None;
-    let mut repo = repo;
-    let mut result = Ok(());
-    let mut commit = None;
-    match op {
-        Op::FindRepos(folders) => {
-            let found = git::repos_of(&folders);
-            let kept = repo.filter(|repo| found.iter().any(|entry| entry.root == repo.root));
-            repo = kept.or_else(|| found.first().cloned());
-            repos = Some(found);
         }
-        Op::Choose(chosen) => repo = Some(chosen),
-        Op::Refresh => {}
-        Op::Change(target, change) => result = change_index(&target, change),
-        Op::Commit(target, message) => {
-            let committed = git::commit(&target.root, &message);
-            commit = Some(CommitDone {
-                root: target.root,
-                summary: committed.as_ref().ok().cloned(),
-            });
-            result = committed.map(drop);
-        }
-        Op::ReadDiff => unreachable!("read above, without the status"),
     }
+}
+
+/// The status of `repo` and the folders to watch for it.
+fn read_state(repo: Option<RepoEntry>) -> StatusRead {
     let status = repo
         .as_ref()
         .map(|repo| git::read_status(&repo.root).map_err(|err| err.to_string()));
@@ -1019,31 +1098,39 @@ fn perform(op: Op, repo: Option<RepoEntry>, selection: Option<Selection>) -> Out
             status.as_ref().and_then(|status| status.as_ref().ok()),
         )
     });
-    let diff = selection.and_then(|selection| {
-        let root = &repo.as_ref()?.root;
-        let file = status
-            .as_ref()?
-            .as_ref()
-            .ok()?
-            .files_on(selection.side)
-            .find(|file| file.path == selection.path)?;
-        Some(read_file_diff(root, file, selection.side))
-    });
-    let error = result.err().map(|err| match commit {
-        Some(_) => git::commit_failure(&err),
-        None => err.to_string(),
-    });
-    Outcome {
-        repos,
-        error,
-        status: Some(StatusRead {
-            repo,
-            status,
-            watch,
-        }),
-        diff,
-        commit,
+    StatusRead {
+        repo,
+        status,
+        watch,
     }
+}
+
+/// The diff of the selected file as `read` lists it, if it still has a change on its side.
+fn read_listed_diff(read: &StatusRead, selection: Selection) -> Option<DiffRead> {
+    let root = &read.repo.as_ref()?.root;
+    let file = read
+        .status
+        .as_ref()?
+        .as_ref()
+        .ok()?
+        .files_on(selection.side)
+        .find(|file| file.path == selection.path)?;
+    Some(read_file_diff(root, file, selection.side))
+}
+
+/// The diff of the selected file as listed when the read was asked.
+fn read_selection_diff(repo: Option<RepoEntry>, selection: Option<Selection>) -> Option<DiffRead> {
+    let (repo, Selection { side, path, file }) = repo.zip(selection)?;
+    Some(match file {
+        Some(file) => read_file_diff(&repo.root, &file, side),
+        None => DiffRead {
+            side,
+            path,
+            orig_path: None,
+            by_line: false,
+            result: Err(NO_LONGER_CHANGED.to_string()),
+        },
+    })
 }
 
 fn read_file_diff(root: &Path, file: &FileStatus, side: DiffSide) -> DiffRead {
@@ -1060,9 +1147,9 @@ fn change_index(target: &Target, change: IndexChange) -> Result<(), git::GitErro
     let root = &target.root;
     match change {
         IndexChange::Stage(files) => git::stage(root, &refs(&files)),
-        IndexChange::Unstage(files) => git::unstage(root, &refs(&files), target.has_commits),
+        IndexChange::Unstage(files) => git::unstage(root, &refs(&files), target.head),
         IndexChange::StageAll => git::stage_all(root),
-        IndexChange::UnstageAll => git::unstage_all(root, target.has_commits),
+        IndexChange::UnstageAll => git::unstage_all(root, target.head),
         IndexChange::Apply { side, patch } => git::apply_patch(root, patch, side),
     }
 }

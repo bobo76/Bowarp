@@ -27,7 +27,7 @@ fn parses_branch_files_and_both_sides() {
     let status = parse_status(output.as_bytes());
 
     assert_eq!(status.branch.as_deref(), Some("feature/git page"));
-    assert!(status.has_commits);
+    assert_eq!(status.head, Head::Born);
     assert!(!status.truncated);
     let file = |path: &str, staged, unstaged| FileStatus {
         path: path.to_string(),
@@ -61,13 +61,13 @@ fn parses_branch_files_and_both_sides() {
 #[test]
 fn initial_and_detached_heads() {
     let status = parse_status(b"# branch.oid (initial)\0# branch.head main\0");
-    assert!(!status.has_commits);
+    assert_eq!(status.head, Head::Unborn);
     assert_eq!(status.branch.as_deref(), Some("main"));
     assert!(!status.has_staged());
 
     let status =
         parse_status(format!("# branch.oid {HASH}\0# branch.head (detached)\0").as_bytes());
-    assert!(status.has_commits);
+    assert_eq!(status.head, Head::Born);
     assert_eq!(status.branch, None);
 }
 
@@ -104,7 +104,7 @@ fn reads_a_real_repository() {
     }
     write(&repo.0.join("new.txt"), "new\n");
     let status = read_status(&repo.0).unwrap();
-    assert!(!status.has_commits);
+    assert_eq!(status.head, Head::Unborn);
     assert_eq!(status.branch.as_deref(), Some("main"));
     assert_eq!(status.files[0].unstaged, Some(Change::Untracked));
 
@@ -112,7 +112,7 @@ fn reads_a_real_repository() {
     assert!(git(&repo.0, &["commit", "-q", "-m", "initial"]));
     write(&repo.0.join("new.txt"), "changed\n");
     let status = read_status(&repo.0).unwrap();
-    assert!(status.has_commits);
+    assert_eq!(status.head, Head::Born);
     assert_eq!(status.files[0].unstaged, Some(Change::Modified));
 }
 

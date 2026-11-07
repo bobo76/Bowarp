@@ -4,7 +4,7 @@
 use std::fmt;
 use std::io::{ErrorKind, Read, Write};
 use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
@@ -109,41 +109,15 @@ pub(super) fn execute_capped(
     deadline: Instant,
     max_stdout: usize,
 ) -> Result<Output, GitError> {
-    let mut command = Command::new("git");
-    // A repository's config must not run commands (`core.fsmonitor`) behind the user's back.
-    command.args(["-c", "core.fsmonitor=false"]);
-    if access == Access::Read {
-        command.arg("--no-optional-locks");
-    }
-    command
-        .args(args)
-        .current_dir(dir)
-        .stdin(if input.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        // Nobody can answer a credential prompt: fail instead of waiting for the deadline.
-        .env("GIT_TERMINAL_PROMPT", "0");
-    for name in REPO_ENV {
-        command.env_remove(name);
-    }
-    // A console child of a GUI process gets its own console window, which flashes.
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    let mut child = command.spawn().map_err(|_| GitError::Missing)?;
-    // Write on a thread, so a git that stops reading cannot outlast the deadline; dropping
-    // stdin at the end tells git the input is complete. A write error (git exited) ends it.
-    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-        thread::spawn(move || {
-            let _ = stdin.write_all(&input);
-        });
-    }
+    let stdin = if input.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    };
+    let mut child = git_command(dir, args, access, stdin)
+        .spawn()
+        .map_err(|_| GitError::Missing)?;
+    feed(child.stdin.take(), input);
     // Read while waiting, so a large output cannot fill a pipe and stall git.
     let stdout = Capture::start(child.stdout.take(), max_stdout);
     let stderr = Capture::start(child.stderr.take(), usize::MAX);
@@ -158,6 +132,46 @@ pub(super) fn execute_capped(
         stdout: stdout.finish(drained),
         stderr: stderr.finish(drained),
     })
+}
+
+/// `git <args>` in `dir`, with output piped, no console window and no variable pointing it at
+/// another repository.
+fn git_command(dir: &Path, args: &[&str], access: Access, stdin: Stdio) -> Command {
+    let mut command = Command::new("git");
+    // A repository's config must not run commands (`core.fsmonitor`) behind the user's back.
+    command.args(["-c", "core.fsmonitor=false"]);
+    if access == Access::Read {
+        command.arg("--no-optional-locks");
+    }
+    command
+        .args(args)
+        .current_dir(dir)
+        .stdin(stdin)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        // Nobody can answer a credential prompt: fail instead of waiting for the deadline.
+        .env("GIT_TERMINAL_PROMPT", "0");
+    for name in REPO_ENV {
+        command.env_remove(name);
+    }
+    // A console child of a GUI process gets its own console window, which flashes.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
+/// Write `input` to git's `stdin` on a thread, so a git that stops reading cannot outlast the
+/// deadline; dropping stdin at the end tells git the input is complete. A write error (git
+/// exited) ends it.
+fn feed(stdin: Option<ChildStdin>, input: Option<Vec<u8>>) {
+    if let (Some(mut stdin), Some(input)) = (stdin, input) {
+        thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        });
+    }
 }
 
 /// The stdout of a read-only `git <args>` run in `dir`, or `None` when it fails or is still

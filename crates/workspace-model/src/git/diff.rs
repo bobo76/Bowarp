@@ -14,7 +14,7 @@ use super::status::{Change, DiffSide, FileStatus};
 /// How long [`read_diff`] waits for `git diff`.
 const DIFF_TIMEOUT: Duration = Duration::from_secs(20);
 /// A diff larger than this is not shown (the file can still be staged whole).
-const MAX_DIFF_BYTES: usize = 8 << 20;
+pub const MAX_DIFF_BYTES: usize = 8 << 20;
 /// Lines of context around each change; [`super::patch`] relies on a fixed value.
 const CONTEXT_ARG: &str = "-U3";
 /// What `git diff --no-index` diffs an untracked file against.

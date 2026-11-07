@@ -97,14 +97,14 @@ fn stages_and_unstages_whole_files() {
         .iter()
         .find(|file| file.path == "kept.txt")
         .unwrap();
-    unstage(&repo.0, &[kept], status.has_commits).unwrap();
+    unstage(&repo.0, &[kept], status.head).unwrap();
     assert_eq!(index_content(&repo.0, "kept.txt").unwrap(), b"kept\n");
     assert_eq!(
         fs::read_to_string(repo.0.join("kept.txt")).unwrap(),
         "changed\n"
     );
 
-    unstage_all(&repo.0, true).unwrap();
+    unstage_all(&repo.0, Head::Born).unwrap();
     let status = read_status(&repo.0).unwrap();
     assert!(!status.has_staged());
     stage_all(&repo.0).unwrap();
@@ -127,7 +127,7 @@ fn unstages_both_paths_of_a_rename() {
     let renamed = &status.files[0];
     assert_eq!(renamed.staged, Some(Change::Renamed));
 
-    unstage(&repo.0, &[renamed], true).unwrap();
+    unstage(&repo.0, &[renamed], Head::Born).unwrap();
     assert_eq!(index_content(&repo.0, "old.txt").unwrap(), b"old\n");
     assert_eq!(index_content(&repo.0, "renamed.txt"), None);
 }
@@ -166,7 +166,7 @@ fn unstages_before_the_first_commit_a_file_edited_since_staged() {
     fs::write(repo.0.join("a.txt"), "a\nedited\n").unwrap();
     fs::write(repo.0.join("b.txt"), "b\nedited\n").unwrap();
     let status = read_status(&repo.0).unwrap();
-    assert!(!status.has_commits);
+    assert_eq!(status.head, Head::Unborn);
     let a = status
         .files
         .iter()
@@ -175,14 +175,14 @@ fn unstages_before_the_first_commit_a_file_edited_since_staged() {
     assert_eq!(a.staged, Some(Change::Added));
     assert_eq!(a.unstaged, Some(Change::Modified));
 
-    unstage(&repo.0, &[a], status.has_commits).unwrap();
+    unstage(&repo.0, &[a], status.head).unwrap();
     assert_eq!(index_content(&repo.0, "a.txt"), None);
     assert_eq!(
         fs::read_to_string(repo.0.join("a.txt")).unwrap(),
         "a\nedited\n"
     );
 
-    unstage_all(&repo.0, status.has_commits).unwrap();
+    unstage_all(&repo.0, status.head).unwrap();
     assert_eq!(index_content(&repo.0, "b.txt"), None);
     assert_eq!(
         fs::read_to_string(repo.0.join("b.txt")).unwrap(),
@@ -198,10 +198,10 @@ fn unstages_before_the_first_commit() {
     fs::write(repo.0.join("a.txt"), "a\n").unwrap();
     stage_all(&repo.0).unwrap();
     let status = read_status(&repo.0).unwrap();
-    assert!(!status.has_commits);
+    assert_eq!(status.head, Head::Unborn);
     assert!(status.has_staged());
 
-    unstage(&repo.0, &[&status.files[0]], status.has_commits).unwrap();
+    unstage(&repo.0, &[&status.files[0]], status.head).unwrap();
     assert_eq!(index_content(&repo.0, "a.txt"), None);
     assert!(repo.0.join("a.txt").exists());
 }
@@ -220,7 +220,7 @@ fn commits_what_is_staged() {
         .iter()
         .find(|file| file.path == "other.txt")
         .unwrap();
-    unstage(&repo.0, &[other], true).unwrap();
+    unstage(&repo.0, &[other], Head::Born).unwrap();
 
     let summary = commit(&repo.0, "Change kept\n\nWith a body.").unwrap();
     assert!(summary.contains("Change kept"), "summary: {summary}");
@@ -340,12 +340,12 @@ fn commits_in_a_new_repository() {
     };
     fs::write(repo.0.join("first.txt"), "first\n").unwrap();
     stage_all(&repo.0).unwrap();
-    assert!(!read_status(&repo.0).unwrap().has_commits);
+    assert_eq!(read_status(&repo.0).unwrap().head, Head::Unborn);
 
     let summary = commit(&repo.0, "First").unwrap();
     assert!(summary.contains("First"), "summary: {summary}");
     let status = read_status(&repo.0).unwrap();
-    assert!(status.has_commits);
+    assert_eq!(status.head, Head::Born);
     assert!(status.branch.is_some());
     assert!(status.files.is_empty());
 }

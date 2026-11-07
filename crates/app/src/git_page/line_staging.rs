@@ -17,7 +17,9 @@ use gpui_kit::{
     div,
 };
 use workspace_model::git::{self, DiffSide, LineKind, LineRef};
+use workspace_model::layout::Direction;
 
+use super::diff_view::ShownDiff;
 use super::{GitPage, IndexChange};
 
 /// The words for an action on `side`'s diff: stage from Changes, unstage from Staged.
@@ -122,37 +124,55 @@ impl GitPage {
         if control || alt || platform || function {
             return false;
         }
-        let Some(diff) = self.diff.as_ref().filter(|diff| diff.stages_by_line()) else {
+        if !self.diff.as_ref().is_some_and(ShownDiff::stages_by_line) {
             return false;
-        };
-        match keystroke.key.to_ascii_lowercase().as_str() {
-            key @ ("up" | "down") => {
-                let cursor = self.lines.step(key == "down", shift, diff.changed_lines());
-                if let Some(row) = cursor.and_then(|line| diff.row_of(line)) {
-                    self.diff_scroll
-                        .scroll_to_item(row, ScrollStrategy::Nearest);
-                }
-                cx.notify();
-            }
-            "s" => self.apply_key(DiffSide::Unstaged, shift, window, cx),
-            "u" => self.apply_key(DiffSide::Staged, shift, window, cx),
+        }
+        // `S` / `U` act on the diff of their side only (`apply_lines` checks it).
+        match (keystroke.key.to_ascii_lowercase().as_str(), shift) {
+            ("up", false) => self.step_line_cursor(Direction::Up, cx),
+            ("down", false) => self.step_line_cursor(Direction::Down, cx),
+            ("up", true) => self.extend_line_selection(Direction::Up, cx),
+            ("down", true) => self.extend_line_selection(Direction::Down, cx),
+            ("s", false) => self.apply_selection(DiffSide::Unstaged, window, cx),
+            ("u", false) => self.apply_selection(DiffSide::Staged, window, cx),
+            ("s", true) => self.apply_cursor_hunk(DiffSide::Unstaged, window, cx),
+            ("u", true) => self.apply_cursor_hunk(DiffSide::Staged, window, cx),
             _ => return false,
         }
         true
     }
 
-    /// `S` or `U`: the selection, or with Shift the cursor's hunk. A key for the other side's
-    /// diff does nothing.
-    fn apply_key(
-        &mut self,
-        side: DiffSide,
-        whole_hunk: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !whole_hunk {
-            self.apply_selection(side, window, cx);
-        } else if let Some(cursor) = self.lines.cursor() {
+    /// Up / Down: move the line cursor, clearing the selection.
+    fn step_line_cursor(&mut self, direction: Direction, cx: &mut Context<Self>) {
+        let Some(diff) = &self.diff else {
+            return;
+        };
+        let cursor = self.lines.step(direction, diff.changed_lines());
+        self.reveal_line(cursor, cx);
+    }
+
+    /// Shift+Up / Shift+Down: move the line cursor, the selection running from the anchor.
+    fn extend_line_selection(&mut self, direction: Direction, cx: &mut Context<Self>) {
+        let Some(diff) = &self.diff else {
+            return;
+        };
+        let cursor = self.lines.extend(direction, diff.changed_lines());
+        self.reveal_line(cursor, cx);
+    }
+
+    /// Scroll the diff to show the line cursor, now at `cursor`.
+    fn reveal_line(&mut self, cursor: Option<LineRef>, cx: &mut Context<Self>) {
+        let row = cursor.and_then(|line| self.diff.as_ref()?.row_of(line));
+        if let Some(row) = row {
+            self.diff_scroll
+                .scroll_to_item(row, ScrollStrategy::Nearest);
+        }
+        cx.notify();
+    }
+
+    /// Shift+`S` / Shift+`U`: stage or unstage the cursor's hunk.
+    fn apply_cursor_hunk(&mut self, side: DiffSide, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(cursor) = self.lines.cursor() {
             self.apply_hunk(side, cursor.hunk, window, cx);
         }
     }

@@ -5,6 +5,7 @@ use gpui_kit::{AppContext, Entity, TestAppContext, VisualTestContext};
 
 use super::*;
 use crate::git_page::tests::{run_git, temp_repo};
+use workspace_model::git::Head;
 
 #[test]
 fn the_placeholder_names_the_branch() {
@@ -233,14 +234,17 @@ fn makes_the_first_commit_of_a_new_repository(cx: &mut TestAppContext) {
     };
     run_git(&folder, &["add", "."]);
     let mut h = Harness::open(cx, vec![folder.clone()]);
-    assert!(!h.update(|page, _, _| page.status().unwrap().has_commits));
+    assert_eq!(
+        h.update(|page, _, _| page.status().unwrap().head),
+        Head::Unborn
+    );
 
     h.type_message("First");
     h.update(|page, window, cx| page.commit(window, cx));
 
     assert_eq!(last_subject(&folder), "First");
     let status = h.update(|page, _, _| page.status().unwrap().clone());
-    assert!(status.has_commits);
+    assert_eq!(status.head, Head::Born);
     assert_eq!(status.branch.as_deref(), Some("main"));
     assert!(status.files.is_empty());
     h.close(&[folder]);

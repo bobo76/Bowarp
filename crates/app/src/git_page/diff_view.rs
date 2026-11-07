@@ -24,6 +24,8 @@ use crate::terminal_element::font_family;
 
 /// How long a diff is read before "Loading…" shows (a quick read shows no flash).
 pub(super) const LOADING_DELAY: Duration = Duration::from_millis(200);
+/// Bytes in a megabyte, to name the diff size limit.
+const BYTES_PER_MB: usize = 1 << 20;
 /// A diff row's height, from the font size.
 const LINE_HEIGHT_FACTOR: f32 = 1.4;
 /// A tab shows as this many spaces.
@@ -150,9 +152,10 @@ impl ShownDiff {
         match &self.result {
             Err(err) => Some(format!("Couldn't read the diff: {err}")),
             Ok(FileDiff::Binary) => Some("Binary file, not shown. It can be staged whole.".into()),
-            Ok(FileDiff::TooLarge) => Some(
-                "This diff is too large to show (over 8 MB). The file can be staged whole.".into(),
-            ),
+            Ok(FileDiff::TooLarge) => Some(format!(
+                "This diff is too large to show (over {} MB). The file can be staged whole.",
+                git::MAX_DIFF_BYTES / BYTES_PER_MB
+            )),
             Ok(FileDiff::Text(diff)) if diff.hunks.is_empty() => {
                 Some("No changes in the content (mode or rename only).".into())
             }

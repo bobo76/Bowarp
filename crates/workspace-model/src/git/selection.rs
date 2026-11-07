@@ -5,6 +5,7 @@
 use std::collections::BTreeSet;
 
 use super::patch::LineRef;
+use crate::layout::Direction;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LineSelection {
@@ -64,27 +65,36 @@ impl LineSelection {
         }
     }
 
-    /// Move the cursor to the next changed line (`down`) or the previous one; from no cursor,
-    /// to the first or the last. With `extend` the selection runs from the anchor to the
-    /// cursor, else it is cleared. Returns the new cursor (`None` without changed lines).
-    pub fn step(&mut self, down: bool, extend: bool, changed: &[LineRef]) -> Option<LineRef> {
-        let at = self.cursor.and_then(|cursor| line_index(cursor, changed));
-        let next = match at {
-            None if down => changed.first(),
-            None => changed.last(),
-            Some(at) if down => changed.get(at + 1).or(changed.get(at)),
-            Some(at) => changed.get(at.saturating_sub(1)),
-        }
-        .copied()?;
-        if extend {
-            let anchor = *self.anchor.get_or_insert(self.cursor.unwrap_or(next));
-            self.selected = range(anchor, next, changed);
-        } else {
-            self.anchor = Some(next);
-            self.selected.clear();
-        }
+    /// Move the cursor to the next changed line in `direction`; from no cursor, to the first
+    /// (Down) or the last (Up). The selection is cleared. Returns the new cursor (`None`
+    /// without changed lines).
+    pub fn step(&mut self, direction: Direction, changed: &[LineRef]) -> Option<LineRef> {
+        let next = self.next_line(direction, changed)?;
+        self.anchor = Some(next);
+        self.selected.clear();
         self.cursor = Some(next);
         Some(next)
+    }
+
+    /// As [`Self::step`], but the selection runs from the anchor to the new cursor.
+    pub fn extend(&mut self, direction: Direction, changed: &[LineRef]) -> Option<LineRef> {
+        let next = self.next_line(direction, changed)?;
+        let anchor = *self.anchor.get_or_insert(self.cursor.unwrap_or(next));
+        self.selected = range(anchor, next, changed);
+        self.cursor = Some(next);
+        Some(next)
+    }
+
+    /// The changed line a step in `direction` goes to.
+    fn next_line(&self, direction: Direction, changed: &[LineRef]) -> Option<LineRef> {
+        let at = self.cursor.and_then(|cursor| line_index(cursor, changed));
+        let next = match (at, direction) {
+            (None, Direction::Down) => changed.first(),
+            (None, Direction::Up) => changed.last(),
+            (Some(at), Direction::Down) => changed.get(at + 1).or(changed.get(at)),
+            (Some(at), Direction::Up) => changed.get(at.saturating_sub(1)),
+        };
+        next.copied()
     }
 
     /// Unselect every line (the cursor stays and becomes the anchor). Returns whether any was
