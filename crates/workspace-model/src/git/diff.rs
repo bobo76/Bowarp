@@ -21,6 +21,8 @@ const CONTEXT_ARG: &str = "-U3";
 const NULL_FILE: &str = "/dev/null";
 /// Marks that the line before it has no newline at the end of the file.
 const NO_NEWLINE_MARK: &[u8] = b"\\";
+/// The header line of a diff that deletes the file.
+const DELETED_FILE_MARK: &[u8] = b"deleted file mode ";
 /// The first line of a file's section of a diff.
 const SECTION_START: &[u8] = b"diff --git ";
 
@@ -198,6 +200,13 @@ impl TextDiff {
             .enumerate()
             .filter(|(_, line)| line.kind != LineKind::Context)
             .map(move |(line, _)| LineRef { hunk, line })
+    }
+
+    /// Whether it deletes the file (its header has `deleted file mode`).
+    pub(super) fn deletes_file(&self) -> bool {
+        self.header
+            .split(|&byte| byte == b'\n')
+            .any(|line| line.starts_with(DELETED_FILE_MARK))
     }
 
     /// The line `line` refers to.

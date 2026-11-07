@@ -399,3 +399,75 @@ fn shows_the_diff_of_the_selected_file(cx: &mut gpui_kit::TestAppContext) {
     page.update(&mut cx, |page, _| page.hide());
     let _ = std::fs::remove_dir_all(&folder);
 }
+
+#[gpui::test]
+fn a_commit_keeps_the_selected_unstaged_file(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::Root;
+    use gpui_kit::{AppContext, VisualTestContext};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let Some(folder) = temp_repo("commit-selected") else {
+        eprintln!("git not available, skipping");
+        return;
+    };
+    run_git(&folder, &["add", "note.txt"]);
+    run_git(&folder, &["commit", "-q", "-m", "first"]);
+    std::fs::write(folder.join("a.txt"), "a\n").unwrap();
+    std::fs::write(folder.join("b.txt"), "b\n").unwrap();
+    run_git(&folder, &["add", "a.txt"]);
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::settings_file::init_in_memory(cx);
+        init(cx);
+    });
+    let captured = Rc::new(RefCell::new(None));
+    let capture = captured.clone();
+    let window = cx.add_window(move |window, cx| {
+        let page = cx.new(|cx| GitPage::new(window, cx));
+        *capture.borrow_mut() = Some(page.clone());
+        Root::new(page, window, cx)
+    });
+    let page = captured.borrow().clone().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let folders = vec![folder.clone()];
+    cx.update(|window, cx| page.update(cx, |page, cx| page.show(folders, window, cx)));
+    cx.run_until_parked();
+
+    // The selected file is the status's second; the commit leaves it the only one, so the old
+    // rows index past the new status.
+    let b = (DiffSide::Unstaged, "b.txt".to_string());
+    cx.update(|window, cx| page.update(cx, |page, cx| page.select(b.clone(), window, cx)));
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        page.update(cx, |page, cx| {
+            let target = page.target().unwrap();
+            page.committing = true;
+            page.enqueue(Op::Commit(target, "add a".to_string()), window, cx);
+        })
+    });
+    cx.run_until_parked();
+
+    let (rows, selected) = cx.update(|_, cx| {
+        let page = page.read(cx);
+        (page.rows.clone(), page.selected.clone())
+    });
+    assert_eq!(
+        rows,
+        [
+            StatusRow::Header {
+                side: DiffSide::Unstaged,
+                count: 1
+            },
+            StatusRow::File {
+                side: DiffSide::Unstaged,
+                index: 0
+            },
+        ]
+    );
+    assert_eq!(selected, Some(b));
+
+    page.update(&mut cx, |page, _| page.hide());
+    let _ = std::fs::remove_dir_all(&folder);
+}

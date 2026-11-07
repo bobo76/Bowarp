@@ -187,6 +187,22 @@ fn part_of_a_deleted_file_edits_it_instead() {
 }
 
 #[test]
+fn unstaging_part_of_a_staged_deletion_brings_those_lines_back() {
+    let Some(repo) = repo_with_change("gone.txt", "x\ny\nz\n", None, true) else {
+        return;
+    };
+    let index = apply_lines(&repo.0, "gone.txt", DiffSide::Staged, &["-y"]);
+    assert_eq!(index.as_deref(), Some("y\n"));
+    let status = read_status(&repo.0).unwrap();
+    assert_eq!(status.files[0].staged, Some(Change::Modified));
+    assert_eq!(status.files[0].unstaged, Some(Change::Deleted));
+
+    // Unstaging the rest of the deletion then restores the committed file.
+    let index = apply_lines(&repo.0, "gone.txt", DiffSide::Staged, &["-x", "-z"]);
+    assert_eq!(index.as_deref(), Some("x\ny\nz\n"));
+}
+
+#[test]
 fn unstaging_part_of_a_new_file_keeps_the_rest() {
     let Some(repo) = init_repo() else {
         return;

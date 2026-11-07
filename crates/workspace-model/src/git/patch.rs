@@ -29,7 +29,8 @@ pub struct LineRef {
 /// `selected` are ignored. `None` when no changed line is selected.
 ///
 /// Selecting every change gives the diff back as it is, so a new or deleted file is added or
-/// removed. Otherwise the patch edits the file in place. Where the end of the file has no
+/// removed. Otherwise the patch edits the file in place, except that unstaging part of a
+/// staged deletion puts the file back in the index with those lines. Where the end of the file has no
 /// newline, a selection that would leave the marker in the middle of a side takes in the rest
 /// of that change, as git cannot apply it otherwise.
 pub fn partial_patch(
@@ -45,7 +46,10 @@ pub fn partial_patch(
     if changed.is_empty() {
         return None;
     }
-    let mut patch = if changed.len() == total {
+    // Unstaging part of a staged deletion recreates the file in the index: the patch must stay
+    // a deletion (`+++ /dev/null`, its mode), as reversed it then creates the file.
+    let recreates = side == DiffSide::Staged && diff.deletes_file();
+    let mut patch = if changed.len() == total || recreates {
         diff.header.clone()
     } else {
         file_header(path)

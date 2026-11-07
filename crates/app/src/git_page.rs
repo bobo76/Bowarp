@@ -336,10 +336,12 @@ impl GitPage {
             if from != to {
                 self.swap_draft(from.as_deref(), to.as_deref(), window, cx);
             }
+            // Found in the old rows while they still index the old status.
+            let old_row = self.selected_row();
             self.repo = read.repo;
             self.status = read.status;
             self.to_watch = read.watch;
-            self.rebuild_rows();
+            self.rebuild_rows(old_row);
             self.sync_watches();
             self.sync_placeholder(window, cx);
         }
@@ -435,9 +437,9 @@ impl GitPage {
     }
 
     /// Rebuild the rows from the status; a selected file that left its group gives the
-    /// selection to the row now at its place.
-    fn rebuild_rows(&mut self) {
-        let old_index = self.selected_row();
+    /// selection to the row now at its place. `old_index`: the selected file's row before,
+    /// found while the rows still matched the status they were built from.
+    fn rebuild_rows(&mut self, old_index: Option<usize>) {
         self.rows = self
             .status()
             .map(|status| status.rows(&self.collapsed))
@@ -512,7 +514,8 @@ impl GitPage {
         if !self.collapsed.remove(&side) {
             self.collapsed.insert(side);
         }
-        self.rebuild_rows();
+        let old_row = self.selected_row();
+        self.rebuild_rows(old_row);
         self.sync_diff(window, cx);
         cx.notify();
     }
