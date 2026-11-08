@@ -2,6 +2,7 @@ mod agent_tracker;
 mod clipboard_notice;
 mod link_hover;
 mod pointer;
+mod remote;
 mod search;
 
 use std::borrow::Cow;
@@ -16,6 +17,7 @@ use agent_status::{
     AgentEvent, AgentMode, AgentModeState, AgentReport, AgentState, AgentStatus, WaitReason,
 };
 
+use agentws_remote::LocalView;
 use futures::StreamExt;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::component::ActiveTheme;
@@ -44,6 +46,8 @@ use workspace_model::{
 use self::agent_tracker::AgentTracker;
 use self::link_hover::LinkHover;
 use self::pointer::PointerState;
+use self::remote::Disconnect;
+pub use self::remote::RemoteAction;
 use crate::file_viewer::FilePlace;
 use crate::history;
 use crate::history_popup::HistoryPopup;
@@ -126,11 +130,13 @@ pub struct GridGeometry {
     pub cursor_origin: Point<Pixels>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum ProcessState {
     Running,
     /// The child exited, with its exit code when one is available.
     Exited(Option<i32>),
+    /// A remote tab lost its connection: the program may still run on its host.
+    Disconnected(Disconnect),
 }
 
 /// A command started at a shell's prompt (its `C` mark) that has not finished (`D` mark).
@@ -254,6 +260,8 @@ pub struct TerminalView {
     pub(crate) search: TerminalSearch,
     search_bar: Option<search::SearchBar>,
     title: Option<String>,
+    /// A remote tab's host, as its launch named it.
+    host: Option<String>,
     process: ProcessState,
     /// Set by the shell integration marks; agent sessions keep their hook status instead.
     running_command: Option<RunningCommand>,
@@ -283,7 +291,7 @@ pub struct SessionEvents {
 }
 
 impl SessionEvents {
-    fn new(spec: &LaunchSpec, cx: &App) -> Self {
+    pub(crate) fn new(spec: &LaunchSpec, cx: &App) -> Self {
         let (sender, receiver) = mpsc::unbounded();
         let callback: EventCallback = Arc::new(move |event| {
             let _ = sender.unbounded_send(event);
@@ -300,6 +308,15 @@ impl SessionEvents {
             spec,
             size: TermDimensions::new(INITIAL_TERMINAL_COLUMNS, INITIAL_TERMINAL_LINES),
             palette,
+        }
+    }
+
+    /// How a remote session `id` shows here with these events.
+    pub(crate) fn local_view(&self, id: u64) -> LocalView {
+        LocalView {
+            id,
+            palette: self.palette,
+            callback: self.callback.clone(),
         }
     }
 }
@@ -458,6 +475,7 @@ impl TerminalView {
             search: TerminalSearch::default(),
             search_bar: None,
             title: None,
+            host: spec.host.clone(),
             process: ProcessState::Running,
             running_command: None,
             cd_file: spec
@@ -610,6 +628,7 @@ impl TerminalView {
         }
         match self.process {
             ProcessState::Exited(_) => TabStatus::Exited,
+            ProcessState::Disconnected(_) => TabStatus::Disconnected,
             // Left by an in-place agent's run until the tab is selected.
             ProcessState::Running if self.finished_unseen => TabStatus::ReadyForReview,
             ProcessState::Running
@@ -893,6 +912,7 @@ impl TerminalView {
                 return;
             }
             SessionEvent::Exited(code) => self.on_exited(code, cx),
+            SessionEvent::Disconnected(reason) => self.on_disconnected(reason, cx),
             SessionEvent::RemoteFolderChanged => cx.emit(TabChanged),
         }
         self.refresh_history(cx);
@@ -1321,6 +1341,7 @@ impl EventEmitter<AgentExited> for TerminalView {}
 impl EventEmitter<AgentNotice> for TerminalView {}
 impl EventEmitter<OpenFileRequest> for TerminalView {}
 impl EventEmitter<LastCommandChanged> for TerminalView {}
+impl EventEmitter<RemoteAction> for TerminalView {}
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -1395,9 +1416,13 @@ impl Render for TerminalView {
 impl TerminalView {
     /// A bar below the terminal once the program exited, so a finished tab is told apart from
     /// a quiet one without looking at the sidebar.
-    fn exit_banner(&self, cx: &App) -> Option<AnyElement> {
-        let ProcessState::Exited(code) = self.process else {
-            return None;
+    fn exit_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let code = match &self.process {
+            ProcessState::Running => return None,
+            ProcessState::Exited(code) => *code,
+            ProcessState::Disconnected(disconnect) => {
+                return Some(self.disconnect_banner(disconnect, cx));
+            }
         };
         let message = match code {
             Some(code) => format!("Process exited with code {code}"),

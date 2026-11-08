@@ -105,14 +105,32 @@ fn a_spawned_shell_runs_what_is_typed() {
 fn a_session_outlives_its_connection_and_reattaches_with_its_screen() {
     let server = Server::new();
     let (client, cut, reason) = connect(&server);
-    let remote = client.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    let (callback, seen) = events();
+    let remote = client
+        .spawn(shell(None), size(40, 6), view(callback))
+        .unwrap();
+    assert_eq!(remote.session.remote_id(), Some(remote.info.id));
     remote.session.write(b"echo before-$((1 + 1))\n".to_vec());
     wait_until("the output", || screen_contains(&remote, "before-2"));
     // The network goes away.
     cut.shutdown(Shutdown::Both).unwrap();
-    assert!(!reason.recv_timeout(TIMEOUT).unwrap().is_empty());
+    let why = reason.recv_timeout(TIMEOUT).unwrap();
+    assert!(!why.is_empty());
     wait_until("the tab to see it", || remote.session.has_exited());
-    assert!(screen_contains(&remote, "connection to the server lost"));
+    // Disconnected, not exited: the tab can attach again.
+    let ends: Vec<_> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                SessionEvent::Exited(_) | SessionEvent::Disconnected(_)
+            )
+        })
+        .cloned()
+        .collect();
+    assert_eq!(ends, [SessionEvent::Disconnected(why)]);
     assert!(!client.is_connected());
     // Dropping the tab now cannot end the session: it is out of reach.
     let id = remote.info.id;
@@ -123,12 +141,64 @@ fn a_session_outlives_its_connection_and_reattaches_with_its_screen() {
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].id, id);
     assert_eq!(sessions[0].exit, None);
-    let again = client.attach(id, size(50, 8), quiet()).unwrap();
+    let again = client
+        .reattach(id, size(50, 8), quiet())
+        .unwrap()
+        .expect("the session is still there");
     // The snapshot shows what was there before.
     assert!(screen_contains(&again, "before-2"));
     assert_eq!(again.session.size(), size(50, 8));
     again.session.write(b"echo after-$((2 + 2))\n".to_vec());
     wait_until("new output", || screen_contains(&again, "after-4"));
+}
+
+#[test]
+fn reattaching_to_a_session_closed_meanwhile_finds_it_gone() {
+    let server = Server::new();
+    let (client, cut, reason) = connect(&server);
+    let remote = client.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    let id = remote.info.id;
+    cut.shutdown(Shutdown::Both).unwrap();
+    reason.recv_timeout(TIMEOUT).unwrap();
+    drop(remote);
+    // Closed on the server (`agentws-server close`) while this app was away.
+    let (other, _, _) = connect(&server);
+    other.close(id).unwrap();
+    wait_until("the close", || other.list().unwrap().is_empty());
+    assert!(other.reattach(id, size(40, 6), quiet()).unwrap().is_none());
+}
+
+#[test]
+fn a_session_that_exited_while_away_reattaches_as_exited() {
+    let server = Server::new();
+    let (client, cut, reason) = connect(&server);
+    let script = "read line; echo done-$line; exit 4";
+    let remote = client
+        .spawn(shell(Some(script)), size(40, 6), quiet())
+        .unwrap();
+    let id = remote.info.id;
+    cut.shutdown(Shutdown::Both).unwrap();
+    reason.recv_timeout(TIMEOUT).unwrap();
+    drop(remote);
+    // Another client makes it finish while this one is away.
+    let (other, _, _) = connect(&server);
+    let helper = other.attach(id, size(40, 6), quiet()).unwrap();
+    helper.session.write(b"x\n".to_vec());
+    wait_until("the exit", || helper.session.has_exited());
+    let (callback, seen) = events();
+    let (client, _, _) = connect(&server);
+    let again = client
+        .reattach(id, size(40, 6), view(callback))
+        .unwrap()
+        .expect("an exited session stays listed");
+    assert!(again.session.has_exited());
+    assert_eq!(again.session.exit_code(), Some(4));
+    assert!(screen_contains(&again, "done-x"));
+    assert!(
+        seen.lock()
+            .unwrap()
+            .contains(&SessionEvent::Exited(Some(4)))
+    );
 }
 
 #[test]

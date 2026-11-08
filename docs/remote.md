@@ -35,7 +35,9 @@ and the app can attach to them again, like tmux.
   resizing go to a `RemoteLink` that queues them for a writer thread, so the UI never waits on
   the network. A remote session never answers terminal queries: the server's session did.
   Dropping the session (closing the tab) ends it on the server; losing the connection leaves
-  it running there, and the tab shows why it stopped.
+  it running there, and the feed reports `SessionEvent::Disconnected` (not `Exited`).
+  `Client::reattach` shows it again on a new connection (a snapshot, then live output), or
+  finds it gone from the server's list.
 - **App.** Hosts are the `remote_hosts` setting (name, ssh destination, server program),
   edited on the settings page; each gets a `+` submenu. A `LaunchSpec` with a `host` runs
   there (`remote_hosts.rs`: one connection per host, opened again when a tab starts after it
@@ -43,6 +45,15 @@ and the app can attach to them again, like tmux.
   once the session runs, or an error toast says why (kept until dismissed). Tabs starting
   together on a host wait for one connection. Remote tabs get no shell integration or hooks
   and are not saved in `tabs.json`.
+- **Reconnect.** A tab whose connection was lost shows Disconnected (an unplug badge, and a
+  banner with the reason and **Reconnect**, also in its right-click menu). Reconnect
+  attaches again to the session's server id (`Session::remote_id`) through
+  `remote_hosts::reattach`, for all the host's disconnected tabs at once over one new
+  connection, and shows each new session in place (name, color, group, place, focus and
+  title kept). A session that ended there meanwhile shows "Process exited"; one gone from
+  the server (closed there, or the daemon restarted) offers **Start new**: the same program
+  on the same host, in its last folder. An unreachable host gives an error toast and leaves
+  the tabs disconnected.
 - **Folder.** After each output chunk the server reads the program's folder
   (`Session::folder_probe`: `/proc/<pid>/cwd`, one syscall) and sends `FolderChanged` when it
   differs; `SessionInfo` carries it on attach. The client keeps it in
@@ -113,7 +124,8 @@ Build the app and `agentws-server` from the same commit: a protocol version mism
 Done: protocol, server, daemon and proxy (`agentws-server`, with `list` and `close`),
 client, snapshot, remote sessions in the app's tabs, from the `+` menu's host submenus
 (hosts set on the settings page) or the command line (`--remote <host>`), and the remote
-folder: shown on the tab, and where agents and new tabs opened from it start.
+folder: shown on the tab, and where agents and new tabs opened from it start; Reconnect for
+tabs whose connection was lost.
 
 Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 
@@ -138,8 +150,6 @@ Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
   by name in the `+` menu opens on this machine (its programs are this machine's); "New tab"
   opens the host's default shell.
 - A remote agent that exits cleanly keeps its last screen: its tab doesn't go on as a shell.
-- A session whose connection was lost keeps running on the server, but the app cannot attach
-  to it again yet: `agentws-server list` and `close <id>` on the server reach it.
+- Reconnect is manual: the app does not retry a lost connection by itself.
 - Closing the app ends its remote sessions, like local ones.
-- A lost connection shows as "Process exited" on the tab, after a line saying why.
 - An exited session stays listed until a client closes it.

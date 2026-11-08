@@ -24,6 +24,10 @@ omitted unless they affect how the app is used.
   in that folder (they opened on this machine before), and an agent that exits in a remote tab
   falls back to the server's shell. The app and `agentws-server` must be updated together
   (protocol version 2).
+- A remote tab whose connection drops shows Disconnected (an unplug badge and a banner with the
+  reason) instead of "Process exited", with Reconnect in the banner and the tab's right-click
+  menu: it attaches to the session still running on the server, screen included, for all the
+  host's disconnected tabs at once. A session closed on the server meanwhile offers Start new.
 
 
 ## 0.2.57

@@ -40,6 +40,9 @@ pub enum SessionEvent {
     Bell,
     /// The child process exited, with its exit code when one is available.
     Exited(Option<i32>),
+    /// A remote session lost the connection to its server, for this reason: the program may
+    /// still run there ([`Session::remote_id`]). Sent instead of [`SessionEvent::Exited`].
+    Disconnected(String),
     /// A shell with integration started a command, with its command line when the shell
     /// reported it.
     CommandStarted(Option<String>),
@@ -208,9 +211,14 @@ impl Shared {
 
     /// The program exited: report it after its output.
     fn exit(&self) {
-        self.wake();
         let code = *self.exit_code.lock().unwrap();
-        (self.callback)(SessionEvent::Exited(code));
+        self.end(SessionEvent::Exited(code));
+    }
+
+    /// No more output comes: report why after the output, `Exited` or `Disconnected`.
+    fn end(&self, event: SessionEvent) {
+        self.wake();
+        (self.callback)(event);
         // After the callback: `has_exited()` then means no event is left to deliver.
         self.exited.store(true, Ordering::Release);
     }
@@ -267,6 +275,8 @@ pub trait RemoteLink: Send + Sync {
     fn resize(&self, size: TermDimensions);
     /// The session was dropped (its tab closed): end the program.
     fn close(&self);
+    /// The program's session id on its server.
+    fn remote_id(&self) -> u64;
 }
 
 /// Brings a remote session's output and exit, from the connection to its server.
@@ -304,8 +314,8 @@ impl SessionFeed {
         self.shared.wake();
     }
 
-    /// The program exited (`None`: without a code, or the connection was lost). Only the first
-    /// call counts.
+    /// The program exited (`None`: without a code). Only the first call to this or
+    /// [`Self::disconnected`] counts.
     pub fn exited(&self, code: Option<i32>) {
         {
             let mut exit_code = self.shared.exit_code.lock().unwrap();
@@ -315,6 +325,16 @@ impl SessionFeed {
             *exit_code = code;
         }
         self.shared.exit();
+    }
+
+    /// The connection to the server was lost: no more output or input, like an exit, but
+    /// reported as [`SessionEvent::Disconnected`]. Only the first call to this or
+    /// [`Self::exited`] counts.
+    pub fn disconnected(&self, reason: String) {
+        if self.shared.exited.load(Ordering::Acquire) {
+            return;
+        }
+        self.shared.end(SessionEvent::Disconnected(reason));
     }
 
     pub fn has_exited(&self) -> bool {
@@ -487,6 +507,12 @@ impl Session {
     /// local session.
     pub fn remote_folder(&self) -> Option<String> {
         self.shared.remote_folder.lock().unwrap().clone()
+    }
+
+    /// A remote session's id on its server, to attach to it again; `None` for a local
+    /// session.
+    pub fn remote_id(&self) -> Option<u64> {
+        self.shared.link.as_ref().map(|link| link.remote_id())
     }
 
     pub fn palette(&self) -> Palette {
@@ -756,6 +782,10 @@ mod remote_tests {
         fn close(&self) {
             self.0.lock().unwrap().push("close".into());
         }
+
+        fn remote_id(&self) -> u64 {
+            42
+        }
     }
 
     #[test]
@@ -798,6 +828,40 @@ mod remote_tests {
         assert_eq!(exits, 1);
         drop(session);
         assert_eq!(sent.lock().unwrap().last().unwrap(), "close");
+    }
+
+    #[test]
+    fn a_lost_connection_ends_the_session_as_disconnected_not_exited() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let seen = events.clone();
+        let (session, feed) = Session::remote(
+            1,
+            SessionKind::Shell,
+            TermDimensions::new(20, 3),
+            Palette::default(),
+            Arc::new(move |event| seen.lock().unwrap().push(event)),
+            Box::new(FakeLink::default()),
+        );
+        assert_eq!(session.remote_id(), Some(42));
+        feed.output(b"hi");
+        feed.disconnected("ssh died".into());
+        feed.disconnected("again".into());
+        feed.exited(Some(0));
+        assert!(session.has_exited());
+        assert_eq!(session.exit_code(), None);
+        let ends: Vec<_> = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    SessionEvent::Exited(_) | SessionEvent::Disconnected(_)
+                )
+            })
+            .cloned()
+            .collect();
+        assert_eq!(ends, [SessionEvent::Disconnected("ssh died".into())]);
     }
 }
 

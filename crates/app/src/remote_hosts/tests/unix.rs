@@ -137,3 +137,78 @@ fn a_failed_connection_names_the_host() {
         "{err}"
     );
 }
+
+fn reattach(server_id: u64, id: u64) -> Reattach {
+    Reattach {
+        server_id,
+        size: TermDimensions::new(40, 5),
+        view: LocalView {
+            id,
+            palette: Palette::default(),
+            callback: Arc::new(|_| {}),
+        },
+    }
+}
+
+#[test]
+fn lost_tabs_reattach_over_one_new_connection_and_a_closed_one_is_gone() {
+    let server = Server::new();
+    let (mut hosts, connects, sockets) = hosts(&server);
+    let first = spawn(&mut hosts, 1).unwrap();
+    let second = spawn(&mut hosts, 2).unwrap();
+    first.write(b"echo kept-$((2 + 3))\n".as_slice());
+    wait_until("the output", || {
+        first
+            .visible_text()
+            .iter()
+            .any(|line| line.contains("kept-5"))
+    });
+    let ids = (first.remote_id().unwrap(), second.remote_id().unwrap());
+    sockets.lock().unwrap()[0].shutdown(Shutdown::Both).unwrap();
+    wait_until("the tabs to see the loss", || {
+        first.has_exited() && second.has_exited()
+    });
+    // A new tab opens the host's connection again; the second session is closed on the
+    // server meanwhile (`agentws-server close`).
+    drop(spawn(&mut hosts, 9).unwrap());
+    assert_eq!(connects.load(Ordering::SeqCst), 2);
+    let client = hosts.connections["box"].lock().unwrap().clone().unwrap();
+    client.close(ids.1).unwrap();
+    wait_until("the close", || {
+        client.list().unwrap().iter().all(|info| info.id != ids.1)
+    });
+    let results = hosts
+        .prepare_reattach(box_target(), vec![reattach(ids.0, 4), reattach(ids.1, 5)])
+        .run()
+        .unwrap();
+    assert_eq!(
+        connects.load(Ordering::SeqCst),
+        2,
+        "the live connection is reused"
+    );
+    let [again, gone] = <[Reattached; 2]>::try_from(results).ok().unwrap();
+    let again = again.unwrap().expect("still running there");
+    assert_eq!(again.id(), 4);
+    assert!(
+        again
+            .visible_text()
+            .iter()
+            .any(|line| line.contains("kept-5"))
+    );
+    assert!(gone.unwrap().is_none());
+}
+
+#[test]
+fn an_unreachable_host_fails_the_whole_reattach() {
+    let mut hosts = RemoteHosts::with_connector(Arc::new(|_: &Target| {
+        Err(io::Error::other(
+            "ssh: connect to host box port 22: No route to host",
+        ))
+    }));
+    let err = hosts
+        .prepare_reattach(box_target(), vec![reattach(1, 1)])
+        .run()
+        .err()
+        .unwrap();
+    assert!(err.to_string().contains("No route to host"), "{err}");
+}

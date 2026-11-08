@@ -1,6 +1,7 @@
 mod busy_close;
 mod divider_drag;
 mod empty_state;
+mod reconnect;
 mod settings_pane;
 mod sidebar_rows;
 mod spinner_clock;
@@ -63,8 +64,8 @@ use crate::sidebar::{self, SIDEBAR_WIDTH};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
 use crate::terminal_view::{
-    AgentExited, AgentNotice, LastCommandChanged, OpenFileRequest, StatusReporting, TabChanged,
-    TerminalView,
+    AgentExited, AgentNotice, LastCommandChanged, OpenFileRequest, RemoteAction, StatusReporting,
+    TabChanged, TerminalView,
 };
 use crate::window_bounds;
 
@@ -185,6 +186,9 @@ pub enum TabOwnership {
     Guest,
 }
 
+/// What the workspace follows of a tab's session view (`listen_to_tab`).
+type TabSubscriptions = [Subscription; 6];
+
 struct Tab {
     /// The first session's id, which stays with the tab when tabs move (and when an agent's
     /// tab goes on as a shell, a new session).
@@ -195,7 +199,7 @@ struct Tab {
     meta: TabMeta,
     /// The file the tab shows beside its terminal; `None` when the viewer is closed.
     viewer: Option<TabViewer>,
-    _view_events: [Subscription; 5],
+    _view_events: TabSubscriptions,
 }
 
 struct TabViewer {
@@ -594,7 +598,7 @@ impl WorkspaceView {
         &mut self,
         id: u64,
         view: Entity<TerminalView>,
-        view_events: [Subscription; 5],
+        view_events: TabSubscriptions,
         spec: LaunchSpec,
         meta: TabMeta,
     ) {
@@ -615,7 +619,7 @@ impl WorkspaceView {
         spec: &LaunchSpec,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> io::Result<(Entity<TerminalView>, [Subscription; 5])> {
+    ) -> io::Result<(Entity<TerminalView>, TabSubscriptions)> {
         let session_id = self.next_session_id;
         let mut launch = spec.clone();
         // First: a shell with integration also gets the agents' hooks.
@@ -656,14 +660,14 @@ impl WorkspaceView {
     }
 
     /// Follow tab `tab_id`'s session view: what it shows, its agent exiting, files it opens,
-    /// agent notices and its last command.
+    /// agent notices, its last command and a remote tab's Reconnect or Start new.
     fn listen_to_tab(
         &mut self,
         tab_id: u64,
         view: &Entity<TerminalView>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> [Subscription; 5] {
+    ) -> TabSubscriptions {
         let changed = cx.subscribe(view, |workspace, _, _: &TabChanged, cx| {
             workspace.sync_explorer(cx);
             cx.notify();
@@ -692,7 +696,14 @@ impl WorkspaceView {
         let last_command = cx.subscribe(view, |workspace, _, _: &LastCommandChanged, cx| {
             workspace.save_tabs(cx);
         });
-        [changed, exited, open_file, notice, last_command]
+        let remote = cx.subscribe_in(
+            view,
+            window,
+            move |workspace, _, action: &RemoteAction, window, cx| {
+                workspace.run_remote_action(tab_id, *action, window, cx);
+            },
+        );
+        [changed, exited, open_file, notice, last_command, remote]
     }
 
     fn notify_agent(
@@ -793,6 +804,22 @@ impl WorkspaceView {
     ) -> io::Result<()> {
         let tab_id = self.tabs[index].id;
         let (view, view_events) = self.start_session(tab_id, &spec, window, cx)?;
+        self.swap_tab_view(index, view, view_events, spec, window, cx);
+        Ok(())
+    }
+
+    /// Show `view` (a new session started from `spec`) in tab `index` instead of its
+    /// current one, which ends: the tab keeps its name, color, place, open file and focus.
+    fn swap_tab_view(
+        &mut self,
+        index: usize,
+        view: Entity<TerminalView>,
+        view_events: TabSubscriptions,
+        spec: LaunchSpec,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab_id = self.tabs[index].id;
         let had_focus = self.tabs[index]
             .view
             .read(cx)
@@ -813,7 +840,7 @@ impl WorkspaceView {
             view.update(cx, |view, _| view.hide());
             self.sync_explorer(cx);
             cx.notify();
-            return Ok(());
+            return;
         }
         view.update(cx, |view, cx| view.show(cx));
         if had_focus {
@@ -821,7 +848,6 @@ impl WorkspaceView {
         }
         self.sync_explorer(cx);
         cx.notify();
-        Ok(())
     }
 
     /// Show `path` in tab `tab_id`'s file viewer, opening the viewer when it is closed.
@@ -1279,6 +1305,7 @@ impl WorkspaceView {
         let location = tab.view.read(cx).location();
         let own_group = self.layout.group_of(id).map(|group| group.id);
         Some(TabMenuState {
+            can_reconnect: self.can_reconnect(id, cx),
             pinned: self.layout.is_pinned(id),
             has_custom_name: tab.meta.custom_name.is_some(),
             other_groups: self
@@ -1310,6 +1337,7 @@ impl WorkspaceView {
         };
         let location = self.tabs[index].view.read(cx).location().cloned();
         match command {
+            TabCommand::Reconnect => self.reconnect(id, window, cx),
             TabCommand::Duplicate => self.duplicate_tab(index, window, cx),
             TabCommand::TogglePin => {
                 self.layout.toggle_pin(id);

@@ -25,8 +25,18 @@ Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in
 
 - Windows app to a Linux host over real ssh (`ssh.exe` with a key): the tab opens without a
   console window flashing up, typing, resizing, colors and Claude Code's full screen work;
-  pulling the network shows the lost-connection line, and `agentws-server list` on the host
+  pulling the network shows the tab Disconnected, and `agentws-server list` on the host
   still shows the session.
+- Reconnect (rebuild app and server): pulling the network (or killing the tab's `ssh`) turns
+  its remote tabs Disconnected (unplug badge, banner "Connection to <host> lost: ..." with
+  Reconnect, not "Process exited"); Reconnect from the banner or the tab's right-click menu
+  shows "Reconnecting to <host>…", then the screen comes back and typing works, in place
+  (name, color, group, focus kept), for all the host's disconnected tabs at once over one
+  ssh. Host still unreachable: an error toast, and the tab can try again. A session that
+  exited meanwhile shows "Process exited with code N"; one closed with `agentws-server close`
+  shows "The session is gone ..." with Start new, which starts the same program in its last
+  folder. Linux and Windows.
+
 - Remote folder (rebuild app and server: protocol 2): `cd` in a remote shell tab updates the
   folder on its card and row; with it selected, Claude Code from the `+` menu, "New tab"
   (Ctrl+T) and Duplicate open on the host in that folder; a shell picked by name opens here;
@@ -421,9 +431,6 @@ Tabs whose programs run on another machine through `agentws-server` over ssh; de
 limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the command line
 (`--remote <host>`); next steps, in order:
 
-- Disconnected remote tab: a "disconnected" state on the tab (instead of "Process exited")
-  with Reconnect, which attaches to the same server session again; a remote agent exiting
-  cleanly goes on as a shell on its host.
 - Restore: `tabs.json` saves a remote tab's host and session id; on start, attach to it again
   (or offer to start a new one when it is gone); a host's running sessions not shown in a tab
   are listed to attach.

@@ -676,6 +676,11 @@ menu.
 `--remote <host>` on the command line takes a destination or a host's name; for a host not in
 the list, the server program comes from `AGENTWS_REMOTE_SERVER`, else `agentws-server`.
 
+When the connection drops, the host's tabs show Disconnected and their programs go on running
+on the server: **Reconnect** (in the banner below the terminal, or the tab's right-click menu)
+brings them all back with their screen. A session closed on the server meanwhile offers
+**Start new**, the same program in its last folder.
+
 ### Keyboard shortcuts
 
 The `"keybindings"` object in `settings.json` changes the default shortcuts key by key: an

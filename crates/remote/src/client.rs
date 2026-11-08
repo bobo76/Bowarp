@@ -258,6 +258,20 @@ impl Client {
         })
     }
 
+    /// Show again a session this app showed before its connection was lost: `None` when the
+    /// server no longer has it (closed there, or the server restarted).
+    pub fn reattach(
+        &self,
+        session: u64,
+        size: TermDimensions,
+        view: LocalView,
+    ) -> io::Result<Option<RemoteSession>> {
+        if !self.list()?.iter().any(|info| info.id == session) {
+            return Ok(None);
+        }
+        self.attach(session, size, view).map(Some)
+    }
+
     fn attach_with(
         &self,
         view: LocalView,
@@ -463,12 +477,9 @@ impl Inner {
         self.outgoing.lock().unwrap().take();
         // Dropping the reply senders wakes the waiters with "connection ended".
         self.pending.lock().unwrap().clear();
-        let notice = format!("\r\n\x1b[0;2m[connection to the server lost: {reason}]\x1b[0m\r\n");
+        // The programs go on running on the server: their tabs can attach to them again.
         for feed in self.feeds.lock().unwrap().drain().map(|(_, feed)| feed) {
-            if !feed.has_exited() {
-                feed.output(notice.as_bytes());
-            }
-            feed.exited(None);
+            feed.disconnected(reason.to_owned());
         }
     }
 }
@@ -514,5 +525,9 @@ impl RemoteLink for Link {
                 session: self.session,
             });
         }
+    }
+
+    fn remote_id(&self) -> u64 {
+        self.session
     }
 }
