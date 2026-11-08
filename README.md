@@ -69,6 +69,13 @@ Shift+Tab move between them, Enter or Space opens one), and the file explorer hi
 next tab. Closing the window works as usual; at the next start the groups come back and the
 default shell opens as the first tab.
 
+Remote hosts (see [Remote hosts](#remote-hosts)) follow the local programs in the `+` menu, one
+submenu each, with the host's default shell, Claude Code and Copilot CLI, started in its home
+folder, and named after it ("Shell (box)") until the program sets a title. Connecting takes a
+moment: a "Connecting to <host>" toast shows meanwhile, and the tab opens once the session
+runs there. When it can't start (ssh's own message, e.g. a host it can't resolve or a key it
+refuses), an error toast says why and stays until dismissed.
+
 | Keys | Action |
 |---|---|
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
@@ -647,6 +654,32 @@ status, status dots and attention badges are unchanged, and a toast already on s
 until it hides. An agent that exits with a nonzero or unknown exit code still shows its toast.
 Toasts that answer something you did (save or delete errors, history cleared, failed starts)
 and the persistent fallback-shell warning always show.
+
+### Remote hosts
+
+Settings → Remote hosts lists the machines whose shells and agents can open in tabs here
+(`remote_hosts` in `settings.json`), through `agentws-server` over ssh
+([docs/remote.md](docs/remote.md)). Add host, then fill in its **Name** (shown in the menu;
+empty for the host part of the destination), its **ssh destination** (`[user@]host`,
+or a `Host` from your ssh config) and, when `agentws-server` is not on the `PATH` of
+non-interactive ssh logins there, its **Server program** (e.g. `~/.cargo/bin/agentws-server`).
+Each row shows the command connecting runs; Remove host deletes it. ssh must log in without
+asking: use a key or an agent. A host without a destination stays on the page but not in the
+menu.
+
+```json
+"remote_hosts": [
+  { "name": "Build box", "destination": "me@build-box", "server_program": "" }
+]
+```
+
+`--remote <host>` on the command line takes a destination or a host's name; for a host not in
+the list, the server program comes from `AGENTWS_REMOTE_SERVER`, else `agentws-server`.
+
+When the connection drops, the host's tabs show Disconnected and their programs go on running
+on the server: **Reconnect** (in the banner below the terminal, or the tab's right-click menu)
+brings them all back with their screen. A session closed on the server meanwhile offers
+**Start new**, the same program in its last folder.
 
 ### Keyboard shortcuts
 

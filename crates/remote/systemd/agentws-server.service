@@ -1,0 +1,25 @@
+# Keeps this user's agentws-server daemon running, instead of `agentws-server proxy` starting it
+# on the first connection and it exiting when idle. Install (on the server):
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp agentws-server.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agentws-server
+#   loginctl enable-linger "$USER"   # start at boot and keep running without a login
+#
+# The daemon listens on the same per-user socket the proxy connects to, so nothing else
+# changes. Stopping or restarting the unit ends every session it runs.
+
+[Unit]
+Description=Agent Workspace remote session server
+
+[Service]
+# A login shell, so the sessions get the PATH and variables of the user's profile (where
+# claude, copilot and ~/.cargo/bin usually come from), as when ssh starts the daemon.
+ExecStart=/bin/bash -lc 'exec "%h/.cargo/bin/agentws-server" serve --idle-exit 0'
+WorkingDirectory=%h
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -1053,3 +1053,87 @@ fn an_in_place_claude_without_its_settings_has_no_status(cx: &mut gpui_kit::Test
         assert_eq!(view.tab_status(), TabStatus::Unavailable);
     });
 }
+
+#[test]
+fn the_disconnect_banner_says_what_happened_and_offers_the_next_step() {
+    use remote::DisconnectPhase;
+
+    let mut disconnect = Disconnect::lost("ssh: broken pipe".into());
+    assert_eq!(
+        disconnect.message("box"),
+        "Connection to box lost: ssh: broken pipe"
+    );
+    assert_eq!(
+        disconnect.action(),
+        Some(("Reconnect", RemoteAction::Reconnect))
+    );
+    disconnect.phase = DisconnectPhase::Reconnecting;
+    assert_eq!(disconnect.message("box"), "Reconnecting to box…");
+    assert_eq!(disconnect.action(), None);
+    disconnect.phase = DisconnectPhase::Gone;
+    assert!(
+        disconnect
+            .message("box")
+            .starts_with("The session is gone from box")
+    );
+    assert_eq!(
+        disconnect.action(),
+        Some(("Start new", RemoteAction::StartNew))
+    );
+    disconnect.phase = DisconnectPhase::Starting;
+    assert_eq!(disconnect.message("box"), "Starting a new session on box…");
+    assert_eq!(disconnect.action(), None);
+}
+
+/// A remote session's link that sends nothing anywhere.
+struct NoLink;
+
+impl term_core::RemoteLink for NoLink {
+    fn write(&self, _: Cow<'static, [u8]>) {}
+    fn resize(&self, _: TermDimensions) {}
+    fn close(&self) {}
+    fn remote_id(&self) -> u64 {
+        77
+    }
+}
+
+#[gpui::test]
+fn a_disconnected_remote_tab_reconnects_or_starts_new(cx: &mut gpui_kit::TestAppContext) {
+    let mut spec = LaunchSpec::new(SessionKind::Shell, Some("sh".into()), Vec::new(), None);
+    spec.host = Some("box".into());
+    let (session, _feed) = Session::remote(
+        1,
+        SessionKind::Shell,
+        TermDimensions::new(40, 5),
+        Palette::default(),
+        Arc::new(|_| {}),
+        Box::new(NoLink),
+    );
+    let view = cx.new(|cx| TerminalView::from_test_session(session, &spec, cx));
+    view.update(cx, |view, cx| {
+        assert!(!view.can_reconnect());
+        view.on_session_event(SessionEvent::Disconnected("cut".into()), cx);
+        assert_eq!(view.tab_status(), TabStatus::Disconnected);
+        assert!(!view.at_prompt());
+        assert!(view.can_reconnect());
+        let (_, reattach) = view.begin_reconnect(2, &spec, cx).unwrap();
+        assert_eq!(reattach.server_id, 77);
+        assert_eq!(reattach.size, TermDimensions::new(40, 5));
+        assert_eq!(reattach.view.id, 2);
+        assert!(!view.can_reconnect(), "one reconnect at a time");
+        assert!(view.begin_reconnect(3, &spec, cx).is_none());
+        // Unreachable: back to Reconnect.
+        view.end_reconnect(false, cx);
+        assert!(view.can_reconnect());
+        assert!(
+            !view.begin_start_new(cx),
+            "Start new only once the session is gone"
+        );
+        view.begin_reconnect(3, &spec, cx).unwrap();
+        view.end_reconnect(true, cx);
+        assert!(!view.can_reconnect());
+        assert!(view.begin_start_new(cx));
+        assert!(!view.begin_start_new(cx));
+        assert_eq!(view.tab_status(), TabStatus::Disconnected);
+    });
+}

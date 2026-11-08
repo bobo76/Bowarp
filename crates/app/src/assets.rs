@@ -23,11 +23,12 @@ pub const FILE_DATA_ICON: &str = "icons/agentws/file-braces.svg";
 pub const FILE_ARCHIVE_ICON: &str = "icons/agentws/file-archive.svg";
 pub const MARKDOWN_ICON: &str = "icons/agentws/markdown.svg";
 pub const CODE_ICON: &str = "icons/agentws/code-xml.svg";
+pub const UNPLUG_ICON: &str = "icons/agentws/unplug.svg";
 pub const APP_ICON: &str = "icons/agentws/app-icon.svg";
 
 /// Icons bundled with the app: (asset path, SVG). `git-branch`, `pin`, `terminal`,
-/// `square-chevron-right`, `files`, `folder-up`, `code-xml` and the `file-*` icons are from
-/// Lucide (ISC, see `assets/icons/LICENSE-LUCIDE`); `git`, `gnubash`, `zsh`, `fishshell`,
+/// `square-chevron-right`, `files`, `folder-up`, `code-xml`, `unplug` and the `file-*` icons
+/// are from Lucide (ISC, see `assets/icons/LICENSE-LUCIDE`); `git`, `gnubash`, `zsh`, `fishshell`,
 /// `ubuntu`, `debian`, `linux`, `githubcopilot` and `markdown` are from Simple Icons 15.0.0
 /// (CC0, see `assets/icons/LICENSE-SIMPLE-ICONS`); the spark and the app icon are our own.
 const ICONS: &[(&str, &[u8])] = &[
@@ -82,6 +83,7 @@ const ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/markdown.svg"),
     ),
     (CODE_ICON, include_bytes!("../assets/icons/code-xml.svg")),
+    (UNPLUG_ICON, include_bytes!("../assets/icons/unplug.svg")),
     (
         APP_ICON,
         include_bytes!("../assets/app-icon/agent-workspace.svg"),

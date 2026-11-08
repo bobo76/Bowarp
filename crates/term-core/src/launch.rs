@@ -17,6 +17,8 @@ pub struct LaunchSpec {
     /// The token the injected shell integration script puts in its OSC 133 marks; `None`
     /// (no integration) reads the output unchanged.
     pub mark_token: Option<String>,
+    /// The ssh destination of the machine the program runs on; `None` runs it here.
+    pub host: Option<String>,
 }
 
 impl LaunchSpec {
@@ -46,6 +48,7 @@ impl LaunchSpec {
             cwd,
             env: HashMap::new(),
             mark_token: None,
+            host: None,
         }
     }
 

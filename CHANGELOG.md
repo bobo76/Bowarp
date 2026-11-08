@@ -5,11 +5,31 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.58
+
+- Remote tabs (docs/remote.md): shells, Claude Code and Copilot CLI running on another
+  machine through `agentws-server` over ssh, and still running there when the connection
+  drops. Hosts are set on the new settings page Remote hosts (name, ssh destination, server
+  program) and each gets a submenu in the `+` menu; `agent-workspace --remote <host>` opens one
+  from the command line. Connecting doesn't block the window: a toast shows meanwhile, and
+  ssh's error stays on screen until dismissed when it fails.
 - Claude Code and Copilot CLI tabs show their running subagents: their count in a ring after the
   tab name (turning while the list is folded in, orange while one waits for you) and their list
   under the row (description or type, a warning mark while waiting); click the ring to fold the
   list. The tab's own status is unchanged.
-
+- Remote sessions: a systemd user unit (`crates/remote/systemd/agentws-server.service`) keeps
+  `agentws-server` running on the server instead of starting it on the first connection, and
+  docs/remote.md explains the `command not found` an ssh login gives when `~/.cargo/bin` is
+  only added by rustup's line at the end of Ubuntu's `~/.bashrc`.
+- Remote tabs show their folder on the server, and follow `cd`. With a remote tab selected,
+  Claude Code or Copilot CLI in the `+` menu, "New tab" and Duplicate open on the same server
+  in that folder (they opened on this machine before), and an agent that exits in a remote tab
+  falls back to the server's shell. The app and `agentws-server` must be updated together
+  (protocol version 2).
+- A remote tab whose connection drops shows Disconnected (an unplug badge and a banner with the
+  reason) instead of "Process exited", with Reconnect in the banner and the tab's right-click
+  menu: it attaches to the session still running on the server, screen included, for all the
+  host's disconnected tabs at once. A session closed on the server meanwhile offers Start new.
 
 ## 0.2.57
 

@@ -19,6 +19,8 @@ use crate::workspace_view::DuplicateTab;
 /// What the tab menu (`⋮` button or right-click) does to its tab.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabCommand {
+    /// Attach a remote tab whose connection was lost to its session again.
+    Reconnect,
     Duplicate,
     TogglePin,
     NewGroup,
@@ -39,6 +41,8 @@ pub enum TabCommand {
 
 /// What the menu shows about its tab, read when it opens.
 pub struct TabMenuState {
+    /// A remote tab lost its connection: "Reconnect" comes first.
+    pub can_reconnect: bool,
     pub pinned: bool,
     /// The tab has a custom name, so "Reset name" is offered.
     pub has_custom_name: bool,
@@ -74,6 +78,10 @@ pub fn build(
     let pick_color = run.clone();
     let duplicate = run.clone();
     menu.min_w(px(crate::ui_dimensions::MENU_WIDTH))
+        .when(state.can_reconnect, |menu| {
+            menu.item(item("Reconnect", TabCommand::Reconnect, true))
+                .separator()
+        })
         .item(
             PopupMenuItem::element(|_, cx| {
                 shortcuts::menu_label_with_hint("duplicate-tab", "Duplicate tab", &DuplicateTab, cx)

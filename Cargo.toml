@@ -5,7 +5,7 @@ members = ["crates/*"]
 [workspace.package]
 edition = "2024"
 rust-version = "1.95"
-version = "0.2.57"
+version = "0.2.58"
 repository = "https://github.com/bobo76/Bowarp"
 publish = false
 
@@ -26,6 +26,7 @@ notify = "8.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 agent-status = { path = "crates/agent-status" }
+agentws-remote = { path = "crates/remote" }
 term-core = { path = "crates/term-core" }
 workspace-model = { path = "crates/workspace-model" }
 

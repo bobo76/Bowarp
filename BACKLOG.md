@@ -10,6 +10,38 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in for ssh:
+
+- Settings → Remote hosts: Add host, type the three fields (the row title and "Connects with"
+  line follow), Remove host on a middle host (the fields below show the right values); a host
+  edited by hand in `settings.json` shows on the page. Linux and Windows.
+- `+` menu: a submenu per host with a destination, none for a host without one; Shell, Claude
+  Code and Copilot CLI open on the host in its home folder, named "Shell (host)"; the window
+  stays responsive while connecting (toast "Connecting to ..."), and two tabs started quickly
+  on a host share one ssh connection.
+- An unreachable host (wrong name, refused key, missing server program): the error toast
+  shows ssh's message and stays until closed; `--remote <unreachable>` the same, after the
+  local tab opens.
+
+- Windows app to a Linux host over real ssh (`ssh.exe` with a key): the tab opens without a
+  console window flashing up, typing, resizing, colors and Claude Code's full screen work;
+  pulling the network shows the tab Disconnected, and `agentws-server list` on the host
+  still shows the session.
+- Reconnect (rebuild app and server): pulling the network (or killing the tab's `ssh`) turns
+  its remote tabs Disconnected (unplug badge, banner "Connection to <host> lost: ..." with
+  Reconnect, not "Process exited"); Reconnect from the banner or the tab's right-click menu
+  shows "Reconnecting to <host>…", then the screen comes back and typing works, in place
+  (name, color, group, focus kept), for all the host's disconnected tabs at once over one
+  ssh. Host still unreachable: an error toast, and the tab can try again. A session that
+  exited meanwhile shows "Process exited with code N"; one closed with `agentws-server close`
+  shows "The session is gone ..." with Start new, which starts the same program in its last
+  folder. Linux and Windows.
+
+- Remote folder (rebuild app and server: protocol 2): `cd` in a remote shell tab updates the
+  folder on its card and row; with it selected, Claude Code from the `+` menu, "New tab"
+  (Ctrl+T) and Duplicate open on the host in that folder; a shell picked by name opens here;
+  `/exit` in a remote Claude tab falls back to the host's shell in the same folder.
+
 Subagent list (Claude Code 2.1.316, Copilot CLI 1.0.105):
 
 - Real Claude Code: a background subagent (`run_in_background`) shows under the tab with its
@@ -392,6 +424,26 @@ UX review, Tier 2 (small polish, one batch):
   keyboard, the idle window keeps redrawing (about 22 CPU ticks/s in Xvfb, even after going
   back to the terminal; a fresh start idles at 0-2). Find what keeps notifying (cursor blink of
   the unfocused input?) and stop it.
+
+### Remote sessions
+
+Tabs whose programs run on another machine through `agentws-server` over ssh; design and
+limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the command line
+(`--remote <host>`); next steps, in order:
+
+- Restore: `tabs.json` saves a remote tab's host and session id; on start, attach to it again
+  (or offer to start a new one when it is gone); a host's running sessions not shown in a tab
+  are listed to attach.
+- Shell integration and status on the server: the server writes the integration scripts and
+  sets the mark token, forwards `CommandStarted/Finished/Executed`, `AgentStarted/Finished`
+  and progress as protocol events; agents get their hook settings and the server's own
+  `HookServer`, whose reports are forwarded to the app.
+- Git branch and file explorer for remote tabs: requests to the server (`workspace-model`
+  git and file tree run there), or hidden for remote tabs. The folder is known already
+  (`Session::remote_folder`); show it shortened to `~` with the server's home folder.
+- Server on Windows: build and test `agentws-server` there (named pipe, detached start).
+- Packaging: ship `agentws-server` in the Linux release and document installing it on the
+  server (README); a version check that names both versions when they differ.
 
 ### Git
 

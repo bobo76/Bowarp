@@ -16,6 +16,45 @@ fn wsl_launch_is_named_after_its_distro() {
 }
 
 #[test]
+fn remote_tabs_are_named_after_their_program_and_host() {
+    let remote = |mut spec: LaunchSpec| {
+        spec.host = Some("me@box".into());
+        default_name(&spec)
+    };
+    // Not this machine's $SHELL: the server picks the shell.
+    assert_eq!(remote(LaunchSpec::shell(None)), "Shell (box)");
+    assert_eq!(remote(LaunchSpec::agent(CLAUDE, None)), "Claude Code (box)");
+    let zsh = LaunchSpec::new(
+        SessionKind::Shell,
+        Some("/bin/zsh".into()),
+        Vec::new(),
+        None,
+    );
+    assert_eq!(remote(zsh), "zsh (box)");
+}
+
+#[test]
+fn a_remote_host_offers_its_shell_then_the_agents_in_its_home_folder() {
+    let launches = remote_launches("me@box");
+    let labels: Vec<_> = launches
+        .iter()
+        .map(|launch| launch.label.as_str())
+        .collect();
+    assert_eq!(labels, ["Shell", CLAUDE.label(), COPILOT.label()]);
+    assert_eq!(launches[1].spec.kind, SessionKind::Agent(CLAUDE));
+    for launch in &launches {
+        assert_eq!(launch.spec.host.as_deref(), Some("me@box"));
+        assert_eq!(launch.spec.cwd, None, "the server's home folder");
+    }
+    // The server's default shell, and agents found on its PATH, not paths on this machine.
+    assert_eq!(launches[0].spec.program, None);
+    assert_eq!(
+        launches[1].spec.program.as_deref(),
+        Some(CLAUDE.executable())
+    );
+}
+
+#[test]
 fn git_bash_has_the_git_icon() {
     let launcher = git_bash_launcher(PathBuf::from(r"C:\Program Files\Git\bin\bash.exe"));
     assert_eq!(launcher.label, "Git Bash");
@@ -77,6 +116,38 @@ fn quoted_or_escaped_windows_paths_survive_agent_argument_parsing() {
             );
         }
     }
+}
+
+#[test]
+fn remote_launches_run_the_agent_by_name_in_the_hosts_folder() {
+    let settings = Settings {
+        claude_args: "--model opus".into(),
+        ..Settings::default()
+    };
+    let claude = remote_spec(
+        SessionKind::Agent(CLAUDE),
+        "me@box",
+        Some("/srv/app"),
+        &settings,
+    )
+    .unwrap();
+    assert_eq!(claude.host.as_deref(), Some("me@box"));
+    assert_eq!(claude.kind, SessionKind::Agent(CLAUDE));
+    assert_eq!(claude.program.as_deref(), Some(CLAUDE.executable()));
+    assert_eq!(claude.args, ["--model", "opus"]);
+    assert_eq!(claude.cwd, Some(PathBuf::from("/srv/app")));
+
+    // The host's default shell, in its home folder.
+    let shell = remote_spec(SessionKind::Shell, "box", None, &settings).unwrap();
+    assert_eq!(shell.host.as_deref(), Some("box"));
+    assert_eq!((shell.program, shell.cwd), (None, None));
+    assert!(shell.args.is_empty());
+
+    let broken = Settings {
+        claude_args: "'unclosed".into(),
+        ..Settings::default()
+    };
+    assert!(remote_spec(SessionKind::Agent(CLAUDE), "box", None, &broken).is_err());
 }
 
 #[test]

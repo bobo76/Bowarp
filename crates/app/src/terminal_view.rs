@@ -2,11 +2,13 @@ mod agent_tracker;
 mod clipboard_notice;
 mod link_hover;
 mod pointer;
+mod remote;
 mod search;
 
 use std::borrow::Cow;
 use std::fs;
 use std::io;
+use std::mem;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,8 +18,9 @@ use agent_status::{
     AgentEvent, AgentMode, AgentModeState, AgentReport, AgentState, AgentStatus, WaitReason,
 };
 
+use agentws_remote::LocalView;
 use futures::StreamExt;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
@@ -30,8 +33,8 @@ use gpui_kit::{
 use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::term::TermMode;
 use term_core::{
-    EventCallback, ExecutedCommand, LaunchSpec, Session, SessionEvent, SessionKind, TermDimensions,
-    TerminalSearch,
+    EventCallback, ExecutedCommand, LaunchSpec, Palette, Session, SessionEvent, SessionKind,
+    TermDimensions, TerminalSearch,
 };
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
@@ -44,12 +47,15 @@ use workspace_model::{
 use self::agent_tracker::AgentTracker;
 use self::link_hover::LinkHover;
 use self::pointer::PointerState;
+use self::remote::Disconnect;
+pub use self::remote::RemoteAction;
 use crate::file_viewer::FilePlace;
 use crate::history;
 use crate::history_popup::HistoryPopup;
 use crate::keymap;
 use crate::keys;
 use crate::launcher;
+use crate::remote_hosts;
 use crate::scrollbar::{self, ScrollbarLayout, ScrollbarState};
 use crate::settings_file::{self, AppSettings};
 use crate::shell_integration;
@@ -125,11 +131,13 @@ pub struct GridGeometry {
     pub cursor_origin: Point<Pixels>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum ProcessState {
     Running,
     /// The child exited, with its exit code when one is available.
     Exited(Option<i32>),
+    /// A remote tab lost its connection: the program may still run on its host.
+    Disconnected(Disconnect),
 }
 
 /// A command started at a shell's prompt (its `C` mark) that has not finished (`D` mark).
@@ -253,6 +261,8 @@ pub struct TerminalView {
     pub(crate) search: TerminalSearch,
     search_bar: Option<search::SearchBar>,
     title: Option<String>,
+    /// A remote tab's host, as its launch named it.
+    host: Option<String>,
     process: ProcessState,
     /// Set by the shell integration marks; agent sessions keep their hook status instead.
     running_command: Option<RunningCommand>,
@@ -267,8 +277,54 @@ pub struct TerminalView {
     _session_events: Task<()>,
 }
 
+/// A remote session being started, or why it could not be (see
+/// [`TerminalView::start_remote`]).
+pub type RemoteStarted = oneshot::Receiver<io::Result<Session>>;
+
+/// Where a session's events go until its view takes them (they queue meanwhile), and what the
+/// session starts with: the launch with the terminal colors' environment, size and palette.
+pub struct SessionEvents {
+    callback: EventCallback,
+    receiver: mpsc::UnboundedReceiver<SessionEvent>,
+    spec: LaunchSpec,
+    size: TermDimensions,
+    palette: Palette,
+}
+
+impl SessionEvents {
+    pub(crate) fn new(spec: &LaunchSpec, cx: &App) -> Self {
+        let (sender, receiver) = mpsc::unbounded();
+        let callback: EventCallback = Arc::new(move |event| {
+            let _ = sender.unbounded_send(event);
+        });
+        let palette = settings_file::terminal_palette(cx);
+        // Tells programs that read it at start whether the background is dark or light; it
+        // goes stale if the terminal colors change later (OSC 11 answers follow).
+        let mut spec = spec.clone();
+        spec.env
+            .insert("COLORFGBG".into(), palette.colorfgbg().into());
+        Self {
+            callback,
+            receiver,
+            spec,
+            size: TermDimensions::new(INITIAL_TERMINAL_COLUMNS, INITIAL_TERMINAL_LINES),
+            palette,
+        }
+    }
+
+    /// How a remote session `id` shows here with these events.
+    pub(crate) fn local_view(&self, id: u64) -> LocalView {
+        LocalView {
+            id,
+            palette: self.palette,
+            callback: self.callback.clone(),
+        }
+    }
+}
+
 impl TerminalView {
-    /// Start `spec` as session `id`, tracking hook status when hooks were installed.
+    /// Start `spec` as session `id` on this machine, tracking hook status when hooks were
+    /// installed.
     pub fn spawn(
         id: u64,
         spec: &LaunchSpec,
@@ -276,26 +332,56 @@ impl TerminalView {
         shell_key: String,
         cx: &mut App,
     ) -> io::Result<Entity<Self>> {
-        let (sender, mut receiver) = mpsc::unbounded();
-        let callback: EventCallback = Arc::new(move |event| {
-            let _ = sender.unbounded_send(event);
-        });
-        let palette = settings_file::terminal_palette(cx);
-        // Tells programs that read it at start whether the background is dark or light; it
-        // goes stale if the terminal colors change later (OSC 11 answers follow).
-        let mut colored_spec = spec.clone();
-        colored_spec
-            .env
-            .insert("COLORFGBG".into(), palette.colorfgbg().into());
+        if spec.host.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a remote launch starts with start_remote",
+            ));
+        }
+        let events = SessionEvents::new(spec, cx);
         let session = Session::spawn(
             id,
-            &colored_spec,
-            TermDimensions::new(INITIAL_TERMINAL_COLUMNS, INITIAL_TERMINAL_LINES),
-            palette,
-            callback,
+            &events.spec,
+            events.size,
+            events.palette,
+            events.callback.clone(),
         )?;
+        Ok(Self::with_session(
+            session, events, spec, reporting, shell_key, cx,
+        ))
+    }
 
-        Ok(cx.new(|cx| {
+    /// Start `spec` as session `id` on its host (docs/remote.md), off this thread: the
+    /// session arrives on the receiver, to be shown with [`TerminalView::with_session`] and
+    /// the returned events.
+    pub fn start_remote(
+        id: u64,
+        spec: &LaunchSpec,
+        cx: &mut App,
+    ) -> io::Result<(SessionEvents, RemoteStarted)> {
+        let events = SessionEvents::new(spec, cx);
+        let started = remote_hosts::start(
+            id,
+            &events.spec,
+            events.size,
+            events.palette,
+            events.callback.clone(),
+            cx,
+        )?;
+        Ok((events, started))
+    }
+
+    /// The view of `session`, started from `spec` with `events`' callback.
+    pub fn with_session(
+        session: Session,
+        events: SessionEvents,
+        spec: &LaunchSpec,
+        reporting: StatusReporting,
+        shell_key: String,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let mut receiver = events.receiver;
+        cx.new(|cx| {
             let session_events = cx.spawn(async move |this, cx| {
                 while let Some(event) = receiver.next().await {
                     if this
@@ -307,7 +393,7 @@ impl TerminalView {
                 }
             });
             Self::new(session, spec, reporting, shell_key, session_events, cx)
-        }))
+        })
     }
 
     fn new(
@@ -351,8 +437,13 @@ impl TerminalView {
             workspace_features: settings_file::workspace_features(cx),
             session,
             name: launcher::default_name(spec),
-            launch_folder: spec.cwd.clone(),
-            location: spec.cwd.clone().map(Location::read),
+            // A remote tab's folder is on its host: nothing here reads it.
+            launch_folder: spec.cwd.clone().filter(|_| spec.host.is_none()),
+            location: spec
+                .cwd
+                .clone()
+                .filter(|_| spec.host.is_none())
+                .map(Location::read),
             shell: launcher::shell_syntax(spec),
             agent: (reporting == StatusReporting::Hooks).then(|| AgentTracker::new(Instant::now())),
             subagents: Subagents::default(),
@@ -385,6 +476,7 @@ impl TerminalView {
             search: TerminalSearch::default(),
             search_bar: None,
             title: None,
+            host: spec.host.clone(),
             process: ProcessState::Running,
             running_command: None,
             cd_file: spec
@@ -508,6 +600,12 @@ impl TerminalView {
             .or_else(|| self.launch_folder.clone())
     }
 
+    /// A remote tab's folder on its host, as its server last reported it; `None` for a local
+    /// tab. Not a path on this machine: keep it out of [`Self::current_folder`].
+    pub fn remote_folder(&self) -> Option<String> {
+        self.session.remote_folder()
+    }
+
     /// The program's title, or the session's default name.
     pub fn name(&self) -> &str {
         self.title.as_deref().unwrap_or(&self.name)
@@ -531,6 +629,7 @@ impl TerminalView {
         }
         match self.process {
             ProcessState::Exited(_) => TabStatus::Exited,
+            ProcessState::Disconnected(_) => TabStatus::Disconnected,
             // Left by an in-place agent's run until the tab is selected.
             ProcessState::Running if self.finished_unseen => TabStatus::ReadyForReview,
             ProcessState::Running
@@ -814,6 +913,8 @@ impl TerminalView {
                 return;
             }
             SessionEvent::Exited(code) => self.on_exited(code, cx),
+            SessionEvent::Disconnected(reason) => self.on_disconnected(reason, cx),
+            SessionEvent::RemoteFolderChanged => cx.emit(TabChanged),
         }
         self.refresh_history(cx);
         cx.notify();
@@ -1241,6 +1342,7 @@ impl EventEmitter<AgentExited> for TerminalView {}
 impl EventEmitter<AgentNotice> for TerminalView {}
 impl EventEmitter<OpenFileRequest> for TerminalView {}
 impl EventEmitter<LastCommandChanged> for TerminalView {}
+impl EventEmitter<RemoteAction> for TerminalView {}
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -1250,6 +1352,10 @@ impl Focusable for TerminalView {
 
 impl Drop for TerminalView {
     fn drop(&mut self) {
+        // Before the session (the first field) hangs up the child: its exit event, sent from
+        // the pty thread, must find the receiver gone instead of waking this task from there
+        // (gpui's test scheduler fails a test on a wake from another thread).
+        drop(mem::replace(&mut self._session_events, Task::ready(())));
         // Left behind when the shell never read it.
         if let Some(file) = &self.cd_file {
             let _ = fs::remove_file(file);
@@ -1315,9 +1421,13 @@ impl Render for TerminalView {
 impl TerminalView {
     /// A bar below the terminal once the program exited, so a finished tab is told apart from
     /// a quiet one without looking at the sidebar.
-    fn exit_banner(&self, cx: &App) -> Option<AnyElement> {
-        let ProcessState::Exited(code) = self.process else {
-            return None;
+    fn exit_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let code = match &self.process {
+            ProcessState::Running => return None,
+            ProcessState::Exited(code) => *code,
+            ProcessState::Disconnected(disconnect) => {
+                return Some(self.disconnect_banner(disconnect, cx));
+            }
         };
         let message = match code {
             Some(code) => format!("Process exited with code {code}"),

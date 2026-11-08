@@ -20,7 +20,7 @@ use workspace_model::{
 
 use crate::assets::{
     BASH_ICON, DEBIAN_ICON, FISH_ICON, GIT_BRANCH_ICON, GIT_ICON, LINUX_ICON, PIN_ICON,
-    POWERSHELL_ICON, PROMPT_ICON, UBUNTU_ICON, ZSH_ICON,
+    POWERSHELL_ICON, PROMPT_ICON, UBUNTU_ICON, UNPLUG_ICON, ZSH_ICON,
 };
 use crate::light_theme;
 use crate::shortcuts;
@@ -96,6 +96,8 @@ pub enum TabStatus {
     /// A quiet Claude Code session while status hooks are off: its silence says nothing.
     Unavailable,
     Exited,
+    /// A remote tab lost its connection: its program may still run on its host.
+    Disconnected,
 }
 
 impl TabStatus {
@@ -115,7 +117,7 @@ impl TabStatus {
             Self::ReadyForReview | Self::Idle => rgb(0x3fb950),
             Self::Running => rgb(0x2dd4bf),
             Self::Active => rgb(0xc9d1d9),
-            Self::Quiet | Self::Unavailable | Self::Exited => rgb(0x545d68),
+            Self::Quiet | Self::Unavailable | Self::Exited | Self::Disconnected => rgb(0x545d68),
         }
         .into()
     }
@@ -128,7 +130,7 @@ impl TabStatus {
             Self::ReadyForReview | Self::Idle => 2,
             Self::Running => 3,
             Self::Active => 4,
-            Self::Quiet | Self::Unavailable | Self::Exited => 5,
+            Self::Quiet | Self::Unavailable | Self::Exited | Self::Disconnected => 5,
         }
     }
 
@@ -143,6 +145,7 @@ impl TabStatus {
             Self::Quiet => "No recent output",
             Self::Unavailable => "Status unavailable",
             Self::Exited => "Exited",
+            Self::Disconnected => "Disconnected",
         }
     }
 
@@ -157,7 +160,8 @@ impl TabStatus {
             | Self::Active
             | Self::Quiet
             | Self::Unavailable
-            | Self::Exited => None,
+            | Self::Exited
+            | Self::Disconnected => None,
         }
     }
 }
@@ -605,6 +609,19 @@ fn status_badge(
             .bg(color)
             .child(
                 Icon::new(IconName::Check)
+                    .size(px(CHECK_MARK_SIZE))
+                    .text_color(ring),
+            ),
+        // Unlike Exited: the program may still run, and the tab can reconnect.
+        TabStatus::Disconnected => badge
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(DONE_BADGE_SIZE))
+            .bg(color)
+            .child(
+                Icon::empty()
+                    .path(UNPLUG_ICON)
                     .size(px(CHECK_MARK_SIZE))
                     .text_color(ring),
             ),
@@ -1319,6 +1336,7 @@ mod tests {
                 TabStatus::Quiet,
                 TabStatus::Unavailable,
                 TabStatus::Exited,
+                TabStatus::Disconnected,
             ] {
                 assert_eq!(
                     working_spinner(kind, status, title_hidden, RunningPulse::Animated),
