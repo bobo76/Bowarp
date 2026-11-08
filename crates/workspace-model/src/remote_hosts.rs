@@ -131,6 +131,12 @@ impl RemoteHosts {
             .map(|(host, _)| host)
     }
 
+    /// The name to show for a tab on `host` (a launch's host: a destination, or a host's name
+    /// from `--remote`): the label of the host it matches, else `host` itself, trimmed.
+    pub fn label_for<'a>(&'a self, host: &'a str) -> &'a str {
+        self.find(host).map_or(host.trim(), RemoteHost::label)
+    }
+
     /// Append an empty host, for the settings page to fill in.
     pub fn add(&mut self) {
         self.0.push(RemoteHost::default());

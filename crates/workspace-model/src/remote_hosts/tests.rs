@@ -84,6 +84,23 @@ fn find_matches_the_destination_before_the_name() {
 }
 
 #[test]
+fn label_for_names_the_matching_host_else_the_given_host() {
+    let hosts = RemoteHosts::new(vec![
+        host("Build box", "me@build"),
+        host("", "you@plain"),
+        host("draft", ""),
+    ]);
+    assert_eq!(hosts.label_for("me@build"), "Build box");
+    assert_eq!(hosts.label_for("Build box"), "Build box");
+    // A host without a name shows its destination without the user.
+    assert_eq!(hosts.label_for("you@plain"), "plain");
+    // No usable host matches: the given destination, as given.
+    assert_eq!(hosts.label_for(" me@elsewhere "), "me@elsewhere");
+    assert_eq!(hosts.label_for("draft"), "draft");
+    assert_eq!(RemoteHosts::default().label_for("box"), "box");
+}
+
+#[test]
 fn editing_ignores_hosts_that_are_gone() {
     let mut hosts = RemoteHosts::default();
     hosts.add();

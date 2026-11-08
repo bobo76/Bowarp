@@ -20,7 +20,7 @@ use workspace_model::{
 
 use crate::assets::{
     BASH_ICON, DEBIAN_ICON, FISH_ICON, GIT_BRANCH_ICON, GIT_ICON, LINUX_ICON, PIN_ICON,
-    POWERSHELL_ICON, PROMPT_ICON, UBUNTU_ICON, UNPLUG_ICON, ZSH_ICON,
+    POWERSHELL_ICON, PROMPT_ICON, SERVER_ICON, UBUNTU_ICON, UNPLUG_ICON, ZSH_ICON,
 };
 use crate::light_theme;
 use crate::shortcuts;
@@ -232,6 +232,8 @@ pub struct TabRow {
     pub kind: SessionKind,
     pub name: SharedString,
     pub detail: Option<TabDetail>,
+    /// The tab runs on a remote host: a server icon starts the second line.
+    pub remote: bool,
     pub status: TabStatus,
     /// Whether a Running badge pulses rather than stays still.
     pub pulse: RunningPulse,
@@ -665,11 +667,15 @@ fn session_icon(row: &TabRow, background: &RowBackground, cx: &App) -> impl Into
         ))
 }
 
-fn detail_line(detail: TabDetail, color: Hsla) -> impl IntoElement {
+/// The row's second line: the server icon on a remote tab, then the branch or folder (none
+/// while a remote tab's folder isn't known yet).
+fn detail_line(detail: Option<TabDetail>, remote: bool, color: Hsla) -> impl IntoElement {
     let (icon, text) = match detail {
-        TabDetail::Branch(branch) => (Some(Icon::empty().path(GIT_BRANCH_ICON)), branch),
-        TabDetail::Folder(folder) => (None, folder),
+        Some(TabDetail::Branch(branch)) => (Some(GIT_BRANCH_ICON), Some(branch)),
+        Some(TabDetail::Folder(folder)) => (None, Some(folder)),
+        None => (None, None),
     };
+    let icons = [remote.then_some(SERVER_ICON), icon];
     div()
         .flex()
         .items_center()
@@ -677,8 +683,20 @@ fn detail_line(detail: TabDetail, color: Hsla) -> impl IntoElement {
         .min_w_0()
         .text_xs()
         .text_color(color)
-        .children(icon.map(|icon| icon.size(px(DETAIL_ICON_SIZE)).text_color(color)))
-        .child(single_line(text))
+        .children(
+            icons
+                .into_iter()
+                .flatten()
+                .map(|path| detail_icon(path, color)),
+        )
+        .children(text.map(single_line))
+}
+
+fn detail_icon(path: &'static str, color: Hsla) -> Icon {
+    Icon::empty()
+        .path(path)
+        .size(px(DETAIL_ICON_SIZE))
+        .text_color(color)
 }
 
 /// Text cut with an ellipsis when it does not fit.
@@ -777,7 +795,9 @@ pub fn tab_row(
                 .flex_1()
                 .min_w_0()
                 .child(name_line(&mut row, muted, cx))
-                .children(row.detail.take().map(|detail| detail_line(detail, muted))),
+                .when(row.detail.is_some() || row.remote, |lines| {
+                    lines.child(detail_line(row.detail.take(), row.remote, muted))
+                }),
         )
         .child(
             // The menu and close buttons show on the selected row and on hover.
@@ -836,6 +856,8 @@ pub struct TabCard {
     pub running_for: Option<Duration>,
     /// The command a shell runs, shown in the Running chip.
     pub running_label: Option<SharedString>,
+    /// A remote tab's host: its name from the settings, else as the tab was given it.
+    pub host: Option<SharedString>,
     /// The full folder, with the home folder shortened to `~`.
     pub folder: Option<SharedString>,
     pub branch: Option<SharedString>,
@@ -916,11 +938,21 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
                 .text_color(muted)
                 .child(format!("Running for {}", format_clock(running)))
         }))
+        .children(card.host.map(|host| {
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .min_w_0()
+                .child(detail_icon(SERVER_ICON, theme.foreground).flex_none())
+                .child(single_line(host))
+        }))
         // The whole folder, wrapped rather than cut: its end is the part that tells tabs apart.
         .children(card.folder.map(|folder| div().child(folder)))
         .children(
-            card.branch
-                .map(|branch| detail_line(TabDetail::Branch(branch), theme.foreground)),
+            card.branch.map(|branch| {
+                detail_line(Some(TabDetail::Branch(branch)), false, theme.foreground)
+            }),
         )
         .children(
             card.title

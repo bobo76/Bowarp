@@ -5,6 +5,11 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.59
+
+- Remote tabs show a server icon on their second line in the sidebar, and their hover card
+  names the host (its name from Settings → Remote hosts, else the ssh destination).
+
 ## 0.2.58
 
 - Remote tabs (docs/remote.md): shells, Claude Code and Copilot CLI running on another
