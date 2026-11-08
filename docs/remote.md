@@ -83,7 +83,10 @@ and the app can attach to them again, like tmux.
 3. Add the host on the settings page (Remote hosts) and open a tab from its `+` submenu, or
    run `agent-workspace --remote <host> [shell|claude|copilot] [folder on the host]` (a
    destination or a host's name) to open the remote tab after the usual local one.
-   `agentws-server list` / `close <id>` on the server show and end its sessions. With the
+   `agentws-server list` / `close <id>` on the server show and end its sessions;
+   `agentws-server status` shows whether the daemon runs (never starting it), with the
+   installed program's version and protocol and the daemon's session count, as `key=value`
+   lines (exit 0 either way). Check on the settings page runs it over ssh. With the
    remote tab selected, Claude Code or Copilot CLI in the `+` menu, "New tab" and Duplicate
    open on that host, in the folder the tab is in there.
 4. Optional: to keep the daemon running instead of starting it on the first connection, install
@@ -121,11 +124,12 @@ Build the app and `agentws-server` from the same commit: a protocol version mism
 
 ## Status
 
-Done: protocol, server, daemon and proxy (`agentws-server`, with `list` and `close`),
-client, snapshot, remote sessions in the app's tabs, from the `+` menu's host submenus
-(hosts set on the settings page) or the command line (`--remote <host>`), and the remote
-folder: shown on the tab, and where agents and new tabs opened from it start; Reconnect for
-tabs whose connection was lost.
+Done: protocol, server, daemon and proxy (`agentws-server`, with `list`, `close` and
+`status`), client, snapshot, remote sessions in the app's tabs, from the `+` menu's host
+submenus (hosts set on the settings page) or the command line (`--remote <host>`), and the
+remote folder: shown on the tab, and where agents and new tabs opened from it start;
+Reconnect for tabs whose connection was lost; each host's server state on the settings page
+(Check).
 
 Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 

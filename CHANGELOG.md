@@ -5,6 +5,15 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.60
+
+- Settings → Remote hosts shows each host's server state on a line above its fields, with a
+  Check button: Connected while a tab uses it, and after a check whether the server is
+  running (with its session count and version), not running, unreachable (ssh's message),
+  not found, too old to report or not answering. Checks run only when you press Check.
+- `agentws-server status` prints whether the server runs on that machine, its version,
+  protocol and session count, without starting it.
+
 ## 0.2.59
 
 - Remote tabs show a server icon on their second line in the sidebar, and their hover card

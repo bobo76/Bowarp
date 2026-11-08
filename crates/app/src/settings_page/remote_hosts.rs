@@ -1,19 +1,24 @@
 //! The Remote hosts page: the machines remote tabs run on (settings `remote_hosts`,
 //! docs/remote.md), each with its name, ssh destination and server program, added and
-//! removed here. Each host with a destination gets a submenu in the `+` menu.
+//! removed here. Each host with a destination gets a submenu in the `+` menu and a line with
+//! its server's state, checked on request (`remote_hosts::check`).
 
 use std::rc::Rc;
 
+use agentws_remote::status::{self, HostCheck, StatusLine, StatusTone};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::setting::{SettingField, SettingGroup, SettingItem};
-use gpui_kit::component::{ActiveTheme, IconName, Sizable};
+use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Sizable};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, App, Axis, IntoElement, ParentElement, SharedString, Styled, Window, div,
+    AnyElement, App, Axis, Div, InteractiveElement, IntoElement, ParentElement, SharedString,
+    StatefulInteractiveElement, Styled, Window, div,
 };
 use workspace_model::{RemoteHost, RemoteHostField};
 
 use super::{Binding, text_field};
-use crate::settings_file;
+use crate::{remote_hosts, settings_file};
 
 /// The fields of a host as the page shows them: field, caption, placeholder.
 const FIELDS: [(RemoteHostField, &str, &str); 3] = [
@@ -91,6 +96,9 @@ fn host_fields(index: usize, window: &mut Window, cx: &mut App) -> AnyElement {
     };
     let muted = cx.theme().muted_foreground;
     let mut column = div().flex().flex_col().gap_2().w_full();
+    if let Some(target) = remote_hosts::host_target(&host) {
+        column = column.child(server_state(index, target, cx));
+    }
     for (field, caption, placeholder) in FIELDS {
         let input = text_field(
             host.field(field).to_owned(),
@@ -118,6 +126,61 @@ fn host_fields(index: usize, window: &mut Window, cx: &mut App) -> AnyElement {
             settings_file::update(cx, |settings| settings.remote_hosts.remove(index));
         });
     column.child(div().child(remove)).into_any_element()
+}
+
+/// The host's server state (live connection, last check) and its Check button.
+fn server_state(index: usize, target: remote_hosts::Target, cx: &App) -> Div {
+    let check = remote_hosts::host_check(&target, cx);
+    let line = status::status_line(
+        remote_hosts::is_connected(&target.destination, cx),
+        check.as_ref(),
+    );
+    let checking = check == Some(HostCheck::Checking);
+    let button = Button::new(SharedString::from(format!("remote-host-{index}-check")))
+        .icon(IconName::RefreshCw)
+        .label("Check")
+        .ghost()
+        .xsmall()
+        .disabled(checking)
+        .on_click(move |_, _, cx| remote_hosts::check(target.clone(), cx));
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(status_text(index, line, cx))
+        .child(div().flex_none().child(button))
+}
+
+fn status_text(index: usize, line: StatusLine, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let (icon, color) = match line.tone {
+        StatusTone::Fine => (IconName::CircleCheck, theme.success),
+        StatusTone::Neutral => (IconName::Info, theme.muted_foreground),
+        StatusTone::Checking => (IconName::LoaderCircle, theme.muted_foreground),
+        StatusTone::Problem => (IconName::TriangleAlert, theme.warning),
+    };
+    let text = div()
+        .id(SharedString::from(format!("remote-host-{index}-state")))
+        .min_w_0()
+        .flex_shrink(1.)
+        .flex()
+        .items_center()
+        .gap_2()
+        .text_sm()
+        .child(Icon::new(icon).small().text_color(color).flex_none())
+        .child(div().min_w_0().truncate().child(line.text))
+        .when_some(line.hint, |text, hint| {
+            text.child(
+                div()
+                    .flex_none()
+                    .text_color(theme.muted_foreground)
+                    .child(format!("· {hint}")),
+            )
+        });
+    text.when_some(line.details, |text, details| {
+        text.tooltip(move |window, cx| Tooltip::new(details.clone()).build(window, cx))
+    })
+    .into_any_element()
 }
 
 /// Edits field `field` of host `index`; nothing once that host is gone.

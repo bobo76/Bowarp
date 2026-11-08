@@ -39,6 +39,8 @@ directly to model APIs.
     Background blur where the system allows it (Windows
     Acrylic or Mica, KDE Plasma on Wayland); elsewhere the blur choice is shown unavailable.
 - Warn before closing a session or workspace with running processes.
+- Check on request whether each remote host's server is reachable and running, with its
+  session count and version.
 
 ## Tabs and Groups
 
