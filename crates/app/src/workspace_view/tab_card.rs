@@ -282,6 +282,13 @@ impl WorkspaceView {
                     view.running_label().map(|label| label.to_string().into())
                 })
                 .flatten(),
+            host: fields
+                .keep(TabCardField::Location, || {
+                    let host = tab.spec.host.as_deref()?;
+                    let hosts = &settings_file::settings(cx).remote_hosts;
+                    Some(hosts.label_for(host).to_owned().into())
+                })
+                .flatten(),
             folder: fields
                 .keep(TabCardField::Location, || {
                     location

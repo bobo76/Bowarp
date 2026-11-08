@@ -42,6 +42,11 @@ Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in
   (Ctrl+T) and Duplicate open on the host in that folder; a shell picked by name opens here;
   `/exit` in a remote Claude tab falls back to the host's shell in the same folder.
 
+- Remote tab marker: a remote tab's row shows only the server icon on its second line until
+  its folder is known (over a slow real ssh); a host renamed in Settings → Remote hosts shows
+  its new name in the next hover card; Location off in the tab card settings hides the host
+  line. On Windows: the server icon on the row and the card.
+
 Subagent list (Claude Code 2.1.316, Copilot CLI 1.0.105):
 
 - Real Claude Code: a background subagent (`run_in_background`) shows under the tab with its
@@ -229,15 +234,6 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Tell remote tabs from local ones: today a remote tab looks like a local one until it shows
-  Disconnected.
-  - Row: a small server icon at the start of the second line, before the folder or branch
-    (`detail_line`, `DETAIL_ICON_SIZE`), only for tabs whose `spec.host` is set; no host name
-    on the row. Local rows are unchanged; the Disconnected unplug badge stays as it is.
-  - Hover card: a "Host" line with the host's name from Settings → Remote hosts, or the ssh
-    destination when no host there matches; shown with the Location field (`TabCardField`).
-  - The name lookup (destination → host label, with the fallback) goes in `workspace-model`,
-    unit-tested.
 - Remote host status and control: Settings → Remote hosts (and the host's `+` submenu) shows
   each host's server state (connected, daemon running / not running, unreachable with ssh's
   message, server version) with a Check/Refresh; Start and Stop buttons run the daemon on the
