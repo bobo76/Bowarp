@@ -77,7 +77,7 @@ Prompt contents:
   - Put pure logic in a non-UI crate with unit tests.
 - Verify with `cargo fmt`, `cargo clippy --all-targets`, `cargo build` and `cargo test`; when the step has UI, run only the touched crate's tests first, drive the app, then run the full suite once (a fix found in the app then costs no second full run). If the step has UI, drive the app with the scripts in `pipeline/tools/` (see "UI test tools"); don't set up the display by hand. Say up front which parts the harness can't drive.
 - Update `BACKLOG.md`: remove the step from "Next steps" and add the checks the harness couldn't drive under "Fixed, not tested yet" (the rest of the cleanup happens after Verification). Add any new known limitation to `docs/known-limitations.md`. No test counts or verification records in `BACKLOG.md`; the test count goes in the `end` log line.
-- Update `README.md` where it describes the behaviour the step changes (not `CHANGELOG.md`).
+- Update `README.md` where it describes the behaviour the step changes (not `CHANGELOG.md`); grep README, docs and code comments for stale wording of the changed behaviour.
 - Commit the code, `BACKLOG.md`, `README.md` and `docs/known-limitations.md` (if changed) with an imperative summary of the step as the message.
 - Write `pipeline/retros/<slug>/1-implement.md` (see Retro focus).
 
@@ -94,7 +94,8 @@ Launch this agent with the Agent tool's `model` set to `opus`.
 ## Agent 3 — verify and fix (general-purpose, `model: "sonnet"`, after agent 2 finishes)
 Launch this agent with the Agent tool's `model` set to `sonnet`.
 - For each finding in `REVIEW.md`, check the quoted lines and confirm or refute it; for an "(optional)" finding decide from the quote alone, without reading more code. Read more code only when the quote isn't enough to decide (e.g. whether a state is cleared elsewhere). Next to each problem, add a **Verdict** (Confirmed / Refuted / Partly), a **Worth doing?** (Yes / No + one-line reason) and later a **Status** (Fixed / Skipped).
-- Fix every finding marked "Yes", all in one batch, then run fmt, clippy, build and test. Iterate until it's green. If a fix is stuck after 2 attempts, mark it Skipped with the reason.
+- Fix every finding marked "Yes", all in one batch. Write each new test first and run it alone (`cargo test -p <crate> <path>`) before the full run, so a suggested fix that fails its own test is caught in seconds. Then run fmt, clippy, build and test. Iterate until it's green. If a fix is stuck after 2 attempts, mark it Skipped with the reason.
+- Grep `README.md` and `docs/known-limitations.md` (and code comments) for wording of the behaviour a fix or user decision changes, and update it in the same commit.
 - Commit the fixes (`REVIEW.md` stays local and untracked): "Address Rust review findings".
 - Write `pipeline/retros/<slug>/3-fix.md` (see Retro focus).
 
