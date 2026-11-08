@@ -5,6 +5,8 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.2.58
+
 - Remote tabs (docs/remote.md): shells, Claude Code and Copilot CLI running on another
   machine through `agentws-server` over ssh, and still running there when the connection
   drops. Hosts are set on the new settings page Remote hosts (name, ssh destination, server
@@ -28,7 +30,6 @@ omitted unless they affect how the app is used.
   reason) instead of "Process exited", with Reconnect in the banner and the tab's right-click
   menu: it attaches to the session still running on the server, screen included, for all the
   host's disconnected tabs at once. A session closed on the server meanwhile offers Start new.
-
 
 ## 0.2.57
 
