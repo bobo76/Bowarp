@@ -229,6 +229,20 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
+- Tell remote tabs from local ones: today a remote tab looks like a local one until it shows
+  Disconnected.
+  - Row: a small server icon at the start of the second line, before the folder or branch
+    (`detail_line`, `DETAIL_ICON_SIZE`), only for tabs whose `spec.host` is set; no host name
+    on the row. Local rows are unchanged; the Disconnected unplug badge stays as it is.
+  - Hover card: a "Host" line with the host's name from Settings → Remote hosts, or the ssh
+    destination when no host there matches; shown with the Location field (`TabCardField`).
+  - The name lookup (destination → host label, with the fallback) goes in `workspace-model`,
+    unit-tested.
+- Remote host status and control: Settings → Remote hosts (and the host's `+` submenu) shows
+  each host's server state (connected, daemon running / not running, unreachable with ssh's
+  message, server version) with a Check/Refresh; Start and Stop buttons run the daemon on the
+  host over ssh (stop asks first when sessions still run there, listing them via `list`).
+
 UX review, Tier 1 ([reviews/ux-review.md](reviews/ux-review.md), numbers are its items):
 
 - Start failures open the window (#15): bad arguments (`main.rs:58`), a folder that isn't a
