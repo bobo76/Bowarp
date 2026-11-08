@@ -8,6 +8,7 @@ mod search;
 use std::borrow::Cow;
 use std::fs;
 use std::io;
+use std::mem;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1351,6 +1352,10 @@ impl Focusable for TerminalView {
 
 impl Drop for TerminalView {
     fn drop(&mut self) {
+        // Before the session (the first field) hangs up the child: its exit event, sent from
+        // the pty thread, must find the receiver gone instead of waking this task from there
+        // (gpui's test scheduler fails a test on a wake from another thread).
+        drop(mem::replace(&mut self._session_events, Task::ready(())));
         // Left behind when the shell never read it.
         if let Some(file) = &self.cd_file {
             let _ = fs::remove_file(file);
