@@ -5,17 +5,20 @@
 //! - `agentws-server serve [--idle-exit <seconds>]`: run the server in the foreground. It
 //!   exits after the given time (default 60, 0 = never) with no session and no connection.
 //! - `agentws-server list`: the sessions this user's server runs.
+//! - `agentws-server status`: whether this user's server runs, with this program's version and
+//!   protocol and the server's session count, as `key=value` lines. Never starts the server.
 //! - `agentws-server close <id>`: end one of them.
 
 use std::process::ExitCode;
 use std::time::Duration;
 
+use agentws_remote::status::{DaemonState, ServerStatus};
 use agentws_remote::{Client, transport};
 
 const DEFAULT_IDLE_EXIT: Duration = Duration::from_secs(60);
 
 const USAGE: &str = "usage: agentws-server proxy | serve [--idle-exit <seconds>] | list | \
-                     close <id> | --version";
+                     status | close <id> | --version";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -30,6 +33,7 @@ fn main() -> ExitCode {
             Err(_) => return usage(),
         },
         ["list"] => list(&name),
+        ["status"] => status(&name),
         ["close", id] => match id.parse::<u64>() {
             Ok(id) => close(&name, id),
             Err(_) => return usage(),
@@ -76,6 +80,25 @@ fn list(name: &str) -> std::io::Result<()> {
         let title = info.title.as_deref().unwrap_or("");
         println!("{}\t{kind}\t{state}\t{title}", info.id);
     }
+    Ok(())
+}
+
+/// Exits 0 whether or not the server runs; an error only when asking it failed.
+fn status(name: &str) -> std::io::Result<()> {
+    let (daemon, sessions) = match transport::connect(name) {
+        Err(_) => (DaemonState::NotRunning, None),
+        Ok(stream) => {
+            let (reader, writer) = transport::halves(stream);
+            agentws_remote::status::daemon_state(reader, writer)?
+        }
+    };
+    let status = ServerStatus {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        protocol: Some(agentws_remote::protocol::PROTOCOL_VERSION),
+        daemon,
+        sessions,
+    };
+    print!("{}", status.lines());
     Ok(())
 }
 

@@ -225,12 +225,34 @@ fn relay(reader: &mut impl Read, writer: &mut impl Write) -> io::Result<()> {
 /// shell finds `agentws-server`. ssh must log in without asking anything (a key or an agent):
 /// there is no terminal to ask on.
 pub fn ssh_command(host: &str, server_program: &str) -> io::Result<Command> {
+    ssh_server_command(host, server_program, "proxy")
+}
+
+/// The ssh command that runs `server_program subcommand` on `host` (e.g. `status`), with
+/// the same options as [`ssh_command`].
+pub fn ssh_server_command(
+    host: &str,
+    server_program: &str,
+    subcommand: &str,
+) -> io::Result<Command> {
     let mut command = Command::new("ssh");
-    command.args(ssh_args(host, server_program)?);
+    command.args(ssh_args(host, server_program, subcommand)?);
     Ok(command)
 }
 
-fn ssh_args(host: &str, server_program: &str) -> io::Result<Vec<String>> {
+/// No console window flashing up for a command the windowed app runs (ssh).
+pub(crate) fn no_console_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
+fn ssh_args(host: &str, server_program: &str, subcommand: &str) -> io::Result<Vec<String>> {
     let host = host.trim();
     // A host starting with `-` would be read as an option.
     if host.is_empty() || host.starts_with('-') || host.chars().any(char::is_whitespace) {
@@ -258,7 +280,7 @@ fn ssh_args(host: &str, server_program: &str) -> io::Result<Vec<String>> {
         "ServerAliveCountMax=3",
         host,
         // The remote shell runs this line.
-        &format!("{server_program} proxy"),
+        &format!("{server_program} {subcommand}"),
     ]
     .map(String::from)
     .to_vec())
@@ -271,7 +293,7 @@ mod tests {
     #[test]
     fn ssh_runs_the_proxy_without_a_terminal_or_prompts() {
         assert_eq!(
-            ssh_args(" me@linux-box ", "~/.cargo/bin/agentws-server").unwrap(),
+            ssh_args(" me@linux-box ", "~/.cargo/bin/agentws-server", "proxy").unwrap(),
             [
                 "-T",
                 "-o",
@@ -291,9 +313,20 @@ mod tests {
     #[test]
     fn hosts_that_would_be_options_are_refused() {
         for host in ["", "  ", "-oProxyCommand=evil", "a b"] {
-            assert!(ssh_args(host, "agentws-server").is_err(), "{host:?}");
+            assert!(
+                ssh_args(host, "agentws-server", "status").is_err(),
+                "{host:?}"
+            );
         }
-        assert!(ssh_args("box", " ").is_err());
+        assert!(ssh_args("box", " ", "proxy").is_err());
+    }
+
+    #[test]
+    fn other_subcommands_run_with_the_same_options() {
+        let args = ssh_args("box", "agentws-server", "status").unwrap();
+        let proxy = ssh_args("box", "agentws-server", "proxy").unwrap();
+        assert_eq!(args.last().unwrap(), "agentws-server status");
+        assert_eq!(args[..args.len() - 1], proxy[..proxy.len() - 1]);
     }
 
     #[test]

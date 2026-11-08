@@ -95,3 +95,42 @@ fn the_ssh_error_output_is_in_the_error() {
         .unwrap();
     assert!(err.to_string().contains("Could not resolve"), "{err}");
 }
+
+fn status(socket: &str) -> String {
+    let output = Command::new(SERVER)
+        .arg("status")
+        .env(SOCKET_ENV, socket)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[test]
+fn status_reports_the_server_without_starting_it() {
+    let socket = format!(
+        "agentws-test-status-{}-{:?}.sock",
+        std::process::id(),
+        Instant::now()
+    );
+    let version = env!("CARGO_PKG_VERSION");
+    let protocol = agentws_remote::protocol::PROTOCOL_VERSION;
+    let not_running = format!("version={version}\nprotocol={protocol}\ndaemon=not-running\n");
+    assert_eq!(status(&socket), not_running);
+    // Asking did not start one.
+    assert_eq!(status(&socket), not_running);
+    let client = proxy(&socket);
+    let spec = SpawnSpec {
+        program: Some("sh".into()),
+        ..SpawnSpec::default()
+    };
+    let remote = client
+        .spawn(spec, TermDimensions::new(40, 5), quiet(1))
+        .unwrap();
+    assert_eq!(
+        status(&socket),
+        format!("version={version}\nprotocol={protocol}\ndaemon=running\nsessions=1\n")
+    );
+    drop(remote);
+    wait_until("the close", || client.list().unwrap().is_empty());
+}

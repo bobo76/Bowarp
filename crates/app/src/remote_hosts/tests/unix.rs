@@ -77,9 +77,12 @@ fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
 fn tabs_on_one_host_share_a_connection_opened_again_once_lost() {
     let server = Server::new();
     let (mut hosts, connects, sockets) = hosts(&server);
+    assert!(!hosts.is_connected("box"));
     let first = spawn(&mut hosts, 1).unwrap();
     let second = spawn(&mut hosts, 2).unwrap();
     assert_eq!(connects.load(Ordering::SeqCst), 1);
+    assert!(hosts.is_connected("box"));
+    assert!(!hosts.is_connected("other"));
     assert_eq!((first.id(), second.id()), (1, 2));
     second.write(b"echo hi-$((1 + 2))\n".as_slice());
     wait_until("the output", || {
@@ -90,6 +93,7 @@ fn tabs_on_one_host_share_a_connection_opened_again_once_lost() {
     });
     sockets.lock().unwrap()[0].shutdown(Shutdown::Both).unwrap();
     wait_until("the tabs to see the loss", || first.has_exited());
+    assert!(!hosts.is_connected("box"));
     let third = spawn(&mut hosts, 3).unwrap();
     assert_eq!(connects.load(Ordering::SeqCst), 2);
     assert!(!third.has_exited());

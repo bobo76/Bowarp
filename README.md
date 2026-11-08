@@ -668,6 +668,16 @@ Each row shows the command connecting runs; Remove host deletes it. ssh must log
 asking: use a key or an agent. A host without a destination stays on the page but not in the
 menu.
 
+A host with a destination starts with its server's state and a **Check** button. Check runs
+`agentws-server status` there over ssh (in the background, up to 20 seconds) and shows "Server
+running, N sessions" or "Server not running" with the server's version, or what went wrong:
+"Unreachable" with ssh's message (all of it in the tooltip), "agentws-server not found" (set
+the Server program), "Server too old to report status", "No answer from the server", or a
+protocol the app doesn't speak. "Connected" in front means a remote tab's connection to the
+host is open. Hosts are checked only when you click Check; results last until the app quits,
+a host whose destination or server program changed shows "Not checked" again, and so does a
+host a remote tab has connected to since its last check.
+
 ```json
 "remote_hosts": [
   { "name": "Build box", "destination": "me@build-box", "server_program": "" }
