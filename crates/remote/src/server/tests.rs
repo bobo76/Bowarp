@@ -394,3 +394,14 @@ fn clients_hear_the_folder_a_shell_moves_to() {
     drop((remote, again));
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn a_closed_session_frees_its_terminal_copy() {
+    let server = Server::new();
+    let hosted = server.spawn(&shell(None), size(20, 4)).unwrap();
+    let (id, fanout) = (hosted.id, Arc::downgrade(&hosted.fanout));
+    drop(hosted);
+    server.close(id);
+    // The program's output reader lets go once the hang-up ends it.
+    wait_until("the fan-out to be freed", || fanout.strong_count() == 0);
+}

@@ -24,7 +24,8 @@ use term_core::{
 use workspace_model::AgentId;
 
 use crate::protocol::{
-    ClientMessage, PROTOCOL_VERSION, ServerMessage, SessionInfo, SpawnSpec, read_frame, write_frame,
+    ClientMessage, MAX_FRAME, PROTOCOL_VERSION, ServerMessage, SessionInfo, SpawnSpec, read_frame,
+    write_frame,
 };
 
 /// A client whose queued output passes this is too slow to follow: it is disconnected, and can
@@ -295,15 +296,21 @@ impl Server {
             folder: None,
             probe: None,
         }));
-        let events = fanout.clone();
-        let callback = Arc::new(move |event| match event {
-            SessionEvent::Exited(code) => {
-                let mut fanout = events.lock().unwrap();
-                fanout.exit = Some(code);
-                fanout.broadcast(|| ServerMessage::Exited { session: id, code });
+        // Weak: the fan-out's folder probe holds the session, which holds this callback.
+        let events = Arc::downgrade(&fanout);
+        let callback = Arc::new(move |event| {
+            let Some(events) = events.upgrade() else {
+                return;
+            };
+            match event {
+                SessionEvent::Exited(code) => {
+                    let mut fanout = events.lock().unwrap();
+                    fanout.exit = Some(code);
+                    fanout.broadcast(|| ServerMessage::Exited { session: id, code });
+                }
+                SessionEvent::TitleChanged(title) => events.lock().unwrap().title = title,
+                _ => {}
             }
-            SessionEvent::TitleChanged(title) => events.lock().unwrap().title = title,
-            _ => {}
         });
         let output = fanout.clone();
         let tap = Box::new(move |bytes: &[u8]| {
@@ -347,8 +354,18 @@ impl Server {
         let resized = fanout.mirror.size() != size;
         fanout.mirror.resize(size);
         fanout.refresh_folder(hosted.id);
-        let snapshot = fanout.mirror.snapshot();
         let info = hosted.info_locked(&fanout);
+        // The peer refuses a longer frame: the oldest scrollback goes instead.
+        let envelope = ServerMessage::Attached {
+            request,
+            info: info.clone(),
+            snapshot: Vec::new(),
+        }
+        .encode()
+        .len();
+        let snapshot = fanout
+            .mirror
+            .snapshot_within(MAX_FRAME.saturating_sub(envelope));
         let exit = fanout.exit;
         if resized {
             fanout.broadcast_except(client, || ServerMessage::Resized {

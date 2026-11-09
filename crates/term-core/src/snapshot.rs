@@ -20,12 +20,22 @@ use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor};
 /// The bytes that recreate `term`'s scrollback, screen, cursor and modes in a fresh terminal
 /// of the same size.
 pub fn snapshot<L>(term: &Term<L>) -> Vec<u8> {
+    snapshot_within(term, usize::MAX)
+}
+
+/// As [`snapshot`], without the oldest scrollback lines that would make it longer than
+/// `max_bytes`. The screen is always kept, so a huge screen may still exceed it.
+pub fn snapshot_within<L>(term: &Term<L>, max_bytes: usize) -> Vec<u8> {
     let grid = term.grid();
     let mode = *term.mode();
     let mut out = String::new();
     if mode.contains(TermMode::ALT_SCREEN) {
         out.push_str("\x1b[?1049h");
     }
+    let body_start = out.len();
+    // Where a scrollback line, or the screen, starts in the default pen: the lines before
+    // such a place can be dropped.
+    let mut cuts = Vec::new();
     let mut pen = Pen::default();
     let history = grid.history_size() as i32;
     let screen = grid.screen_lines() as i32;
@@ -59,6 +69,9 @@ pub fn snapshot<L>(term: &Term<L>) -> Vec<u8> {
             // The rest of the line is blank in the default colors, as on a fresh line.
             pen.reset(&mut out);
             out.push_str("\r\n");
+            if line < 0 {
+                cuts.push(out.len());
+            }
         }
     }
     pen.reset(&mut out);
@@ -80,6 +93,17 @@ pub fn snapshot<L>(term: &Term<L>) -> Vec<u8> {
     pen.apply(&cursor.template, &mut out);
     push_modes(mode, &mut out);
     push_cursor_style(term, &mut out);
+    if out.len() > max_bytes {
+        let excess = out.len() - max_bytes;
+        let cut = cuts
+            .iter()
+            .copied()
+            .find(|&cut| cut - body_start >= excess)
+            .or(cuts.last().copied());
+        if let Some(cut) = cut {
+            out.replace_range(body_start..cut, "");
+        }
+    }
     out.into_bytes()
 }
 

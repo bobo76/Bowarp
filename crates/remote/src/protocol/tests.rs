@@ -188,3 +188,16 @@ fn bad_frames_are_errors() {
     let huge = ((MAX_FRAME + 1) as u32).to_le_bytes();
     assert!(read_frame(&mut &huge[..]).is_err());
 }
+
+#[test]
+fn a_frame_the_peer_would_refuse_is_not_written() {
+    let mut written = Vec::new();
+    let err = write_frame(&mut written, &vec![1; MAX_FRAME + 1]).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    assert!(written.is_empty());
+    write_frame(&mut written, &vec![1; MAX_FRAME]).unwrap();
+    assert_eq!(
+        read_frame(&mut written.as_slice()).unwrap().unwrap().len(),
+        MAX_FRAME
+    );
+}

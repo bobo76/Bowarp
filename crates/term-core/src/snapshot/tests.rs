@@ -125,3 +125,40 @@ fn replays_the_alternate_screen() {
 fn keeps_colored_blank_cells() {
     assert_round_trip(b"\x1b[41m    \x1b[0m\r\nx\x1b[42m\x1b[K", 10, 3);
 }
+
+/// Rows of `columns` cells, each in its own truecolor: the densest common snapshot.
+fn rainbow_rows(rows: usize, columns: usize) -> String {
+    let mut text = String::new();
+    for row in 0..rows {
+        for col in 0..columns {
+            let shade = (row * columns + col) % 256;
+            text.push_str(&format!("\x1b[38;2;{shade};0;0;48;2;0;{shade};0mx"));
+        }
+        text.push_str(&format!("\x1b[0m\r\nrow {row}\r\n"));
+    }
+    text
+}
+
+#[test]
+fn a_snapshot_within_a_limit_drops_the_oldest_scrollback_and_keeps_the_screen() {
+    let original = fed(rainbow_rows(60, 20).as_bytes(), 20, 5);
+    let full = snapshot(&original);
+    let limit = full.len() / 3;
+
+    let capped = snapshot_within(&original, limit);
+    assert!(capped.len() <= limit, "{} > {limit}", capped.len());
+    let replayed = fed(&capped, 20, 5);
+    let (original_cells, replayed_cells) = (cells(&original), cells(&replayed));
+    assert!(replayed.grid().history_size() < original.grid().history_size());
+    // The newest lines, the screen among them, come back as they were.
+    assert!(original_cells.ends_with(&replayed_cells));
+    assert_eq!(replayed.grid().cursor.point, original.grid().cursor.point);
+}
+
+#[test]
+fn a_snapshot_under_its_limit_is_whole() {
+    let original = fed(rainbow_rows(10, 20).as_bytes(), 20, 5);
+    assert_eq!(snapshot_within(&original, usize::MAX), snapshot(&original));
+    let full = snapshot(&original);
+    assert_eq!(snapshot_within(&original, full.len()), full);
+}

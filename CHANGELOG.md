@@ -5,6 +5,14 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Remote tabs: a session whose scrollback is too large to send at once (dense truecolor
+  output) attaches again with its oldest scrollback lines left out, instead of disconnecting
+  every tab on that host. The server no longer keeps a closed session's screen in memory.
+- Holding Ctrl over a network path (`\\host\share\…`) in terminal output no longer freezes the
+  window on Windows while it tries to reach that host; such paths are not links.
+- Windows: deleting a folder link or junction in the file explorer works (it removed nothing
+  and showed "permission denied"); the folder it points to is kept.
+
 ## 0.2.58
 
 - Remote tabs (docs/remote.md): shells, Claude Code and Copilot CLI running on another

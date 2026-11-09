@@ -310,8 +310,15 @@ impl ServerMessage {
     }
 }
 
-/// Write one encoded message as a frame. Does not flush.
+/// Write one encoded message as a frame. Does not flush. A frame longer than [`MAX_FRAME`],
+/// which [`read_frame`] refuses, is an error and nothing is written.
 pub fn write_frame(writer: &mut impl Write, frame: &[u8]) -> io::Result<()> {
+    if frame.len() > MAX_FRAME {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("frame of {} bytes", frame.len()),
+        ));
+    }
     writer.write_all(&(frame.len() as u32).to_le_bytes())?;
     writer.write_all(frame)
 }
