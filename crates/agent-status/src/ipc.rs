@@ -162,7 +162,7 @@ fn hook_line(agent: Option<AgentId>, session: u64, at: u64, input: &[u8]) -> io:
         })
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing hook_event_name"))?;
     let mut line = format!("{session} {at} {event_name}");
-    if let Some(kind) = field("notification_type") {
+    if let Some(kind) = field("notification_type").and_then(token) {
         line.push(' ');
         line.push_str(kind);
     }
@@ -467,6 +467,14 @@ mod tests {
         assert!(hook_line(copilot, 7, 1000, br#"{"hookName":""}"#).is_err());
         assert!(hook_line(claude, 7, 1000, br#"{"session_id":"abc"}"#).is_err());
         assert!(hook_line(claude, 7, 1000, b"not json").is_err());
+    }
+
+    #[test]
+    fn a_notification_type_that_is_not_one_word_is_left_out() {
+        let input = br#"{"hook_event_name":"Notification","notification_type":"x agent=y"}"#;
+        let line = hook_line(Some(CLAUDE), 7, 1000, input).unwrap();
+        assert_eq!(line, "7 1000 Notification\n");
+        assert_eq!(parse_line(&line).unwrap().report.subagent, None);
     }
 
     #[test]

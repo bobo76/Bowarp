@@ -111,9 +111,15 @@ impl Mirror {
 
     /// The bytes that recreate this terminal in a fresh one of the same size.
     pub fn snapshot(&self) -> Vec<u8> {
+        self.snapshot_within(usize::MAX)
+    }
+
+    /// As [`Mirror::snapshot`], without the oldest scrollback lines beyond `max_bytes`
+    /// ([`crate::snapshot::snapshot_within`]).
+    pub fn snapshot_within(&self, max_bytes: usize) -> Vec<u8> {
         // Locks the parser too, so no output is half parsed.
         let _parser = self.parser.lock().unwrap();
-        crate::snapshot(&self.term.lock())
+        crate::snapshot::snapshot_within(&self.term.lock(), max_bytes)
     }
 
     /// The visible screen as text, one string per line with trailing blanks trimmed.

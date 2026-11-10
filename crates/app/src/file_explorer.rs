@@ -996,6 +996,11 @@ fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
 fn remove_entry(path: &Path) -> io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() => fs::remove_dir_all(path),
+        // Windows removes a link to a folder (a junction too) as a folder.
+        #[cfg(windows)]
+        Ok(meta) if std::os::windows::fs::FileTypeExt::is_symlink_dir(&meta.file_type()) => {
+            fs::remove_dir(path)
+        }
         Ok(_) => fs::remove_file(path),
         Err(err) => Err(err),
     }
@@ -1080,6 +1085,35 @@ mod tests {
         rename_no_replace(&from, &free).unwrap();
         assert_eq!(fs::read_to_string(&free).unwrap(), "moved");
         assert!(!from.exists());
+        fs::remove_dir_all(&folder).unwrap();
+    }
+
+    /// A junction is what Windows users get without developer mode; a directory symlink
+    /// behaves the same.
+    #[cfg(windows)]
+    #[test]
+    fn removing_a_folder_link_removes_the_link_only() {
+        let folder = std::env::temp_dir().join(format!(
+            "agentws-remove-link-{}-{}",
+            std::process::id(),
+            agent_status::now_micros()
+        ));
+        let (target, link) = (folder.join("target"), folder.join("link"));
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("kept.txt"), "kept").unwrap();
+        let made = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(&link)
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+
+        remove_entry(&link).unwrap();
+        assert!(fs::symlink_metadata(&link).is_err());
+        assert_eq!(fs::read_to_string(target.join("kept.txt")).unwrap(), "kept");
         fs::remove_dir_all(&folder).unwrap();
     }
 }

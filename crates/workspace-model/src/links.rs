@@ -232,8 +232,12 @@ pub fn parse_path_ref(text: &str) -> PathRef {
 }
 
 /// Where a path written in terminal output points: `~/` from `home`, a relative path from
-/// `folder` (the tab's). `None` when that folder (or home) is not known.
+/// `folder` (the tab's). `None` when that folder (or home) is not known, and for a network
+/// path ([`is_network_path`]).
 pub fn resolve_path(path: &str, folder: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
+    if is_network_path(path, cfg!(windows)) {
+        return None;
+    }
     if path == "~" {
         return home.map(Path::to_path_buf);
     }
@@ -245,6 +249,18 @@ pub fn resolve_path(path: &str, folder: Option<&Path>, home: Option<&Path>) -> O
         return Some(path.to_path_buf());
     }
     folder.map(|folder| folder.join(path))
+}
+
+/// Whether `path` names a share on another machine or a device (`\\host\share`, `//host`,
+/// `\\?\UNC\…`, `\\.\pipe\…`) on Windows. Output and links are written by any program: checking
+/// such a path would connect to a host it chose, and hang while that host does not answer.
+fn is_network_path(path: &str, windows: bool) -> bool {
+    let mut chars = path.chars();
+    windows && chars.next().is_some_and(is_separator) && chars.next().is_some_and(is_separator)
+}
+
+fn is_separator(c: char) -> bool {
+    matches!(c, '/' | '\\')
 }
 
 /// Whether a terminal hyperlink to `uri` may be opened: its scheme is one of
@@ -289,7 +305,8 @@ pub fn link_rows(range: Range<usize>, columns: usize) -> Vec<RowSpan> {
 
 /// The local file a link written in a document points to, resolved from the document's
 /// `folder`: a relative or absolute path, or a `file://` URL, without its `#fragment` or
-/// `?query`. `None` for links to elsewhere (`https:`, `mailto:`) and in-page anchors.
+/// `?query`. `None` for links to elsewhere (`https:`, `mailto:`, a network share) and in-page
+/// anchors.
 pub fn local_link(url: &str, folder: &Path) -> Option<PathBuf> {
     let url = url.trim();
     let without_fragment = url.split('#').next().unwrap_or_default();
@@ -297,7 +314,8 @@ pub fn local_link(url: &str, folder: &Path) -> Option<PathBuf> {
         // `file:///home/x` and `file://localhost/home/x`.
         let path = rest.strip_prefix("localhost").unwrap_or(rest);
         let path = percent_decode(path.split('?').next().unwrap_or_default())?;
-        return (!path.is_empty()).then(|| file_url_path(&path));
+        let local = !path.is_empty() && !is_network_path(&path, cfg!(windows));
+        return local.then(|| file_url_path(&path));
     }
     if has_scheme(without_fragment) {
         return None;
@@ -307,7 +325,7 @@ pub fn local_link(url: &str, folder: &Path) -> Option<PathBuf> {
         return None;
     }
     let path = percent_decode(path)?;
-    Some(folder.join(path))
+    (!is_network_path(&path, cfg!(windows))).then(|| folder.join(path))
 }
 
 /// The path of a `file://` URL's path part: `/C:/x` is `C:/x` on Windows.

@@ -225,3 +225,37 @@ fn link_rows_split_at_wraps() {
     assert_eq!(link_rows(3..3, 10), vec![]);
     assert_eq!(link_rows(0..3, 0), vec![]);
 }
+
+#[test]
+fn network_paths_are_recognized_on_windows_only() {
+    for path in [
+        r"\\host\share\x.txt",
+        "//host/share/x",
+        r"\/host/share",
+        r"\\?\UNC\host\share",
+    ] {
+        assert!(is_network_path(path, true), "{path}");
+        // `//x` is a local path on Unix, and `\` an ordinary character.
+        assert!(!is_network_path(path, false), "{path}");
+    }
+    for path in [r"C:\x.txt", r"\x.txt", "/x.txt", "src/a.rs", ""] {
+        assert!(!is_network_path(path, true), "{path}");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn network_paths_in_output_or_links_are_not_files_to_check() {
+    let folder = Path::new(r"C:\work");
+    assert_eq!(
+        resolve_path(r"\\host\share\x.txt", Some(folder), None),
+        None
+    );
+    assert_eq!(resolve_path("//host/share/x", Some(folder), None), None);
+    assert_eq!(local_link("file:////host/share/x", folder), None);
+    assert_eq!(local_link("//host/share/x.md", folder), None);
+    assert_eq!(
+        resolve_path(r"C:\x.txt", Some(folder), None),
+        Some(PathBuf::from(r"C:\x.txt"))
+    );
+}
