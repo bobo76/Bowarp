@@ -15,12 +15,19 @@ fn wait_for_exit(session: &term_core::Session) {
 #[test]
 fn default_bindings_name_workspace_actions() {
     let bindings = default_bindings();
-    assert_eq!(bindings.len(), 20);
+    assert_eq!(bindings.len(), 23);
     assert!(
         bindings
             .iter()
             .all(|shortcut| shortcut.action.starts_with("workspace::"))
     );
+    for shortcut in &bindings {
+        assert!(
+            gpui_kit::Keystroke::parse(&shortcut.keys).is_ok(),
+            "{}",
+            shortcut.keys
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -1108,6 +1115,60 @@ fn busy_tabs_are_asked_about_before_closing(cx: &mut gpui_kit::TestAppContext) {
     // Nothing busy: the window may close without a question.
     assert!(allow_close_or_ask(&mut h));
     assert!(!dialog(&mut h));
+}
+
+#[gpui::test]
+fn back_forward_and_last_tab_follow_the_selected_tabs(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("tab-history", cx);
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            for _ in 0..3 {
+                let spec = workspace.tabs[0].spec.clone();
+                workspace.open_tab(spec, window, cx).unwrap();
+                wait_for_exit(&workspace.tabs.last().unwrap().view.read(cx).session);
+            }
+        })
+    });
+    h.cx.run_until_parked();
+    let ids: Vec<u64> = workspace.read_with(&h.cx, |workspace, _| {
+        workspace.tabs.iter().map(|tab| tab.id).collect()
+    });
+    let run = |h: &mut PanesHarness,
+               f: fn(&mut WorkspaceView, &mut Window, &mut Context<WorkspaceView>)| {
+        h.cx.update(|window, cx| workspace.update(cx, |workspace, cx| f(workspace, window, cx)));
+        h.cx.run_until_parked();
+        h.workspace
+            .read_with(&h.cx, |workspace, _| workspace.active_tab().unwrap().id)
+    };
+    let select = |h: &mut PanesHarness, id: u64| {
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                let index = workspace.tab_index(id).unwrap();
+                workspace.activate(index, window, cx);
+            })
+        });
+    };
+    select(&mut h, ids[0]);
+    select(&mut h, ids[2]);
+    select(&mut h, ids[3]);
+    assert_eq!(run(&mut h, WorkspaceView::go_back), ids[2]);
+    assert_eq!(run(&mut h, WorkspaceView::go_back), ids[0]);
+    assert_eq!(run(&mut h, WorkspaceView::go_forward), ids[2]);
+    // Last tab switches between two tabs.
+    assert_eq!(run(&mut h, WorkspaceView::last_tab), ids[0]);
+    assert_eq!(run(&mut h, WorkspaceView::last_tab), ids[2]);
+
+    // A closed tab leaves the history: Back skips it.
+    select(&mut h, ids[1]);
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let index = workspace.tab_index(ids[2]).unwrap();
+            workspace.close_tab(index, window, cx);
+        })
+    });
+    h.cx.run_until_parked();
+    assert_eq!(run(&mut h, WorkspaceView::go_back), ids[0]);
 }
 
 #[gpui::test]

@@ -6,7 +6,7 @@ use std::rc::Rc;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme, IconName, Sizable};
+use gpui_kit::component::{ActiveTheme, Disableable, IconName, Sizable};
 use gpui_kit::{
     Anchor, AnyElement, App, AppContext, ClickEvent, Context, Div, DragMoveEvent,
     InteractiveElement, IntoElement, ParentElement, SharedString, Stateful,
@@ -24,7 +24,7 @@ use crate::sidebar::{
     SubagentChip, SubagentItem, TabDetail, TabRow,
 };
 use crate::tab_menu;
-use crate::workspace_view::{NewTab, NextAttention};
+use crate::workspace_view::{GoBack, GoForward, NewTab, NextAttention};
 
 /// A row of the tab list, with its tab's id when it is a tab row.
 type SidebarRow = (Option<u64>, AnyElement);
@@ -72,6 +72,7 @@ impl WorkspaceView {
                     ))
                     .pl_2()
                     .pr_1()
+                    .child(self.history_buttons(cx))
                     .child(self.render_search(cx))
                     .children(attention_button)
                     .child(new_tab_button),
@@ -234,6 +235,25 @@ impl WorkspaceView {
             return Vec::new();
         }
         self.render_group(slot, group, Some(&tabs), list_focused, cx)
+    }
+
+    /// Back and Forward through the tabs selected before; dimmed when there is nowhere to go.
+    fn history_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let back = Button::new("tab-back")
+            .icon(IconName::ArrowLeft)
+            .ghost()
+            .xsmall()
+            .disabled(!self.tab_history.can_go_back())
+            .tooltip(shortcuts::with_shortcut("Back", &GoBack, cx))
+            .on_click(cx.listener(|workspace, _, window, cx| workspace.go_back(window, cx)));
+        let forward = Button::new("tab-forward")
+            .icon(IconName::ArrowRight)
+            .ghost()
+            .xsmall()
+            .disabled(!self.tab_history.can_go_forward())
+            .tooltip(shortcuts::with_shortcut("Forward", &GoForward, cx))
+            .on_click(cx.listener(|workspace, _, window, cx| workspace.go_forward(window, cx)));
+        div().flex().flex_none().child(back).child(forward)
     }
 
     /// Shown while a tab needs attention: the count; clicking jumps to the next one.

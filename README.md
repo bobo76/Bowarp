@@ -79,6 +79,8 @@ refuses), an error toast says why and stays until dismissed.
 | Keys | Action |
 |---|---|
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
+| Ctrl+Alt+Left / Ctrl+Alt+Right | Back / forward through the tabs selected before (also the ← → buttons in the sidebar header) |
+| Ctrl+` | Switch with the last tab selected (press again to switch back) |
 | Ctrl+1..9 | Select tab 1..9 |
 | Ctrl+Shift+T | New tab with the default shell, in the selected tab's folder (no tab: the last closed tab's, at the end) |
 | Ctrl+Shift+D | Duplicate the selected tab: same program, its folder (also in the tab menu) |

@@ -48,6 +48,7 @@ mod search;
 mod settings;
 mod subagents;
 mod tab;
+mod tab_history;
 mod tab_list;
 mod tabs_state;
 mod time;
@@ -118,6 +119,7 @@ pub use settings::{
 };
 pub use subagents::{Subagent, SubagentEvent, Subagents};
 pub use tab::{TabColor, TabMeta};
+pub use tab_history::TabHistory;
 pub use tab_list::{ListMove, list_entry, list_step, listed_tabs};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};
 pub use wheel::{WheelScroll, notch_lines};

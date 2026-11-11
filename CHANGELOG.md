@@ -5,6 +5,9 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Back and Forward through the tabs you selected, like a browser: ← → buttons in the sidebar
+  header and Ctrl+Alt+Left / Ctrl+Alt+Right. Ctrl+` switches with the last tab selected.
+  Closed tabs drop out of the history. All three can be rebound on Settings → Keyboard.
 - File viewer: "Discard changes?" is now "Save changes?" with Save (the default, Enter),
   Discard and Cancel, when opening another file or closing the viewer or the tab.
 - Closing the window asks about files with unsaved edits in the viewer (Save all / Discard /

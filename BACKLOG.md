@@ -10,6 +10,11 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Tab Back / Forward / Last tab: the ← → buttons dim when there is nowhere to go and their
+  tooltips name the keys; Ctrl+Alt+Left/Right and Ctrl+` work from the terminal (not sent to
+  the program), also on Windows (AltGr layouts) and under GNOME, whose default workspace
+  switch also uses Ctrl+Alt+Left/Right; Settings → Keyboard lists and rebinds them.
+
 - Unsaved viewer edits: opening another file asks "Save changes?"; Save writes and goes on,
   Discard drops, Cancel keeps; Save on a file changed on disk asks first, and its Cancel
   cancels. Closing the window (title bar button, Alt+F4) with edits in two tabs asks once

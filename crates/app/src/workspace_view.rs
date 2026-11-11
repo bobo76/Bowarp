@@ -34,8 +34,8 @@ use workspace_model::layout::Direction;
 use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION, ExplorerWidth, ViewerFraction};
 use workspace_model::{
     Attention, DropTarget, FeatureSwitch, FileLinkAction, GroupId, Layout, PaneChange, PaneEntry,
-    Shortcut, TabColor, TabId, TabMeta, TabsState, ToastKind, exit_toast_kind, next_attention,
-    pane_change, waiting_count,
+    Shortcut, TabColor, TabHistory, TabId, TabMeta, TabsState, ToastKind, exit_toast_kind,
+    next_attention, pane_change, waiting_count,
 };
 
 use self::divider_drag::DividerDrag;
@@ -88,6 +88,9 @@ actions!(
         ToggleExplorer,
         SearchTabs,
         NextAttention,
+        GoBack,
+        GoForward,
+        LastTab,
         RenameTab,
         SelectTab1,
         SelectTab2,
@@ -135,6 +138,10 @@ fn default_bindings() -> Vec<Shortcut> {
         Shortcut::new("f11", ToggleFullScreen.name(), None),
         bind("ctrl-tab", &NextTab),
         bind("ctrl-shift-tab", &PreviousTab),
+        // Not Alt+Left/Right: shells move the cursor by word with them.
+        bind("ctrl-alt-left", &GoBack),
+        bind("ctrl-alt-right", &GoForward),
+        bind("ctrl-`", &LastTab),
         bind(&format!("ctrl-{EXPLORER_KEY}"), &ToggleExplorer),
         bind("ctrl-1", &SelectTab1),
         bind("ctrl-2", &SelectTab2),
@@ -267,6 +274,8 @@ pub struct WorkspaceView {
     tabs: Vec<Tab>,
     layout: Layout,
     active: usize,
+    /// The tabs selected before, for Back, Forward and Last tab.
+    tab_history: TabHistory,
     sidebar_visible: bool,
     /// GPU capability is fixed for the lifetime of this window.
     pulse_running: bool,
@@ -408,6 +417,7 @@ impl WorkspaceView {
             tabs: Vec::new(),
             layout: Layout::default(),
             active: 0,
+            tab_history: TabHistory::default(),
             sidebar_visible: true,
             pulse_running: sidebar::pulse_allowed(window),
             window_visible: window.is_visible(),
@@ -1161,6 +1171,27 @@ impl WorkspaceView {
         }
     }
 
+    /// Select the tab selected before, as a browser's Back does.
+    fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.tab_history.back().and_then(|id| self.tab_index(id)) {
+            self.activate(index, window, cx);
+        }
+    }
+
+    /// Select the tab left with Back.
+    fn go_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.tab_history.forward().and_then(|id| self.tab_index(id)) {
+            self.activate(index, window, cx);
+        }
+    }
+
+    /// Switch with the tab selected before; pressed again, it switches back.
+    fn last_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.tab_history.last().and_then(|id| self.tab_index(id)) {
+            self.activate(index, window, cx);
+        }
+    }
+
     /// Select a tab, expanding its group if it is collapsed and ending a search that hides it,
     /// without moving the keyboard. Returns the tab's view; `None` when there is no such tab.
     fn select_tab(
@@ -1179,6 +1210,7 @@ impl WorkspaceView {
             previous.view.update(cx, |view, _| view.hide());
         }
         self.active = index;
+        self.tab_history.visit(id);
         view.update(cx, |view, cx| view.show(cx));
         self.sync_explorer(cx);
         cx.notify();
@@ -1243,6 +1275,7 @@ impl WorkspaceView {
                 .update(cx, |viewer, cx| viewer.forget_image(window, cx));
         }
         self.layout.remove(tab.id);
+        self.tab_history.remove(tab.id);
         self.cards.forget(tab.id);
         if self.tabs.is_empty() {
             // The window stays with its groups and shows the empty state (or the settings
@@ -2230,6 +2263,18 @@ impl Render for WorkspaceView {
             }))
             .capture_action(cx.listener(|workspace, _: &NextAttention, window, cx| {
                 workspace.jump_to_attention(window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &GoBack, window, cx| {
+                workspace.go_back(window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &GoForward, window, cx| {
+                workspace.go_forward(window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &LastTab, window, cx| {
+                workspace.last_tab(window, cx);
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &SelectTab1, window, cx| {
