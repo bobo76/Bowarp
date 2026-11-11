@@ -431,6 +431,16 @@ Tabs whose programs run on another machine through `agentws-server` over ssh; de
 limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the command line
 (`--remote <host>`); next steps, in order:
 
+- Attached clients in `agentws-server list`: a `clients` count in `SessionInfo` (the size of
+  the session's fan-out client map), printed as a column. Changes the wire format: bump the
+  protocol version. A client lost to a network drop still counts until its ssh connection
+  times out on the server side (sshd's `ClientAliveInterval`, off by default).
+- Reconnecting clients known by the server: the app sends a stable id (per install) and its
+  machine name in `Hello`; a client attaching again with the same id replaces its lost
+  connection (dropped from the session at once, counted once), and `agentws-server list` names
+  the attached clients. A ping in the protocol drops a dead connection without relying on sshd.
+- `agentws-server show <id>`: print the session's screen (the server's mirror, as plain text,
+  `--scrollback` for the history too) without attaching, so the pty size is unchanged.
 - Restore: `tabs.json` saves a remote tab's host and session id; on start, attach to it again
   (or offer to start a new one when it is gone); a host's running sessions not shown in a tab
   are listed to attach.
@@ -438,9 +448,15 @@ limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the comma
   sets the mark token, forwards `CommandStarted/Finished/Executed`, `AgentStarted/Finished`
   and progress as protocol events; agents get their hook settings and the server's own
   `HookServer`, whose reports are forwarded to the app.
-- Git branch and file explorer for remote tabs: requests to the server (`workspace-model`
-  git and file tree run there), or hidden for remote tabs. The folder is known already
-  (`Session::remote_folder`); show it shortened to `~` with the server's home folder.
+- Git branch and `~` folder for remote tabs: the server reads the branch (`workspace-model`
+  git, in the folder from `/proc`) and sends it with `FolderChanged`, and sends its home
+  folder in the hello so the tab shows the folder shortened to `~`. Protocol bump; the card,
+  row and hover card show them like a local tab's.
+- File explorer for remote tabs: until built, the explorer shows "Files on <host> aren't
+  available yet" instead of "No folder". Then a request/reply pair in the protocol (answered
+  off the UI thread) for folder listings and file reads, run by `workspace-model` file tree
+  on the server: first read-only (tree, git-ignored dimming, viewer), then refresh on change
+  (a watcher on the server), then create, rename and delete.
 - Server on Windows: build and test `agentws-server` there (named pipe, detached start).
 - Packaging: ship `agentws-server` in the Linux release and document installing it on the
   server (README); a version check that names both versions when they differ.
