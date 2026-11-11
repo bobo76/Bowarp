@@ -5,12 +5,16 @@
 //! Connecting (ssh, then the server's hello) and starting the session there run on a thread
 //! of their own ([`start`]), so the UI never waits on the network; so does attaching again
 //! to sessions whose connection was lost ([`reattach`]).
+//!
+//! The settings page checks a host's server on request ([`check`]): `agentws-server status`
+//! over ssh, on a thread of its own; the results ([`HostChecks`]) last for the app run.
 
 use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use agentws_remote::status::{self, CheckOutcome, HostCheck};
 use agentws_remote::{Client, LocalView, SpawnSpec};
 use futures::channel::oneshot;
 use gpui_kit::{App, Global};
@@ -22,7 +26,7 @@ use crate::settings_file;
 pub const SERVER_PROGRAM_ENV: &str = "AGENTWS_REMOTE_SERVER";
 
 /// Where to connect: the ssh destination and the server program to run there.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Target {
     pub destination: String,
     pub program: String,
@@ -43,6 +47,35 @@ impl Global for RemoteHosts {}
 impl Default for RemoteHosts {
     fn default() -> Self {
         Self::with_connector(Arc::new(connect_over_ssh))
+    }
+}
+
+type Checker = Arc<dyn Fn(&Target) -> CheckOutcome + Send + Sync>;
+
+/// The server checks of this app run, by target: a host edited since shows "Not checked" for
+/// its new target, and a check still running when the page closes shows when it opens again.
+/// Observers (the settings pane) redraw on each change.
+pub struct HostChecks {
+    checks: HashMap<Target, HostCheck>,
+    checker: Checker,
+}
+
+impl Global for HostChecks {}
+
+impl Default for HostChecks {
+    fn default() -> Self {
+        Self::with_checker(Arc::new(|target| {
+            status::check(&target.destination, &target.program, status::CHECK_TIMEOUT)
+        }))
+    }
+}
+
+impl HostChecks {
+    fn with_checker(checker: Checker) -> Self {
+        Self {
+            checks: HashMap::new(),
+            checker,
+        }
     }
 }
 
@@ -86,6 +119,18 @@ impl RemoteHosts {
             connections: HashMap::new(),
             connect,
         }
+    }
+
+    /// See [`is_connected`].
+    fn is_connected(&self, destination: &str) -> bool {
+        let Some(connection) = self.connections.get(destination) else {
+            return false;
+        };
+        connection
+            .try_lock()
+            .ok()
+            .and_then(|client| client.as_ref().map(|client| client.is_connected()))
+            .unwrap_or(false)
     }
 
     fn host(&mut self, target: Target) -> HostLink {
@@ -192,6 +237,7 @@ pub fn start(
         .as_deref()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "the launch names no host"))?;
     let target = target(host, cx);
+    let checked = target.clone();
     let view = LocalView {
         id,
         palette,
@@ -207,7 +253,7 @@ pub fn start(
             // The tab may be gone by now: the session then ends on the server as it drops.
             let _ = sender.send(start.run());
         })?;
-    Ok(receiver)
+    Ok(forget_check_once_connected(receiver, checked, cx))
 }
 
 /// Attach again to `sessions` on `host` (a launch's host), off this thread: their results
@@ -219,6 +265,7 @@ pub fn reattach(
     cx: &mut App,
 ) -> io::Result<oneshot::Receiver<io::Result<Vec<Reattached>>>> {
     let target = target(host, cx);
+    let checked = target.clone();
     let reattach = cx
         .default_global::<RemoteHosts>()
         .prepare_reattach(target, sessions);
@@ -229,7 +276,102 @@ pub fn reattach(
             // The tabs may be gone by now: the sessions then end on the server as they drop.
             let _ = sender.send(reattach.run());
         })?;
+    Ok(forget_check_once_connected(receiver, checked, cx))
+}
+
+/// `attempt` as it arrives, after `target`'s finished check is dropped when it succeeded: the
+/// connection is live then and the page shows it as "Connected", not as an older check's result.
+fn forget_check_once_connected<T: Send + 'static>(
+    attempt: oneshot::Receiver<io::Result<T>>,
+    target: Target,
+    cx: &mut App,
+) -> oneshot::Receiver<io::Result<T>> {
+    let (sender, forwarded) = oneshot::channel();
+    cx.spawn(async move |cx| {
+        // A dropped sender (the attempt panicked) drops ours too, which reads the same.
+        let Ok(result) = attempt.await else {
+            return;
+        };
+        if result.is_ok() {
+            cx.update(|cx| {
+                let checks = &mut cx.default_global::<HostChecks>().checks;
+                // A check still running stays, so Check stays disabled until it ends.
+                if matches!(checks.get(&target), Some(HostCheck::Done(_))) {
+                    checks.remove(&target);
+                }
+            });
+        }
+        let _ = sender.send(result);
+    })
+    .detach();
+    forwarded
+}
+
+/// Where a host of the settings is; `None` without a destination.
+pub fn host_target(host: &workspace_model::RemoteHost) -> Option<Target> {
+    Some(Target {
+        destination: host.destination()?.to_owned(),
+        program: host.server_program().to_owned(),
+    })
+}
+
+/// `target`'s last check this run, or the one running.
+pub fn host_check(target: &Target, cx: &App) -> Option<HostCheck> {
+    cx.try_global::<HostChecks>()?.checks.get(target).cloned()
+}
+
+/// Whether the app's connection to `destination` is live. Never waits: a connection being
+/// opened (its lock held) counts as not connected.
+pub fn is_connected(destination: &str, cx: &App) -> bool {
+    cx.try_global::<RemoteHosts>()
+        .is_some_and(|hosts| hosts.is_connected(destination))
+}
+
+/// Check `target`'s server off the UI thread, unless a check of it already runs: its state
+/// is "Checking" until the outcome arrives. When the app quits first, the check's thread and
+/// its ssh end with the process (ssh may outlive it until its own timeout).
+pub fn check(target: Target, cx: &mut App) {
+    let host_checks = cx.default_global::<HostChecks>();
+    if host_checks.checks.get(&target) == Some(&HostCheck::Checking) {
+        return;
+    }
+    host_checks
+        .checks
+        .insert(target.clone(), HostCheck::Checking);
+    let receiver = match spawn_check(host_checks.checker.clone(), target.clone()) {
+        Ok(receiver) => receiver,
+        Err(err) => return finish_check(target, failed(&err.to_string()), cx),
+    };
+    cx.spawn(async move |cx| {
+        let outcome = receiver
+            .await
+            .unwrap_or_else(|_| failed("the check stopped unexpectedly"));
+        cx.update(|cx| finish_check(target, outcome, cx));
+    })
+    .detach();
+}
+
+/// Run `checker` for `target` on a thread of its own; its outcome arrives on the receiver.
+fn spawn_check(checker: Checker, target: Target) -> io::Result<oneshot::Receiver<CheckOutcome>> {
+    let (sender, receiver) = oneshot::channel();
+    thread::Builder::new()
+        .name("agentws-remote-check".into())
+        .spawn(move || {
+            let _ = sender.send(checker(&target));
+        })?;
     Ok(receiver)
+}
+
+fn failed(message: &str) -> CheckOutcome {
+    CheckOutcome::Failed {
+        stderr: message.to_owned(),
+    }
+}
+
+fn finish_check(target: Target, outcome: CheckOutcome, cx: &mut App) {
+    cx.default_global::<HostChecks>()
+        .checks
+        .insert(target, HostCheck::Done(outcome));
 }
 
 /// Where `host` (a launch's host: a destination, or a host's name from the settings) is.

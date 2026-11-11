@@ -8,6 +8,7 @@ use gpui_kit::{AnyElement, Context, FocusHandle, IntoElement, Subscription, Wind
 
 use super::WorkspaceView;
 use crate::file_viewer::FilePlace;
+use crate::remote_hosts::HostChecks;
 use crate::settings_file::{self, AppSettings};
 use crate::settings_page::KeyRecorder;
 use crate::sidebar;
@@ -20,7 +21,7 @@ pub(super) struct SettingsPane {
     shown: bool,
     /// The keyboard goes here while the page shows, not to the hidden terminal.
     focus: FocusHandle,
-    _changes: [Subscription; 2],
+    _changes: [Subscription; 3],
 }
 
 impl SettingsPane {
@@ -34,11 +35,18 @@ impl SettingsPane {
         });
         // A Keyboard page row starts or stops recording a keystroke.
         let recorder = cx.observe_global::<KeyRecorder>(|_, cx| cx.notify());
+        // A Remote hosts check starts or ends; while the page is hidden it reads them when
+        // shown again.
+        let checks = cx.observe_global::<HostChecks>(|workspace, cx| {
+            if workspace.settings.shown {
+                cx.notify();
+            }
+        });
         Self {
             open: false,
             shown: false,
             focus: cx.focus_handle(),
-            _changes: [changes, recorder],
+            _changes: [changes, recorder, checks],
         }
     }
 

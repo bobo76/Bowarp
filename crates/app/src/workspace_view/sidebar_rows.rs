@@ -345,6 +345,7 @@ impl WorkspaceView {
                     let folder = view.remote_folder()?;
                     Some(TabDetail::Folder(folder.into()))
                 }),
+            remote: tab.spec.host.is_some(),
             status,
             pulse: sidebar::running_pulse(may_animate, view.running_pulses()),
             spinner: sidebar::working_spinner(

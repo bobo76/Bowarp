@@ -39,6 +39,8 @@ directly to model APIs.
     Background blur where the system allows it (Windows
     Acrylic or Mica, KDE Plasma on Wayland); elsewhere the blur choice is shown unavailable.
 - Warn before closing a session or workspace with running processes.
+- Check on request whether each remote host's server is reachable and running, with its
+  session count and version.
 
 ## Remote Sessions
 
@@ -72,6 +74,8 @@ directly to model APIs.
 - Assign colors to individual tabs and groups, with tabs optionally inheriting
   their group's color.
 - Display an icon identifying the session type, with manual icon overrides.
+- Mark tabs whose program runs on another machine, and name that machine in the tab's
+  details.
 - Keep session identity, custom colors, and activity status visually distinct.
 - Provide keyboard shortcuts for opening, closing, and switching tabs and panes.
 - Move the keyboard from the tab search into the tab list and pick a tab with the arrow keys;

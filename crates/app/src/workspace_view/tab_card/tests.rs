@@ -75,6 +75,7 @@ fn card_settings_stop_existing_clocks_and_skip_disabled_work(cx: &mut gpui_kit::
             assert!(card.status.is_some());
             assert!(card.kind.is_some());
             assert!(card.folder.is_some());
+            assert!(card.host.is_none());
             workspace.cards.shown = Some(1);
             workspace.cards.clock = Some((
                 1,
@@ -110,6 +111,11 @@ fn card_settings_stop_existing_clocks_and_skip_disabled_work(cx: &mut gpui_kit::
             assert!(card.lines_added.is_none());
             assert!(card.title.is_some());
             assert!(card.kind.is_some());
+            // A remote tab's card names its host: no host in the settings matches, so as given.
+            workspace.tabs[0].spec.host = Some(" me@elsewhere ".into());
+            let card = workspace.tab_card(1, cx).unwrap();
+            assert_eq!(card.host.as_deref(), Some("me@elsewhere"));
+            workspace.tabs[0].spec.host = None;
         })
     });
     cx.update(|_, cx| {

@@ -42,6 +42,20 @@ Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in
   (Ctrl+T) and Duplicate open on the host in that folder; a shell picked by name opens here;
   `/exit` in a remote Claude tab falls back to the host's shell in the same folder.
 
+- Remote tab marker: a remote tab's row shows only the server icon on its second line until
+  its folder is known (over a slow real ssh); a host renamed in Settings → Remote hosts shows
+  its new name in the next hover card; Location off in the tab card settings hides the host
+  line. On Windows: the server icon on the row and the card.
+
+- Remote host status (rebuild app and server): over real ssh, Check on Settings → Remote
+  hosts shows "Server running, N sessions" / "Server not running" with the version; a host
+  that is off or unknown shows "Unreachable: ..." within ssh's 10 s connect timeout; a server
+  built before `status` shows "Server too old to report status"; a daemon left running from
+  an older protocol after updating the program shows "A server of another version is
+  running"; an app of another protocol shows "speaks protocol N, this app M". Quitting the
+  app mid-check leaves no `ssh` running past its timeout. On Windows: no console window
+  flashes up during a check.
+
 Subagent list (Claude Code 2.1.316, Copilot CLI 1.0.105):
 
 - Real Claude Code: a background subagent (`run_in_background`) shows under the tab with its
@@ -228,6 +242,12 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
+
+- Remote host status and control, in order (each ships alone):
+  1. Start and Stop on Settings → Remote hosts: Start runs the daemon on the host over ssh;
+     Stop (a new `agentws-server stop`) asks first when sessions still run there, listing them
+     via `list`. The host's state refreshes after each.
+  2. The host's last known state in its `+` submenu, with a Check entry there.
 
 UX review, Tier 1 ([reviews/ux-review.md](reviews/ux-review.md), numbers are its items):
 

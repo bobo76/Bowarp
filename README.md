@@ -226,6 +226,7 @@ repository) or the folder. The folder follows `cd` in a shell (Linux; other plat
 launch folder for now).
 
 The badge on the icon shows the status. Hover a row for a moment to see its card: the status,
+a remote tab's host (its name from Settings → Remote hosts, else its ssh destination),
 the full folder, the branch, the program's title, the session kind and, in a repository, the
 lines added in the working tree (`+N`: changes to tracked files from `git diff HEAD` plus new
 files not yet added and not ignored, refreshed at most every 5 s). No card opens while a tab
@@ -667,6 +668,16 @@ Each row shows the command connecting runs; Remove host deletes it. ssh must log
 asking: use a key or an agent. A host without a destination stays on the page but not in the
 menu.
 
+A host with a destination starts with its server's state and a **Check** button. Check runs
+`agentws-server status` there over ssh (in the background, up to 20 seconds) and shows "Server
+running, N sessions" or "Server not running" with the server's version, or what went wrong:
+"Unreachable" with ssh's message (all of it in the tooltip), "agentws-server not found" (set
+the Server program), "Server too old to report status", "No answer from the server", or a
+protocol the app doesn't speak. "Connected" in front means a remote tab's connection to the
+host is open. Hosts are checked only when you click Check; results last until the app quits,
+a host whose destination or server program changed shows "Not checked" again, and so does a
+host a remote tab has connected to since its last check.
+
 ```json
 "remote_hosts": [
   { "name": "Build box", "destination": "me@build-box", "server_program": "" }
@@ -675,6 +686,9 @@ menu.
 
 `--remote <host>` on the command line takes a destination or a host's name; for a host not in
 the list, the server program comes from `AGENTWS_REMOTE_SERVER`, else `agentws-server`.
+
+A remote tab's row starts its second line with a server icon (before the folder or branch),
+and its hover card names the host above the folder, both also while it is Disconnected.
 
 When the connection drops, the host's tabs show Disconnected and their programs go on running
 on the server: **Reconnect** (in the banner below the terminal, or the tab's right-click menu)

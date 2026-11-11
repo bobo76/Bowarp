@@ -13,6 +13,27 @@ omitted unless they affect how the app is used.
 - Windows: deleting a folder link or junction in the file explorer works (it removed nothing
   and showed "permission denied"); the folder it points to is kept.
 
+## 0.2.61
+
+- Settings → Remote hosts: Check no longer takes 20 seconds on hosts whose ssh config keeps a
+  shared connection open (`ControlPersist`).
+- `agentws-server status` reports an error instead of "not running" when it can't reach the
+  server's socket, and gives up after 5 seconds on a server that doesn't answer.
+
+## 0.2.60
+
+- Settings → Remote hosts shows each host's server state on a line above its fields, with a
+  Check button: Connected while a tab uses it, and after a check whether the server is
+  running (with its session count and version), not running, unreachable (ssh's message),
+  not found, too old to report or not answering. Checks run only when you press Check.
+- `agentws-server status` prints whether the server runs on that machine, its version,
+  protocol and session count, without starting it.
+
+## 0.2.59
+
+- Remote tabs show a server icon on their second line in the sidebar, and their hover card
+  names the host (its name from Settings → Remote hosts, else the ssh destination).
+
 ## 0.2.58
 
 - Remote tabs (docs/remote.md): shells, Claude Code and Copilot CLI running on another
