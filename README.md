@@ -470,6 +470,10 @@ Drag a tab row to move it: the upper or lower half of a row drops above or below
 row's block (dropping among pinned tabs pins it); the upper half of a group header drops above
 the group, the lower half into it; the space below the last row drops at the end, ungrouped.
 
+Drag a group header to move the group with its tabs: it drops above another group's header,
+above or below an ungrouped tab, or at the end. Groups never go among the pinned tabs or into
+another group, so those rows show no drop line.
+
 ## File explorer
 
 The file explorer (Ctrl+Shift+|, the title bar button next to the sidebar toggle, closed with

@@ -16,7 +16,8 @@ use gpui_kit::{
     px, rgb,
 };
 use workspace_model::{
-    AgentId, Attention, FileChange, LauncherIcon, SessionKind, TabColor, format_clock, format_lap,
+    AgentId, Attention, FileChange, GroupId, LauncherIcon, SessionKind, TabColor, format_clock,
+    format_lap,
 };
 
 use crate::assets::{
@@ -321,6 +322,57 @@ impl Render for DraggedTab {
             .opacity(0.9)
             .child(kind_icon(self.kind).small())
             .child(single_line(self.name.clone()))
+    }
+}
+
+/// The value carried while a group header is dragged; it also renders the header that follows
+/// the mouse.
+#[derive(Clone)]
+pub struct DraggedGroup {
+    pub id: GroupId,
+    pub name: SharedString,
+    pub color: Option<TabColor>,
+    pub tab_count: usize,
+}
+
+impl Render for DraggedGroup {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let count = match self.tab_count {
+            1 => "1 tab".to_string(),
+            count => format!("{count} tabs"),
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .w(px(SIDEBAR_WIDTH - DRAG_PREVIEW_INSET))
+            .h(px(DRAG_PREVIEW_HEIGHT))
+            .px_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.drag_border)
+            .bg(theme.sidebar_accent)
+            .text_color(theme.sidebar_accent_foreground)
+            .text_sm()
+            .opacity(0.9)
+            .when_some(self.color, |preview, color| {
+                preview.child(
+                    div()
+                        .flex_none()
+                        .size(px(GROUP_COLOR_SIZE))
+                        .rounded_full()
+                        .bg(tab_color(color)),
+                )
+            })
+            .child(single_line(self.name.clone()))
+            .child(
+                div()
+                    .flex_none()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(count),
+            )
     }
 }
 

@@ -51,7 +51,7 @@ pub enum Item {
     Group(Group),
 }
 
-/// Where a dragged tab lands.
+/// Where a dragged tab or group lands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DropTarget {
     /// Next to a tab, in that tab's block: pinned, a group, or ungrouped.
@@ -394,6 +394,42 @@ impl Layout {
         if let Some(index) = self.group_index(id) {
             swap_step(&mut self.items, index, direction);
         }
+    }
+
+    /// Whether the group can be dropped on `target`: next to an ungrouped tab, above another
+    /// group, or at the end. Groups never go into the pinned block or another group.
+    pub fn accepts_group_drop(&self, id: GroupId, target: DropTarget) -> bool {
+        self.group(id).is_some()
+            && match target {
+                DropTarget::Before(tab) | DropTarget::After(tab) => {
+                    matches!(self.place(tab), Some(Place::Loose(_)))
+                }
+                DropTarget::BeforeGroup(other) => other != id && self.group(other).is_some(),
+                DropTarget::IntoGroup(_) => false,
+                DropTarget::End => true,
+            }
+    }
+
+    /// Move the group, with its tabs, to `target`. Returns whether anything moved.
+    pub fn drop_group(&mut self, id: GroupId, target: DropTarget) -> bool {
+        if !self.accepts_group_drop(id, target) {
+            return false;
+        }
+        let from = self.group_index(id).expect("checked above");
+        let group = self.items.remove(from);
+        let to = match target {
+            DropTarget::Before(tab) | DropTarget::After(tab) => {
+                let Some(Place::Loose(index)) = self.place(tab) else {
+                    unreachable!("checked above");
+                };
+                index + usize::from(matches!(target, DropTarget::After(_)))
+            }
+            DropTarget::BeforeGroup(other) => self.group_index(other).expect("checked above"),
+            DropTarget::IntoGroup(_) => unreachable!("checked above"),
+            DropTarget::End => self.items.len(),
+        };
+        self.items.insert(to, group);
+        to != from
     }
 
     /// Delete the group; its tabs stay, ungrouped, where the group was.

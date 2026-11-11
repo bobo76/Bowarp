@@ -321,7 +321,6 @@ UX review, Tier 2 (small polish, one batch):
 - "Hold Shift to select" hint (#19): on the first drag in a mouse-reporting tab per run, an
   info toast "Hold Shift to select text". One flag.
 
-- Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - PowerShell: after an app restart, a restored PowerShell tab doesn't show its last command
   (the restored-tab suggestion that bash, zsh and Git Bash tabs get). Find whether the
   command is never saved for PowerShell tabs or saved but not offered on restore.

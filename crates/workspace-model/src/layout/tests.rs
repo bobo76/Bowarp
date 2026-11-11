@@ -312,6 +312,65 @@ fn groups_move_and_delete_in_place() {
 }
 
 #[test]
+fn groups_drop_between_top_level_items() {
+    let (mut layout, a, b) = sample();
+    // Next to an ungrouped tab.
+    assert!(layout.drop_group(b, DropTarget::Before(2)));
+    assert_eq!(layout.tabs(), vec![1, 6, 2, 3, 4, 5]);
+    assert!(layout.drop_group(b, DropTarget::After(5)));
+    assert_eq!(layout.tabs(), vec![1, 2, 3, 4, 5, 6]);
+    // Above another group, and at the end.
+    assert!(layout.drop_group(b, DropTarget::BeforeGroup(a)));
+    assert_eq!(layout.tabs(), vec![1, 2, 6, 3, 4, 5]);
+    assert!(layout.drop_group(a, DropTarget::End));
+    assert_eq!(layout.tabs(), vec![1, 2, 6, 5, 3, 4]);
+    // Groups and their tabs are kept.
+    assert_eq!(layout.group(a).unwrap().tabs(), &[3, 4]);
+    assert_eq!(layout.group(b).unwrap().tabs(), &[6]);
+}
+
+#[test]
+fn groups_never_drop_into_pins_groups_or_themselves() {
+    let (mut layout, a, b) = sample();
+    assert!(!layout.accepts_group_drop(a, DropTarget::Before(1)));
+    assert!(!layout.accepts_group_drop(a, DropTarget::After(6)));
+    assert!(!layout.accepts_group_drop(a, DropTarget::IntoGroup(b)));
+    assert!(!layout.accepts_group_drop(a, DropTarget::BeforeGroup(a)));
+    assert!(!layout.accepts_group_drop(a, DropTarget::After(99)));
+    assert!(!layout.drop_group(a, DropTarget::Before(1)));
+    // Already in place.
+    assert!(!layout.drop_group(a, DropTarget::After(2)));
+    assert!(!layout.drop_group(b, DropTarget::End));
+    assert_eq!(layout.tabs(), vec![1, 2, 3, 4, 5, 6]);
+}
+
+#[test]
+fn group_drop_change_detection_matches_the_resulting_layout() {
+    let (initial, first_group, last_group) = sample();
+    let targets: Vec<_> = (0..=7)
+        .flat_map(|id| [DropTarget::Before(id), DropTarget::After(id)])
+        .chain([
+            DropTarget::BeforeGroup(first_group),
+            DropTarget::BeforeGroup(last_group),
+            DropTarget::IntoGroup(first_group),
+            DropTarget::End,
+        ])
+        .collect();
+    for group in [first_group, last_group] {
+        for &target in &targets {
+            let mut layout = initial.clone();
+            let before = layout.save(Some);
+            let changed = layout.drop_group(group, target);
+            assert_eq!(
+                changed,
+                before != layout.save(Some),
+                "{group:?} -> {target:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn reveal_expands_a_collapsed_group() {
     let (mut layout, a, _) = sample();
     layout.group_mut(a).unwrap().collapsed = true;

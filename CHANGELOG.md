@@ -5,6 +5,7 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Drag a group header to move the group, with its tabs, in the sidebar.
 - Tab names, pins, order, groups and colors, and opened and closed tabs, are saved as they
   change instead of only when the window closes, so a crash or a killed session keeps them.
 - A second window (started while another runs) says that its tabs are not saved or restored.
