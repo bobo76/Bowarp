@@ -10,6 +10,10 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Tabs saved as they change: rename, pin, color, group and move tabs, then kill the app
+  (`kill -9`) and start it again: the arrangement is back. A second window shows "Tabs in
+  this window aren't saved..." until closed; none with Restore previous tabs off.
+
 - Resume on restore: a Claude Code tab with a conversation, closed and reopened, shows the bar;
   Resume it shows the old conversation (`--resume <id>`), Start new and typing a prompt hide
   the bar; a conversation deleted from `~/.claude/projects` gives the warning and a fresh

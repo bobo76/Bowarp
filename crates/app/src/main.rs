@@ -261,6 +261,9 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
             if let Some(warning) = startup.hooks_warning {
                 workspace.warn_agent_status_off(warning, window, cx);
             }
+            if startup.ownership == TabOwnership::Guest {
+                workspace.note_guest_window(window, cx);
+            }
             restore_or_open_first_tab(workspace, initial, window, cx);
         });
         let closing = workspace.downgrade();

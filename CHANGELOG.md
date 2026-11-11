@@ -5,6 +5,9 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Tab names, pins, order, groups and colors, and opened and closed tabs, are saved as they
+  change instead of only when the window closes, so a crash or a killed session keeps them.
+- A second window (started while another runs) says that its tabs are not saved or restored.
 - A restored Claude Code tab offers to resume the conversation it had when the window closed
   (Resume it / Start new, in a bar above the terminal); a conversation Claude Code no longer
   has starts a new one with a warning.

@@ -79,6 +79,10 @@ fn last_command_events_and_history_deletion_are_flushed_with_the_final_snapshot(
     let workspace = captured.borrow().clone().unwrap();
     let mut cx = VisualTestContext::from_window(window.into(), cx);
     cx.run_until_parked();
+    // Opening a tab saves the layout at once: one snapshot per tab opened.
+    let next = || snapshots.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!(next().layout.tabs().len(), 1);
+    assert_eq!(next().layout.tabs().len(), 2);
     cx.update(|_, cx| {
         workspace.update(cx, |workspace, cx| {
             for tab in &workspace.tabs {
@@ -154,6 +158,120 @@ fn last_command_events_and_history_deletion_are_flushed_with_the_final_snapshot(
     // A retained workspace must not keep writing after the lock can change owners.
     workspace.read_with(&cx, |workspace, cx| workspace.save_tabs(cx));
     assert!(snapshots.try_recv().is_err());
+}
+
+#[gpui::test]
+fn a_guest_window_says_its_tabs_are_not_saved(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("guest-notice", cx);
+    let workspace = h.workspace.clone();
+    let set_restore = |h: &mut PanesHarness, on: bool| {
+        h.cx.update(|_, cx| {
+            settings_file::update(cx, |settings| {
+                settings.restore_tabs = FeatureSwitch::new(on);
+            })
+        });
+    };
+    let note = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| workspace.note_guest_window(window, cx));
+        });
+        h.cx.run_until_parked();
+        h.cx.update(|window, cx| window.notifications(cx).len())
+    };
+    // "Restore previous tabs" off: no window saves tabs, nothing to say.
+    set_restore(&mut h, false);
+    assert_eq!(note(&mut h), 0);
+    set_restore(&mut h, true);
+    assert_eq!(note(&mut h), 1);
+}
+
+/// Arranging tabs saves at once, not only at window close: a crash keeps the arrangement.
+#[cfg(unix)]
+#[gpui::test]
+fn arranging_tabs_saves_them_at_once(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::VisualTestContext;
+    use gpui_kit::component::Root;
+    use std::cell::RefCell;
+    use std::sync::mpsc;
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        settings_file::init_in_memory(cx);
+        crate::terminal_element::init(cx);
+        crate::terminal_view::init(cx);
+        init(cx);
+    });
+    let (saved, snapshots) = mpsc::channel();
+    let writer = Rc::new(tabs_file::TabsWriter::for_test(move |state| {
+        saved.send(state).unwrap();
+    }));
+    let captured = Rc::new(RefCell::new(None));
+    let capture = captured.clone();
+    let window = cx.add_window(move |window, cx| {
+        let (_, messages) = futures::channel::mpsc::unbounded();
+        let workspace =
+            cx.new(|cx| WorkspaceView::new(Rc::from([]), None, messages, writer, window, cx));
+        workspace.update(cx, |workspace, cx| {
+            let spec = LaunchSpec::new(
+                SessionKind::Shell,
+                Some("/bin/sh".into()),
+                vec!["-c".into(), "exit 0".into()],
+                None,
+            );
+            for _ in 0..2 {
+                workspace.open_tab(spec.clone(), window, cx).unwrap();
+                wait_for_exit(&workspace.tabs.last().unwrap().view.read(cx).session);
+            }
+        });
+        *capture.borrow_mut() = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let workspace = captured.borrow().clone().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    let last = || {
+        let mut state = snapshots.recv_timeout(Duration::from_secs(10)).unwrap();
+        while let Ok(newer) = snapshots.recv_timeout(Duration::from_millis(100)) {
+            state = newer;
+        }
+        state
+    };
+    assert_eq!(last().layout.tabs().len(), 2);
+    let ids: Vec<u64> = workspace.read_with(&cx, |workspace, _| {
+        workspace.tabs.iter().map(|tab| tab.id).collect()
+    });
+    let command = |cx: &mut VisualTestContext, id: u64, command: TabCommand| {
+        cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.run_tab_command(id, command, window, cx)
+            })
+        });
+        cx.run_until_parked();
+    };
+
+    command(&mut cx, ids[1], TabCommand::SetColor(Some(TabColor::Pink)));
+    assert_eq!(last().layout.tabs()[1].meta.color, Some(TabColor::Pink));
+    command(&mut cx, ids[1], TabCommand::TogglePin);
+    assert_eq!(last().layout.pinned.len(), 1, "pinned");
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.start_rename(RenameTarget::Tab(ids[0]), RenameOrigin::Menu, window, cx);
+            let input = workspace.renaming.as_ref().unwrap().input.clone();
+            input.update(cx, |input, cx| input.set_value("api", window, cx));
+            workspace.commit_rename(window, cx);
+        })
+    });
+    cx.run_until_parked();
+    let state = last();
+    assert!(
+        state
+            .layout
+            .tabs()
+            .iter()
+            .any(|tab| tab.meta.custom_name.as_deref() == Some("api"))
+    );
+    command(&mut cx, ids[0], TabCommand::Close);
+    assert_eq!(last().layout.tabs().len(), 1, "closed");
 }
 
 /// A window with one tab, an in-memory settings file and a text file to open.

@@ -207,7 +207,9 @@ saved. Saving to `tabs.json` is queued immediately when a command starts, withou
 delay; one background writer saves snapshots in order. A crash can lose an in-flight or queued
 update, including a deletion. Deleting a command from HISTORY also forgets it in the tabs of
 the selected shell (every tab under "All"). Normal window close waits for pending saves and a
-final snapshot before releasing ownership of the saved tabs; guest instances never write them.
+final snapshot before releasing ownership of the saved tabs; guest instances never write them,
+and say so in a notice that stays until closed. Opening, closing, renaming, pinning, moving,
+grouping and coloring tabs (and collapsing groups) are saved at once, so a crash keeps them.
 On Unix, every write makes `tabs.json` owner-only (`0600`); on Windows it inherits the profile
 folder's permissions.
 

@@ -187,6 +187,10 @@ pub fn select_tab_action(index: usize) -> Option<&'static str> {
     actions.get(index).map(|action| action.name())
 }
 
+/// Shown in a window that doesn't own the saved tabs.
+const GUEST_WINDOW_NOTICE: &str = "Tabs in this window aren't saved or restored: another \
+    Agent Workspace window, opened first, keeps the saved tabs.";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabOwnership {
     Owner,
@@ -370,6 +374,24 @@ impl WorkspaceView {
             window.push_notification(
                 Notification::warning(message)
                     .id::<AgentStatusOff>()
+                    .autohide(false),
+                cx,
+            );
+        });
+    }
+
+    /// Say in a second window that its tabs are not saved: the first window running owns
+    /// `tabs.json` (`instance_lock`). Shown until dismissed; not when tabs aren't saved anyway.
+    pub fn note_guest_window(&self, window: &mut Window, cx: &mut Context<Self>) {
+        struct GuestWindow;
+        if !settings_file::workspace_features(cx).saves_tabs() {
+            return;
+        }
+        // Startup runs before the notification layer's root exists.
+        cx.defer_in(window, move |_, window, cx| {
+            window.push_notification(
+                Notification::info(GUEST_WINDOW_NOTICE)
+                    .id::<GuestWindow>()
                     .autohide(false),
                 cx,
             );
@@ -857,7 +879,10 @@ impl WorkspaceView {
                 Notification::error(format!("Failed to start {}: {err}", launch_name(&spec))),
                 cx,
             );
+            return;
         }
+        // It reopens as a shell from now on.
+        self.save_tabs(cx);
     }
 
     /// The default shell in tab `index`'s folder, on its host for a remote tab.
@@ -1351,6 +1376,7 @@ impl WorkspaceView {
         self.layout.remove(tab.id);
         self.tab_history.remove(tab.id);
         self.cards.forget(tab.id);
+        self.save_tabs(cx);
         if self.tabs.is_empty() {
             // The window stays with its groups and shows the empty state (or the settings
             // page, still open); the next new tab starts where this one was.
@@ -1383,7 +1409,7 @@ impl WorkspaceView {
     }
 
     /// Put `tabs` back in sidebar order after the layout changed, keeping the same tab
-    /// selected.
+    /// selected, and save the new layout.
     fn sync_order(&mut self, cx: &mut Context<Self>) {
         let active_id = self.active_tab().map(|tab| tab.id);
         let order = self.layout.tabs();
@@ -1392,6 +1418,7 @@ impl WorkspaceView {
         if let Some(index) = active_id.and_then(|id| self.tab_index(id)) {
             self.active = index;
         }
+        self.save_tabs(cx);
         cx.notify();
     }
 
@@ -1490,6 +1517,7 @@ impl WorkspaceView {
                     self.cancel_rename(window, cx);
                 }
                 self.tabs[index].meta.reset_name();
+                self.save_tabs(cx);
                 cx.notify();
             }
             TabCommand::Move(direction) => {
@@ -1508,6 +1536,7 @@ impl WorkspaceView {
             }
             TabCommand::SetColor(color) => {
                 self.tabs[index].meta.color = color;
+                self.save_tabs(cx);
                 cx.notify();
             }
         }
@@ -1540,6 +1569,7 @@ impl WorkspaceView {
             }
             GroupCommand::ToggleCollapsed => {
                 group.collapsed = !group.collapsed;
+                self.save_tabs(cx);
                 cx.notify();
             }
             GroupCommand::Move(direction) => {
@@ -1556,6 +1586,7 @@ impl WorkspaceView {
             }
             GroupCommand::SetColor(color) => {
                 group.color = color;
+                self.save_tabs(cx);
                 cx.notify();
             }
         }
@@ -1569,6 +1600,7 @@ impl WorkspaceView {
         }
         if let Some(group) = self.layout.group_mut(id) {
             group.collapsed = !group.collapsed;
+            self.save_tabs(cx);
             cx.notify();
         }
     }
@@ -1627,6 +1659,7 @@ impl WorkspaceView {
                 }
             }
         }
+        self.save_tabs(cx);
         self.end_rename(&rename, window, cx);
     }
 

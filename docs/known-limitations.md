@@ -115,8 +115,9 @@ entry when the limitation is lifted.
   commands.
 - Last-command saves go through a background writer: a crash can lose queued or in-flight
   updates, including a command just deleted from HISTORY.
-- Tab names, pins, order, groups and colors reach `tabs.json` only at window close or a
-  shell's next last-command change: a crash loses those made since.
+- Tab names, pins, order, groups, colors, opened and closed tabs are saved as they change;
+  each tab's folder and conversation only with the next such change, a last command or the
+  window closing, so a crash can bring a tab back in an earlier folder.
 - Restore previous tabs off: `tabs.json` is kept unread and unwritten (the one exception:
   "Clear saved session commands" and forgetting a command remove just the matching
   `last_command` values from it, on the tabs writer thread), so the next
@@ -166,8 +167,8 @@ entry when the limitation is lifted.
   not on the settings page, not while the file is broken, other instances after a reload.
 - Resuming a restored Claude Code tab: Claude Code starts on a new conversation while the bar
   asks, and Resume restarts it (the new one, still empty, is dropped). The bar has no keyboard
-  shortcut. The conversation is saved at window close (or with the last command), so after a
-  crash the previous start's conversation is offered. Copilot CLI tabs can't resume.
+  shortcut. The conversation is saved with the tab's next layout change, last command or the
+  window closing, so after a crash an earlier conversation may be offered. Copilot CLI tabs can't resume.
 - File explorer colors of changed files: git is asked again when an open folder's entries or
   files change, or the tab's folder changes; a commit, checkout or stash made while nothing
   in the open folders is written shows once something is, or the tab is selected again. A file
