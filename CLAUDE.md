@@ -25,6 +25,10 @@ node --test crates/app/copilot-extension/bridge.test.mjs  # Copilot extension te
 scripts/test-windows.sh [--build-only]         # cross-compile tests for Windows and run under Wine
 ```
 
+PRs: `gh pr create ... && gh pr merge --auto --merge` merges once the required checks pass. A
+PR touching only docs (`*.md`, `docs/`, `reviews/`, `.claude/`; `scripts/ci-code-changed.sh`)
+skips the build, test and lint jobs, so it merges in about a minute.
+
 "The check" before committing: `cargo fmt --check && cargo build && cargo test && cargo clippy --all-targets -- -D warnings`.
 rustfmt does not wrap comments; keep lines ≤ 100 chars by hand.
 
