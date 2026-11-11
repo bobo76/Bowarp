@@ -175,7 +175,8 @@ fn card_lists_the_first_changes_relative_to_the_folder() {
         added: Some(1),
         removed: Some(0),
     };
-    let mut files = vec![file("/repo/src/new.rs"), file("/elsewhere/x.rs")];
+    let nested = Path::new("/repo").join("src").join("new.rs");
+    let mut files = vec![file(&nested.to_string_lossy()), file("/elsewhere/x.rs")];
     files.extend((0..MAX_CARD_CHANGES).map(|i| file(&format!("/repo/f{i}"))));
     let (listed, more) = card_changes(&WorkingChanges { files }, Path::new("/repo"), None);
     assert_eq!(listed.len(), MAX_CARD_CHANGES);

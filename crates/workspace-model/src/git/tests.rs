@@ -98,6 +98,15 @@ fn numstat_counts_per_path_with_binary_files_unknown() {
 }
 
 #[test]
+fn git_paths_get_backslashes_on_windows_only() {
+    assert_eq!(
+        native_separators("C:/repo/src/new.rs", true),
+        r"C:\repo\src\new.rs"
+    );
+    assert_eq!(native_separators("src/new.rs", false), "src/new.rs");
+}
+
+#[test]
 fn status_entries_read_each_kind_of_change() {
     let status = " M a.rs\0M  b.rs\0A  c.rs\0 D d.rs\0?? e f.rs\0UU g.rs\0AA h.rs\0!! i\0AM j.rs\0";
     assert_eq!(

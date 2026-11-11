@@ -150,7 +150,10 @@ pub fn lines_added(dir: &Path) -> Option<u64> {
 pub fn working_changes(dir: &Path) -> Option<WorkingChanges> {
     let deadline = Instant::now() + GIT_TIMEOUT;
     let top = run_git(dir, &["rev-parse", "--show-toplevel"], deadline)?;
-    let top = PathBuf::from(top.trim_end_matches(['\n', '\r']));
+    let top = PathBuf::from(native_separators(
+        top.trim_end_matches(['\n', '\r']),
+        cfg!(windows),
+    ));
     let numstat = run_git(
         &top,
         &[
@@ -180,7 +183,7 @@ pub fn working_changes(dir: &Path) -> Option<WorkingChanges> {
     let files = status_entries(&status)
         .into_iter()
         .map(|(path, change)| {
-            let full = top.join(&path);
+            let full = top.join(native_separators(&path, cfg!(windows)));
             let (added, removed) = if change == FileChange::Untracked {
                 untracked_read += 1;
                 let lines = (untracked_read <= MAX_UNTRACKED_FILES)
@@ -199,6 +202,16 @@ pub fn working_changes(dir: &Path) -> Option<WorkingChanges> {
         })
         .collect();
     Some(WorkingChanges { files })
+}
+
+/// `path` as git prints it (always `/`-separated, even on Windows) with the platform's separator,
+/// so paths built from it display like the ones the user typed.
+fn native_separators(path: &str, windows: bool) -> String {
+    if windows {
+        path.replace('/', "\\")
+    } else {
+        path.to_string()
+    }
 }
 
 /// The entries of `git status --porcelain=v1 -z --no-renames` output: (path, change). Ignored

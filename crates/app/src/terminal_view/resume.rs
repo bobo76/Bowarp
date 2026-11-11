@@ -66,7 +66,7 @@ impl TerminalView {
         self.conversation.resume_failed(code)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn resume_offer_for_test(&self) -> Option<&str> {
         self.conversation.offer()
     }
