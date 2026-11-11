@@ -40,6 +40,17 @@ directly to model APIs.
     Acrylic or Mica, KDE Plasma on Wayland); elsewhere the blur choice is shown unavailable.
 - Warn before closing a session or workspace with running processes.
 
+## Remote Sessions
+
+- Run shells and agents on another machine over ssh (`agentws-server` on the host), in
+  tabs like local ones; a lost connection shows the tab Disconnected with Reconnect, and the
+  session keeps running on the host.
+- On the host, `agentws-server list` shows each session's attached clients (count and
+  machine names); a client that reconnects replaces its lost connection instead of being
+  counted twice, and a dead connection is dropped without waiting for ssh to time out.
+- On the host, `agentws-server show <id>` prints a session's screen (and optionally its
+  scrollback) without attaching to it or changing its size.
+
 ## Tabs and Groups
 
 - Organize terminal tabs into named, collapsible groups, such as projects or tasks.
