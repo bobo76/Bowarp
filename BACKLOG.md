@@ -10,6 +10,12 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Changed files: the hover card lists them under `+N` and stays open while the pointer moves
+  onto the list; clicking a file opens it in that tab's viewer (also with the settings page
+  open, and for a non-selected tab). The explorer colors a file an agent writes within a
+  second, and its parent folders; colors in light and dark themes are readable. Windows paths
+  (`git rev-parse` gives `C:/...`) match the tree.
+
 - Tab Back / Forward / Last tab: the ← → buttons dim when there is nowhere to go and their
   tooltips name the keys; Ctrl+Alt+Left/Right and Ctrl+` work from the terminal (not sent to
   the program), also on Windows (AltGr layouts) and under GNOME, whose default workspace

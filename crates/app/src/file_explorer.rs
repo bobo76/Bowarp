@@ -7,6 +7,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
@@ -25,7 +26,7 @@ use workspace_model::file_tree::{
     self, DirEntry, EntryKind, ExpandedFolders, FileKind, TreeRow, entry_folder, entry_name,
     parent_folder, relative_path, validate_name,
 };
-use workspace_model::ignored_names;
+use workspace_model::{FileChange, ignored_names, working_changes};
 
 use crate::assets::{
     FILE_ARCHIVE_ICON, FILE_CODE_ICON, FILE_DATA_ICON, FILE_IMAGE_ICON, FILES_ICON, FOLDER_UP_ICON,
@@ -37,6 +38,9 @@ use crate::open_menu::OpenMenu;
 use crate::sidebar;
 
 const ROW_HEIGHT: f32 = 24.;
+/// How long the explorer waits after a change before asking git what changed, gathering a
+/// burst of writes into one `git status`.
+const CHANGES_PAUSE: Duration = Duration::from_millis(300);
 const INDENT: f32 = 14.;
 const ROW_LEFT_PADDING: f32 = 6.;
 
@@ -115,6 +119,13 @@ pub struct FileExplorer {
     unchecked: HashSet<PathBuf>,
     /// The `git check-ignore` running per folder: replacing or dropping a task cancels it.
     ignore_checks: HashMap<PathBuf, Task<()>>,
+    /// Changed files of the root's repository and the folders holding them, colored in the
+    /// tree, as of git's last answer.
+    changes: HashMap<PathBuf, FileChange>,
+    /// The `git status` run asking for `changes`; dropping it cancels it.
+    changes_check: Option<Task<()>>,
+    /// Something changed while `changes_check` ran: ask again once it has answered.
+    changes_stale: bool,
     selected: Option<PathBuf>,
     editing: Option<NameEdit>,
     /// The entry menu that is open, if any.
@@ -130,21 +141,21 @@ impl EventEmitter<ExplorerEvent> for FileExplorer {}
 impl WatchesFolders for FileExplorer {
     const OWNER: &'static str = "file explorer";
 
-    /// Only entries appearing, going or being renamed change a listing (reading a folder opens
-    /// it, which would otherwise report a change and read it again), and a `.gitignore` edited
-    /// in place changes what git ignores.
+    /// Entries appearing, going or being renamed change a listing (reading a folder opens it,
+    /// which would otherwise report a change and read it again); a file written may change
+    /// what git reports as changed, and a `.gitignore` written what git ignores.
     fn ignores(event: &Event) -> bool {
-        match event.kind {
-            EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(_)) => true,
-            EventKind::Modify(ModifyKind::Data(_)) => !file_tree::touches_gitignore(&event.paths),
-            _ => false,
-        }
+        matches!(
+            event.kind,
+            EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(_))
+        )
     }
 
-    /// Re-read the watched folders that changed.
+    /// Re-read the watched folders that changed, and ask git again what changed.
     fn on_folder_changes(&mut self, paths: Vec<PathBuf>, _: &mut Window, cx: &mut Context<Self>) {
         let folders = file_tree::folders_to_reread(&paths, self.watches.watched());
         if folders.is_empty() {
+            self.check_changes(cx);
             return;
         }
         self.reread(folders, &paths, cx);
@@ -181,6 +192,9 @@ impl FileExplorer {
             ignored: HashMap::new(),
             unchecked: HashSet::new(),
             ignore_checks: HashMap::new(),
+            changes: HashMap::new(),
+            changes_check: None,
+            changes_stale: false,
             selected: None,
             editing: None,
             menu: OpenMenu::default(),
@@ -237,6 +251,9 @@ impl FileExplorer {
         self.ignored.clear();
         self.unchecked.clear();
         self.ignore_checks.clear();
+        self.changes.clear();
+        self.changes_check = None;
+        self.changes_stale = false;
         self.refresh(cx);
     }
 
@@ -302,7 +319,41 @@ impl FileExplorer {
         }
         self.rows = self.list_rows(rows).into();
         self.watches.sync(open);
+        self.check_changes(cx);
         cx.notify();
+    }
+
+    /// Ask git off the UI thread which files of the root's repository changed, after a short
+    /// pause that gathers a burst of writes into one run; one run at a time.
+    fn check_changes(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+        if self.changes_check.is_some() {
+            self.changes_stale = true;
+            return;
+        }
+        let task = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(CHANGES_PAUSE).await;
+            let marks = cx
+                .background_spawn(async move { changed_marks(&root) })
+                .await;
+            let _ = this.update(cx, |explorer, cx| explorer.set_changes(marks, cx));
+        });
+        self.changes_check = Some(task);
+    }
+
+    /// Git's answer: redraw when it changes the colors, and ask again if something changed
+    /// meanwhile.
+    fn set_changes(&mut self, marks: HashMap<PathBuf, FileChange>, cx: &mut Context<Self>) {
+        self.changes_check = None;
+        if marks != self.changes {
+            self.changes = marks;
+            cx.notify();
+        }
+        if std::mem::take(&mut self.changes_stale) {
+            self.check_changes(cx);
+        }
     }
 
     /// Read `folder` (again), and ask git about it at the next refresh unless its entries are
@@ -690,6 +741,10 @@ impl FileExplorer {
             Some(NameEdit { target: EditTarget::Rename(target), .. }) if *target == row.path
         );
         let hovered = sidebar::hover_background(cx);
+        let change_color = (!ignored)
+            .then(|| self.changes.get(&row.path))
+            .flatten()
+            .map(|&change| sidebar::change_mark(change, cx).1);
         let menu = self.entry_menu(row.clone(), cx);
         let chevron = entry_chevron(row, cx);
         let theme = cx.theme();
@@ -700,8 +755,10 @@ impl FileExplorer {
             .debug_selector(move || format!("explorer-row-{index}"))
             .when(selected, |row| row.bg(selected_background))
             .when(!selected, |row| row.hover(|style| style.bg(hovered)))
-            // Git-ignored entries are dimmed like the icons.
+            // Git-ignored entries are dimmed like the icons; changed ones take the color of
+            // their change, and folders holding one the color of a change.
             .when(ignored, |row| row.text_color(theme.muted_foreground))
+            .when_some(change_color, |row, color| row.text_color(color))
             .on_click(cx.listener(move |explorer, _, _, cx| explorer.click(clicked.clone(), cx)))
             .child(chevron)
             .child(entry_icon(row, cx))
@@ -1046,22 +1103,100 @@ fn entry_chevron(row: &TreeRow, cx: &App) -> AnyElement {
     div().w(px(INDENT)).flex_none().into_any_element()
 }
 
+/// The changed files under `root` and the folders holding them, by their path under `root`
+/// as the tree names them (git names them under the repository's real path, links resolved).
+/// Empty outside a repository or when git fails.
+fn changed_marks(root: &Path) -> HashMap<PathBuf, FileChange> {
+    let Some(changes) = working_changes(root) else {
+        return HashMap::new();
+    };
+    let real_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    changes
+        .marks()
+        .into_iter()
+        .filter_map(|(path, change)| {
+            let path = match path.strip_prefix(root) {
+                Ok(_) => path,
+                Err(_) => root.join(path.strip_prefix(&real_root).ok()?),
+            };
+            (path != root).then_some((path, change))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use notify::event::DataChange;
 
     #[test]
-    fn in_place_writes_matter_only_for_a_gitignore() {
+    fn writes_matter_and_reads_do_not() {
         let write = |path: &str| {
             Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any))).add_path(path.into())
         };
+        // A written file may become changed for git; a `.gitignore` changes what it ignores.
         assert!(!FileExplorer::ignores(&write("/repo/.gitignore")));
-        assert!(FileExplorer::ignores(&write("/repo/a.log")));
+        assert!(!FileExplorer::ignores(&write("/repo/a.log")));
+        let read = Event::new(EventKind::Access(notify::event::AccessKind::Any));
+        assert!(FileExplorer::ignores(&read.add_path("/repo".into())));
         let created = Event::new(EventKind::Create(notify::event::CreateKind::File));
         assert!(!FileExplorer::ignores(
             &created.add_path("/repo/a.log".into())
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn changed_marks_name_paths_as_the_tree_does() {
+        use std::process::{Command, Stdio};
+        let base = std::env::temp_dir().join(format!(
+            "agentws-marks-{}-{}",
+            std::process::id(),
+            agent_status::now_micros()
+        ));
+        let repo = base.join("repo");
+        fs::create_dir_all(repo.join("src")).unwrap();
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+                .args([
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                ])
+                .args(args)
+                .current_dir(&repo)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        };
+        if !git(&["init", "-q"]) {
+            eprintln!("git not available, skipping");
+            return;
+        }
+        fs::write(repo.join("src/kept.rs"), "a\n").unwrap();
+        assert!(git(&["add", "."]) && git(&["commit", "-q", "-m", "initial"]));
+        fs::write(repo.join("src/kept.rs"), "a\nb\n").unwrap();
+        fs::write(repo.join("new.txt"), "x\n").unwrap();
+
+        // The tree shows the repository through a link: marks follow the link's paths.
+        let link = base.join("link");
+        std::os::unix::fs::symlink(&repo, &link).unwrap();
+        let marks = changed_marks(&link);
+        assert_eq!(
+            marks.get(&link.join("src/kept.rs")),
+            Some(&FileChange::Modified)
+        );
+        assert_eq!(marks.get(&link.join("src")), Some(&FileChange::Modified));
+        assert_eq!(
+            marks.get(&link.join("new.txt")),
+            Some(&FileChange::Untracked)
+        );
+        assert!(!marks.contains_key(&link), "the root itself isn't marked");
+        assert!(changed_marks(&base).is_empty(), "outside a repository");
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

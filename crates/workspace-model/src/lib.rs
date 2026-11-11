@@ -77,7 +77,9 @@ pub use close_warning::{
 pub use file_pane_features::{
     FileLinkAction, FilePaneFeatures, PaneChange, PaneEntry, pane_change,
 };
-pub use git::{GitHead, ignored_names, lines_added};
+pub use git::{
+    ChangedFile, FileChange, GitHead, WorkingChanges, ignored_names, lines_added, working_changes,
+};
 pub use history::{
     CommandHistory, HistoryEntry, HistoryScope, HistorySelection, append_entry, clear_history_file,
     entry_line, is_recordable, remove_command,

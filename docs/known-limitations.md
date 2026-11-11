@@ -164,6 +164,10 @@ entry when the limitation is lifted.
   leave the terminal and viewer below their usual minimums), and saved in pixels
   (`file_explorer_width`) with the same rules as the viewer width: once when the drag ends,
   not on the settings page, not while the file is broken, other instances after a reload.
+- File explorer colors of changed files: git is asked again when an open folder's entries or
+  files change, or the tab's folder changes; a commit, checkout or stash made while nothing
+  in the open folders is written shows once something is, or the tab is selected again. A file
+  changed only in a folder that is not expanded colors its folders, not itself, until shown.
 - File explorer dimming of git-ignored entries: git is asked again for a folder only when it is
   read again (expanded, or its entries change), and for every open folder when a `.gitignore`
   in one of them changes; a change to `.git/info/exclude` or the global excludes file, or a

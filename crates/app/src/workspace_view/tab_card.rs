@@ -3,6 +3,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::WindowExt;
@@ -11,13 +13,18 @@ use gpui_kit::{
     Anchor, AnyElement, App, AppContext, Context, IntoElement, Styled, Task, Window, div,
 };
 use workspace_model::{
-    TabCardField, display_path, in_place_kind_label, lines_added, until_next_second,
+    TabCardField, WorkingChanges, display_path, in_place_kind_label, until_next_second,
+    working_changes,
 };
 
 use super::WorkspaceView;
+use crate::file_viewer::FilePlace;
 use crate::launcher;
 use crate::settings_file;
-use crate::sidebar::{self, TabCard};
+use crate::sidebar::{self, CardChange, OpenChangedFile, TabCard};
+
+/// How many changed files a hover card lists.
+const MAX_CARD_CHANGES: usize = 8;
 
 /// How long a hover card's `+N` is reused before `git diff` runs again.
 const DIFF_STAT_TTL: Duration = Duration::from_secs(5);
@@ -30,8 +37,8 @@ struct DiffStat {
     /// The run whose answer is awaited; an answer from an older run is stale.
     generation: u64,
     running: bool,
-    /// `None` until `git diff` answers, or when it cannot.
-    added: Option<u64>,
+    /// `None` until git answers, or when it cannot.
+    changes: Option<Arc<WorkingChanges>>,
 }
 
 impl DiffStat {
@@ -41,7 +48,7 @@ impl DiffStat {
             checked: None,
             generation: 0,
             running: false,
-            added: None,
+            changes: None,
         }
     }
 
@@ -73,13 +80,18 @@ impl DiffStat {
 
     /// Take the answer of run `generation`. Returns false, ignoring it, when a newer run
     /// started since (the folder changed while it ran).
-    fn finish(&mut self, generation: u64, added: Option<u64>, now: Instant) -> bool {
+    fn finish(
+        &mut self,
+        generation: u64,
+        changes: Option<Arc<WorkingChanges>>,
+        now: Instant,
+    ) -> bool {
         if generation != self.generation {
             return false;
         }
         self.running = false;
         self.checked = Some(now);
-        self.added = added;
+        self.changes = changes;
         true
     }
 }
@@ -129,20 +141,25 @@ impl TabCards {
         &mut self,
         id: u64,
         generation: u64,
-        added: Option<u64>,
+        changes: Option<Arc<WorkingChanges>>,
         now: Instant,
     ) -> bool {
         self.diff_stats
             .get_mut(&id)
-            .is_some_and(|stat| stat.finish(generation, added, now))
+            .is_some_and(|stat| stat.finish(generation, changes, now))
     }
 
-    /// Lines added in `folder` for tab `id`, once `git diff` answered there.
-    fn lines_added(&self, id: u64, folder: &Path) -> Option<u64> {
+    /// The working tree's changes seen from `folder` for tab `id`, once git answered there.
+    fn changes(&self, id: u64, folder: &Path) -> Option<&WorkingChanges> {
         self.diff_stats
             .get(&id)
             .filter(|stat| stat.folder == folder)
-            .and_then(|stat| stat.added)
+            .and_then(|stat| stat.changes.as_deref())
+    }
+
+    /// Lines added in `folder` for tab `id`, once git answered there.
+    fn lines_added(&self, id: u64, folder: &Path) -> Option<u64> {
+        self.changes(id, folder).map(WorkingChanges::lines_added)
     }
 }
 
@@ -240,8 +257,17 @@ impl WorkspaceView {
                     .upgrade()
                     .filter(|_| !held)
                     .and_then(|workspace| workspace.read(cx).tab_card(id, cx));
+                let open_file: OpenChangedFile = {
+                    let workspace = source.clone();
+                    Rc::new(move |path: &Path, window: &mut Window, cx: &mut App| {
+                        let path = path.to_path_buf();
+                        let _ = workspace.update(cx, |workspace, cx| {
+                            workspace.open_file_in(id, path, FilePlace::default(), window, cx);
+                        });
+                    })
+                };
                 match card {
-                    Some(card) => sidebar::tab_card(card, cx).into_any_element(),
+                    Some(card) => sidebar::tab_card(card, open_file, cx).into_any_element(),
                     None => div().into_any_element(),
                 }
             })
@@ -264,6 +290,18 @@ impl WorkspaceView {
         let view = tab.view.read(cx);
         let location = view.location();
         let now = Instant::now();
+        let (changes, more_changes) = fields
+            .keep(TabCardField::Changes, || {
+                let location = location?;
+                let changes = self.cards.changes(id, &location.folder)?;
+                Some(card_changes(
+                    changes,
+                    &location.folder,
+                    self.home.as_deref(),
+                ))
+            })
+            .flatten()
+            .unwrap_or_default();
         Some(TabCard {
             index,
             name: Self::tab_name(tab, cx).into(),
@@ -325,6 +363,8 @@ impl WorkspaceView {
                     location.and_then(|location| self.cards.lines_added(id, &location.folder))
                 })
                 .flatten(),
+            changes,
+            more_changes,
         })
     }
 
@@ -408,13 +448,13 @@ impl WorkspaceView {
             return;
         };
         cx.spawn(async move |this, cx| {
-            let added = cx
-                .background_spawn(async move { lines_added(&folder) })
+            let changes = cx
+                .background_spawn(async move { working_changes(&folder).map(Arc::new) })
                 .await;
             let _ = this.update(cx, |workspace, cx| {
                 if workspace
                     .cards
-                    .finish_diff_stat(id, generation, added, Instant::now())
+                    .finish_diff_stat(id, generation, changes, Instant::now())
                 {
                     cx.notify();
                 }
@@ -422,6 +462,31 @@ impl WorkspaceView {
         })
         .detach();
     }
+}
+
+/// The first [`MAX_CARD_CHANGES`] changed files, named relative to `folder` when inside it,
+/// and how many more there are.
+fn card_changes(
+    changes: &WorkingChanges,
+    folder: &Path,
+    home: Option<&Path>,
+) -> (Vec<CardChange>, usize) {
+    let listed = changes
+        .files
+        .iter()
+        .take(MAX_CARD_CHANGES)
+        .map(|file| CardChange {
+            path: file.path.clone(),
+            label: match file.path.strip_prefix(folder) {
+                Ok(relative) => relative.display().to_string().into(),
+                Err(_) => display_path(&file.path, home).into(),
+            },
+            change: file.change,
+            added: file.added,
+            removed: file.removed,
+        })
+        .collect();
+    (listed, changes.files.len().saturating_sub(MAX_CARD_CHANGES))
 }
 
 #[cfg(test)]

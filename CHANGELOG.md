@@ -5,6 +5,9 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- See what the agent changed: the tab's hover card lists the changed files under `+N` (with
+  their status and line counts), and clicking one opens it in the viewer. The file explorer
+  colors changed files and the folders holding them.
 - Back and Forward through the tabs you selected, like a browser: ← → buttons in the sidebar
   header and Ctrl+Alt+Left / Ctrl+Alt+Right. Ctrl+` switches with the last tab selected.
   Closed tabs drop out of the history. All three can be rebound on Settings → Keyboard.

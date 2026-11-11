@@ -231,7 +231,10 @@ The badge on the icon shows the status. Hover a row for a moment to see its card
 a remote tab's host (its name from Settings → Remote hosts, else its ssh destination),
 the full folder, the branch, the program's title, the session kind and, in a repository, the
 lines added in the working tree (`+N`: changes to tracked files from `git diff HEAD` plus new
-files not yet added and not ignored, refreshed at most every 5 s). No card opens while a tab
+files not yet added and not ignored, refreshed at most every 5 s). Below it the card lists the
+first 8 changed files (a letter as in `git status`: M modified, A added, U untracked, D
+deleted, ! conflicted, with `+added −removed`); click one to open it in the tab's file viewer.
+No card opens while a tab
 is dragged, a name is edited, or a menu or dialog is open; a card hidden that way comes back
 after the pointer leaves the row and hovers it again.
 
@@ -469,7 +472,9 @@ click a file to open it in the file viewer. Expanded folders refresh when their 
 In a git repository, entries git ignores (such as `target/` or `*.log` in `.gitignore`) and the
 `.git` folder are dimmed, as is everything inside an ignored folder; they dim a moment after
 the folder shows, once git answers. The order doesn't change, and nothing is dimmed outside a
-repository or when git isn't installed.
+repository or when git isn't installed. Files that differ from HEAD are colored like their
+change (modified yellow, new green, conflicted red), and so are the folders holding them; the
+colors follow a moment after a file is written.
 
 The folder-with-an-arrow button in the explorer's header ("Parent folder (cd ..)") moves a
 shell tab to the folder above the tree's, and the tree follows. zsh and PowerShell change
