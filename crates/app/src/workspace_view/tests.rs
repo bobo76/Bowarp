@@ -1111,6 +1111,40 @@ fn busy_tabs_are_asked_about_before_closing(cx: &mut gpui_kit::TestAppContext) {
 }
 
 #[gpui::test]
+fn closing_the_window_asks_about_unsaved_viewer_edits(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("close-unsaved", cx);
+    let workspace = h.workspace.clone();
+    let allow_close_or_ask = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| workspace.allow_close_or_ask(window, cx))
+        })
+    };
+    let dialog = |h: &mut PanesHarness| h.cx.update(|window, cx| window.has_active_dialog(cx));
+    assert!(allow_close_or_ask(&mut h), "nothing unsaved: no question");
+
+    let viewer = h.open_dirty_viewer();
+    assert!(!allow_close_or_ask(&mut h));
+    h.cx.run_until_parked();
+    assert!(dialog(&mut h));
+    // Asked once, however often the window manager repeats its close.
+    assert!(!allow_close_or_ask(&mut h));
+    h.cx.run_until_parked();
+    h.cx.simulate_keystrokes("escape");
+    h.cx.run_until_parked();
+    assert!(!dialog(&mut h), "one question only");
+    assert!(h.cx.update(|_, cx| viewer.upgrade().unwrap().read(cx).is_dirty()));
+
+    // Cancelled: a new close asks again.
+    assert!(!allow_close_or_ask(&mut h));
+    h.cx.run_until_parked();
+    assert!(dialog(&mut h));
+    h.cx.simulate_keystrokes("escape");
+    h.cx.run_until_parked();
+    h.mark_dirty(&viewer, false);
+    assert!(allow_close_or_ask(&mut h));
+}
+
+#[gpui::test]
 fn settings_page_hides_the_viewer_and_opening_a_file_shows_the_tab(
     cx: &mut gpui_kit::TestAppContext,
 ) {

@@ -514,7 +514,9 @@ and SVG, checked Raw/Rendered choices. The existing mode buttons and Ctrl+S stil
 |---|---|
 | Ctrl+S | Save the file (a `●` after its name marks unsaved edits) |
 
-Opening another file or closing the panel with unsaved edits asks before dropping them. When
+Opening another file, closing the panel or the tab with unsaved edits asks "Save changes?"
+(Save, the default, Discard or Cancel); closing the window asks once for every file with
+unsaved edits (Save all / Discard / Cancel). A save that fails or is cancelled cancels. When
 the file changes on disk (an agent edits it), the panel reloads it where it was scrolled to,
 unless it has unsaved edits, which are kept.
 
@@ -640,7 +642,7 @@ Settings → Workspace has three switches, all on by default (`restore_tabs`,
   Folder tracking, agent status and busy-close warnings are unaffected.
 - **File explorer and viewer** off (applies live): both panes are hidden, the title bar button
   goes and Ctrl+Shift+| does nothing, no folder is scanned or watched and no file loaded, and
-  every open file is closed. When a file has unsaved edits, the viewer's Discard/Cancel
+  every open file is closed. When a file has unsaved edits, the viewer's Save/Discard/Cancel
   question comes first (one per file); Cancel keeps the switch on. A Ctrl+clicked file link
   asks "Open externally?" and opens the file with the system's application; "Open settings
   file" does the same. The pane widths (`file_viewer_fraction`, `file_explorer_width`) are kept.

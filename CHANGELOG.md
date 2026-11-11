@@ -5,6 +5,10 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- File viewer: "Discard changes?" is now "Save changes?" with Save (the default, Enter),
+  Discard and Cancel, when opening another file or closing the viewer or the tab.
+- Closing the window asks about files with unsaved edits in the viewer (Save all / Discard /
+  Cancel) instead of dropping the edits.
 - Remote tabs: a session whose scrollback is too large to send at once (dense truecolor
   output) attaches again with its oldest scrollback lines left out, instead of disconnecting
   every tab on that host. The server no longer keeps a closed session's screen in memory.

@@ -9,7 +9,7 @@ entry when the limitation is lifted.
   or its agent is Working or Waiting. Never busy: cmd tabs (no `C` mark), shells without the
   integration's marks (a shell started inside a tab, ssh), jobs left running in the
   background (`&`), Copilot before its first progress report and agents without status
-  hooks. Closing the window still drops unsaved file viewer edits without asking.
+  hooks.
 - In-app notifications off drops only the agent status toasts (Needs attention / Waiting for
   permission / Waiting for your reply, Ready for review, Agent finished on a clean exit); a
   toast already shown stays until it hides. A background agent that exits with a nonzero or
@@ -175,7 +175,7 @@ entry when the limitation is lifted.
   tab's viewer starts empty after turning it on again (the explorer stays hidden until its
   button or Ctrl+Shift+| is used). `tabs.json` never held a tab's open file, and no file
   associations are saved anywhere, so nothing of either is kept. The unsaved-edit prompt is
-  the viewer's Discard/Cancel one (there is no Save choice), asked once per file; a pending
+  the viewer's Save/Discard/Cancel one, asked once per file; a pending
   chain blocks a second one, and Cancel (or Esc) ends it.
   The switch is written off and then back on while the prompt is open, so
   settings.json briefly reads off (a second running instance or a reload may read it), a hand

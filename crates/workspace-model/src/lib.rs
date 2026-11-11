@@ -71,6 +71,7 @@ pub use clipboard_guard::{
 };
 pub use close_warning::{
     AgentActivity, BusyReason, BusyTab, CloseTarget, CloseWarning, TabActivity, close_warning,
+    unsaved_edits_warning,
 };
 pub use file_pane_features::{
     FileLinkAction, FilePaneFeatures, PaneChange, PaneEntry, pane_change,

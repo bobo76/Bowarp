@@ -1720,6 +1720,12 @@ impl WorkspaceView {
         });
     }
 
+    /// Tab `id`'s file viewer, if it has one.
+    fn viewer_of(&self, id: u64) -> Option<Entity<FileViewer>> {
+        let tab = &self.tabs[self.tab_index(id)?];
+        tab.viewer.as_ref().map(|viewer| viewer.view.clone())
+    }
+
     /// The ids of tabs whose viewer shows a file with unsaved edits.
     fn unsaved_viewer_tabs(&self, cx: &App) -> Vec<u64> {
         self.tabs

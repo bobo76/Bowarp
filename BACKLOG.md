@@ -10,6 +10,11 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Unsaved viewer edits: opening another file asks "Save changes?"; Save writes and goes on,
+  Discard drops, Cancel keeps; Save on a file changed on disk asks first, and its Cancel
+  cancels. Closing the window (title bar button, Alt+F4) with edits in two tabs asks once
+  (Save all saves both and closes; Discard closes; Cancel keeps all). Linux and Windows.
+
 Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in for ssh:
 
 - Settings → Remote hosts: Add host, type the three fields (the row title and "Connects with"

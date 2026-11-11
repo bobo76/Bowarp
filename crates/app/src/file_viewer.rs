@@ -223,7 +223,8 @@ impl FileViewer {
         self.open_file().is_some_and(|file| file.dirty)
     }
 
-    /// Run `then` now, or once the user agrees to drop the unsaved edits.
+    /// Run `then` now, or once the user has saved or dropped the unsaved edits (Save /
+    /// Discard / Cancel; Enter saves).
     pub(crate) fn discard_then(
         &mut self,
         window: &mut Window,
@@ -233,7 +234,8 @@ impl FileViewer {
         self.discard_then_or(window, cx, then, |_| {});
     }
 
-    /// [`Self::discard_then`], also telling the caller when the user cancels the prompt.
+    /// [`Self::discard_then`], also telling the caller when the user cancels the question (or
+    /// the save it asked for fails or is cancelled).
     pub(crate) fn discard_then_or(
         &mut self,
         window: &mut Window,
@@ -247,26 +249,28 @@ impl FileViewer {
         }
         let name = self.file_name();
         let viewer = cx.entity().downgrade();
-        let then = Rc::new(then);
-        let on_cancel = Rc::new(on_cancel);
+        let then: AfterUnsaved = Rc::new(then);
+        let on_cancel: Rc<dyn Fn(&mut App)> = Rc::new(on_cancel);
         window.open_alert_dialog(cx, move |alert, _, _| {
-            let viewer = viewer.clone();
-            let then = then.clone();
-            let on_cancel = on_cancel.clone();
+            let choice = UnsavedChoice {
+                viewer: viewer.clone(),
+                then: then.clone(),
+                on_cancel: on_cancel.clone(),
+            };
+            let (on_enter, on_escape) = (choice.clone(), choice.clone());
             alert
-                .title(format!("Discard changes to \"{name}\"?"))
-                .description("The edits not saved with Ctrl+S are lost.")
-                .ok_text("Discard")
-                .ok_variant(ButtonVariant::Danger)
-                .show_cancel(true)
+                .title(format!("Save changes to \"{name}\"?"))
+                .description("Your edits are lost if you don't save them.")
+                // Enter saves, Esc cancels; the footer's buttons do the same, and Discard.
                 .on_ok(move |_, window, cx| {
-                    let _ = viewer.update(cx, |viewer, cx| then(viewer, window, cx));
+                    on_enter.save(window, cx);
                     true
                 })
                 .on_cancel(move |_, _, cx| {
-                    on_cancel(cx);
+                    (on_escape.on_cancel)(cx);
                     true
                 })
+                .footer(unsaved_footer(choice))
         });
     }
 
@@ -351,6 +355,18 @@ impl FileViewer {
     /// Save the edits, asking first when the file changed on disk since it was read (an agent
     /// may have written it while the edits waited).
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_then(window, cx, |_, _, _| {}, |_| {});
+    }
+
+    /// [`Self::save`], then `then` once the file is written; `on_fail` when it is not (the
+    /// write failed, or the user kept the file changed on disk).
+    pub(crate) fn save_then(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        then: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        on_fail: impl Fn(&mut App) + 'static,
+    ) {
         let Some(path) = self.path.clone() else {
             return;
         };
@@ -358,13 +374,20 @@ impl FileViewer {
             return;
         };
         if !file_view::changed_on_disk(&file.saved, fs::read(&path)) {
-            self.write(window, cx);
+            if self.write(window, cx) {
+                then(self, window, cx);
+            } else {
+                on_fail(cx);
+            }
             return;
         }
         let name = self.file_name();
         let viewer = cx.entity().downgrade();
+        let then = Rc::new(then);
+        let on_fail = Rc::new(on_fail);
         window.open_alert_dialog(cx, move |alert, _, _| {
-            let viewer = viewer.clone();
+            let (viewer, then, on_fail) = (viewer.clone(), then.clone(), on_fail.clone());
+            let cancelled = on_fail.clone();
             alert
                 .title(format!("\"{name}\" changed on disk"))
                 .description("Saving replaces the changes made outside the viewer.")
@@ -372,30 +395,46 @@ impl FileViewer {
                 .ok_variant(ButtonVariant::Danger)
                 .show_cancel(true)
                 .on_ok(move |_, window, cx| {
-                    let _ = viewer.update(cx, |viewer, cx| viewer.write(window, cx));
+                    // `then` may open a dialog of its own: wait until this one has closed.
+                    let (viewer, then, on_fail) = (viewer.clone(), then.clone(), on_fail.clone());
+                    window.defer(cx, move |window, cx| {
+                        let _ = viewer.update(cx, |viewer, cx| {
+                            if viewer.write(window, cx) {
+                                then(viewer, window, cx);
+                            } else {
+                                on_fail(cx);
+                            }
+                        });
+                    });
+                    true
+                })
+                .on_cancel(move |_, _, cx| {
+                    cancelled(cx);
                     true
                 })
         });
     }
 
-    /// Write the editor's text to the file. In place, not through a renamed temporary file:
-    /// that would replace a symlink with a file and drop the file's permissions and owner.
-    fn write(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Write the editor's text to the file, telling whether it was written. In place, not
+    /// through a renamed temporary file: that would replace a symlink with a file and drop the
+    /// file's permissions and owner.
+    fn write(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(path) = self.path.clone() else {
-            return;
+            return false;
         };
         let Some(file) = self.open_file_mut() else {
-            return;
+            return false;
         };
         let text = file.editor.read(cx).value().to_string();
         if let Err(err) = fs::write(&path, &text) {
             window.push_notification(Notification::error(format!("Couldn't save: {err}")), cx);
-            return;
+            return false;
         }
         file.saved = text;
         file.dirty = false;
         cx.emit(ViewerEvent::Saved(path));
         cx.notify();
+        true
     }
 
     /// Watch the folder holding the file shown: a file's own watch would end when an editor
@@ -534,7 +573,7 @@ impl FileViewer {
         }
     }
 
-    fn file_name(&self) -> String {
+    pub(crate) fn file_name(&self) -> String {
         self.path.as_deref().map(entry_name).unwrap_or_default()
     }
 
@@ -718,6 +757,81 @@ impl FileViewer {
             )
             .into_any_element()
     }
+}
+
+/// What runs once the unsaved edits are saved or dropped.
+type AfterUnsaved = Rc<dyn Fn(&mut FileViewer, &mut Window, &mut Context<FileViewer>)>;
+
+/// The answers to "Save changes?": what each of its buttons runs.
+#[derive(Clone)]
+struct UnsavedChoice {
+    viewer: WeakEntity<FileViewer>,
+    then: AfterUnsaved,
+    on_cancel: Rc<dyn Fn(&mut App)>,
+}
+
+impl UnsavedChoice {
+    /// Save, then go on; a failed or cancelled save cancels. Deferred: saving may ask its own
+    /// question, and `then` may open a dialog, once the question has closed.
+    fn save(&self, window: &mut Window, cx: &mut App) {
+        let choice = self.clone();
+        window.defer(cx, move |window, cx| {
+            let (then, on_cancel) = (choice.then.clone(), choice.on_cancel.clone());
+            let _ = choice.viewer.update(cx, |viewer, cx| {
+                viewer.save_then(
+                    window,
+                    cx,
+                    move |viewer, window, cx| then(viewer, window, cx),
+                    move |cx| on_cancel(cx),
+                );
+            });
+        });
+    }
+
+    fn discard(&self, window: &mut Window, cx: &mut App) {
+        let choice = self.clone();
+        window.defer(cx, move |window, cx| {
+            let then = choice.then.clone();
+            let _ = choice
+                .viewer
+                .update(cx, |viewer, cx| then(viewer, window, cx));
+        });
+    }
+}
+
+/// Cancel, Discard and Save (the default), right-aligned like the alert's own buttons.
+fn unsaved_footer(choice: UnsavedChoice) -> impl IntoElement {
+    let (cancel, discard, save) = (choice.clone(), choice.clone(), choice);
+    div()
+        .flex()
+        .justify_end()
+        .gap_2()
+        .child(
+            Button::new("unsaved-cancel")
+                .label("Cancel")
+                .on_click(move |_, window, cx| {
+                    window.close_dialog(cx);
+                    (cancel.on_cancel)(cx);
+                }),
+        )
+        .child(
+            Button::new("unsaved-discard")
+                .label("Discard")
+                .danger()
+                .on_click(move |_, window, cx| {
+                    window.close_dialog(cx);
+                    discard.discard(window, cx);
+                }),
+        )
+        .child(
+            Button::new("unsaved-save")
+                .label("Save")
+                .primary()
+                .on_click(move |_, window, cx| {
+                    window.close_dialog(cx);
+                    save.save(window, cx);
+                }),
+        )
 }
 
 fn viewer_menu(
