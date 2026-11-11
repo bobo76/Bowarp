@@ -27,6 +27,8 @@ omitted unless they affect how the app is used.
   every tab on that host. The server no longer keeps a closed session's screen in memory.
 - Holding Ctrl over a network path (`\\host\share\…`) in terminal output no longer freezes the
   window on Windows while it tries to reach that host; such paths are not links.
+- Holding Ctrl over a path on a network drive or mount that does not answer (a mapped drive,
+  NFS, sshfs) no longer freezes the window: the file is looked up in the background.
 - Windows: deleting a folder link or junction in the file explorer works (it removed nothing
   and showed "permission denied"); the folder it points to is kept.
 
