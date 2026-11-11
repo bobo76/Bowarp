@@ -10,6 +10,12 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Resume on restore: a Claude Code tab with a conversation, closed and reopened, shows the bar;
+  Resume it shows the old conversation (`--resume <id>`), Start new and typing a prompt hide
+  the bar; a conversation deleted from `~/.claude/projects` gives the warning and a fresh
+  Claude; `/clear` then close and reopen offers the new conversation; Copilot tabs show no bar.
+  The `agentws-hook` installed with the app must be the new one (it sends the id).
+
 - Changed files: the hover card lists them under `+N` and stays open while the pointer moves
   onto the list; clicking a file opens it in that tab's viewer (also with the settings page
   open, and for a non-selected tab). The explorer colors a file an agent writes within a

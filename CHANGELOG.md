@@ -5,6 +5,9 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- A restored Claude Code tab offers to resume the conversation it had when the window closed
+  (Resume it / Start new, in a bar above the terminal); a conversation Claude Code no longer
+  has starts a new one with a warning.
 - See what the agent changed: the tab's hover card lists the changed files under `+N` (with
   their status and line counts), and clicking one opens it in the viewer. The file explorer
   colors changed files and the folders holding them.

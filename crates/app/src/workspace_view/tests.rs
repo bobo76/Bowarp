@@ -1624,6 +1624,93 @@ fn settings_page_stays_after_the_last_tab_and_closing_it_shows_the_empty_state(
     });
 }
 
+/// A restored Claude Code tab offers its conversation; Resume restarts the agent with the
+/// resume flag, and a resume the agent fails at once (here `exit 1`, like a conversation it no
+/// longer has) starts it again on a new one. `sh` stands in for the agent.
+#[cfg(unix)]
+#[gpui::test]
+fn a_restored_agent_tab_offers_to_resume_its_conversation(cx: &mut gpui_kit::TestAppContext) {
+    use workspace_model::agents::CLAUDE;
+    use workspace_model::{SavedItem, SavedKind, SavedLayout, SavedTab};
+
+    let mut h = PanesHarness::new("resume", cx);
+    let workspace = h.workspace.clone();
+    let saved = SavedTab {
+        kind: SavedKind::Agent(CLAUDE),
+        program: Some("/bin/sh".into()),
+        args: vec!["-c".into(), "exit 1".into()],
+        folder: Some(h.folder.clone()),
+        last_command: None,
+        conversation: Some("1b04-cf".into()),
+        meta: TabMeta::default(),
+    };
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let layout = SavedLayout {
+                pinned: Vec::new(),
+                items: vec![SavedItem::Tab(saved)],
+            };
+            let state = TabsState {
+                layout,
+                selected: None,
+            };
+            assert!(workspace.restore(state, window, cx));
+        })
+    });
+    let agent_view = |h: &mut PanesHarness| {
+        h.workspace.read_with(&h.cx, |workspace, _| {
+            let tab = workspace
+                .tabs
+                .iter()
+                .find(|tab| tab.spec.kind == SessionKind::Agent(CLAUDE))
+                .unwrap();
+            (tab.view.clone(), tab.spec.args.clone())
+        })
+    };
+    let wait = |h: &mut PanesHarness, view: &Entity<TerminalView>| {
+        h.cx.update(|_, cx| wait_for_exit(&view.read(cx).session));
+        h.cx.run_until_parked();
+    };
+    let (restored, _) = agent_view(&mut h);
+    wait(&mut h, &restored);
+    h.cx.update(|_, cx| {
+        let view = restored.read(cx);
+        assert_eq!(view.resume_offer_for_test(), Some("1b04-cf"));
+        assert_eq!(
+            view.conversation(),
+            Some("1b04-cf"),
+            "kept if left unanswered"
+        );
+    });
+
+    // The restart happens as the answer is given; its exit is read only once parked.
+    h.cx.update(|_, cx| restored.update(cx, |view, cx| view.answer_resume(true, cx)));
+    let (resumed, args) = agent_view(&mut h);
+    assert_ne!(resumed, restored, "the agent started again");
+    assert_eq!(
+        args,
+        ["-c", "exit 1"],
+        "the tab keeps its launch without the flag"
+    );
+    h.cx.update(|_, cx| {
+        let view = resumed.read(cx);
+        assert_eq!(view.resume_offer_for_test(), None);
+        assert_eq!(view.conversation(), Some("1b04-cf"));
+    });
+
+    // It exits at once: a new conversation starts in its place.
+    wait(&mut h, &resumed);
+    let (fresh, _) = agent_view(&mut h);
+    assert_ne!(fresh, resumed);
+    wait(&mut h, &fresh);
+    h.cx.update(|_, cx| assert_eq!(fresh.read(cx).conversation(), None));
+    assert_eq!(
+        agent_view(&mut h).0,
+        fresh,
+        "a plain failure isn't a failed resume"
+    );
+}
+
 #[gpui::test]
 fn restoring_no_tab_keeps_the_saved_groups(cx: &mut gpui_kit::TestAppContext) {
     use workspace_model::{SavedGroup, SavedItem, SavedLayout};

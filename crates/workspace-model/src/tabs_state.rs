@@ -56,6 +56,9 @@ pub struct SavedTab {
     pub folder: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_command: Option<String>,
+    /// The agent's conversation when the window closed, offered to resume at the next start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<String>,
     #[serde(flatten)]
     pub meta: TabMeta,
 }

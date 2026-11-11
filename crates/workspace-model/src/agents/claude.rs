@@ -59,6 +59,7 @@ pub const DEFINITION: AgentDefinition = AgentDefinition {
             "CLAUDE_PID",
         ],
         shell_after_normal_exit: true,
+        resume_flag: Some("--resume"),
     },
     hooks: HookProtocol {
         artifact: HookArtifactPlan {

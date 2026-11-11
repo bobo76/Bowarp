@@ -21,6 +21,7 @@ pub mod agents;
 mod attention;
 mod clipboard_guard;
 mod close_warning;
+mod conversation;
 mod file_pane_features;
 pub mod file_tree;
 pub mod file_view;
@@ -74,6 +75,7 @@ pub use close_warning::{
     AgentActivity, BusyReason, BusyTab, CloseTarget, CloseWarning, TabActivity, close_warning,
     unsaved_edits_warning,
 };
+pub use conversation::Conversation;
 pub use file_pane_features::{
     FileLinkAction, FilePaneFeatures, PaneChange, PaneEntry, pane_change,
 };

@@ -164,6 +164,10 @@ entry when the limitation is lifted.
   leave the terminal and viewer below their usual minimums), and saved in pixels
   (`file_explorer_width`) with the same rules as the viewer width: once when the drag ends,
   not on the settings page, not while the file is broken, other instances after a reload.
+- Resuming a restored Claude Code tab: Claude Code starts on a new conversation while the bar
+  asks, and Resume restarts it (the new one, still empty, is dropped). The bar has no keyboard
+  shortcut. The conversation is saved at window close (or with the last command), so after a
+  crash the previous start's conversation is offered. Copilot CLI tabs can't resume.
 - File explorer colors of changed files: git is asked again when an open folder's entries or
   files change, or the tab's folder changes; a commit, checkout or stash made while nothing
   in the open folders is written shows once something is, or the tab is selected again. A file

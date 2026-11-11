@@ -63,6 +63,13 @@ selected tab's folder and open right below it (below a pinned tab: first after t
 with no tab open, they start in the last closed tab's folder, at the end of the list. The tab
 named on the command line goes after the restored ones.
 
+A restored Claude Code tab that had a conversation when the window closed starts a new one and
+asks in a bar above the terminal: **Resume it** restarts Claude Code with `--resume <id>` on that
+conversation (its id comes from the hooks, so it is that tab's conversation, not the folder's
+latest), **Start new** keeps the new one; typing a prompt answers Start new too. Unanswered, the
+question comes back at the next start. If Claude Code no longer has the conversation, a new one
+starts and a warning says so. Copilot CLI tabs always start a new session.
+
 Closing the last tab keeps the window and its groups: the terminal area shows "No open tabs"
 with a button per program of the `+` menu, in the same order (the default shell first; Tab and
 Shift+Tab move between them, Enter or Space opens one), and the file explorer hides until the

@@ -64,8 +64,8 @@ use crate::sidebar::{self, SIDEBAR_WIDTH};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
 use crate::terminal_view::{
-    AgentExited, AgentNotice, LastCommandChanged, OpenFileRequest, RemoteAction, StatusReporting,
-    TabChanged, TerminalView,
+    AgentExited, AgentNotice, LastCommandChanged, OpenFileRequest, RemoteAction,
+    ResumeConversation, ResumeFailed, StatusReporting, TabChanged, TerminalView,
 };
 use crate::window_bounds;
 
@@ -194,7 +194,7 @@ pub enum TabOwnership {
 }
 
 /// What the workspace follows of a tab's session view (`listen_to_tab`).
-type TabSubscriptions = [Subscription; 6];
+type TabSubscriptions = [Subscription; 8];
 
 struct Tab {
     /// The first session's id, which stays with the tab when tabs move (and when an agent's
@@ -713,7 +713,77 @@ impl WorkspaceView {
                 workspace.run_remote_action(tab_id, *action, window, cx);
             },
         );
-        [changed, exited, open_file, notice, last_command, remote]
+        let resume = cx.subscribe_in(
+            view,
+            window,
+            move |workspace, _, request: &ResumeConversation, window, cx| {
+                workspace.resume_conversation(tab_id, request.0.clone(), window, cx);
+            },
+        );
+        let resume_failed = cx.subscribe_in(
+            view,
+            window,
+            move |workspace, _, _: &ResumeFailed, window, cx| {
+                workspace.start_new_conversation(tab_id, window, cx);
+            },
+        );
+        [
+            changed,
+            exited,
+            open_file,
+            notice,
+            last_command,
+            remote,
+            resume,
+            resume_failed,
+        ]
+    }
+
+    /// Restart tab `tab_id`'s agent on conversation `id`. The tab keeps its launch without the
+    /// resume flag, so Duplicate and the next resume start from it.
+    fn resume_conversation(
+        &mut self,
+        tab_id: u64,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.tab_index(tab_id) else {
+            return;
+        };
+        let base = self.tabs[index].spec.clone();
+        let Some(resume) = base.kind.agent().and_then(|agent| agent.resume_args(&id)) else {
+            return;
+        };
+        let mut spec = base.clone();
+        spec.args.extend(resume);
+        if let Err(err) = self.replace_tab_session(index, spec, window, cx) {
+            window.push_notification(
+                Notification::error(format!("Failed to resume the conversation: {err}")),
+                cx,
+            );
+            return;
+        }
+        let tab = &mut self.tabs[index];
+        tab.spec = base;
+        tab.view.update(cx, |view, _| view.mark_resumed(id));
+    }
+
+    /// The agent no longer had the conversation it was asked to resume: start it again on a
+    /// new one, and say so (its own message goes with the screen).
+    fn start_new_conversation(&mut self, tab_id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.tab_index(tab_id) else {
+            return;
+        };
+        let spec = self.tabs[index].spec.clone();
+        let label = spec.kind.agent().map_or("The agent", |agent| agent.label());
+        let message = match self.replace_tab_session(index, spec, window, cx) {
+            Ok(()) => format!(
+                "Couldn't resume the conversation: {label} no longer has it. Started a new one."
+            ),
+            Err(err) => format!("Couldn't resume the conversation, nor start a new one: {err}"),
+        };
+        window.push_notification(Notification::warning(message), cx);
     }
 
     fn notify_agent(
@@ -929,6 +999,9 @@ impl WorkspaceView {
                     if let Some(index) = self.tab_index(id) {
                         self.tabs[index].view.update(cx, |view, cx| {
                             view.restore_last_command(saved.last_command, cx);
+                            if let Some(conversation) = saved.conversation {
+                                view.offer_resume(conversation, cx);
+                            }
                         });
                     }
                     Some(id)
@@ -980,6 +1053,7 @@ impl WorkspaceView {
             let folder = tab.view.read(cx).current_folder();
             let mut saved = tabs_file::saved_tab(&tab.spec, folder, tab.meta.clone());
             saved.last_command = tab.view.read(cx).last_command().map(str::to_owned);
+            saved.conversation = tab.view.read(cx).conversation().map(str::to_owned);
             Some(saved)
         });
         self.tabs_writer.save(TabsState { layout, selected });
