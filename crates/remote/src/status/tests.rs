@@ -232,6 +232,17 @@ fn a_process_left_holding_the_pipes_does_not_hold_up_the_run() {
     assert!(started.elapsed() < Duration::from_secs(5));
 }
 
+#[cfg(unix)]
+#[test]
+fn output_held_open_is_waited_for_briefly_not_until_the_timeout() {
+    let started = Instant::now();
+    let mut command = Command::new("sh");
+    command.args(["-c", "echo out; sleep 30 & exit 0"]);
+    let output = run(command, Duration::from_secs(20)).unwrap().unwrap();
+    assert_eq!(output.stdout, "out\n");
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
 fn answer_with(message: ServerMessage) -> io::Cursor<Vec<u8>> {
     let mut frame = Vec::new();
     write_frame(&mut frame, &message.encode()).unwrap();
@@ -245,7 +256,7 @@ fn a_daemon_refusing_the_hello_is_incompatible() {
         message: "protocol 9 not supported".into(),
     };
     assert_eq!(
-        daemon_state(answer_with(refusal), io::sink()).unwrap(),
+        daemon_state(answer_with(refusal), io::sink(), ASK_TIMEOUT).unwrap(),
         (DaemonState::Incompatible, None)
     );
 }
@@ -255,6 +266,37 @@ fn a_hello_in_another_version_is_an_error() {
     let hello = ServerMessage::Hello {
         version: PROTOCOL_VERSION + 1,
     };
-    let err = daemon_state(answer_with(hello), io::sink()).unwrap_err();
+    let err = daemon_state(answer_with(hello), io::sink(), ASK_TIMEOUT).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
+
+/// A daemon that accepted the connection but never answers.
+struct Silent;
+
+impl Read for Silent {
+    fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+        thread::sleep(Duration::from_secs(60));
+        Ok(0)
+    }
+}
+
+#[test]
+fn a_daemon_that_never_answers_times_out() {
+    let started = Instant::now();
+    let err = daemon_state(Silent, io::sink(), Duration::from_millis(100)).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn only_a_missing_or_refusing_socket_means_no_daemon() {
+    use io::ErrorKind::{ConnectionRefused, NotFound, PermissionDenied, TimedOut};
+    for (kind, absent) in [
+        (NotFound, true),
+        (ConnectionRefused, true),
+        (PermissionDenied, false),
+        (TimedOut, false),
+    ] {
+        assert_eq!(daemon_absent(&io::Error::from(kind)), absent, "{kind:?}");
+    }
 }

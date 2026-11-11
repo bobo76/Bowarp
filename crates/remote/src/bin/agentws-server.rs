@@ -12,7 +12,7 @@
 use std::process::ExitCode;
 use std::time::Duration;
 
-use agentws_remote::status::{DaemonState, ServerStatus};
+use agentws_remote::status::{self, DaemonState, ServerStatus};
 use agentws_remote::{Client, transport};
 
 const DEFAULT_IDLE_EXIT: Duration = Duration::from_secs(60);
@@ -83,13 +83,19 @@ fn list(name: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Exits 0 whether or not the server runs; an error only when asking it failed.
+/// Exits 0 whether or not the server runs; an error only when reaching or asking it failed.
 fn status(name: &str) -> std::io::Result<()> {
     let (daemon, sessions) = match transport::connect(name) {
-        Err(_) => (DaemonState::NotRunning, None),
+        Err(err) if status::daemon_absent(&err) => (DaemonState::NotRunning, None),
+        Err(err) => {
+            return Err(std::io::Error::new(
+                err.kind(),
+                format!("could not reach the server: {err}"),
+            ));
+        }
         Ok(stream) => {
             let (reader, writer) = transport::halves(stream);
-            agentws_remote::status::daemon_state(reader, writer)?
+            status::daemon_state(reader, writer, status::ASK_TIMEOUT)?
         }
     };
     let status = ServerStatus {

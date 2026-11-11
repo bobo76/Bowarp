@@ -19,7 +19,12 @@ use crate::transport;
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(20);
 /// A check keeps at most this much of ssh's output and error output each.
 const OUTPUT_LIMIT: usize = 64 * 1024;
+/// How long output may still come once ssh ended: a process it left behind (a `ControlPersist`
+/// master) can hold its pipes open long after.
+const OUTPUT_GRACE: Duration = Duration::from_millis(500);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// How long `status` waits for the daemon's answer before reporting it as not answering.
+pub const ASK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// This user's daemon on the host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,9 +173,41 @@ pub fn last_line(text: &str) -> Option<&str> {
     text.lines().map(str::trim).rfind(|line| !line.is_empty())
 }
 
+/// Whether failing to connect to the daemon's socket means no daemon listens on it.
+pub fn daemon_absent(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+    )
+}
+
 /// The daemon state and its session count from a connection to the daemon's socket; an error
-/// when it is no agentws server or asking it failed.
+/// when it is no agentws server, asking it failed or it gave no answer within `timeout`.
 pub fn daemon_state(
+    reader: impl Read + Send + 'static,
+    writer: impl Write + Send + 'static,
+    timeout: Duration,
+) -> io::Result<(DaemonState, Option<usize>)> {
+    let (sender, answer) = mpsc::channel();
+    // The socket has no portable read timeout: ask from a thread, left blocked on a timeout.
+    thread::Builder::new()
+        .name("agentws-status-ask".into())
+        .spawn(move || {
+            let _ = sender.send(ask_daemon(reader, writer));
+        })?;
+    match answer.recv_timeout(timeout) {
+        Ok(state) => state,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "the server did not answer",
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(io::Error::other("asking the server stopped unexpectedly"))
+        }
+    }
+}
+
+fn ask_daemon(
     reader: impl Read + Send + 'static,
     writer: impl Write + Send + 'static,
 ) -> io::Result<(DaemonState, Option<usize>)> {
@@ -221,11 +258,12 @@ fn run(mut command: Command, timeout: Duration) -> io::Result<Option<CommandOutp
         let _ = child.wait();
         return waited.map(|_| None);
     };
-    // A process ssh left behind may hold the pipes open: wait for them no longer than for ssh.
+    // A process ssh left behind may hold the pipes open: wait for them only briefly.
+    let output_deadline = deadline.min(Instant::now() + OUTPUT_GRACE);
     Ok(Some(CommandOutput {
         exit: status.code(),
-        stdout: collect_output(&stdout, deadline),
-        stderr: collect_output(&stderr, deadline),
+        stdout: collect_output(&stdout, output_deadline),
+        stderr: collect_output(&stderr, output_deadline),
     }))
 }
 

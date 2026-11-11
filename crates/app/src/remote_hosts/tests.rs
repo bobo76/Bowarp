@@ -131,3 +131,25 @@ fn a_successful_connection_drops_the_hosts_check(cx: &mut gpui_kit::TestAppConte
     assert_eq!(cx.update(|cx| host_check(&target, cx)), None);
     assert!(cx.update(|cx| host_check(&other, cx)).is_some());
 }
+
+#[gpui::test]
+fn a_successful_connection_keeps_a_check_still_running(cx: &mut gpui_kit::TestAppContext) {
+    let target = Target {
+        destination: "me@box".into(),
+        program: "agentws-server".into(),
+    };
+    let connected = cx.update(|cx| {
+        let checks = cx.default_global::<HostChecks>();
+        checks.checks.insert(target.clone(), HostCheck::Checking);
+        let (sender, receiver) = oneshot::channel::<io::Result<()>>();
+        let forwarded = forget_check_once_connected(receiver, target.clone(), cx);
+        sender.send(Ok(())).unwrap();
+        forwarded
+    });
+    cx.run_until_parked();
+    assert!(futures::executor::block_on(connected).unwrap().is_ok());
+    assert_eq!(
+        cx.update(|cx| host_check(&target, cx)),
+        Some(HostCheck::Checking)
+    );
+}

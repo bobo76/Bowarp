@@ -279,7 +279,7 @@ pub fn reattach(
     Ok(forget_check_once_connected(receiver, checked, cx))
 }
 
-/// `attempt` as it arrives, after the check of `target` is dropped when it succeeded: the
+/// `attempt` as it arrives, after `target`'s finished check is dropped when it succeeded: the
 /// connection is live then and the page shows it as "Connected", not as an older check's result.
 fn forget_check_once_connected<T: Send + 'static>(
     attempt: oneshot::Receiver<io::Result<T>>,
@@ -294,7 +294,11 @@ fn forget_check_once_connected<T: Send + 'static>(
         };
         if result.is_ok() {
             cx.update(|cx| {
-                cx.default_global::<HostChecks>().checks.remove(&target);
+                let checks = &mut cx.default_global::<HostChecks>().checks;
+                // A check still running stays, so Check stays disabled until it ends.
+                if matches!(checks.get(&target), Some(HostCheck::Done(_))) {
+                    checks.remove(&target);
+                }
             });
         }
         let _ = sender.send(result);
