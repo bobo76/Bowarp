@@ -120,11 +120,12 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--li
   <header>
     <span class="eyebrow">Bowarp · agent-workspace</span>
     <h1>Agent Workspace anatomy</h1>
-    <p class="lede prose">A desktop terminal for running Claude Code, Copilot CLI and shells side by side in tabs, with each tab's agent status visible at a glance. This page names every part of the window, the code behind it, and what each part does.</p>
+    <p class="lede prose">A desktop terminal for running Claude Code, Copilot CLI and shells side by side in tabs, on this machine or on another one over ssh, with each tab's agent status visible at a glance. This page names every part of the window, the code behind it, and what each part does.</p>
     <div class="chips">
       <span class="chip">Rust + GPUI</span>
       <span class="chip">alacritty_terminal 0.26</span>
       <span class="chip">Windows first, then Linux</span>
+      <span class="chip">Remote tabs over ssh</span>
       <span class="chip">No AI of its own</span>
     </div>
   </header>
@@ -153,12 +154,12 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--li
       <div><span class="n">1</span><p><strong>Title bar</strong>Sidebar toggle, explorer toggle, About (<code>i</code>) and Settings (gear); window buttons on the right.<br><small>workspace_view.rs</small></p></div>
       <div><span class="n">2</span><p><strong>Sidebar header</strong>"Search tabs..." (<kbd>Ctrl+Shift+S</kbd>) and the <code>+</code> new-tab menu. A warning button with a count shows here when other tabs need attention.<br><small>workspace_view.rs · sidebar</small></p></div>
       <div><span class="n">3</span><p><strong>Pinned tab</strong>The pin marks a tab kept at the top and spared by "Close other tabs".<br><small>tab layout pins</small></p></div>
-      <div><span class="n">4</span><p><strong>Tab row</strong>Kind icon with its status badge (bottom right), name, and branch or folder below. Hovered or selected rows show <code>⋮</code> (tab menu) and <code>×</code>. Hover for the tab hover card.<br><small>TabMeta · sidebar</small></p></div>
+      <div><span class="n">4</span><p><strong>Tab row</strong>Kind icon with its status badge (bottom right), name, and branch or folder below. Hovered or selected rows show <code>⋮</code> (tab menu) and <code>×</code>. Hover for the tab hover card. Agent tabs running subagents show their count in a ring after the name, and the list under the row.<br><small>TabMeta · sidebar.rs · sidebar_rows.rs</small></p></div>
       <div><span class="n">5</span><p><strong>Group header</strong>Collapsed here: its color, name, tab count and status counts (2 idle).<br><small>workspace-model · tab layout</small></p></div>
       <div><span class="n">6</span><p><strong>Settings row</strong>Added under the tabs while the settings page is open; close it with its <code>×</code>.<br><small>settings_page.rs</small></p></div>
       <div><span class="n">7</span><p><strong>File explorer</strong>The selected tab's folder; follows <code>cd</code>. Header: parent folder button and <code>×</code>.<br><small>file_explorer.rs · file_tree</small></p></div>
       <div><span class="n">8</span><p><strong>Dimmed entries</strong>Git-ignored entries and <code>.git</code> are dimmed (<code>pipeline</code>, <code>target</code>).<br><small>file explorer git ignore</small></p></div>
-      <div><span class="n">9</span><p><strong>Terminal</strong>The tab's live session, here Claude Code. Clickable links, search, history popup on <kbd>Up</kbd> in shell tabs.<br><small>terminal_view.rs · terminal_element.rs · term-core</small></p></div>
+      <div><span class="n">9</span><p><strong>Terminal</strong>The tab's live session, here Claude Code. Clickable links, search, history popup on <kbd>Up</kbd> in shell tabs. A remote tab whose connection dropped shows a Disconnected banner with Reconnect.<br><small>terminal_view.rs · terminal_element.rs · term-core</small></p></div>
       <div><span class="n">10</span><p><strong>File viewer</strong>The tab's open file with its folder. Rendered / Raw for Markdown, JSON and SVG, <code>⋮</code> menu (Save), <code>×</code> to close.<br><small>file viewer · workspace-model decoding</small></p></div>
     </div>
   </section>
@@ -173,17 +174,23 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--li
         <tbody>
           <tr><td>Tab</td><td>One session: a shell, Claude Code or Copilot CLI, with its own terminal, folder and open file.</td><td><code>TabMeta</code>, <code>TerminalView</code></td></tr>
           <tr><td>Tab row</td><td>The tab's line in the sidebar.</td><td>sidebar in <code>workspace_view.rs</code></td></tr>
-          <tr><td>Tab menu</td><td>Right-click or <code>⋮</code>: duplicate, pin, rename, copy branch / title / folder, move, close, color, groups.</td><td><code>start_rename</code>, …</td></tr>
+          <tr><td>Tab menu</td><td>Right-click or <code>⋮</code>: duplicate, pin, rename, reset name, copy branch / title / folder, move, close, color, groups; Reconnect / Start new on a disconnected remote tab.</td><td><code>tab_menu.rs</code></td></tr>
+          <tr><td>Tab list focus</td><td>The keyboard in the sidebar tab list (entered from "Search tabs..." with <kbd>Tab</kbd> or <kbd>Down</kbd>): arrows pick a tab, <kbd>F2</kbd> renames it. A focus ring marks the row.</td><td><code>sidebar.rs</code></td></tr>
           <tr><td>Tab hover card</td><td>Status, full folder, branch, program title, session kind, <code>+N</code> lines changed.</td><td>Appearance → Tab hover card</td></tr>
           <tr><td>Group</td><td>Named, colored, collapsible set of tabs. Kept when empty.</td><td>workspace-model tab layout</td></tr>
           <tr><td>Pinned tab</td><td>Stays at the top; spared by "Close other tabs".</td><td>tab layout pins</td></tr>
-          <tr><td>Launcher</td><td>An entry of the <code>+</code> menu, with a stable id: <code>bash</code>, <code>zsh</code>, <code>fish</code>, <code>pwsh</code>, <code>powershell</code>, <code>cmd</code>, <code>git-bash</code>, <code>wsl:&lt;distro&gt;</code>, <code>claude</code>, <code>copilot</code>.</td><td><code>launcher.rs</code></td></tr>
+          <tr><td>Launcher</td><td>An entry of the <code>+</code> menu, with a stable id: <code>bash</code>, <code>zsh</code>, <code>fish</code>, <code>pwsh</code>, <code>powershell</code>, <code>cmd</code>, <code>git-bash</code>, <code>wsl:&lt;distro&gt;</code>, <code>claude</code>, <code>copilot</code>. Each remote host adds a submenu.</td><td><code>launcher.rs</code>, <code>LaunchSpec</code></td></tr>
           <tr><td>Session</td><td>The pty-backed child process feeding an alacritty <code>Term</code>.</td><td><code>term-core::Session</code></td></tr>
           <tr><td>Shell integration</td><td>Small scripts that load your rc files and mark prompts with OSC 133 plus a per-session token.</td><td><code>shell_integration.rs</code>, <code>MarkedPty</code></td></tr>
+          <tr><td>Agent at the prompt</td><td><code>claude</code> or <code>copilot</code> typed in a bash, zsh or PowerShell tab: runs in place with the agent's status, then the tab is a shell again. Can be switched off.</td><td><code>shell_integration.rs</code></td></tr>
+          <tr><td>Subagent</td><td>A subagent started by a Claude Code or Copilot CLI tab, from its <code>SubagentStart</code> hook to <code>SubagentStop</code>. Shown under the row; does not change the tab's own status.</td><td><code>workspace-model::subagents</code></td></tr>
           <tr><td>Agent status</td><td>Working, Waiting, Idle and so on, from the agent's own hooks or OSC 9;4 progress.</td><td><code>AgentStatus</code>, <code>HookServer</code></td></tr>
           <tr><td>Hook helper</td><td>Tiny binary next to the app that forwards hook JSON to the right tab.</td><td><code>agentws-hook</code></td></tr>
+          <tr><td>Remote host</td><td>A machine whose shells and agents open in tabs here: name, ssh destination, server program. Set on Settings → Remote hosts.</td><td><code>remote_hosts</code> setting, <code>remote_hosts.rs</code></td></tr>
+          <tr><td>Remote tab</td><td>A tab whose session runs on a remote host and keeps running there when the connection drops. Follows the server-side folder; not saved in <code>tabs.json</code>.</td><td><code>Session::remote</code>, <code>agentws_remote::Client</code></td></tr>
+          <tr><td>agentws-server</td><td>Per-user daemon on the remote host, reached with <code>ssh -T host agentws-server proxy</code>. Holds the sessions, streams a snapshot then live output.</td><td><code>crates/remote</code></td></tr>
           <tr><td>Settings page</td><td>Searchable settings in place of the terminal, plus a Settings row under the tabs.</td><td><code>settings_page.rs</code>, <code>settings.json</code></td></tr>
-          <tr><td>Config folder</td><td>Holds <code>settings.json</code>, <code>tabs.json</code>, <code>history.jsonl</code>, <code>shell-integration/</code>.</td><td><code>settings_file.rs</code>, <code>tabs_file.rs</code></td></tr>
+          <tr><td>Config folder</td><td>Holds <code>settings.json</code>, <code>tabs.json</code>, <code>history.jsonl</code> (kept per shell), <code>shell-integration/</code>.</td><td><code>settings_file.rs</code>, <code>tabs_file.rs</code></td></tr>
         </tbody>
       </table>
     </div>
@@ -203,7 +210,9 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--li
           <tr><td><span class="dot" style="background:var(--st-ready);opacity:.6"></span>Idle</td><td>The agent waits for your next prompt.</td></tr>
           <tr><td><span class="dot" style="background:var(--st-running)"></span>Running</td><td>A command typed at a bash, zsh or PowerShell prompt has run for over half a second. Pulses for 10 s.</td></tr>
           <tr><td><span class="dot" style="background:var(--st-recent)"></span>Recent output</td><td>Output arrived lately, with no reliable agent status.</td></tr>
-          <tr><td><span class="dot ring"></span>Exited</td><td>The program ended with an error. An agent that exits with 0 becomes a shell tab instead.</td></tr>
+          <tr><td><span class="dot ring"></span>Exited</td><td>The program ended with an error. An agent that exits with 0 becomes a shell tab instead (in a remote tab, the server's shell).</td></tr>
+          <tr><td><span class="dot ring" style="border-style:dashed"></span>Disconnected</td><td>A remote tab lost its connection: an unplug badge and a banner with the reason. Reconnect attaches to the session still running on the server, screen included.</td></tr>
+          <tr><td><span class="dot ring" style="border-color:var(--st-working)"></span>Subagent ring</td><td>Not a status: the count of running subagents after the name. Turns while the list is folded, orange while one waits for you. Click to fold the list.</td></tr>
         </tbody>
       </table>
     </div>
@@ -212,38 +221,51 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--li
   <section>
     <span class="eyebrow">Under the hood</span>
     <h2>How the crates fit together</h2>
-    <p class="prose">Only <code>app</code> depends on GPUI. Pure logic lives in <code>workspace-model</code> with unit tests. Agent hooks travel through <code>agentws-hook</code> over a local socket or pipe.</p>
+    <p class="prose">Only <code>app</code> depends on GPUI. Pure logic lives in <code>workspace-model</code> with unit tests. Agent hooks travel through <code>agentws-hook</code> over a local socket or pipe. Remote tabs speak the <code>remote</code> crate's protocol to <code>agentws-server</code> over ssh.</p>
     <div class="scroll-x">
       <div class="arch">
-        <svg viewBox="0 0 900 300" role="img" aria-label="Crate diagram: app uses term-core, workspace-model and agent-status; agent CLIs call agentws-hook which sends to the app's HookServer">
-          <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="var(--muted)"/></marker></defs>
+        <svg viewBox="0 0 900 300" role="img" aria-label="Crate diagram: app uses remote, term-core, workspace-model and agent-status; remote uses term-core; app reaches agentws-server over ssh; agent CLIs call agentws-hook which sends to the app's HookServer">
+          <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="var(--muted)"/></marker></defs>
+          <rect class="ext" x="30" y="20" width="200" height="78" rx="8"/>
+          <text x="130" y="50" text-anchor="middle" font-weight="600" font-size="15">agentws-server</text>
+          <text class="sub" x="130" y="72" text-anchor="middle">on the remote host</text>
+
           <rect class="box ui" x="330" y="20" width="240" height="78" rx="8"/>
           <text x="450" y="50" text-anchor="middle" font-weight="600" font-size="16">app</text>
           <text class="sub" x="450" y="72" text-anchor="middle">package agent-workspace · GPUI UI</text>
 
-          <rect class="box" x="40" y="180" width="230" height="78" rx="8"/>
-          <text x="155" y="210" text-anchor="middle" font-weight="600" font-size="15">term-core</text>
-          <text class="sub" x="155" y="232" text-anchor="middle">pty + alacritty Term, OSC 133</text>
+          <rect class="ext" x="670" y="20" width="200" height="78" rx="8"/>
+          <text x="770" y="50" text-anchor="middle" font-weight="600" font-size="15">agentws-hook</text>
+          <text class="sub" x="770" y="72" text-anchor="middle">run by Claude / Copilot hooks</text>
 
-          <rect class="box" x="335" y="180" width="230" height="78" rx="8"/>
-          <text x="450" y="210" text-anchor="middle" font-weight="600" font-size="15">workspace-model</text>
-          <text class="sub" x="450" y="232" text-anchor="middle">pure logic, unit-tested</text>
+          <rect class="box" x="30" y="180" width="190" height="78" rx="8"/>
+          <text x="125" y="210" text-anchor="middle" font-weight="600" font-size="15">remote</text>
+          <text class="sub" x="125" y="232" text-anchor="middle">protocol, Client, Server</text>
 
-          <rect class="box" x="630" y="180" width="230" height="78" rx="8"/>
-          <text x="745" y="210" text-anchor="middle" font-weight="600" font-size="15">agent-status</text>
-          <text class="sub" x="745" y="232" text-anchor="middle">events → AgentStatus</text>
+          <rect class="box" x="247" y="180" width="190" height="78" rx="8"/>
+          <text x="342" y="210" text-anchor="middle" font-weight="600" font-size="15">term-core</text>
+          <text class="sub" x="342" y="232" text-anchor="middle">pty + alacritty Term</text>
 
-          <rect class="ext" x="660" y="20" width="200" height="78" rx="8"/>
-          <text x="760" y="50" text-anchor="middle" font-weight="600" font-size="15">agentws-hook</text>
-          <text class="sub" x="760" y="72" text-anchor="middle">run by Claude / Copilot hooks</text>
+          <rect class="box" x="463" y="180" width="190" height="78" rx="8"/>
+          <text x="558" y="210" text-anchor="middle" font-weight="600" font-size="15">workspace-model</text>
+          <text class="sub" x="558" y="232" text-anchor="middle">pure logic, unit-tested</text>
 
-          <path class="edge" d="M390 98 L190 178" marker-end="url(#ar)"/>
-          <path class="edge" d="M450 98 L450 178" marker-end="url(#ar)"/>
-          <path class="edge" d="M510 98 L705 178" marker-end="url(#ar)"/>
-          <path class="edge" d="M660 59 L574 59" marker-end="url(#ar)"/>
-          <text class="lbl" x="617" y="50" text-anchor="middle">socket / pipe</text>
-          <text class="lbl" x="617" y="80" text-anchor="middle">→ HookServer</text>
-          <text class="lbl" x="40" y="290">Arrows: "uses" from app; hook events flow right to left into app.</text>
+          <rect class="box" x="680" y="180" width="190" height="78" rx="8"/>
+          <text x="775" y="210" text-anchor="middle" font-weight="600" font-size="15">agent-status</text>
+          <text class="sub" x="775" y="232" text-anchor="middle">events → AgentStatus</text>
+
+          <path class="edge" d="M355 98 L150 178" marker-end="url(#ar)"/>
+          <path class="edge" d="M410 98 L350 178" marker-end="url(#ar)"/>
+          <path class="edge" d="M490 98 L550 178" marker-end="url(#ar)"/>
+          <path class="edge" d="M545 98 L760 178" marker-end="url(#ar)"/>
+          <path class="edge" d="M220 219 L245 219" marker-end="url(#ar)"/>
+          <path class="edge" d="M130 98 L125 178" stroke-dasharray="4 4"/>
+          <path class="edge" d="M232 59 L328 59" marker-start="url(#ar)" marker-end="url(#ar)"/>
+          <text class="lbl" x="280" y="50" text-anchor="middle">ssh -T</text>
+          <path class="edge" d="M670 59 L574 59" marker-end="url(#ar)"/>
+          <text class="lbl" x="622" y="50" text-anchor="middle">socket / pipe</text>
+          <text class="lbl" x="622" y="80" text-anchor="middle">→ HookServer</text>
+          <text class="lbl" x="30" y="290">Arrows: "uses"; dashed: agentws-server is the remote crate's binary.</text>
         </svg>
       </div>
     </div>
@@ -253,12 +275,14 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--li
     <span class="eyebrow">What it does</span>
     <h2>Major features</h2>
     <div class="features">
-      <div class="feat"><span class="k">Tabs &amp; groups</span><h3>Organize many sessions</h3><ul><li>New tabs open below the selected one, in its folder</li><li>Groups, pins, colors, drag to reorder</li><li>Duplicate <kbd>Ctrl+Shift+D</kbd>, close <kbd>Ctrl+Shift+W</kbd></li><li>Busy tabs ask before closing</li></ul></div>
+      <div class="feat"><span class="k">Tabs &amp; groups</span><h3>Organize many sessions</h3><ul><li>New tabs open below the selected one, in its folder</li><li>Groups, pins, colors, drag to reorder</li><li>Rename, or reset to the program's title</li><li>Arrow keys in the tab list, <kbd>F2</kbd> to rename</li><li>Duplicate <kbd>Ctrl+Shift+D</kbd>, close <kbd>Ctrl+Shift+W</kbd></li><li>Busy tabs ask before closing</li></ul></div>
       <div class="feat"><span class="k">Attention</span><h3>Know who needs you</h3><ul><li>Status badges from the agents' own hooks</li><li>Toasts for background agent tabs</li><li>Jump to the next waiting tab <kbd>Ctrl+Shift+A</kbd></li><li>Collapsed groups keep their counts</li></ul></div>
+      <div class="feat"><span class="k">Remote tabs</span><h3>Sessions on another machine</h3><ul><li>Shells and agents on a host over ssh, via <code>agentws-server</code></li><li>Hosts on Settings → Remote hosts, a <code>+</code> submenu each</li><li><code>agent-workspace --remote &lt;host&gt;</code></li><li>Survive a dropped connection: Reconnect, or Start new</li><li>Follow the server folder; new tabs open there</li></ul></div>
+      <div class="feat"><span class="k">Agents</span><h3>Agents wherever they run</h3><ul><li>Typed <code>claude</code> / <code>copilot</code> in bash, zsh or PowerShell get full status</li><li>Tab turns back into a shell when the agent exits</li><li>Running subagents listed under the row, with a count ring</li><li>Spinner on renamed Claude Code tabs</li><li>Copilot Autopilot approvals kept out of Waiting</li></ul></div>
       <div class="feat"><span class="k">Terminal</span><h3>A real terminal</h3><ul><li>Copy, paste, scrollback, mouse reporting</li><li>Search output <kbd>Ctrl+Shift+F</kbd></li><li>Clickable URLs and <code>path:line</code> links</li><li>Clipboard writes from programs ask first</li></ul></div>
-      <div class="feat"><span class="k">Command history</span><h3>Commands you ran, anywhere</h3><ul><li>Inline suggestion, accept with <kbd>Right</kbd></li><li>HISTORY popup on <kbd>Up</kbd>, with folders</li><li>Last command offered after a restart</li><li>bash, zsh and PowerShell</li></ul></div>
+      <div class="feat"><span class="k">Command history</span><h3>Commands you ran, anywhere</h3><ul><li>Kept per shell: bash, zsh and PowerShell</li><li>Inline suggestion from the tab's own shell, accept with <kbd>Right</kbd></li><li>HISTORY popup on <kbd>Up</kbd>, with folders and a chip per shell plus "All"</li><li>Last command offered after a restart</li></ul></div>
       <div class="feat"><span class="k">Files</span><h3>Explorer and viewer</h3><ul><li>Tree follows the tab's folder, dims ignored files</li><li>New, rename, delete, open a tab there</li><li>Markdown, JSON, SVG rendered; images</li><li>Edit and save, reloads on disk changes</li></ul></div>
-      <div class="feat"><span class="k">Settings &amp; persistence</span><h3>Comes back as you left it</h3><ul><li>Window, tabs, groups and order restored</li><li>Settings page, applied live, search and reset</li><li>Hand-editable <code>settings.json</code>, shortcuts too</li><li>Light theme, font, opacity and blur</li></ul></div>
+      <div class="feat"><span class="k">Settings &amp; persistence</span><h3>Comes back as you left it</h3><ul><li>Window, tabs, groups and order restored</li><li>Settings page, applied live, search and reset</li><li>Hand-editable <code>settings.json</code>, shortcuts too</li><li>Dark, Light and Sepia themes; terminal colors follow or stay fixed</li><li>Font, opacity (terminal, sidebar, explorer), blur and Mica</li></ul></div>
     </div>
   </section>
 
@@ -273,6 +297,9 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--li
           <tr><td><kbd>Ctrl+1..9</kbd></td><td>Select tab 1 to 9</td></tr>
           <tr><td><kbd>Ctrl+Shift+T</kbd></td><td>New tab with the default shell</td></tr>
           <tr><td><kbd>Ctrl+Shift+S</kbd></td><td>Search tabs</td></tr>
+          <tr><td><kbd>Tab</kbd> / <kbd>Down</kbd> in Search tabs</td><td>Move the keyboard into the tab list (<kbd>Up</kbd> <kbd>Down</kbd> <kbd>Home</kbd> <kbd>End</kbd>, <kbd>Enter</kbd> or <kbd>Esc</kbd> back to the terminal)</td></tr>
+          <tr><td><kbd>F2</kbd> in the tab list</td><td>Rename the selected tab</td></tr>
+          <tr><td><kbd>Alt</kbd>+letter in HISTORY</td><td>Switch to the shell chip with that underlined letter</td></tr>
           <tr><td><kbd>Ctrl+Shift+B</kbd></td><td>Hide or show the sidebar</td></tr>
           <tr><td><kbd>Ctrl+Shift+|</kbd></td><td>Hide or show the file explorer</td></tr>
           <tr><td><kbd>Ctrl+Shift+A</kbd></td><td>Next tab needing attention</td></tr>
@@ -283,7 +310,7 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--li
     </div>
   </section>
 
-  <footer>Based on README.md, FEATURES.md and CLAUDE.md of the agent-workspace repository, branch m2-sidebar, 2026-10-28.</footer>
+  <footer>Based on README.md, FEATURES.md, CHANGELOG.md, CLAUDE.md and docs/remote.md of the agent-workspace repository, branch main, version 0.2.58, 2026-11-08. The screenshot predates remote tabs and subagents.</footer>
 </div>
 </body>
 </html>

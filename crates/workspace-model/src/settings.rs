@@ -19,6 +19,7 @@ use crate::clipboard_guard::ClipboardPolicy;
 use crate::diff_colors::DiffColors;
 use crate::keymap::KeybindingOverlay;
 use crate::pane_width::{ExplorerWidth, ViewerFraction};
+use crate::remote_hosts::RemoteHosts;
 use crate::window_background::{WindowBlur, WindowOpacity};
 use crate::window_state::write_atomic;
 
@@ -115,6 +116,9 @@ pub struct Settings {
     /// settings page).
     #[serde(deserialize_with = "lenient")]
     pub file_explorer_width: ExplorerWidth,
+    /// The machines remote tabs can run on (docs/remote.md), in menu order.
+    #[serde(deserialize_with = "lenient")]
+    pub remote_hosts: RemoteHosts,
     /// Changes to the default keyboard shortcuts, key by key (see [`crate::Keymap`]): an
     /// action name binds the key, `null` unbinds it. Kept as written, unusable entries too.
     #[serde(deserialize_with = "lenient")]
@@ -406,6 +410,7 @@ where
 pub enum SettingsLoad {
     /// No file yet: the defaults apply.
     Missing,
+    /// Boxed: `Settings` grows with every setting.
     Loaded(Box<Settings>),
     /// The file can't be read or isn't valid settings; the error says why.
     Broken(String),

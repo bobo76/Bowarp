@@ -21,6 +21,7 @@ mod light_theme;
 mod mouse;
 mod open_menu;
 mod processes;
+mod remote_hosts;
 mod scrollbar;
 mod settings_file;
 mod settings_page;
@@ -52,7 +53,8 @@ use crate::hooks::AgentHooks;
 use crate::instance_lock::InstanceLock;
 use crate::workspace_view::{TabOwnership, WorkspaceView};
 
-/// Usage: `agent-workspace [shell|claude|copilot] [project-dir]`. `None` without arguments.
+/// Usage: `agent-workspace [--remote <host>] [shell|claude|copilot] [project-dir]`. `None`
+/// without arguments.
 fn launch_spec_from_args() -> Option<LaunchSpec> {
     match parse_launch_args(std::env::args().skip(1), || std::env::current_dir().ok()) {
         Ok(spec) => spec,
@@ -64,23 +66,40 @@ fn launch_spec_from_args() -> Option<LaunchSpec> {
 }
 
 /// The launch the arguments (without the program name) ask for; `current_dir` is the folder
-/// when none is given.
+/// when none is given. `--remote <host>` runs it on that ssh host (docs/remote.md), a shell
+/// by default, in the given folder there or the server's home folder.
 fn parse_launch_args(
     args: impl IntoIterator<Item = String>,
     current_dir: impl FnOnce() -> Option<PathBuf>,
 ) -> Result<Option<LaunchSpec>, String> {
-    let mut args = args.into_iter();
-    let Some(kind) = args.next() else {
-        return Ok(None);
+    let mut args = args.into_iter().peekable();
+    let host = if args.next_if(|arg| arg == "--remote").is_some() {
+        match args.next() {
+            Some(host) if !host.trim().is_empty() => Some(host),
+            _ => return Err("--remote needs a host".into()),
+        }
+    } else {
+        None
     };
-    let folder = args.next().map(PathBuf::from).or_else(current_dir);
-    let launch = if kind == "shell" {
+    let kind = match args.next() {
+        Some(kind) => kind,
+        None if host.is_some() => "shell".into(),
+        None => return Ok(None),
+    };
+    let folder = args.next().map(PathBuf::from);
+    let folder = if host.is_some() {
+        folder
+    } else {
+        folder.or_else(current_dir)
+    };
+    let mut launch = if kind == "shell" {
         LaunchSpec::shell(folder)
     } else if let Some(agent) = AgentId::from_cli_selector(&kind) {
         LaunchSpec::agent(agent, folder)
     } else {
         return Err(format!("unknown session kind {kind:?}"));
     };
+    launch.host = host;
     Ok(Some(launch))
 }
 
@@ -99,11 +118,12 @@ fn usage() -> String {
         .chain(agents().map(|agent| agent.cli_selector().to_owned()))
         .collect::<Vec<_>>()
         .join("|");
-    format!("usage: agent-workspace [{selectors}] [project-dir]")
+    format!("usage: agent-workspace [--remote <host>] [{selectors}] [project-dir]")
 }
 
 fn validate_requested_folder(requested: Option<&LaunchSpec>) {
     if let Some(folder) = requested
+        .filter(|spec| spec.host.is_none())
         .and_then(|spec| spec.cwd.as_ref())
         .filter(|folder| !folder.is_dir())
     {
@@ -212,7 +232,8 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
         .default_shell()
         .map(str::to_owned);
     let requested = startup.requested.map(|spec| {
-        if spec.kind == SessionKind::Shell && spec.program.is_none() {
+        // A remote shell is the server's default one.
+        if spec.kind == SessionKind::Shell && spec.program.is_none() && spec.host.is_none() {
             return launcher::startup_shell(&startup.launchers, shell_setting.as_deref(), spec.cwd);
         }
         spec
@@ -241,6 +262,9 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
             // Before the tabs, so it stacks above a fallback-shell warning.
             if let Some(warning) = startup.hooks_warning {
                 workspace.warn_agent_status_off(warning, window, cx);
+            }
+            if startup.ownership == TabOwnership::Guest {
+                workspace.note_guest_window(window, cx);
             }
             restore_or_open_first_tab(workspace, initial, window, cx);
         });
@@ -274,21 +298,33 @@ fn restore_or_open_first_tab(
     window: &mut Window,
     cx: &mut Context<WorkspaceView>,
 ) {
+    // A remote tab opens after a local one, once connected: when its host cannot be reached,
+    // the window keeps a tab and a notification says why.
+    let (requested, remote) = match initial.requested {
+        Some(spec) if spec.host.is_some() => (None, Some(spec)),
+        requested => (requested, None),
+    };
     let restored = initial.ownership == TabOwnership::Owner
         && tabs_file::load(settings_file::workspace_features(cx))
             .is_some_and(|state| workspace.restore(state, window, cx));
     if restored {
-        if let Some(spec) = initial.requested {
+        if let Some(spec) = requested {
             workspace.open_requested_tab(spec, window, cx);
         }
-        return;
+    } else {
+        open_first_tab(
+            workspace,
+            requested.unwrap_or(initial.default_shell),
+            window,
+            cx,
+        );
     }
-    open_first_tab(
-        workspace,
-        initial.requested.unwrap_or(initial.default_shell),
-        window,
-        cx,
-    );
+    if let Some(spec) = remote {
+        // Deferred: the notification layer exists once the window is built.
+        cx.defer_in(window, move |workspace, window, cx| {
+            workspace.open_requested_tab(spec, window, cx);
+        });
+    }
 }
 
 fn open_first_tab(
@@ -339,6 +375,24 @@ mod tests {
         assert_eq!(copilot.kind, SessionKind::Agent(COPILOT));
         assert_eq!(copilot.cwd, Some(PathBuf::from("/cwd")));
         assert_eq!(parse(&["shell"]).unwrap().unwrap().kind, SessionKind::Shell);
+    }
+
+    #[test]
+    fn remote_launches_name_a_host_and_keep_the_folder_remote() {
+        let shell = parse(&["--remote", "me@box"]).unwrap().unwrap();
+        assert_eq!(shell.kind, SessionKind::Shell);
+        assert_eq!(shell.host.as_deref(), Some("me@box"));
+        // The server's home folder, not this machine's current one.
+        assert_eq!(shell.cwd, None);
+        let claude = parse(&["--remote", "box", "claude", "/srv/app"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(claude.kind, SessionKind::Agent(CLAUDE));
+        assert_eq!(claude.cwd, Some(PathBuf::from("/srv/app")));
+        assert_eq!(parse(&["shell"]).unwrap().unwrap().host, None);
+        for args in [&["--remote"][..], &["--remote", " "]] {
+            assert!(parse(args).unwrap_err().contains("host"));
+        }
     }
 
     #[test]

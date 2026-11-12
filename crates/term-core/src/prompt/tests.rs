@@ -115,6 +115,7 @@ fn repeated_progress_reports_are_forwarded() {
         harness.tracker,
         None,
         Box::new(move |state| captured.lock().unwrap().push(state)),
+        None,
     );
     pty.report_progress(b"\x1b]9;4;3\x07");
     pty.report_progress(b"ordinary output");

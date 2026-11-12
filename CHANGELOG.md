@@ -5,13 +5,34 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
-
 ## 0.3.0
 
-- Claude Code and Copilot CLI tabs show their running subagents: their count in a ring after the
-  tab name (turning while the list is folded in, orange while one waits for you) and their list
-  under the row (description or type, a warning mark while waiting); click the ring to fold the
-  list. The tab's own status is unchanged.
+- Drag a group header to move the group, with its tabs, in the sidebar.
+- Tab names, pins, order, groups and colors, and opened and closed tabs, are saved as they
+  change instead of only when the window closes, so a crash or a killed session keeps them.
+- A second window (started while another runs) says that its tabs are not saved or restored.
+- A restored Claude Code tab offers to resume the conversation it had when the window closed
+  (Resume it / Start new, in a bar above the terminal); a conversation Claude Code no longer
+  has starts a new one with a warning.
+- See what the agent changed: the tab's hover card lists the changed files under `+N` (with
+  their status and line counts), and clicking one opens it in the viewer. The file explorer
+  colors changed files and the folders holding them.
+- Back and Forward through the tabs you selected, like a browser: ← → buttons in the sidebar
+  header and Ctrl+Alt+Left / Ctrl+Alt+Right. Ctrl+` switches with the last tab selected.
+  Closed tabs drop out of the history. All three can be rebound on Settings → Keyboard.
+- File viewer: "Discard changes?" is now "Save changes?" with Save (the default, Enter),
+  Discard and Cancel, when opening another file or closing the viewer or the tab.
+- Closing the window asks about files with unsaved edits in the viewer (Save all / Discard /
+  Cancel) instead of dropping the edits.
+- Remote tabs: a session whose scrollback is too large to send at once (dense truecolor
+  output) attaches again with its oldest scrollback lines left out, instead of disconnecting
+  every tab on that host. The server no longer keeps a closed session's screen in memory.
+- Holding Ctrl over a network path (`\\host\share\…`) in terminal output no longer freezes the
+  window on Windows while it tries to reach that host; such paths are not links.
+- Holding Ctrl over a path on a network drive or mount that does not answer (a mapped drive,
+  NFS, sshfs) no longer freezes the window: the file is looked up in the background.
+- Windows: deleting a folder link or junction in the file explorer works (it removed nothing
+  and showed "permission denied"); the folder it points to is kept.
 - Git page (title bar button): see what changed in the repositories the tabs are in, stage or
   unstage files, hunks or single lines from the diff, and commit with a message (Ctrl+Enter);
   hooks run, and a failure shows git's message. The page never changes your files.
@@ -19,6 +40,52 @@ omitted unless they affect how the app is used.
   removed lines. Added and removed lines now default
   to `#14803D` and `#7F1D1D`, and a selected line shows lighter.
 
+## 0.2.61
+
+- Settings → Remote hosts: Check no longer takes 20 seconds on hosts whose ssh config keeps a
+  shared connection open (`ControlPersist`).
+- `agentws-server status` reports an error instead of "not running" when it can't reach the
+  server's socket, and gives up after 5 seconds on a server that doesn't answer.
+
+## 0.2.60
+
+- Settings → Remote hosts shows each host's server state on a line above its fields, with a
+  Check button: Connected while a tab uses it, and after a check whether the server is
+  running (with its session count and version), not running, unreachable (ssh's message),
+  not found, too old to report or not answering. Checks run only when you press Check.
+- `agentws-server status` prints whether the server runs on that machine, its version,
+  protocol and session count, without starting it.
+
+## 0.2.59
+
+- Remote tabs show a server icon on their second line in the sidebar, and their hover card
+  names the host (its name from Settings → Remote hosts, else the ssh destination).
+
+## 0.2.58
+
+- Remote tabs (docs/remote.md): shells, Claude Code and Copilot CLI running on another
+  machine through `agentws-server` over ssh, and still running there when the connection
+  drops. Hosts are set on the new settings page Remote hosts (name, ssh destination, server
+  program) and each gets a submenu in the `+` menu; `agent-workspace --remote <host>` opens one
+  from the command line. Connecting doesn't block the window: a toast shows meanwhile, and
+  ssh's error stays on screen until dismissed when it fails.
+- Claude Code and Copilot CLI tabs show their running subagents: their count in a ring after the
+  tab name (turning while the list is folded in, orange while one waits for you) and their list
+  under the row (description or type, a warning mark while waiting); click the ring to fold the
+  list. The tab's own status is unchanged.
+- Remote sessions: a systemd user unit (`crates/remote/systemd/agentws-server.service`) keeps
+  `agentws-server` running on the server instead of starting it on the first connection, and
+  docs/remote.md explains the `command not found` an ssh login gives when `~/.cargo/bin` is
+  only added by rustup's line at the end of Ubuntu's `~/.bashrc`.
+- Remote tabs show their folder on the server, and follow `cd`. With a remote tab selected,
+  Claude Code or Copilot CLI in the `+` menu, "New tab" and Duplicate open on the same server
+  in that folder (they opened on this machine before), and an agent that exits in a remote tab
+  falls back to the server's shell. The app and `agentws-server` must be updated together
+  (protocol version 2).
+- A remote tab whose connection drops shows Disconnected (an unplug badge and a banner with the
+  reason) instead of "Process exited", with Reconnect in the banner and the tab's right-click
+  menu: it attaches to the session still running on the server, screen included, for all the
+  host's disconnected tabs at once. A session closed on the server meanwhile offers Start new.
 
 ## 0.2.57
 

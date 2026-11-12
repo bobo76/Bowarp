@@ -63,15 +63,31 @@ selected tab's folder and open right below it (below a pinned tab: first after t
 with no tab open, they start in the last closed tab's folder, at the end of the list. The tab
 named on the command line goes after the restored ones.
 
+A restored Claude Code tab that had a conversation when the window closed starts a new one and
+asks in a bar above the terminal: **Resume it** restarts Claude Code with `--resume <id>` on that
+conversation (its id comes from the hooks, so it is that tab's conversation, not the folder's
+latest), **Start new** keeps the new one; typing a prompt answers Start new too. Unanswered, the
+question comes back at the next start. If Claude Code no longer has the conversation, a new one
+starts and a warning says so. Copilot CLI tabs always start a new session.
+
 Closing the last tab keeps the window and its groups: the terminal area shows "No open tabs"
 with a button per program of the `+` menu, in the same order (the default shell first; Tab and
 Shift+Tab move between them, Enter or Space opens one), and the file explorer hides until the
 next tab. Closing the window works as usual; at the next start the groups come back and the
 default shell opens as the first tab.
 
+Remote hosts (see [Remote hosts](#remote-hosts)) follow the local programs in the `+` menu, one
+submenu each, with the host's default shell, Claude Code and Copilot CLI, started in its home
+folder, and named after it ("Shell (box)") until the program sets a title. Connecting takes a
+moment: a "Connecting to <host>" toast shows meanwhile, and the tab opens once the session
+runs there. When it can't start (ssh's own message, e.g. a host it can't resolve or a key it
+refuses), an error toast says why and stays until dismissed.
+
 | Keys | Action |
 |---|---|
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
+| Ctrl+Alt+Left / Ctrl+Alt+Right | Back / forward through the tabs selected before (also the ← → buttons in the sidebar header) |
+| Ctrl+` | Switch with the last tab selected (press again to switch back) |
 | Ctrl+1..9 | Select tab 1..9 |
 | Ctrl+Shift+T | New tab with the default shell, in the selected tab's folder (no tab: the last closed tab's, at the end) |
 | Ctrl+Shift+D | Duplicate the selected tab: same program, its folder (also in the tab menu) |
@@ -191,7 +207,9 @@ saved. Saving to `tabs.json` is queued immediately when a command starts, withou
 delay; one background writer saves snapshots in order. A crash can lose an in-flight or queued
 update, including a deletion. Deleting a command from HISTORY also forgets it in the tabs of
 the selected shell (every tab under "All"). Normal window close waits for pending saves and a
-final snapshot before releasing ownership of the saved tabs; guest instances never write them.
+final snapshot before releasing ownership of the saved tabs; guest instances never write them,
+and say so in a notice that stays until closed. Opening, closing, renaming, pinning, moving,
+grouping and coloring tabs (and collapsing groups) are saved at once, so a crash keeps them.
 On Unix, every write makes `tabs.json` owner-only (`0600`); on Windows it inherits the profile
 folder's permissions.
 
@@ -219,9 +237,13 @@ repository) or the folder. The folder follows `cd` in a shell (Linux; other plat
 launch folder for now).
 
 The badge on the icon shows the status. Hover a row for a moment to see its card: the status,
+a remote tab's host (its name from Settings → Remote hosts, else its ssh destination),
 the full folder, the branch, the program's title, the session kind and, in a repository, the
 lines added in the working tree (`+N`: changes to tracked files from `git diff HEAD` plus new
-files not yet added and not ignored, refreshed at most every 5 s). No card opens while a tab
+files not yet added and not ignored, refreshed at most every 5 s). Below it the card lists the
+first 8 changed files (a letter as in `git status`: M modified, A added, U untracked, D
+deleted, ! conflicted, with `+added −removed`); click one to open it in the tab's file viewer.
+No card opens while a tab
 is dragged, a name is edited, or a menu or dialog is open; a card hidden that way comes back
 after the pointer leaves the row and hovers it again.
 
@@ -448,6 +470,10 @@ Drag a tab row to move it: the upper or lower half of a row drops above or below
 row's block (dropping among pinned tabs pins it); the upper half of a group header drops above
 the group, the lower half into it; the space below the last row drops at the end, ungrouped.
 
+Drag a group header to move the group with its tabs: it drops above another group's header,
+above or below an ungrouped tab, or at the end. Groups never go among the pinned tabs or into
+another group, so those rows show no drop line.
+
 ## File explorer
 
 The file explorer (Ctrl+Shift+|, the title bar button next to the sidebar toggle, closed with
@@ -459,7 +485,9 @@ click a file to open it in the file viewer. Expanded folders refresh when their 
 In a git repository, entries git ignores (such as `target/` or `*.log` in `.gitignore`) and the
 `.git` folder are dimmed, as is everything inside an ignored folder; they dim a moment after
 the folder shows, once git answers. The order doesn't change, and nothing is dimmed outside a
-repository or when git isn't installed.
+repository or when git isn't installed. Files that differ from HEAD are colored like their
+change (modified yellow, new green, conflicted red), and so are the folders holding them; the
+colors follow a moment after a file is written.
 
 The folder-with-an-arrow button in the explorer's header ("Parent folder (cd ..)") moves a
 shell tab to the folder above the tree's, and the tree follows. zsh and PowerShell change
@@ -506,7 +534,9 @@ and SVG, checked Raw/Rendered choices. The existing mode buttons and Ctrl+S stil
 |---|---|
 | Ctrl+S | Save the file (a `●` after its name marks unsaved edits) |
 
-Opening another file or closing the panel with unsaved edits asks before dropping them. When
+Opening another file, closing the panel or the tab with unsaved edits asks "Save changes?"
+(Save, the default, Discard or Cancel); closing the window asks once for every file with
+unsaved edits (Save all / Discard / Cancel). A save that fails or is cancelled cancels. When
 the file changes on disk (an agent edits it), the panel reloads it where it was scrolled to,
 unless it has unsaved edits, which are kept.
 
@@ -679,7 +709,7 @@ Settings → Workspace has three switches, all on by default (`restore_tabs`,
   Folder tracking, agent status and busy-close warnings are unaffected.
 - **File explorer and viewer** off (applies live): both panes are hidden, the title bar button
   goes and Ctrl+Shift+| does nothing, no folder is scanned or watched and no file loaded, and
-  every open file is closed. When a file has unsaved edits, the viewer's Discard/Cancel
+  every open file is closed. When a file has unsaved edits, the viewer's Save/Discard/Cancel
   question comes first (one per file); Cancel keeps the switch on. A Ctrl+clicked file link
   asks "Open externally?" and opens the file with the system's application; "Open settings
   file" does the same. The pane widths (`file_viewer_fraction`, `file_explorer_width`) are kept.
@@ -694,6 +724,45 @@ status, status dots and attention badges are unchanged, and a toast already on s
 until it hides. An agent that exits with a nonzero or unknown exit code still shows its toast.
 Toasts that answer something you did (save or delete errors, history cleared, failed starts)
 and the persistent fallback-shell warning always show.
+
+### Remote hosts
+
+Settings → Remote hosts lists the machines whose shells and agents can open in tabs here
+(`remote_hosts` in `settings.json`), through `agentws-server` over ssh
+([docs/remote.md](docs/remote.md)). Add host, then fill in its **Name** (shown in the menu;
+empty for the host part of the destination), its **ssh destination** (`[user@]host`,
+or a `Host` from your ssh config) and, when `agentws-server` is not on the `PATH` of
+non-interactive ssh logins there, its **Server program** (e.g. `~/.cargo/bin/agentws-server`).
+Each row shows the command connecting runs; Remove host deletes it. ssh must log in without
+asking: use a key or an agent. A host without a destination stays on the page but not in the
+menu.
+
+A host with a destination starts with its server's state and a **Check** button. Check runs
+`agentws-server status` there over ssh (in the background, up to 20 seconds) and shows "Server
+running, N sessions" or "Server not running" with the server's version, or what went wrong:
+"Unreachable" with ssh's message (all of it in the tooltip), "agentws-server not found" (set
+the Server program), "Server too old to report status", "No answer from the server", or a
+protocol the app doesn't speak. "Connected" in front means a remote tab's connection to the
+host is open. Hosts are checked only when you click Check; results last until the app quits,
+a host whose destination or server program changed shows "Not checked" again, and so does a
+host a remote tab has connected to since its last check.
+
+```json
+"remote_hosts": [
+  { "name": "Build box", "destination": "me@build-box", "server_program": "" }
+]
+```
+
+`--remote <host>` on the command line takes a destination or a host's name; for a host not in
+the list, the server program comes from `AGENTWS_REMOTE_SERVER`, else `agentws-server`.
+
+A remote tab's row starts its second line with a server icon (before the folder or branch),
+and its hover card names the host above the folder, both also while it is Disconnected.
+
+When the connection drops, the host's tabs show Disconnected and their programs go on running
+on the server: **Reconnect** (in the banner below the terminal, or the tab's right-click menu)
+brings them all back with their screen. A session closed on the server meanwhile offers
+**Start new**, the same program in its last folder.
 
 ### Keyboard shortcuts
 

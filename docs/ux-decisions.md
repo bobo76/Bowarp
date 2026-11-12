@@ -190,6 +190,37 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   to a terminal. Tab and Shift+Tab walk message, list and diff; Tab in the message moves on
   rather than indenting. [plan]
 
+## Remote hosts (Settings page)
+
+- **Server state line**: one line at the top of each host's fields, an icon plus text (never
+  color alone), then the Check button; the description keeps the command connecting runs,
+  and Remove host stays alone at the bottom. Start/Stop will join Check on that line. States:
+  "Connected" (live connection, free, read at render) prefixed to the check result; "Not
+  checked"; "Checking…"; "Server running, N sessions"; "Server not running"; "Unreachable:"
+  + ssh's last stderr line (full text in a tooltip); "agentws-server not found" (exit 127,
+  hint: set Server program); "Server too old to report status: update it". Version follows
+  the result. A host without a destination shows no line and no Check. [UX agent]
+- **Checks run only on Check**, never on page open or after an edit: each is an ssh login
+  per host, up to the connect timeout, and the page must cost nothing idle. A whole check
+  gives up after a fixed overall timeout ("No answer from the server"). [UX agent]
+- **During a check**: static "Checking…" (no spinner: no redraw loop), Check disabled. The
+  check goes on if the page closes; its result is keyed by destination and server program,
+  so a row edited or removed meanwhile shows "Not checked" for its new target. [UX agent]
+- **Results last for the app run only** (in memory, kept when leaving Settings), with no
+  check time shown: a stale state from a past run would mislead. [UX agent]
+- **Versions**: shown plainly; only a protocol mismatch is flagged ("speaks protocol N,
+  this app M: remote tabs can't open"), the full version comparison is left to Packaging.
+  [UX agent]
+- **`agentws-server status` output**: one `key=value` per line (version, protocol, daemon
+  state, sessions), unknown keys ignored; exit 0 whether or not the daemon runs, nonzero
+  only when the check itself failed. Never starts the daemon. [UX agent]
+- **A new connection clears the host's last check** (a tab starting or reconnecting there):
+  the row reads "Connected · Not checked" rather than pairing Connected with an older "Server
+  not running" or "Unreachable". [pipeline]
+- **An incompatible daemon hides the protocol clause**: the proxy only relays to the daemon,
+  so the installed program's protocol says nothing there, and the line would say "can't
+  open" twice. [pipeline]
+
 ## Command history popup (per shell)
 
 - **Chips**: "All" first, then shells in new-tab menu order, then unknown keys by label; icon +

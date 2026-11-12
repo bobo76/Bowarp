@@ -250,5 +250,10 @@ fn registry_identifiers_are_unambiguous() {
 #[test]
 fn agent_constants_name_their_definitions() {
     assert_eq!(CLAUDE.saved_kind(), "claude-code");
+    assert_eq!(
+        CLAUDE.resume_args("1b04"),
+        Some(["--resume".to_string(), "1b04".to_string()])
+    );
+    assert_eq!(COPILOT.resume_args("1b04"), None);
     assert_eq!(COPILOT.saved_kind(), "copilot-cli");
 }

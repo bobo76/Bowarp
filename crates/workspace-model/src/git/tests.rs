@@ -81,10 +81,73 @@ fn follows_a_worktree_gitdir_file() {
 }
 
 #[test]
-fn sums_added_lines_skipping_binary_files() {
-    let numstat = "12\t3\tcrates/app/src/sidebar.rs\n-\t-\tdocs/shot.png\n0\t5\tREADME.md\n1\t0\tnew file.txt\n";
-    assert_eq!(numstat_added(numstat), 13);
-    assert_eq!(numstat_added(""), 0);
+fn numstat_counts_per_path_with_binary_files_unknown() {
+    let numstat = concat!(
+        "12\t3\tcrates/app/src/sidebar.rs\0",
+        "-\t-\tdocs/shot.png\0",
+        "1\t0\tnew\tfile.txt\0",
+    );
+    let counts = numstat_counts(numstat);
+    assert_eq!(counts["crates/app/src/sidebar.rs"], (Some(12), Some(3)));
+    assert_eq!(counts["docs/shot.png"], (None, None));
+    assert_eq!(
+        counts["new\tfile.txt"],
+        (Some(1), Some(0)),
+        "a tab in a name is kept"
+    );
+    assert!(numstat_counts("").is_empty());
+}
+
+#[test]
+fn git_paths_get_backslashes_on_windows_only() {
+    assert_eq!(
+        native_separators("C:/repo/src/new.rs", true),
+        r"C:\repo\src\new.rs"
+    );
+    assert_eq!(native_separators("src/new.rs", false), "src/new.rs");
+}
+
+#[test]
+fn status_entries_read_each_kind_of_change() {
+    let status = " M a.rs\0M  b.rs\0A  c.rs\0 D d.rs\0?? e f.rs\0UU g.rs\0AA h.rs\0!! i\0AM j.rs\0";
+    assert_eq!(
+        status_entries(status),
+        vec![
+            ("a.rs".to_string(), FileChange::Modified),
+            ("b.rs".to_string(), FileChange::Modified),
+            ("c.rs".to_string(), FileChange::Added),
+            ("d.rs".to_string(), FileChange::Deleted),
+            ("e f.rs".to_string(), FileChange::Untracked),
+            ("g.rs".to_string(), FileChange::Conflicted),
+            ("h.rs".to_string(), FileChange::Conflicted),
+            ("j.rs".to_string(), FileChange::Added),
+        ]
+    );
+}
+
+#[test]
+fn marks_name_changed_files_and_the_folders_holding_them() {
+    let file = |path: &str, change| ChangedFile {
+        path: PathBuf::from(path),
+        change,
+        added: None,
+        removed: None,
+    };
+    let changes = WorkingChanges {
+        files: vec![
+            file("/repo/src/a/new.rs", FileChange::Untracked),
+            file("/repo/src/b.rs", FileChange::Modified),
+            file("/repo/gone.rs", FileChange::Deleted),
+        ],
+    };
+    let marks = changes.marks();
+    assert_eq!(
+        marks[Path::new("/repo/src/a/new.rs")],
+        FileChange::Untracked
+    );
+    assert_eq!(marks[Path::new("/repo/src/a")], FileChange::Modified);
+    assert_eq!(marks[Path::new("/repo/src")], FileChange::Modified);
+    assert!(!marks.contains_key(Path::new("/repo/gone.rs")));
 }
 
 #[test]
@@ -168,6 +231,36 @@ fn counts_tracked_changes_and_untracked_files() {
     // 2 added to tracked.txt, 3 in new.txt, 1 in src/new.rs; from any folder of the repo.
     assert_eq!(lines_added(&nested), Some(6));
     assert_eq!(lines_added(&repo.0), Some(6));
+
+    let changes = working_changes(&nested).unwrap();
+    let top = fs::canonicalize(&repo.0).unwrap();
+    let found: Vec<(PathBuf, FileChange, Option<u64>, Option<u64>)> = changes
+        .files
+        .iter()
+        .map(|file| {
+            let path = fs::canonicalize(&file.path).unwrap();
+            (path, file.change, file.added, file.removed)
+        })
+        .collect();
+    assert_eq!(
+        found,
+        vec![
+            (
+                top.join("tracked.txt"),
+                FileChange::Modified,
+                Some(2),
+                Some(0)
+            ),
+            (top.join("blob.bin"), FileChange::Untracked, None, None),
+            (top.join("new.txt"), FileChange::Untracked, Some(3), Some(0)),
+            (
+                top.join("src/new.rs"),
+                FileChange::Untracked,
+                Some(1),
+                Some(0)
+            ),
+        ]
+    );
 }
 
 #[test]

@@ -129,6 +129,36 @@ fn list_warning(
     }
 }
 
+/// The question asked before closing the window while file viewers hold unsaved edits, or
+/// `None` when none does. `files` names each file (as its viewer header does); the confirming
+/// button saves them all, the dialog's other buttons discard them or cancel.
+pub fn unsaved_edits_warning(files: &[String]) -> Option<CloseWarning> {
+    let first = files.first()?;
+    let (title, intro) = match files.len() {
+        1 => (
+            format!("Save changes to \"{first}\"?"),
+            "Its edits are lost if you close the window without saving them.".to_string(),
+        ),
+        n => (
+            format!("Save changes to {n} files?"),
+            "Their edits are lost if you close the window without saving them:".to_string(),
+        ),
+    };
+    let mut lines = Vec::new();
+    if files.len() > 1 {
+        lines = files.iter().take(MAX_LISTED).cloned().collect();
+        if files.len() > MAX_LISTED {
+            lines.push(format!("and {} more", files.len() - MAX_LISTED));
+        }
+    }
+    Some(CloseWarning {
+        title,
+        intro,
+        lines,
+        ok_text: if files.len() == 1 { "Save" } else { "Save all" },
+    })
+}
+
 fn busy_sentence(reason: &BusyReason) -> String {
     match reason {
         BusyReason::Command(Some(command)) => format!("\"{command}\" is still running."),
@@ -166,6 +196,26 @@ mod tests {
             name: name.to_string(),
             reason,
         }
+    }
+
+    #[test]
+    fn unsaved_edits_warning_names_one_file_or_lists_several() {
+        assert_eq!(unsaved_edits_warning(&[]), None);
+        let one = unsaved_edits_warning(&["plan.md".to_string()]).unwrap();
+        assert_eq!(one.title, "Save changes to \"plan.md\"?");
+        assert!(one.lines.is_empty());
+        assert_eq!(one.ok_text, "Save");
+
+        let files: Vec<String> = (0..MAX_LISTED + 2).map(|i| format!("f{i}.rs")).collect();
+        let many = unsaved_edits_warning(&files).unwrap();
+        assert_eq!(
+            many.title,
+            format!("Save changes to {} files?", MAX_LISTED + 2)
+        );
+        assert_eq!(many.lines.len(), MAX_LISTED + 1);
+        assert_eq!(many.lines[0], "f0.rs");
+        assert_eq!(many.lines.last().unwrap(), "and 2 more");
+        assert_eq!(many.ok_text, "Save all");
     }
 
     #[test]

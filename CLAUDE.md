@@ -25,6 +25,10 @@ node --test crates/app/copilot-extension/bridge.test.mjs  # Copilot extension te
 scripts/test-windows.sh [--build-only]         # cross-compile tests for Windows and run under Wine
 ```
 
+PRs: `gh pr create ... && gh pr merge --auto --merge` merges once the required checks pass. A
+PR touching only docs (`*.md`, `docs/`, `reviews/`, `.claude/`; `scripts/ci-code-changed.sh`)
+skips the build, test and lint jobs, so it merges in about a minute.
+
 "The check" before committing: `cargo fmt --check && cargo build && cargo test && cargo clippy --all-targets -- -D warnings`.
 rustfmt does not wrap comments; keep lines ≤ 100 chars by hand.
 
@@ -70,6 +74,12 @@ Cargo workspace, `crates/*`:
   right tab.
 - **`agentws-hook`** — tiny binary that forwards hook JSON to the owning session; always exits 0
   silently for Claude hooks. Tested by running the binary (`tests/round_trip.rs`).
+- **`remote`** (package `agentws-remote`, binary `agentws-server`) — no UI. Remote sessions
+  over ssh (docs/remote.md): wire `protocol`, a `Server` running `term-core` sessions and
+  streaming their tapped output to clients, the per-user daemon and its `proxy`, and the
+  `Client`, which hands out `term_core::Session::remote` sessions fed from the connection (a
+  `snapshot` on attach, then the live bytes). The app runs a `LaunchSpec` with a `host` through
+  `remote_hosts.rs`.
 - **`app`** (package `agent-workspace`) — the GPUI UI (`gpui-kit`). `workspace_view.rs` is the
   root view (sidebar, tab cards, settings pane, file explorer/viewer, dividers); it embeds the
   active `TerminalView` uncached, so any notify on it re-renders the terminal. `terminal_view.rs`

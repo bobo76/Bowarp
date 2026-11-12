@@ -39,6 +39,19 @@ directly to model APIs.
     Background blur where the system allows it (Windows
     Acrylic or Mica, KDE Plasma on Wayland); elsewhere the blur choice is shown unavailable.
 - Warn before closing a session or workspace with running processes.
+- Check on request whether each remote host's server is reachable and running, with its
+  session count and version.
+
+## Remote Sessions
+
+- Run shells and agents on another machine over ssh (`agentws-server` on the host), in
+  tabs like local ones; a lost connection shows the tab Disconnected with Reconnect, and the
+  session keeps running on the host.
+- On the host, `agentws-server list` shows each session's attached clients (count and
+  machine names); a client that reconnects replaces its lost connection instead of being
+  counted twice, and a dead connection is dropped without waiting for ssh to time out.
+- On the host, `agentws-server show <id>` prints a session's screen (and optionally its
+  scrollback) without attaching to it or changing its size.
 
 ## Tabs and Groups
 
@@ -61,6 +74,8 @@ directly to model APIs.
 - Assign colors to individual tabs and groups, with tabs optionally inheriting
   their group's color.
 - Display an icon identifying the session type, with manual icon overrides.
+- Mark tabs whose program runs on another machine, and name that machine in the tab's
+  details.
 - Keep session identity, custom colors, and activity status visually distinct.
 - Provide keyboard shortcuts for opening, closing, and switching tabs and panes.
 - Move the keyboard from the tab search into the tab list and pick a tab with the arrow keys;

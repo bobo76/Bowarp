@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -15,12 +16,13 @@ use gpui_kit::{
     px, rgb,
 };
 use workspace_model::{
-    AgentId, Attention, LauncherIcon, SessionKind, TabColor, format_clock, format_lap,
+    AgentId, Attention, FileChange, GroupId, LauncherIcon, SessionKind, TabColor, format_clock,
+    format_lap,
 };
 
 use crate::assets::{
     BASH_ICON, DEBIAN_ICON, FISH_ICON, GIT_BRANCH_ICON, GIT_ICON, LINUX_ICON, PIN_ICON,
-    POWERSHELL_ICON, PROMPT_ICON, UBUNTU_ICON, ZSH_ICON,
+    POWERSHELL_ICON, PROMPT_ICON, SERVER_ICON, UBUNTU_ICON, UNPLUG_ICON, ZSH_ICON,
 };
 use crate::light_theme;
 use crate::shortcuts;
@@ -96,6 +98,8 @@ pub enum TabStatus {
     /// A quiet Claude Code session while status hooks are off: its silence says nothing.
     Unavailable,
     Exited,
+    /// A remote tab lost its connection: its program may still run on its host.
+    Disconnected,
 }
 
 impl TabStatus {
@@ -115,7 +119,7 @@ impl TabStatus {
             Self::ReadyForReview | Self::Idle => rgb(0x3fb950),
             Self::Running => rgb(0x2dd4bf),
             Self::Active => rgb(0xc9d1d9),
-            Self::Quiet | Self::Unavailable | Self::Exited => rgb(0x545d68),
+            Self::Quiet | Self::Unavailable | Self::Exited | Self::Disconnected => rgb(0x545d68),
         }
         .into()
     }
@@ -128,7 +132,7 @@ impl TabStatus {
             Self::ReadyForReview | Self::Idle => 2,
             Self::Running => 3,
             Self::Active => 4,
-            Self::Quiet | Self::Unavailable | Self::Exited => 5,
+            Self::Quiet | Self::Unavailable | Self::Exited | Self::Disconnected => 5,
         }
     }
 
@@ -143,6 +147,7 @@ impl TabStatus {
             Self::Quiet => "No recent output",
             Self::Unavailable => "Status unavailable",
             Self::Exited => "Exited",
+            Self::Disconnected => "Disconnected",
         }
     }
 
@@ -157,7 +162,8 @@ impl TabStatus {
             | Self::Active
             | Self::Quiet
             | Self::Unavailable
-            | Self::Exited => None,
+            | Self::Exited
+            | Self::Disconnected => None,
         }
     }
 }
@@ -228,6 +234,8 @@ pub struct TabRow {
     pub kind: SessionKind,
     pub name: SharedString,
     pub detail: Option<TabDetail>,
+    /// The tab runs on a remote host: a server icon starts the second line.
+    pub remote: bool,
     pub status: TabStatus,
     /// Whether a Running badge pulses rather than stays still.
     pub pulse: RunningPulse,
@@ -314,6 +322,57 @@ impl Render for DraggedTab {
             .opacity(0.9)
             .child(kind_icon(self.kind).small())
             .child(single_line(self.name.clone()))
+    }
+}
+
+/// The value carried while a group header is dragged; it also renders the header that follows
+/// the mouse.
+#[derive(Clone)]
+pub struct DraggedGroup {
+    pub id: GroupId,
+    pub name: SharedString,
+    pub color: Option<TabColor>,
+    pub tab_count: usize,
+}
+
+impl Render for DraggedGroup {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let count = match self.tab_count {
+            1 => "1 tab".to_string(),
+            count => format!("{count} tabs"),
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .w(px(SIDEBAR_WIDTH - DRAG_PREVIEW_INSET))
+            .h(px(DRAG_PREVIEW_HEIGHT))
+            .px_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.drag_border)
+            .bg(theme.sidebar_accent)
+            .text_color(theme.sidebar_accent_foreground)
+            .text_sm()
+            .opacity(0.9)
+            .when_some(self.color, |preview, color| {
+                preview.child(
+                    div()
+                        .flex_none()
+                        .size(px(GROUP_COLOR_SIZE))
+                        .rounded_full()
+                        .bg(tab_color(color)),
+                )
+            })
+            .child(single_line(self.name.clone()))
+            .child(
+                div()
+                    .flex_none()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(count),
+            )
     }
 }
 
@@ -608,6 +667,19 @@ fn status_badge(
                     .size(px(CHECK_MARK_SIZE))
                     .text_color(ring),
             ),
+        // Unlike Exited: the program may still run, and the tab can reconnect.
+        TabStatus::Disconnected => badge
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(DONE_BADGE_SIZE))
+            .bg(color)
+            .child(
+                Icon::empty()
+                    .path(UNPLUG_ICON)
+                    .size(px(CHECK_MARK_SIZE))
+                    .text_color(ring),
+            ),
         // The dot fades over the ring color, so the icon never shows through it.
         TabStatus::Running => badge
             .size(px(BADGE_SIZE))
@@ -648,11 +720,15 @@ fn session_icon(row: &TabRow, background: &RowBackground, cx: &App) -> impl Into
         ))
 }
 
-fn detail_line(detail: TabDetail, color: Hsla) -> impl IntoElement {
+/// The row's second line: the server icon on a remote tab, then the branch or folder (none
+/// while a remote tab's folder isn't known yet).
+fn detail_line(detail: Option<TabDetail>, remote: bool, color: Hsla) -> impl IntoElement {
     let (icon, text) = match detail {
-        TabDetail::Branch(branch) => (Some(Icon::empty().path(GIT_BRANCH_ICON)), branch),
-        TabDetail::Folder(folder) => (None, folder),
+        Some(TabDetail::Branch(branch)) => (Some(GIT_BRANCH_ICON), Some(branch)),
+        Some(TabDetail::Folder(folder)) => (None, Some(folder)),
+        None => (None, None),
     };
+    let icons = [remote.then_some(SERVER_ICON), icon];
     div()
         .flex()
         .items_center()
@@ -660,8 +736,20 @@ fn detail_line(detail: TabDetail, color: Hsla) -> impl IntoElement {
         .min_w_0()
         .text_xs()
         .text_color(color)
-        .children(icon.map(|icon| icon.size(px(DETAIL_ICON_SIZE)).text_color(color)))
-        .child(single_line(text))
+        .children(
+            icons
+                .into_iter()
+                .flatten()
+                .map(|path| detail_icon(path, color)),
+        )
+        .children(text.map(single_line))
+}
+
+fn detail_icon(path: &'static str, color: Hsla) -> Icon {
+    Icon::empty()
+        .path(path)
+        .size(px(DETAIL_ICON_SIZE))
+        .text_color(color)
 }
 
 /// Text cut with an ellipsis when it does not fit.
@@ -760,7 +848,9 @@ pub fn tab_row(
                 .flex_1()
                 .min_w_0()
                 .child(name_line(&mut row, muted, cx))
-                .children(row.detail.take().map(|detail| detail_line(detail, muted))),
+                .when(row.detail.is_some() || row.remote, |lines| {
+                    lines.child(detail_line(row.detail.take(), row.remote, muted))
+                }),
         )
         .child(
             // The menu and close buttons show on the selected row and on hover.
@@ -819,6 +909,8 @@ pub struct TabCard {
     pub running_for: Option<Duration>,
     /// The command a shell runs, shown in the Running chip.
     pub running_label: Option<SharedString>,
+    /// A remote tab's host: its name from the settings, else as the tab was given it.
+    pub host: Option<SharedString>,
     /// The full folder, with the home folder shortened to `~`.
     pub folder: Option<SharedString>,
     pub branch: Option<SharedString>,
@@ -829,6 +921,89 @@ pub struct TabCard {
     pub kind_label: Option<SharedString>,
     /// Lines added in the working tree, once `git diff` has answered.
     pub lines_added: Option<u64>,
+    /// The first changed files of the working tree, listed under `+N`.
+    pub changes: Vec<CardChange>,
+    /// How many more changed files there are than listed.
+    pub more_changes: usize,
+}
+
+/// A changed file in a hover card: clicking it opens it in the tab's viewer.
+#[derive(Clone)]
+pub struct CardChange {
+    pub path: PathBuf,
+    /// The path relative to the tab's folder when it is inside, else shortened.
+    pub label: SharedString,
+    pub change: FileChange,
+    pub added: Option<u64>,
+    pub removed: Option<u64>,
+}
+
+/// Opens a file of a hover card's change list in the tab's viewer.
+pub type OpenChangedFile = Rc<dyn Fn(&Path, &mut Window, &mut App)>;
+
+/// The letter and color marking a changed file, as in `git status` (the explorer uses the
+/// color alone).
+pub fn change_mark(change: FileChange, cx: &App) -> (&'static str, Hsla) {
+    let theme = cx.theme();
+    match change {
+        FileChange::Modified => ("M", theme.warning),
+        FileChange::Added => ("A", theme.success),
+        FileChange::Untracked => ("U", theme.success),
+        FileChange::Deleted => ("D", theme.danger),
+        FileChange::Conflicted => ("!", theme.danger),
+    }
+}
+
+/// One changed file: its mark, its path cut at the start, and `+a −r`. Deleted files can't be
+/// opened.
+fn change_row(
+    index: usize,
+    change: CardChange,
+    open_file: &OpenChangedFile,
+    cx: &App,
+) -> impl IntoElement {
+    let (letter, color) = change_mark(change.change, cx);
+    let muted = cx.theme().muted_foreground;
+    let counts = match (change.added, change.removed) {
+        (Some(added), Some(removed)) => Some((added, removed)),
+        _ => None,
+    };
+    let open = (change.change != FileChange::Deleted).then(|| open_file.clone());
+    let path = change.path;
+    div()
+        .id(("card-change", index))
+        .flex()
+        .items_center()
+        .gap_1p5()
+        .min_w_0()
+        .px_1()
+        .rounded_sm()
+        .text_xs()
+        .child(div().flex_none().w(px(10.)).text_color(color).child(letter))
+        .child(single_line(change.label))
+        .children(counts.map(|(added, removed)| {
+            div()
+                .flex()
+                .flex_none()
+                .gap_1()
+                .ml_auto()
+                .when(added > 0, |row| {
+                    row.child(
+                        div()
+                            .text_color(rgb(ADDED_GREEN))
+                            .child(format!("+{added}")),
+                    )
+                })
+                .when(removed > 0, |row| {
+                    row.child(div().text_color(muted).child(format!("−{removed}")))
+                })
+        }))
+        .when_some(open, |row, open| {
+            row.cursor_pointer()
+                .hover(|row| row.bg(cx.theme().list_hover))
+                .tooltip(|window, cx| Tooltip::new("Open in the viewer").build(window, cx))
+                .on_click(move |_, window, cx| open(&path, window, cx))
+        })
 }
 
 /// The status as a colored chip: mark and label, with the lap time while working
@@ -858,7 +1033,7 @@ fn status_chip(
         .children(running_label.map(|command| single_line(format!("· {command}").into())))
 }
 
-pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
+pub fn tab_card(card: TabCard, open_file: OpenChangedFile, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
     let muted = theme.muted_foreground;
     div()
@@ -899,11 +1074,21 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
                 .text_color(muted)
                 .child(format!("Running for {}", format_clock(running)))
         }))
+        .children(card.host.map(|host| {
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .min_w_0()
+                .child(detail_icon(SERVER_ICON, theme.foreground).flex_none())
+                .child(single_line(host))
+        }))
         // The whole folder, wrapped rather than cut: its end is the part that tells tabs apart.
         .children(card.folder.map(|folder| div().child(folder)))
         .children(
-            card.branch
-                .map(|branch| detail_line(TabDetail::Branch(branch), theme.foreground)),
+            card.branch.map(|branch| {
+                detail_line(Some(TabDetail::Branch(branch)), false, theme.foreground)
+            }),
         )
         .children(
             card.title
@@ -928,6 +1113,21 @@ pub fn tab_card(card: TabCard, cx: &App) -> impl IntoElement {
                         .child(format!("+{added}"))
                 })),
         )
+        .children(
+            card.changes
+                .into_iter()
+                .enumerate()
+                .map(|(index, change)| change_row(index, change, &open_file, cx)),
+        )
+        .when(card.more_changes > 0, |list| {
+            list.child(
+                div()
+                    .px_1()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(format!("and {} more", card.more_changes)),
+            )
+        })
 }
 
 /// A page's row under the tabs (Settings, Git): a heading, then a row like a tab's, selected
@@ -1362,6 +1562,7 @@ mod tests {
                 TabStatus::Quiet,
                 TabStatus::Unavailable,
                 TabStatus::Exited,
+                TabStatus::Disconnected,
             ] {
                 assert_eq!(
                     working_spinner(kind, status, title_hidden, RunningPulse::Animated),

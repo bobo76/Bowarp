@@ -65,6 +65,29 @@ impl Launcher {
     }
 }
 
+/// What `kind` starts as on `host`, in `folder` there (`None`: the home folder): an agent by
+/// its command name with the user's arguments for it, a shell as the host's default shell.
+/// This machine's program paths and shells do not apply there.
+pub fn remote_spec(
+    kind: SessionKind,
+    host: &str,
+    folder: Option<&str>,
+    settings: &Settings,
+) -> Result<LaunchSpec, shell_words::ParseError> {
+    let cwd = folder.map(PathBuf::from);
+    let mut spec = match kind.agent() {
+        Some(agent) => {
+            let mut spec = LaunchSpec::agent(agent, cwd);
+            spec.args
+                .extend(shell_words::split(settings.agent_arguments(agent))?);
+            spec
+        }
+        None => LaunchSpec::shell(cwd),
+    };
+    spec.host = Some(host.to_owned());
+    Ok(spec)
+}
+
 /// Shells offered when found on `PATH`: (program, label). The program name is also the
 /// launcher's [`Launcher::id`], saved in settings.json: don't rename it.
 #[cfg(unix)]
@@ -323,6 +346,9 @@ fn shell_key_with(
 
 /// Name shown for a session until its program sets a title.
 pub fn default_name(spec: &LaunchSpec) -> String {
+    if let Some(host) = &spec.host {
+        return remote_name(spec, host);
+    }
     if let Some(agent) = spec.kind.agent() {
         return agent.label().to_owned();
     }
@@ -339,6 +365,53 @@ pub fn default_name(spec: &LaunchSpec) -> String {
             || "Shell".into(),
             |name| name.to_string_lossy().into_owned(),
         )
+}
+
+/// An entry of a remote host's `+` submenu.
+#[derive(Clone, Debug)]
+pub struct RemoteLaunch {
+    pub label: String,
+    pub icon: LauncherIcon,
+    pub spec: LaunchSpec,
+}
+
+/// What a remote host's `+` submenu offers: the server's default shell, then the agent CLIs,
+/// all in the server's home folder on `destination`.
+pub fn remote_launches(destination: &str) -> Vec<RemoteLaunch> {
+    let shell = RemoteLaunch {
+        label: "Shell".into(),
+        icon: LauncherIcon::Shell,
+        spec: LaunchSpec::shell(None),
+    };
+    let agents = agents().map(|agent| RemoteLaunch {
+        label: agent.label().into(),
+        icon: LauncherIcon::Agent(agent),
+        spec: LaunchSpec::agent(agent, None),
+    });
+    std::iter::once(shell)
+        .chain(agents)
+        .map(|mut launch| {
+            launch.spec.host = Some(destination.to_owned());
+            launch
+        })
+        .collect()
+}
+
+/// A remote tab's name: what it runs, then its host. A shell without a program is the
+/// server's default one, whose name this machine can't know.
+fn remote_name(spec: &LaunchSpec, host: &str) -> String {
+    let program = spec
+        .program
+        .as_deref()
+        .map(Path::new)
+        .and_then(Path::file_stem)
+        .map(|name| name.to_string_lossy());
+    let base = match (spec.kind.agent(), program) {
+        (Some(agent), _) => agent.label().into(),
+        (None, Some(program)) => program,
+        (None, None) => "Shell".into(),
+    };
+    format!("{base} ({})", workspace_model::host_part(host.trim()))
 }
 
 /// The distro a `wsl -d <distro>` launch opens.

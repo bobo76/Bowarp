@@ -2,6 +2,7 @@ mod busy_close;
 mod divider_drag;
 mod empty_state;
 mod git_pane;
+mod reconnect;
 mod settings_pane;
 mod sidebar_rows;
 mod spinner_clock;
@@ -34,8 +35,8 @@ use workspace_model::layout::Direction;
 use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION, ExplorerWidth, ViewerFraction};
 use workspace_model::{
     Attention, DropTarget, FeatureSwitch, FileLinkAction, GroupId, Layout, PaneChange, PaneEntry,
-    Shortcut, TabColor, TabId, TabMeta, TabsState, ToastKind, exit_toast_kind, next_attention,
-    pane_change, waiting_count,
+    Shortcut, TabColor, TabHistory, TabId, TabMeta, TabsState, ToastKind, exit_toast_kind,
+    next_attention, pane_change, waiting_count,
 };
 
 use self::divider_drag::DividerDrag;
@@ -65,8 +66,8 @@ use crate::sidebar::{self, SIDEBAR_WIDTH};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
 use crate::terminal_view::{
-    AgentExited, AgentNotice, LastCommandChanged, OpenFileRequest, StatusReporting, TabChanged,
-    TerminalView,
+    AgentExited, AgentNotice, LastCommandChanged, OpenFileRequest, RemoteAction,
+    ResumeConversation, ResumeFailed, StatusReporting, TabChanged, TerminalView,
 };
 use crate::window_bounds;
 
@@ -89,6 +90,9 @@ actions!(
         ToggleExplorer,
         SearchTabs,
         NextAttention,
+        GoBack,
+        GoForward,
+        LastTab,
         RenameTab,
         SelectTab1,
         SelectTab2,
@@ -137,6 +141,10 @@ fn default_bindings() -> Vec<Shortcut> {
         Shortcut::new("f11", ToggleFullScreen.name(), None),
         bind("ctrl-tab", &NextTab),
         bind("ctrl-shift-tab", &PreviousTab),
+        // Not Alt+Left/Right: shells move the cursor by word with them.
+        bind("ctrl-alt-left", &GoBack),
+        bind("ctrl-alt-right", &GoForward),
+        bind("ctrl-`", &LastTab),
         bind(&format!("ctrl-{EXPLORER_KEY}"), &ToggleExplorer),
         bind("ctrl-1", &SelectTab1),
         bind("ctrl-2", &SelectTab2),
@@ -182,11 +190,18 @@ pub fn select_tab_action(index: usize) -> Option<&'static str> {
     actions.get(index).map(|action| action.name())
 }
 
+/// Shown in a window that doesn't own the saved tabs.
+const GUEST_WINDOW_NOTICE: &str = "Tabs in this window aren't saved or restored: another \
+    Agent Workspace window, opened first, keeps the saved tabs.";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabOwnership {
     Owner,
     Guest,
 }
+
+/// What the workspace follows of a tab's session view (`listen_to_tab`).
+type TabSubscriptions = [Subscription; 8];
 
 struct Tab {
     /// The first session's id, which stays with the tab when tabs move (and when an agent's
@@ -198,13 +213,16 @@ struct Tab {
     meta: TabMeta,
     /// The file the tab shows beside its terminal; `None` when the viewer is closed.
     viewer: Option<TabViewer>,
-    _view_events: [Subscription; 5],
+    _view_events: TabSubscriptions,
 }
 
 struct TabViewer {
     view: Entity<FileViewer>,
     _events: Subscription,
 }
+
+/// Keys the "Connecting to <host>" notification of a remote tab being started.
+struct RemoteConnecting;
 
 /// Dragged when the file viewer's divider is: the drag moves the divider, nothing follows the
 /// pointer.
@@ -263,6 +281,8 @@ pub struct WorkspaceView {
     tabs: Vec<Tab>,
     layout: Layout,
     active: usize,
+    /// The tabs selected before, for Back, Forward and Last tab.
+    tab_history: TabHistory,
     sidebar_visible: bool,
     /// GPU capability is fixed for the lifetime of this window.
     pulse_running: bool,
@@ -364,6 +384,24 @@ impl WorkspaceView {
         });
     }
 
+    /// Say in a second window that its tabs are not saved: the first window running owns
+    /// `tabs.json` (`instance_lock`). Shown until dismissed; not when tabs aren't saved anyway.
+    pub fn note_guest_window(&self, window: &mut Window, cx: &mut Context<Self>) {
+        struct GuestWindow;
+        if !settings_file::workspace_features(cx).saves_tabs() {
+            return;
+        }
+        // Startup runs before the notification layer's root exists.
+        cx.defer_in(window, move |_, window, cx| {
+            window.push_notification(
+                Notification::info(GUEST_WINDOW_NOTICE)
+                    .id::<GuestWindow>()
+                    .autohide(false),
+                cx,
+            );
+        });
+    }
+
     pub fn new(
         launchers: Rc<[Launcher]>,
         hooks: Option<Rc<AgentHooks>>,
@@ -405,6 +443,7 @@ impl WorkspaceView {
             tabs: Vec::new(),
             layout: Layout::default(),
             active: 0,
+            tab_history: TabHistory::default(),
             sidebar_visible: true,
             pulse_running: sidebar::pulse_allowed(window),
             window_visible: window.is_visible(),
@@ -480,7 +519,8 @@ impl WorkspaceView {
             .map_or(NewTabPlace::End, |tab| NewTabPlace::After(tab.id))
     }
 
-    /// Start `spec` in a new tab at `place` and select it.
+    /// Start `spec` in a new tab at `place` and select it. A remote launch only starts here:
+    /// its tab opens once connected (see [`Self::start_remote_tab`]).
     fn open_tab_in(
         &mut self,
         spec: LaunchSpec,
@@ -488,7 +528,22 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> io::Result<()> {
+        if spec.host.is_some() {
+            return self.start_remote_tab(spec, place, window, cx);
+        }
         let id = self.spawn_tab(spec, TabMeta::default(), window, cx)?;
+        self.place_new_tab(id, place, window, cx);
+        Ok(())
+    }
+
+    /// Put new tab `id` at `place` and select it.
+    fn place_new_tab(
+        &mut self,
+        id: u64,
+        place: NewTabPlace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.last_closed_folder = None;
         match place {
             NewTabPlace::End => self.layout.add(id),
@@ -498,6 +553,66 @@ impl WorkspaceView {
         if let Some(index) = self.tab_index(id) {
             self.activate(index, window, cx);
         }
+    }
+
+    /// Connect to `spec`'s host and start it there on another thread, showing "Connecting"
+    /// meanwhile; then open its tab at `place` (after the tab there, or at the end once that
+    /// one closed), or show why it could not start until dismissed. Shell integration and
+    /// hooks are files and a socket on this machine: a remote tab has neither yet
+    /// (docs/remote.md).
+    fn start_remote_tab(
+        &mut self,
+        spec: LaunchSpec,
+        place: NewTabPlace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> io::Result<()> {
+        let id = self.next_session_id;
+        let (events, started) = TerminalView::start_remote(id, &spec, cx)?;
+        self.next_session_id += 1;
+        let host = spec.host.clone().unwrap_or_default();
+        window.push_notification(
+            Notification::info(format!("Connecting to {host}…"))
+                .id1::<RemoteConnecting>(id)
+                .autohide(false),
+            cx,
+        );
+        cx.spawn_in(window, async move |workspace, cx| {
+            let started = started
+                .await
+                .unwrap_or_else(|_| Err(io::Error::other("the connection attempt stopped")));
+            let _ = workspace.update_in(cx, |workspace, window, cx| {
+                window.remove_notification1::<RemoteConnecting>(id, cx);
+                match started {
+                    Ok(session) => {
+                        let shell_key = launcher::shell_key(&workspace.launchers, &spec);
+                        let view = TerminalView::with_session(
+                            session,
+                            events,
+                            &spec,
+                            StatusReporting::OutputActivity,
+                            shell_key,
+                            cx,
+                        );
+                        let view_events = workspace.listen_to_tab(id, &view, window, cx);
+                        workspace.push_tab(id, view, view_events, spec, TabMeta::default());
+                        workspace.place_new_tab(id, place, window, cx);
+                    }
+                    Err(err) => {
+                        let program = launch_name(&spec);
+                        log::error!("failed to start {program} on {host}: {err}");
+                        window.push_notification(
+                            Notification::error(format!(
+                                "Failed to start {program} on {host}: {err}"
+                            ))
+                            .autohide(false),
+                            cx,
+                        );
+                    }
+                }
+            });
+        })
+        .detach();
         Ok(())
     }
 
@@ -511,6 +626,19 @@ impl WorkspaceView {
     ) -> io::Result<u64> {
         let id = self.next_session_id;
         let (view, view_events) = self.start_session(id, &spec, window, cx)?;
+        self.push_tab(id, view, view_events, spec, meta);
+        Ok(id)
+    }
+
+    /// Add tab `id`, showing `view`, to the tabs; not to the layout yet.
+    fn push_tab(
+        &mut self,
+        id: u64,
+        view: Entity<TerminalView>,
+        view_events: TabSubscriptions,
+        spec: LaunchSpec,
+        meta: TabMeta,
+    ) {
         self.tabs.push(Tab {
             id,
             view,
@@ -519,7 +647,6 @@ impl WorkspaceView {
             viewer: None,
             _view_events: view_events,
         });
-        Ok(id)
     }
 
     /// Start `spec` as a new session for tab `tab_id`, listening to it.
@@ -529,7 +656,7 @@ impl WorkspaceView {
         spec: &LaunchSpec,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> io::Result<(Entity<TerminalView>, [Subscription; 5])> {
+    ) -> io::Result<(Entity<TerminalView>, TabSubscriptions)> {
         let session_id = self.next_session_id;
         let mut launch = spec.clone();
         // First: a shell with integration also gets the agents' hooks.
@@ -565,35 +692,125 @@ impl WorkspaceView {
             });
         }
         self.next_session_id += 1;
-        let changed = cx.subscribe(&view, |workspace, _, _: &TabChanged, cx| {
+        let view_events = self.listen_to_tab(tab_id, &view, window, cx);
+        Ok((view, view_events))
+    }
+
+    /// Follow tab `tab_id`'s session view: what it shows, its agent exiting, files it opens,
+    /// agent notices, its last command and a remote tab's Reconnect or Start new.
+    fn listen_to_tab(
+        &mut self,
+        tab_id: u64,
+        view: &Entity<TerminalView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> TabSubscriptions {
+        let changed = cx.subscribe(view, |workspace, _, _: &TabChanged, cx| {
             workspace.sync_explorer(cx);
             cx.notify();
         });
         let exited = cx.subscribe_in(
-            &view,
+            view,
             window,
             move |workspace, _, _: &AgentExited, window, cx| {
                 workspace.fall_back_to_shell(tab_id, window, cx);
             },
         );
         let open_file = cx.subscribe_in(
-            &view,
+            view,
             window,
             move |workspace, _, request: &OpenFileRequest, window, cx| {
                 workspace.open_file_in(tab_id, request.path.clone(), request.place, window, cx);
             },
         );
         let notice = cx.subscribe_in(
-            &view,
+            view,
             window,
             move |workspace, _, notice: &AgentNotice, window, cx| {
                 workspace.notify_agent(tab_id, *notice, window, cx);
             },
         );
-        let last_command = cx.subscribe(&view, |workspace, _, _: &LastCommandChanged, cx| {
+        let last_command = cx.subscribe(view, |workspace, _, _: &LastCommandChanged, cx| {
             workspace.save_tabs(cx);
         });
-        Ok((view, [changed, exited, open_file, notice, last_command]))
+        let remote = cx.subscribe_in(
+            view,
+            window,
+            move |workspace, _, action: &RemoteAction, window, cx| {
+                workspace.run_remote_action(tab_id, *action, window, cx);
+            },
+        );
+        let resume = cx.subscribe_in(
+            view,
+            window,
+            move |workspace, _, request: &ResumeConversation, window, cx| {
+                workspace.resume_conversation(tab_id, request.0.clone(), window, cx);
+            },
+        );
+        let resume_failed = cx.subscribe_in(
+            view,
+            window,
+            move |workspace, _, _: &ResumeFailed, window, cx| {
+                workspace.start_new_conversation(tab_id, window, cx);
+            },
+        );
+        [
+            changed,
+            exited,
+            open_file,
+            notice,
+            last_command,
+            remote,
+            resume,
+            resume_failed,
+        ]
+    }
+
+    /// Restart tab `tab_id`'s agent on conversation `id`. The tab keeps its launch without the
+    /// resume flag, so Duplicate and the next resume start from it.
+    fn resume_conversation(
+        &mut self,
+        tab_id: u64,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.tab_index(tab_id) else {
+            return;
+        };
+        let base = self.tabs[index].spec.clone();
+        let Some(resume) = base.kind.agent().and_then(|agent| agent.resume_args(&id)) else {
+            return;
+        };
+        let mut spec = base.clone();
+        spec.args.extend(resume);
+        if let Err(err) = self.replace_tab_session(index, spec, window, cx) {
+            window.push_notification(
+                Notification::error(format!("Failed to resume the conversation: {err}")),
+                cx,
+            );
+            return;
+        }
+        let tab = &mut self.tabs[index];
+        tab.spec = base;
+        tab.view.update(cx, |view, _| view.mark_resumed(id));
+    }
+
+    /// The agent no longer had the conversation it was asked to resume: start it again on a
+    /// new one, and say so (its own message goes with the screen).
+    fn start_new_conversation(&mut self, tab_id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.tab_index(tab_id) else {
+            return;
+        };
+        let spec = self.tabs[index].spec.clone();
+        let label = spec.kind.agent().map_or("The agent", |agent| agent.label());
+        let message = match self.replace_tab_session(index, spec, window, cx) {
+            Ok(()) => format!(
+                "Couldn't resume the conversation: {label} no longer has it. Started a new one."
+            ),
+            Err(err) => format!("Couldn't resume the conversation, nor start a new one: {err}"),
+        };
+        window.push_notification(Notification::warning(message), cx);
     }
 
     fn notify_agent(
@@ -651,18 +868,14 @@ impl WorkspaceView {
         let Some(index) = self.tab_index(tab_id) else {
             return;
         };
+        // The default shell is this machine's: a remote agent's tab keeps its last screen.
+        if self.tabs[index].spec.host.is_some() {
+            return;
+        }
         if let Some(hooks) = &self.hooks {
             hooks.remove_session(self.tabs[index].view.read(cx).id());
         }
-        let Some(shell) =
-            launcher::default_shell(&self.launchers, settings_file::settings(cx).default_shell())
-                .cloned()
-        else {
-            return;
-        };
-        // The child is gone: the last folder it reported, else the one it started in.
-        let folder = self.tabs[index].view.read(cx).current_folder();
-        let Some(spec) = shell.spec(folder) else {
+        let Some(spec) = self.fallback_shell_spec(index, cx) else {
             return;
         };
         if let Err(err) = self.replace_tab_session(index, spec.clone(), window, cx) {
@@ -671,7 +884,25 @@ impl WorkspaceView {
                 Notification::error(format!("Failed to start {}: {err}", launch_name(&spec))),
                 cx,
             );
+            return;
         }
+        // It reopens as a shell from now on.
+        self.save_tabs(cx);
+    }
+
+    /// The default shell in tab `index`'s folder, on its host for a remote tab.
+    fn fallback_shell_spec(&self, index: usize, cx: &App) -> Option<LaunchSpec> {
+        let tab = &self.tabs[index];
+        let view = tab.view.read(cx);
+        let settings = settings_file::settings(cx);
+        if let Some(host) = &tab.spec.host {
+            let folder = view.remote_folder();
+            return launcher::remote_spec(SessionKind::Shell, host, folder.as_deref(), settings)
+                .ok();
+        }
+        let shell = launcher::default_shell(&self.launchers, settings.default_shell())?;
+        // The child is gone: the last folder it reported, else the one it started in.
+        shell.spec(view.current_folder())
     }
 
     fn replace_tab_session(
@@ -683,6 +914,22 @@ impl WorkspaceView {
     ) -> io::Result<()> {
         let tab_id = self.tabs[index].id;
         let (view, view_events) = self.start_session(tab_id, &spec, window, cx)?;
+        self.swap_tab_view(index, view, view_events, spec, window, cx);
+        Ok(())
+    }
+
+    /// Show `view` (a new session started from `spec`) in tab `index` instead of its
+    /// current one, which ends: the tab keeps its name, color, place, open file and focus.
+    fn swap_tab_view(
+        &mut self,
+        index: usize,
+        view: Entity<TerminalView>,
+        view_events: TabSubscriptions,
+        spec: LaunchSpec,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab_id = self.tabs[index].id;
         let had_focus = self.tabs[index]
             .view
             .read(cx)
@@ -703,7 +950,7 @@ impl WorkspaceView {
             view.update(cx, |view, _| view.hide());
             self.sync_explorer(cx);
             cx.notify();
-            return Ok(());
+            return;
         }
         view.update(cx, |view, cx| view.show(cx));
         if had_focus {
@@ -711,7 +958,6 @@ impl WorkspaceView {
         }
         self.sync_explorer(cx);
         cx.notify();
-        Ok(())
     }
 
     /// Show `path` in tab `tab_id`'s file viewer, opening the viewer when it is closed.
@@ -783,6 +1029,9 @@ impl WorkspaceView {
                     if let Some(index) = self.tab_index(id) {
                         self.tabs[index].view.update(cx, |view, cx| {
                             view.restore_last_command(saved.last_command, cx);
+                            if let Some(conversation) = saved.conversation {
+                                view.offer_resume(conversation, cx);
+                            }
                         });
                     }
                     Some(id)
@@ -826,10 +1075,15 @@ impl WorkspaceView {
         }
         let active = self.active_tab().map(|tab| tab.id);
         let (layout, selected) = self.layout.save_selected(active, |id| {
-            let tab = self.tabs.iter().find(|tab| tab.id == id)?;
+            // Remote tabs are not reopened yet (docs/remote.md).
+            let tab = self
+                .tabs
+                .iter()
+                .find(|tab| tab.id == id && tab.spec.host.is_none())?;
             let folder = tab.view.read(cx).current_folder();
             let mut saved = tabs_file::saved_tab(&tab.spec, folder, tab.meta.clone());
             saved.last_command = tab.view.read(cx).last_command().map(str::to_owned);
+            saved.conversation = tab.view.read(cx).conversation().map(str::to_owned);
             Some(saved)
         });
         self.tabs_writer.save(TabsState { layout, selected });
@@ -918,9 +1172,43 @@ impl WorkspaceView {
         self.git.focus(cx)
     }
 
+    /// The selected tab's host and its folder there, when it runs on another machine: agents
+    /// and new shells opened from it start there too.
+    fn remote_origin(&self, cx: &App) -> Option<(String, Option<String>)> {
+        let tab = self.active_tab()?;
+        let host = tab.spec.host.clone()?;
+        Some((host, tab.view.read(cx).remote_folder()))
+    }
+
     fn open_launcher(&mut self, launcher: &Launcher, window: &mut Window, cx: &mut Context<Self>) {
+        // A shell picked by name is this machine's program: it opens here.
+        if launcher.kind.agent().is_some()
+            && let Some((host, folder)) = self.remote_origin(cx)
+        {
+            self.open_remote(launcher, &host, folder.as_deref(), window, cx);
+            return;
+        }
         let folder = self.new_tab_folder(cx);
         self.open_launcher_in(launcher, folder, window, cx);
+    }
+
+    /// Open what `launcher` starts on `host`, in `folder` there.
+    fn open_remote(
+        &mut self,
+        launcher: &Launcher,
+        host: &str,
+        folder: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let settings = settings_file::settings(cx);
+        match launcher::remote_spec(launcher.kind, host, folder, settings) {
+            Ok(spec) => self.open_tab_or_notify(spec, window, cx),
+            Err(error) => window.push_notification(
+                Notification::error(format!("{} arguments: {error}", launcher.label)),
+                cx,
+            ),
+        }
     }
 
     fn open_launcher_in(
@@ -941,7 +1229,18 @@ impl WorkspaceView {
     }
 
     /// Open the default shell (the `+` menu's first entry) in the selected tab's folder.
+    /// From a remote tab: the host's default shell, in that tab's folder there.
     fn open_default_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((host, folder)) = self.remote_origin(cx) {
+            let settings = settings_file::settings(cx);
+            // A shell takes no user arguments: this cannot fail.
+            if let Ok(spec) =
+                launcher::remote_spec(SessionKind::Shell, &host, folder.as_deref(), settings)
+            {
+                self.open_tab_or_notify(spec, window, cx);
+            }
+            return;
+        }
         self.open_default_shell_in(self.new_tab_folder(cx), window, cx);
     }
 
@@ -969,7 +1268,16 @@ impl WorkspaceView {
             return;
         };
         let (mut spec, id) = (tab.spec.clone(), tab.id);
-        spec.cwd = self.tab_folder(index, cx);
+        spec.cwd = if spec.host.is_some() {
+            // A folder on the host, where the copy runs too.
+            tab.view
+                .read(cx)
+                .remote_folder()
+                .map(PathBuf::from)
+                .or(spec.cwd)
+        } else {
+            self.tab_folder(index, cx)
+        };
         self.open_tab_in_or_notify(spec, NewTabPlace::After(id), window, cx);
     }
 
@@ -977,6 +1285,27 @@ impl WorkspaceView {
     fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(view) = self.select_tab(index, window, cx) {
             window.focus(&view.focus_handle(cx), cx);
+        }
+    }
+
+    /// Select the tab selected before, as a browser's Back does.
+    fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.tab_history.back().and_then(|id| self.tab_index(id)) {
+            self.activate(index, window, cx);
+        }
+    }
+
+    /// Select the tab left with Back.
+    fn go_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.tab_history.forward().and_then(|id| self.tab_index(id)) {
+            self.activate(index, window, cx);
+        }
+    }
+
+    /// Switch with the tab selected before; pressed again, it switches back.
+    fn last_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.tab_history.last().and_then(|id| self.tab_index(id)) {
+            self.activate(index, window, cx);
         }
     }
 
@@ -999,6 +1328,7 @@ impl WorkspaceView {
             previous.view.update(cx, |view, _| view.hide());
         }
         self.active = index;
+        self.tab_history.visit(id);
         view.update(cx, |view, cx| view.show(cx));
         self.sync_explorer(cx);
         cx.notify();
@@ -1063,7 +1393,9 @@ impl WorkspaceView {
                 .update(cx, |viewer, cx| viewer.forget_image(window, cx));
         }
         self.layout.remove(tab.id);
+        self.tab_history.remove(tab.id);
         self.cards.forget(tab.id);
+        self.save_tabs(cx);
         if self.tabs.is_empty() {
             // The window stays with its groups and shows the empty state (or the settings
             // page, still open); the next new tab starts where this one was.
@@ -1096,7 +1428,7 @@ impl WorkspaceView {
     }
 
     /// Put `tabs` back in sidebar order after the layout changed, keeping the same tab
-    /// selected.
+    /// selected, and save the new layout.
     fn sync_order(&mut self, cx: &mut Context<Self>) {
         let active_id = self.active_tab().map(|tab| tab.id);
         let order = self.layout.tabs();
@@ -1105,6 +1437,7 @@ impl WorkspaceView {
         if let Some(index) = active_id.and_then(|id| self.tab_index(id)) {
             self.active = index;
         }
+        self.save_tabs(cx);
         cx.notify();
     }
 
@@ -1125,6 +1458,7 @@ impl WorkspaceView {
         let location = tab.view.read(cx).location();
         let own_group = self.layout.group_of(id).map(|group| group.id);
         Some(TabMenuState {
+            can_reconnect: self.can_reconnect(id, cx),
             pinned: self.layout.is_pinned(id),
             has_custom_name: tab.meta.custom_name.is_some(),
             other_groups: self
@@ -1156,6 +1490,7 @@ impl WorkspaceView {
         };
         let location = self.tabs[index].view.read(cx).location().cloned();
         match command {
+            TabCommand::Reconnect => self.reconnect(id, window, cx),
             TabCommand::Duplicate => self.duplicate_tab(index, window, cx),
             TabCommand::TogglePin => {
                 self.layout.toggle_pin(id);
@@ -1201,6 +1536,7 @@ impl WorkspaceView {
                     self.cancel_rename(window, cx);
                 }
                 self.tabs[index].meta.reset_name();
+                self.save_tabs(cx);
                 cx.notify();
             }
             TabCommand::Move(direction) => {
@@ -1219,6 +1555,7 @@ impl WorkspaceView {
             }
             TabCommand::SetColor(color) => {
                 self.tabs[index].meta.color = color;
+                self.save_tabs(cx);
                 cx.notify();
             }
         }
@@ -1251,6 +1588,7 @@ impl WorkspaceView {
             }
             GroupCommand::ToggleCollapsed => {
                 group.collapsed = !group.collapsed;
+                self.save_tabs(cx);
                 cx.notify();
             }
             GroupCommand::Move(direction) => {
@@ -1267,6 +1605,7 @@ impl WorkspaceView {
             }
             GroupCommand::SetColor(color) => {
                 group.color = color;
+                self.save_tabs(cx);
                 cx.notify();
             }
         }
@@ -1280,6 +1619,7 @@ impl WorkspaceView {
         }
         if let Some(group) = self.layout.group_mut(id) {
             group.collapsed = !group.collapsed;
+            self.save_tabs(cx);
             cx.notify();
         }
     }
@@ -1338,6 +1678,7 @@ impl WorkspaceView {
                 }
             }
         }
+        self.save_tabs(cx);
         self.end_rename(&rename, window, cx);
     }
 
@@ -1536,6 +1877,12 @@ impl WorkspaceView {
                     true
                 })
         });
+    }
+
+    /// Tab `id`'s file viewer, if it has one.
+    fn viewer_of(&self, id: u64) -> Option<Entity<FileViewer>> {
+        let tab = &self.tabs[self.tab_index(id)?];
+        tab.viewer.as_ref().map(|viewer| viewer.view.clone())
     }
 
     /// The ids of tabs whose viewer shows a file with unsaved edits.
@@ -2047,6 +2394,18 @@ impl Render for WorkspaceView {
             }))
             .capture_action(cx.listener(|workspace, _: &NextAttention, window, cx| {
                 workspace.jump_to_attention(window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &GoBack, window, cx| {
+                workspace.go_back(window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &GoForward, window, cx| {
+                workspace.go_forward(window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|workspace, _: &LastTab, window, cx| {
+                workspace.last_tab(window, cx);
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|workspace, _: &SelectTab1, window, cx| {

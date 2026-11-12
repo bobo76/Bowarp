@@ -6,7 +6,7 @@ use std::rc::Rc;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme, IconName, Sizable};
+use gpui_kit::component::{ActiveTheme, Disableable, IconName, Sizable};
 use gpui_kit::{
     Anchor, AnyElement, App, AppContext, ClickEvent, Context, Div, DragMoveEvent,
     InteractiveElement, IntoElement, ParentElement, SharedString, Stateful,
@@ -20,11 +20,11 @@ use crate::open_menu::OpenMenu;
 use crate::settings_file;
 use crate::shortcuts;
 use crate::sidebar::{
-    self, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, RunningPulse, SIDEBAR_WIDTH,
-    SubagentChip, SubagentItem, TabDetail, TabRow,
+    self, DraggedGroup, DraggedTab, DropMarker, GroupRow, GroupSummary, MenuBuilder, RunningPulse,
+    SIDEBAR_WIDTH, SubagentChip, SubagentItem, TabDetail, TabRow,
 };
 use crate::tab_menu;
-use crate::workspace_view::{NewTab, NextAttention};
+use crate::workspace_view::{GoBack, GoForward, NewTab, NextAttention};
 
 /// A row of the tab list, with its tab's id when it is a tab row.
 type SidebarRow = (Option<u64>, AnyElement);
@@ -72,6 +72,7 @@ impl WorkspaceView {
                     ))
                     .pl_2()
                     .pr_1()
+                    .child(self.history_buttons(cx))
                     .child(self.render_search(cx))
                     .children(attention_button)
                     .child(new_tab_button),
@@ -89,8 +90,18 @@ impl WorkspaceView {
                             }
                         },
                     ))
+                    .on_drag_move(cx.listener(
+                        |workspace, event: &DragMoveEvent<DraggedGroup>, _, cx| {
+                            if !event.bounds.contains(&event.event.position) {
+                                workspace.set_drop_hint(None, cx);
+                            }
+                        },
+                    ))
                     .on_drop(cx.listener(|workspace, dragged: &DraggedTab, _, cx| {
                         workspace.drop_dragged(dragged.id, cx)
+                    }))
+                    .on_drop(cx.listener(|workspace, dragged: &DraggedGroup, _, cx| {
+                        workspace.drop_dragged_group(dragged.id, cx)
                     }))
                     .children(
                         rows.into_iter().flat_map(|(_, row)| {
@@ -237,6 +248,25 @@ impl WorkspaceView {
         self.render_group(slot, group, Some(&tabs), list_focused, cx)
     }
 
+    /// Back and Forward through the tabs selected before; dimmed when there is nowhere to go.
+    fn history_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let back = Button::new("tab-back")
+            .icon(IconName::ArrowLeft)
+            .ghost()
+            .xsmall()
+            .disabled(!self.tab_history.can_go_back())
+            .tooltip(shortcuts::with_shortcut("Back", &GoBack, cx))
+            .on_click(cx.listener(|workspace, _, window, cx| workspace.go_back(window, cx)));
+        let forward = Button::new("tab-forward")
+            .icon(IconName::ArrowRight)
+            .ghost()
+            .xsmall()
+            .disabled(!self.tab_history.can_go_forward())
+            .tooltip(shortcuts::with_shortcut("Forward", &GoForward, cx))
+            .on_click(cx.listener(|workspace, _, window, cx| workspace.go_forward(window, cx)));
+        div().flex().flex_none().child(back).child(forward)
+    }
+
     /// Shown while a tab needs attention: the count; clicking jumps to the next one.
     fn attention_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let count = self.attention_count(cx);
@@ -308,8 +338,15 @@ impl WorkspaceView {
         .id("tabs-end")
         .flex_1()
         .min_h(px(32.))
+        .on_drag_move(
+            cx.listener(|workspace, event: &DragMoveEvent<DraggedTab>, _, cx| {
+                if event.bounds.contains(&event.event.position) {
+                    workspace.set_drop_hint(Some(DropTarget::End), cx);
+                }
+            }),
+        )
         .on_drag_move(cx.listener(
-            |workspace, event: &DragMoveEvent<DraggedTab>, _, cx| {
+            |workspace, event: &DragMoveEvent<DraggedGroup>, _, cx| {
                 if event.bounds.contains(&event.event.position) {
                     workspace.set_drop_hint(Some(DropTarget::End), cx);
                 }
@@ -341,7 +378,12 @@ impl WorkspaceView {
             name: name.clone(),
             detail: view
                 .location()
-                .map(|location| tab_detail(location, self.home.as_deref())),
+                .map(|location| tab_detail(location, self.home.as_deref()))
+                .or_else(|| {
+                    let folder = view.remote_folder()?;
+                    Some(TabDetail::Folder(folder.into()))
+                }),
+            remote: tab.spec.host.is_some(),
             status,
             pulse: sidebar::running_pulse(may_animate, view.running_pulses()),
             spinner: sidebar::working_spinner(
@@ -386,25 +428,36 @@ impl WorkspaceView {
         let row = self.with_hover_card(row.into_any_element(), id, cx);
         let marker = self.drop_marker(DropTarget::Before(id), cx);
         let dragged = DraggedTab { id, kind, name };
-        let slot = sidebar::drop_slot(row, marker, cx)
-            .id(("tab-slot", id as usize))
-            .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
-            .on_drag_move(cx.listener(
-                move |workspace, event: &DragMoveEvent<DraggedTab>, _, cx| {
-                    if !event.bounds.contains(&event.event.position) {
-                        return;
+        let slot = sidebar::drop_slot(row, marker, cx).id(("tab-slot", id as usize));
+        // A group lands next to an ungrouped tab only.
+        let slot = Self::on_group_drag_over(
+            slot,
+            move |event| {
+                if in_upper_half(event) {
+                    DropTarget::Before(id)
+                } else {
+                    DropTarget::After(id)
+                }
+            },
+            cx,
+        )
+        .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+        .on_drag_move(cx.listener(
+            move |workspace, event: &DragMoveEvent<DraggedTab>, _, cx| {
+                if !event.bounds.contains(&event.event.position) {
+                    return;
+                }
+                // No marker on the dragged row itself: dropping there changes nothing.
+                let hint = (event.drag(cx).id != id).then(|| {
+                    if in_upper_half(event) {
+                        DropTarget::Before(id)
+                    } else {
+                        DropTarget::After(id)
                     }
-                    // No marker on the dragged row itself: dropping there changes nothing.
-                    let hint = (event.drag(cx).id != id).then(|| {
-                        if event.event.position.y < event.bounds.center().y {
-                            DropTarget::Before(id)
-                        } else {
-                            DropTarget::After(id)
-                        }
-                    });
-                    workspace.set_drop_hint(hint, cx);
-                },
-            ));
+                });
+                workspace.set_drop_hint(hint, cx);
+            },
+        ));
         Some(slot)
     }
 
@@ -440,8 +493,9 @@ impl WorkspaceView {
         })
     }
 
-    /// A group header: the upper half drops above the group, the lower half into it. While
-    /// searching it shows expanded, since its matching tabs are listed below it.
+    /// A draggable group header. A dragged tab drops above the group from the upper half, into
+    /// it from the lower half; a dragged group drops above it. While searching it shows
+    /// expanded, since its matching tabs are listed below it.
     fn render_group_header(
         &self,
         slot: usize,
@@ -451,6 +505,12 @@ impl WorkspaceView {
     ) -> AnyElement {
         let workspace = cx.entity().downgrade();
         let id = group.id;
+        let dragged = DraggedGroup {
+            id,
+            name: group.name.clone().into(),
+            color: group.color,
+            tab_count: group.tabs().len(),
+        };
         // A page (settings, Git) hides the selected tab: no group holds the selection then.
         let active_id = self
             .active_tab()
@@ -517,14 +577,17 @@ impl WorkspaceView {
                 .into_any_element()
         };
         let marker = self.drop_marker(DropTarget::IntoGroup(id), cx);
-        sidebar::drop_slot(header, marker, cx)
+        let slot = sidebar::drop_slot(header, marker, cx)
             .id(("group-slot", slot))
+            .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()));
+        // A group lands above another group's header, never into it.
+        Self::on_group_drag_over(slot, move |_| DropTarget::BeforeGroup(id), cx)
             .on_drag_move(cx.listener(
                 move |workspace, event: &DragMoveEvent<DraggedTab>, _, cx| {
                     if !event.bounds.contains(&event.event.position) {
                         return;
                     }
-                    let hint = if event.event.position.y < event.bounds.center().y {
+                    let hint = if in_upper_half(event) {
                         DropTarget::BeforeGroup(id)
                     } else {
                         DropTarget::IntoGroup(id)
@@ -533,6 +596,28 @@ impl WorkspaceView {
                 },
             ))
             .into_any_element()
+    }
+
+    /// Shows on `slot` where a dragged group would land: at `target`, unless the layout
+    /// refuses it there.
+    fn on_group_drag_over(
+        slot: Stateful<Div>,
+        target: impl Fn(&DragMoveEvent<DraggedGroup>) -> DropTarget + 'static,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        slot.on_drag_move(cx.listener(
+            move |workspace, event: &DragMoveEvent<DraggedGroup>, _, cx| {
+                if !event.bounds.contains(&event.event.position) {
+                    return;
+                }
+                let target = target(event);
+                let hint = workspace
+                    .layout
+                    .accepts_group_drop(event.drag(cx).id, target)
+                    .then_some(target);
+                workspace.set_drop_hint(hint, cx);
+            },
+        ))
     }
 
     fn group_summary(&self, group: &Group, cx: &App) -> GroupSummary {
@@ -561,11 +646,18 @@ impl WorkspaceView {
                     }
                 },
             ))
+            .on_drag_move(
+                cx.listener(|workspace, event: &DragMoveEvent<DraggedGroup>, _, cx| {
+                    if event.bounds.contains(&event.event.position) {
+                        workspace.set_drop_hint(None, cx);
+                    }
+                }),
+            )
             .into_any_element()
     }
 
-    /// The `+` menu: the default shell (with its shortcut), the other shells, then the agent
-    /// CLIs.
+    /// The `+` menu: the default shell (with its shortcut), the other shells, the agent CLIs,
+    /// then a submenu per remote host (settings `remote_hosts`) with its shell and agents.
     fn new_tab_button(&self, workspace: WeakEntity<Self>, cx: &App) -> impl IntoElement + use<> {
         let launchers = self.launchers.clone();
         Button::new("new-tab")
@@ -573,7 +665,7 @@ impl WorkspaceView {
             .ghost()
             .xsmall()
             .tooltip(shortcuts::with_shortcut("New tab", &NewTab, cx))
-            .dropdown_menu(move |mut menu, _, cx| {
+            .dropdown_menu(move |mut menu, window, cx| {
                 OpenMenu::track(&workspace, |workspace| &mut workspace.menu, cx);
                 let open = |launcher: &Launcher| {
                     let launcher = launcher.clone();
@@ -616,6 +708,34 @@ impl WorkspaceView {
                                 .on_click(open(launcher)),
                         );
                     }
+                }
+                let hosts: Vec<_> = settings_file::settings(cx)
+                    .remote_hosts
+                    .usable()
+                    .map(|(host, destination)| (host.label().to_owned(), destination.to_owned()))
+                    .collect();
+                if !hosts.is_empty() {
+                    menu = menu.separator();
+                }
+                for (label, destination) in hosts {
+                    let workspace = workspace.clone();
+                    menu = menu.submenu(label, window, cx, move |mut submenu, _, _| {
+                        for launch in launcher::remote_launches(&destination) {
+                            let workspace = workspace.clone();
+                            let spec = launch.spec;
+                            submenu = submenu.item(
+                                PopupMenuItem::new(launch.label)
+                                    .icon(sidebar::launcher_icon(launch.icon))
+                                    .on_click(move |_, window, cx| {
+                                        let spec = spec.clone();
+                                        let _ = workspace.update(cx, |workspace, cx| {
+                                            workspace.open_tab_or_notify(spec, window, cx)
+                                        });
+                                    }),
+                            );
+                        }
+                        submenu
+                    });
                 }
                 menu
             })
@@ -683,7 +803,16 @@ impl WorkspaceView {
         cx.notify();
     }
 
-    /// The drop marker for the row `target` is shown on, while a tab is dragged.
+    fn drop_dragged_group(&mut self, id: GroupId, cx: &mut Context<Self>) {
+        if let Some(target) = self.drop_hint.take()
+            && self.layout.drop_group(id, target)
+        {
+            self.sync_order(cx);
+        }
+        cx.notify();
+    }
+
+    /// The drop marker for the row `target` is shown on, while a tab or group is dragged.
     fn drop_marker(&self, row: DropTarget, cx: &App) -> Option<DropMarker> {
         if !cx.has_active_drag() {
             return None;
@@ -705,6 +834,11 @@ impl WorkspaceView {
             _ => None,
         }
     }
+}
+
+/// Whether the mouse is over the upper half of the row being dragged over.
+fn in_upper_half<T>(event: &DragMoveEvent<T>) -> bool {
+    event.event.position.y < event.bounds.center().y
 }
 
 /// The branch when the folder is in a repository, else the folder.

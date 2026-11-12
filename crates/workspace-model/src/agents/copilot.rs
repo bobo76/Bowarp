@@ -47,6 +47,7 @@ pub const DEFINITION: AgentDefinition = AgentDefinition {
         environment: &[("ConEmuANSI", "ON")],
         inherited_markers: &[],
         shell_after_normal_exit: true,
+        resume_flag: None,
     },
     hooks: HookProtocol {
         artifact: HookArtifactPlan {
