@@ -22,10 +22,11 @@ mod attention;
 mod clipboard_guard;
 mod close_warning;
 mod conversation;
+mod diff_colors;
 mod file_pane_features;
 pub mod file_tree;
 pub mod file_view;
-mod git;
+pub mod git;
 mod history;
 mod history_features;
 mod history_shells;
@@ -76,11 +77,13 @@ pub use close_warning::{
     unsaved_edits_warning,
 };
 pub use conversation::Conversation;
+pub use diff_colors::{DiffColors, RgbaColor};
 pub use file_pane_features::{
     FileLinkAction, FilePaneFeatures, PaneChange, PaneEntry, pane_change,
 };
 pub use git::{
-    ChangedFile, FileChange, GitHead, WorkingChanges, ignored_names, lines_added, working_changes,
+    ChangedFile, FileChange, GitHead, WorkingChanges, changed_files, ignored_names, lines_added,
+    working_changes,
 };
 pub use history::{
     CommandHistory, HistoryEntry, HistoryScope, HistorySelection, append_entry, clear_history_file,

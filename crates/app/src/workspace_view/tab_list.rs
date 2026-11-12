@@ -77,7 +77,7 @@ impl WorkspaceView {
             return;
         };
         window.focus(&self.tab_list.focus, cx);
-        if self.settings.shows_page() {
+        if self.shows_page() {
             // The Settings row is the selected entry: the page stays until a key moves off it.
             cx.notify();
             return;
@@ -90,7 +90,7 @@ impl WorkspaceView {
         let listed = self.listed_tabs(cx);
         // From the Settings row, Up / Down pick the tab entering the list would have picked.
         let from_settings =
-            self.settings.shows_page() && matches!(step, ListMove::Previous | ListMove::Next);
+            self.shows_page() && matches!(step, ListMove::Previous | ListMove::Next);
         let index = if from_settings {
             list_entry(&listed, Some(self.active))
         } else {
@@ -104,7 +104,7 @@ impl WorkspaceView {
     /// F2 in the list: edit the selected tab's name. Nothing while the ring sits on the
     /// Settings row (the selected tab is hidden under the page) or the selected row isn't shown.
     fn rename_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.settings.shows_page() {
+        if self.shows_page() {
             return;
         }
         let Some(id) = self.active_tab().map(|tab| tab.id) else {

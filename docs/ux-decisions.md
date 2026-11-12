@@ -176,6 +176,20 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   for `.gitignore` only). `.git/info/exclude`, global excludes and tracking changes still need
   a collapse/expand. [UX agent]
 
+## Git page
+
+- **The page replaces the tab like Settings**, with its own sidebar row and a title bar
+  button; the two pages take turns. A full page leaves room for the list and the diff side by
+  side, which a file-viewer panel would not. [plan]
+- **A visible "Stage N lines" bar** over the diff while lines are selected, besides the
+  right-click menu: VS Code hides it in a context menu, a button is easier to find. [plan]
+- **The commit box sits above the lists**, as in VS Code's Source Control view. [plan]
+- **No "stage all and commit"** when nothing is staged: the button stays disabled with a
+  tooltip, so what a commit takes is always chosen explicitly. [plan]
+- **Plain `S` / `U` keys in the diff** (Shift for the hunk), since the diff never passes keys
+  to a terminal. Tab and Shift+Tab walk message, list and diff; Tab in the message moves on
+  rather than indenting. [plan]
+
 ## Remote hosts (Settings page)
 
 - **Server state line**: one line at the top of each host's fields, an icon plus text (never

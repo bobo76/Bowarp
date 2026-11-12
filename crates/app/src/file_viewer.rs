@@ -2,7 +2,8 @@
 //! terminal), shown beside the terminal. Markdown, JSON and SVG have a rendered view (the page,
 //! the JSON laid out and colored, the drawing) and a raw one; other text files only the raw
 //! one, and images only the drawing. The raw view edits the file, and Ctrl+S saves it. Each tab
-//! has its own viewer.
+//! has its own viewer. The file is read, checked and written off the UI thread, where a network
+//! or WSL file could freeze the window.
 
 use std::fs::{self, File};
 use std::io::Read;
@@ -20,8 +21,8 @@ use gpui_kit::{
     AnyElement, App, AppContext, ClickEvent, Context, DevicePixels, ElementId, Entity,
     EventEmitter, ImgResourceLoader, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
     ObjectFit, ParentElement, Render, RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR, SharedString,
-    Size, StatefulInteractiveElement, Styled, StyledImage, Subscription, WeakEntity, Window, div,
-    img, px,
+    Size, StatefulInteractiveElement, Styled, StyledImage, Subscription, Task, WeakEntity, Window,
+    div, img, px,
 };
 use image::{ImageError, ImageReader};
 use notify::{Event, EventKind};
@@ -82,6 +83,8 @@ struct OpenFile {
 }
 
 enum Content {
+    /// The file is being read for the first time.
+    Loading,
     Open(OpenFile),
     /// A raster image, drawn from the file (GPUI caches it by path until the file changes).
     Image,
@@ -95,8 +98,45 @@ pub struct FileViewer {
     /// Without a platform watcher, the file is not reloaded.
     watcher: FolderWatcher,
     watched_folder: Option<PathBuf>,
+    /// The read of the file shown running off the UI thread: replacing or dropping it cancels
+    /// it.
+    reading: Option<Task<()>>,
+    /// Where to put the cursor once the file being read is shown.
+    place: FilePlace,
+    /// The last save started. The next one waits for it, so two saves never write at once.
+    saving: Option<Task<()>>,
     /// For shortening the folder to `~` in the header.
     home: Option<PathBuf>,
+}
+
+/// What was read of the file to show.
+enum FileRead {
+    /// Whether the image may be shown, or why not.
+    Image(Result<(), String>),
+    /// The text, or why it is not shown.
+    Text(Result<String, String>),
+}
+
+/// Whether a save may replace changes made to the file outside the viewer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DiskCheck {
+    /// Don't write when the file changed on disk since it was read.
+    KeepChanges,
+    Overwrite,
+}
+
+/// The file and the text of one save.
+struct Save {
+    path: PathBuf,
+    text: String,
+}
+
+enum SaveOutcome {
+    Written,
+    /// Not written: the file changed on disk since it was read.
+    ChangedOnDisk,
+    /// Not written, and why.
+    Failed(String),
 }
 
 impl EventEmitter<ViewerEvent> for FileViewer {}
@@ -128,6 +168,9 @@ impl FileViewer {
             content: None,
             watcher: FolderWatcher::new(window, cx),
             watched_folder: None,
+            reading: None,
+            place: FilePlace::default(),
+            saving: None,
             home: std::env::home_dir(),
         }
     }
@@ -155,16 +198,20 @@ impl FileViewer {
             return;
         }
         self.discard_then(window, cx, move |viewer, window, cx| {
-            viewer.load(path.clone(), window, cx);
-            viewer.go_to(place, window, cx);
+            viewer.load(path.clone(), place, window, cx);
         });
     }
 
-    /// Put the cursor at `place`, scrolled into view, switching to the raw view.
+    /// Put the cursor at `place`, scrolled into view, switching to the raw view; once the file
+    /// is shown, when it is still being read.
     fn go_to(&mut self, place: FilePlace, window: &mut Window, cx: &mut Context<Self>) {
         let Some(line) = place.line else {
             return;
         };
+        if matches!(self.content, Some(Content::Loading)) {
+            self.place = place;
+            return;
+        }
         self.set_mode(Mode::Raw, window, cx);
         let Some(file) = self.open_file() else {
             return;
@@ -184,6 +231,7 @@ impl FileViewer {
             viewer.forget_image(window, cx);
             viewer.path = None;
             viewer.content = None;
+            viewer.reading = None;
             viewer.watch(None);
             cx.emit(ViewerEvent::Closed);
             cx.notify();
@@ -211,6 +259,18 @@ impl FileViewer {
                 editor.set_value(text.to_owned(), window, cx)
             });
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reload_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.reload(window, cx);
+    }
+
+    /// The text in the editor; `None` while no text file is shown.
+    #[cfg(test)]
+    pub(crate) fn text_for_test(&self, cx: &App) -> Option<String> {
+        let file = self.open_file()?;
+        Some(file.editor.read(cx).value().to_string())
     }
 
     #[cfg(test)]
@@ -274,20 +334,21 @@ impl FileViewer {
         });
     }
 
-    fn load(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let name = entry_name(&path);
+    /// Show `path` with the cursor at `place`. The panel opens empty and shows the file once
+    /// it is read.
+    fn load(
+        &mut self,
+        path: PathBuf,
+        place: FilePlace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.forget_image(window, cx);
-        let kind = file_view::view_kind(&name);
-        self.content = Some(if kind == ViewKind::Image {
-            image_content(&path)
-        } else {
-            match read_text(&path) {
-                Ok(text) => Content::Open(self.open_text(&name, text, window, cx)),
-                Err(reason) => Content::Unviewable(reason),
-            }
-        });
+        self.content = Some(Content::Loading);
+        self.place = place;
         self.watch(path.parent());
         self.path = Some(path);
+        self.reload(window, cx);
         cx.emit(ViewerEvent::Opened);
         cx.notify();
     }
@@ -367,24 +428,104 @@ impl FileViewer {
         then: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
         on_fail: impl Fn(&mut App) + 'static,
     ) {
-        let Some(path) = self.path.clone() else {
+        self.start_save(
+            DiskCheck::KeepChanges,
+            Rc::new(then),
+            Rc::new(on_fail),
+            window,
+            cx,
+        );
+    }
+
+    /// Check and write the file off the UI thread, once a save still running has ended.
+    fn start_save(
+        &mut self,
+        check: DiskCheck,
+        then: AfterUnsaved,
+        on_fail: Rc<dyn Fn(&mut App)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(save) = self.save_request(cx) else {
             return;
         };
-        let Some(file) = self.open_file() else {
-            return;
-        };
-        if !file_view::changed_on_disk(&file.saved, fs::read(&path)) {
-            if self.write(window, cx) {
+        let previous = self.saving.take();
+        self.saving = Some(cx.spawn_in(window, async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.await;
+            }
+            // Read now: the save waited for has just changed the text last saved.
+            let saved = this.update(cx, |viewer, _| viewer.saved_text(&save.path));
+            let Ok(Some(saved)) = saved else {
+                let _ = cx.update(|_, cx| on_fail(cx));
+                return;
+            };
+            let (save, outcome) = cx
+                .background_spawn(async move {
+                    let outcome = write_file(&save, &saved, check);
+                    (save, outcome)
+                })
+                .await;
+            let _ = this.update_in(cx, |viewer, window, cx| {
+                viewer.finish_save(save, outcome, then, on_fail, window, cx);
+            });
+        }));
+    }
+
+    /// What a save writes now: the file shown and the editor's text.
+    fn save_request(&self, cx: &App) -> Option<Save> {
+        let path = self.path.clone()?;
+        let text = self.open_file()?.editor.read(cx).value().to_string();
+        Some(Save { path, text })
+    }
+
+    /// The text of `path` as last read or saved, while it is the file shown.
+    fn saved_text(&self, path: &Path) -> Option<String> {
+        let file = self.open_file()?;
+        (self.path.as_deref() == Some(path)).then(|| file.saved.clone())
+    }
+
+    fn finish_save(
+        &mut self,
+        save: Save,
+        outcome: SaveOutcome,
+        then: AfterUnsaved,
+        on_fail: Rc<dyn Fn(&mut App)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let shown = self.path.as_ref() == Some(&save.path);
+        match outcome {
+            SaveOutcome::Written => {
+                if shown && let Some(file) = self.open_file_mut() {
+                    // Edits typed while the file was written are still unsaved.
+                    file.dirty = file.editor.read(cx).value().as_str() != save.text;
+                    file.saved = save.text;
+                    cx.notify();
+                }
+                cx.emit(ViewerEvent::Saved(save.path));
                 then(self, window, cx);
-            } else {
+            }
+            SaveOutcome::ChangedOnDisk if shown => self.ask_overwrite(then, on_fail, window, cx),
+            SaveOutcome::ChangedOnDisk => on_fail(cx),
+            SaveOutcome::Failed(reason) => {
+                window
+                    .push_notification(Notification::error(format!("Couldn't save: {reason}")), cx);
                 on_fail(cx);
             }
-            return;
         }
+    }
+
+    /// The file changed on disk since it was read: write over it only if the user says so.
+    fn ask_overwrite(
+        &mut self,
+        then: AfterUnsaved,
+        on_fail: Rc<dyn Fn(&mut App)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let name = self.file_name();
         let viewer = cx.entity().downgrade();
-        let then = Rc::new(then);
-        let on_fail = Rc::new(on_fail);
         window.open_alert_dialog(cx, move |alert, _, _| {
             let (viewer, then, on_fail) = (viewer.clone(), then.clone(), on_fail.clone());
             let cancelled = on_fail.clone();
@@ -395,16 +536,9 @@ impl FileViewer {
                 .ok_variant(ButtonVariant::Danger)
                 .show_cancel(true)
                 .on_ok(move |_, window, cx| {
-                    // `then` may open a dialog of its own: wait until this one has closed.
-                    let (viewer, then, on_fail) = (viewer.clone(), then.clone(), on_fail.clone());
-                    window.defer(cx, move |window, cx| {
-                        let _ = viewer.update(cx, |viewer, cx| {
-                            if viewer.write(window, cx) {
-                                then(viewer, window, cx);
-                            } else {
-                                on_fail(cx);
-                            }
-                        });
+                    let (then, on_fail) = (then.clone(), on_fail.clone());
+                    let _ = viewer.update(cx, |viewer, cx| {
+                        viewer.start_save(DiskCheck::Overwrite, then, on_fail, window, cx);
                     });
                     true
                 })
@@ -413,28 +547,6 @@ impl FileViewer {
                     true
                 })
         });
-    }
-
-    /// Write the editor's text to the file, telling whether it was written. In place, not
-    /// through a renamed temporary file: that would replace a symlink with a file and drop the
-    /// file's permissions and owner.
-    fn write(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(path) = self.path.clone() else {
-            return false;
-        };
-        let Some(file) = self.open_file_mut() else {
-            return false;
-        };
-        let text = file.editor.read(cx).value().to_string();
-        if let Err(err) = fs::write(&path, &text) {
-            window.push_notification(Notification::error(format!("Couldn't save: {err}")), cx);
-            return false;
-        }
-        file.saved = text;
-        file.dirty = false;
-        cx.emit(ViewerEvent::Saved(path));
-        cx.notify();
-        true
     }
 
     /// Watch the folder holding the file shown: a file's own watch would end when an editor
@@ -454,38 +566,79 @@ impl FileViewer {
         }
     }
 
-    /// Show the file as it now is on disk, unless it has unsaved edits, which are kept.
+    /// Read the file shown (again) off the UI thread, replacing (cancelling) a read still
+    /// running.
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(path) = self.path.clone() else {
             return;
         };
-        // By the file's kind: an image that could not be read a moment ago may be back.
-        let is_image = file_view::view_kind(&entry_name(&path)) == ViewKind::Image;
-        if is_image {
-            // Decoded again on the next paint.
-            self.forget_image(window, cx);
-            self.content = Some(image_content(&path));
-            cx.notify();
+        self.reading = Some(cx.spawn_in(window, async move |this, cx| {
+            let asked = path.clone();
+            let read = cx.background_spawn(async move { read_file(&asked) }).await;
+            let _ = this.update_in(cx, |viewer, window, cx| {
+                viewer.show_read(&path, read, window, cx);
+            });
+        }));
+    }
+
+    /// Show what was read of `path`, if it is still the file shown.
+    fn show_read(
+        &mut self,
+        path: &Path,
+        read: FileRead,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.path.as_deref() != Some(path) {
             return;
         }
-        // Gone (perhaps for a moment, while being replaced): keep showing what was read.
-        let Ok(text) = read_text(&path) else {
-            return;
-        };
+        match read {
+            FileRead::Image(checked) => {
+                // Decoded again on the next paint: the file may have changed.
+                self.forget_image(window, cx);
+                self.content = Some(match checked {
+                    Ok(()) => Content::Image,
+                    Err(reason) => Content::Unviewable(reason),
+                });
+            }
+            // Gone (perhaps for a moment, while being replaced): keep showing what was read.
+            FileRead::Text(Err(_)) if self.open_file().is_some() => return,
+            FileRead::Text(Err(reason)) => self.content = Some(Content::Unviewable(reason)),
+            FileRead::Text(Ok(text)) => {
+                if !self.show_text(path, text, window, cx) {
+                    return;
+                }
+            }
+        }
+        let place = std::mem::take(&mut self.place);
+        self.go_to(place, window, cx);
+        cx.notify();
+    }
+
+    /// Show the text read: a file not shown yet (it may have become readable), or the file
+    /// shown as it now is on disk, unless it has unsaved edits, which are kept. `false` when
+    /// nothing changes.
+    fn show_text(
+        &mut self,
+        path: &Path,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(file) = self.open_file_mut() else {
-            // It may have become readable.
-            self.load(path, window, cx);
-            return;
+            let file = self.open_text(&entry_name(path), text, window, cx);
+            self.content = Some(Content::Open(file));
+            return true;
         };
         if file.dirty || file.saved == text {
-            return;
+            return false;
         }
         set_value_keeping_scroll(&file.editor, text.clone(), window, cx);
         if file.mode == Mode::Rendered {
             refresh_rendered(file, &text, window, cx);
         }
         file.saved = text;
-        cx.notify();
+        true
     }
 
     /// Drop the decoded image of the file shown from GPUI's cache, so the memory goes and a
@@ -675,7 +828,7 @@ impl FileViewer {
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let file = match &self.content {
-            None => return div().into_any_element(),
+            None | Some(Content::Loading) => return div().into_any_element(),
             Some(Content::Image) => {
                 let Some(path) = &self.path else {
                     return div().into_any_element();
@@ -934,13 +1087,6 @@ fn readonly_code_editor(state: &Entity<EditorState>) -> Editor {
     editable_code_editor(state).readonly(true)
 }
 
-fn image_content(path: &Path) -> Content {
-    match check_image(path) {
-        Ok(()) => Content::Image,
-        Err(reason) => Content::Unviewable(reason),
-    }
-}
-
 fn refresh_rendered(
     file: &mut OpenFile,
     text: &str,
@@ -1040,6 +1186,28 @@ fn check_image(path: &Path) -> Result<(), String> {
         return Ok(());
     };
     file_view::check_image_dimensions(width, height).map_err(|reason| reason.to_string())
+}
+
+/// What the viewer needs of the file at `path`, by its kind.
+fn read_file(path: &Path) -> FileRead {
+    if file_view::view_kind(&entry_name(path)) == ViewKind::Image {
+        FileRead::Image(check_image(path))
+    } else {
+        FileRead::Text(read_text(path))
+    }
+}
+
+/// Write the save's text to its file, unless `check` keeps changes made on disk since `saved`
+/// was read. In place, not through a renamed temporary file: that would replace a symlink with
+/// a file and drop the file's permissions and owner.
+fn write_file(save: &Save, saved: &str, check: DiskCheck) -> SaveOutcome {
+    if check == DiskCheck::KeepChanges && file_view::changed_on_disk(saved, fs::read(&save.path)) {
+        return SaveOutcome::ChangedOnDisk;
+    }
+    match fs::write(&save.path, &save.text) {
+        Ok(()) => SaveOutcome::Written,
+        Err(err) => SaveOutcome::Failed(err.to_string()),
+    }
 }
 
 /// The file's text, or why it is not shown.

@@ -1,11 +1,33 @@
+//! What git says about the folder a tab works in: its branch, how many lines changed, which
+//! entries are ignored; and, for the Git page, the repository's status, a file's diff, and
+//! staging (whole files, hunks or single lines) and committing.
+
+mod actions;
+mod diff;
+mod patch;
+mod runner;
+mod selection;
+mod status;
+
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
-use std::thread;
 use std::time::{Duration, Instant};
 
+pub use self::actions::{
+    RepoEntry, apply_patch, commit, commit_failure, commit_message_ready, missing_identity,
+    repos_of, stage, stage_all, unstage, unstage_all,
+};
+pub use self::diff::{
+    DiffLine, DiffRow, FileDiff, Hunk, LineKind, MAX_DIFF_BYTES, TextDiff, read_diff,
+};
+pub use self::patch::{LineRef, partial_patch};
+pub use self::runner::GitError;
+use self::runner::{Access, execute, run_git};
+pub use self::selection::{LineSelection, line_index};
+pub use self::status::{
+    Change, DiffSide, FileStatus, Head, MAX_STATUS_FILES, RepoStatus, StatusRow, read_status,
+};
 use crate::file_tree::DirEntry;
 
 /// Length of the abbreviated commit id shown for a detached HEAD.
@@ -14,22 +36,10 @@ const SHORT_COMMIT_LEN: usize = 7;
 const GIT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long [`ignored_names`] waits for `git check-ignore`.
 const CHECK_IGNORE_TIMEOUT: Duration = Duration::from_secs(5);
-/// How often a running `git` is checked for exit.
-const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// Untracked files larger than this are not read, and count as nothing.
 const MAX_UNTRACKED_FILE_BYTES: u64 = 1 << 20;
 /// At most this many untracked files are read.
 const MAX_UNTRACKED_FILES: usize = 1000;
-/// Win32 process creation flag: start a console program without a console window.
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-/// Variables that would point every `git` at one repository, whatever folder it runs in.
-const REPO_ENV: [&str; 4] = [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_COMMON_DIR",
-];
 
 /// What a repository's HEAD points at.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,11 +159,7 @@ pub fn lines_added(dir: &Path) -> Option<u64> {
 /// `dir` is not in a repository, or HEAD has no commit yet.
 pub fn working_changes(dir: &Path) -> Option<WorkingChanges> {
     let deadline = Instant::now() + GIT_TIMEOUT;
-    let top = run_git(dir, &["rev-parse", "--show-toplevel"], deadline)?;
-    let top = PathBuf::from(native_separators(
-        top.trim_end_matches(['\n', '\r']),
-        cfg!(windows),
-    ));
+    let top = repo_top(dir, deadline)?;
     let numstat = run_git(
         &top,
         &[
@@ -167,17 +173,7 @@ pub fn working_changes(dir: &Path) -> Option<WorkingChanges> {
         ],
         deadline,
     )?;
-    let status = run_git(
-        &top,
-        &[
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-            "--no-renames",
-        ],
-        deadline,
-    )?;
+    let status = porcelain_status(&top, deadline)?;
     let counts = numstat_counts(&numstat);
     let mut untracked_read = 0;
     let files = status_entries(&status)
@@ -202,6 +198,52 @@ pub fn working_changes(dir: &Path) -> Option<WorkingChanges> {
         })
         .collect();
     Some(WorkingChanges { files })
+}
+
+/// The changed files of the repository containing `dir`, like [`working_changes`] but
+/// without line counts (all `None`): one `git status`, no diff and no file reads, for when
+/// only the kind of change matters. Unlike [`working_changes`], works before the first commit.
+/// Call it off the UI thread; `None` when git is missing or too slow, or `dir` is not in a
+/// repository.
+pub fn changed_files(dir: &Path) -> Option<WorkingChanges> {
+    let deadline = Instant::now() + GIT_TIMEOUT;
+    let top = repo_top(dir, deadline)?;
+    let status = porcelain_status(&top, deadline)?;
+    let files = status_entries(&status)
+        .into_iter()
+        .map(|(path, change)| ChangedFile {
+            path: top.join(native_separators(&path, cfg!(windows))),
+            change,
+            added: None,
+            removed: None,
+        })
+        .collect();
+    Some(WorkingChanges { files })
+}
+
+/// The top folder of the repository containing `dir`, with the platform's separators.
+fn repo_top(dir: &Path, deadline: Instant) -> Option<PathBuf> {
+    let top = run_git(dir, &["rev-parse", "--show-toplevel"], deadline)?;
+    Some(PathBuf::from(native_separators(
+        top.trim_end_matches(['\n', '\r']),
+        cfg!(windows),
+    )))
+}
+
+/// `git status` in machine form for the repository at `top`, untracked files listed one by
+/// one, read by [`status_entries`].
+fn porcelain_status(top: &Path, deadline: Instant) -> Option<String> {
+    run_git(
+        top,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--no-renames",
+        ],
+        deadline,
+    )
 }
 
 /// `path` as git prints it (always `/`-separated, even on Windows) with the platform's separator,
@@ -263,14 +305,17 @@ pub fn ignored_names(folder: &Path, entries: &[DirEntry]) -> Option<HashSet<Stri
     }
     let deadline = Instant::now() + CHECK_IGNORE_TIMEOUT;
     let input = check_ignore_input(entries);
-    let (status, output) = git_output(
+    let output = execute(
         folder,
         &["check-ignore", "--stdin", "-z"],
         Some(input),
+        Access::Read,
         deadline,
-    )?;
+    )
+    .ok()?;
     // 0: some are ignored, 1: none are; 128 (not in a work tree, ...) is a failure.
-    matches!(status.code(), Some(0 | 1)).then(|| ignored_from_output(&output, entries))
+    matches!(output.status.code(), Some(0 | 1))
+        .then(|| ignored_from_output(&output.stdout, entries))
 }
 
 /// `git check-ignore --stdin -z` input: each name as `./<name>`, so a name starting with `:` is
@@ -297,83 +342,6 @@ fn ignored_from_output(output: &[u8], entries: &[DirEntry]) -> HashSet<String> {
         .filter(|entry| entry.name == ".git" || reported.contains(entry.name.as_bytes()))
         .map(|entry| entry.name.clone())
         .collect()
-}
-
-/// The stdout of `git <args>` run in `dir`, or `None` when it fails or is still running at
-/// `deadline` (it is then killed).
-fn run_git(dir: &Path, args: &[&str], deadline: Instant) -> Option<String> {
-    let (status, output) = git_output(dir, args, None, deadline)?;
-    status
-        .success()
-        .then(|| String::from_utf8_lossy(&output).into_owned())
-}
-
-/// The exit status and stdout of `git <args>` run in `dir` with `input` on its stdin, or `None`
-/// when it cannot start or is still running at `deadline` (it is then killed).
-fn git_output(
-    dir: &Path,
-    args: &[&str],
-    input: Option<Vec<u8>>,
-    deadline: Instant,
-) -> Option<(ExitStatus, Vec<u8>)> {
-    let mut command = Command::new("git");
-    command
-        // Hovering a tab must not run commands a repository's config names (`core.fsmonitor`).
-        // Do not take the index lock to refresh stat info: a git command the user runs at the
-        // same time must not fail because of us.
-        .args(["-c", "core.fsmonitor=false", "--no-optional-locks"])
-        .args(args)
-        .current_dir(dir)
-        .stdin(if input.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    for name in REPO_ENV {
-        command.env_remove(name);
-    }
-    // A console child of a GUI process gets its own console window, which flashes on hover.
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    let mut child = command.spawn().ok()?;
-    let mut stdout = child.stdout.take()?;
-    // Write on a thread, so a git that stops reading cannot outlast the deadline; dropping
-    // stdin at the end tells git the input is complete. A write error (git exited) ends it.
-    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-        thread::spawn(move || {
-            let _ = stdin.write_all(&input);
-        });
-    }
-    // Read while waiting, so a large output cannot fill the pipe and stall git.
-    let reader = thread::spawn(move || {
-        let mut output = Vec::new();
-        stdout.read_to_end(&mut output).map(|_| output)
-    });
-    let Some(status) = wait_until(&mut child, deadline) else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return None;
-    };
-    let output = reader.join().ok()?.ok()?;
-    Some((status, output))
-}
-
-/// The child's exit status, or `None` when it has not exited by `deadline`.
-fn wait_until(child: &mut Child, deadline: Instant) -> Option<ExitStatus> {
-    loop {
-        if let Some(status) = child.try_wait().ok()? {
-            return Some(status);
-        }
-        if Instant::now() >= deadline {
-            return None;
-        }
-        thread::sleep(POLL_INTERVAL);
-    }
 }
 
 /// The lines of an untracked file; `None` when it is binary, too large or unreadable (like

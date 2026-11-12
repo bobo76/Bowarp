@@ -1,6 +1,7 @@
 mod busy_close;
 mod divider_drag;
 mod empty_state;
+mod git_pane;
 mod reconnect;
 mod settings_pane;
 mod sidebar_rows;
@@ -26,8 +27,8 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     Action, AnyElement, App, AppContext, ClipboardItem, Context, CursorStyle, DragMoveEvent, Empty,
     Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
-    WeakEntity, Window, actions, div, px,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, StyleRefinement, Styled,
+    Subscription, Task, WeakEntity, Window, actions, div, px,
 };
 use term_core::{LaunchSpec, SessionKind};
 use workspace_model::layout::Direction;
@@ -39,6 +40,7 @@ use workspace_model::{
 };
 
 use self::divider_drag::DividerDrag;
+use self::git_pane::GitPane;
 use self::settings_pane::SettingsPane;
 use self::spinner_clock::SpinnerClock;
 use self::tab_card::TabCards;
@@ -108,6 +110,7 @@ actions!(
 pub fn init(cx: &mut App) {
     keymap::add_defaults(cx, default_bindings());
     tab_list::init(cx);
+    crate::git_page::init(cx);
     // A global listener, so F11 also works while a dialog or notification has the keyboard
     // (they are not inside the workspace view) or nothing does.
     cx.on_action(|_: &ToggleFullScreen, cx| {
@@ -292,7 +295,7 @@ pub struct WorkspaceView {
     explorer: Entity<FileExplorer>,
     /// The "close busy tabs?" question is open (it is never asked twice at once).
     close_question_open: bool,
-    /// The explorer is on (remembered while the settings page hides it: `explorer_shown`).
+    /// The explorer is on (remembered while a page hides it: `explorer_shown`).
     explorer_visible: bool,
     /// Whether the file explorer and viewer panes work: the "File explorer and viewer" switch
     /// as last applied (it stays on while unsaved edits wait for an answer).
@@ -330,6 +333,7 @@ pub struct WorkspaceView {
     launchers: Rc<[Launcher]>,
     hooks: Option<Rc<AgentHooks>>,
     settings: SettingsPane,
+    git: GitPane,
     _hook_messages: Task<()>,
     _explorer_events: Subscription,
     _file_panes_observer: Subscription,
@@ -467,6 +471,7 @@ impl WorkspaceView {
             launchers,
             hooks,
             settings: SettingsPane::new(cx),
+            git: GitPane::default(),
             _hook_messages: hook_task,
             _explorer_events: explorer_events,
             _file_panes_observer: file_panes_observer,
@@ -941,7 +946,7 @@ impl WorkspaceView {
         tab.spec = spec;
         tab._view_events = view_events;
         self.cards.forget(tab_id);
-        if index != self.active || self.settings.shows_page() {
+        if index != self.active || self.shows_page() {
             view.update(cx, |view, _| view.hide());
             self.sync_explorer(cx);
             cx.notify();
@@ -972,9 +977,9 @@ impl WorkspaceView {
             Self::offer_external_open(path, window, cx);
             return;
         }
-        // The settings page hides the selected tab's viewer: the tab shows again, or the file
+        // A page (settings, Git) hides the selected tab's viewer: the tab shows again, or the file
         // would open out of sight (the Settings row stays).
-        if index == self.active && self.settings.shows_page() {
+        if index == self.active && self.shows_page() {
             self.activate(index, window, cx);
         }
         let viewer = match &self.tabs[index].viewer {
@@ -996,10 +1001,10 @@ impl WorkspaceView {
         cx.notify();
     }
 
-    /// The selected tab's file viewer, while it shows a file and the settings page doesn't
+    /// The selected tab's file viewer, while it shows a file and a page (settings, Git) doesn't
     /// hide it (with the tab's terminal; the tab keeps its file and unsaved edits).
     fn active_viewer(&self, cx: &App) -> Option<Entity<FileViewer>> {
-        if self.settings.shows_page() {
+        if self.shows_page() {
             return None;
         }
         let viewer = &self.active_tab()?.viewer.as_ref()?.view;
@@ -1154,6 +1159,19 @@ impl WorkspaceView {
             .or_else(|| std::env::current_dir().ok())
     }
 
+    /// Whether a page (settings or Git) shows in place of the selected tab.
+    fn shows_page(&self) -> bool {
+        self.settings.shows_page() || self.git.shows_page()
+    }
+
+    /// Where the keyboard goes while a page shows.
+    fn page_focus(&self, cx: &App) -> Option<FocusHandle> {
+        if self.settings.shows_page() {
+            return Some(self.settings.focus().clone());
+        }
+        self.git.focus(cx)
+    }
+
     /// The selected tab's host and its folder there, when it runs on another machine: agents
     /// and new shells opened from it start there too.
     fn remote_origin(&self, cx: &App) -> Option<(String, Option<String>)> {
@@ -1303,6 +1321,7 @@ impl WorkspaceView {
         let (id, view) = (tab.id, tab.view.clone());
         self.focus_empty_default = false;
         self.settings.hide_page();
+        self.git.hide_page(cx);
         self.layout.reveal(id);
         self.clear_search_hiding(id, window, cx);
         if let Some(previous) = self.active_tab().filter(|_| self.active != index) {
@@ -1389,7 +1408,7 @@ impl WorkspaceView {
         if index < self.active || self.active == self.tabs.len() {
             self.active -= 1;
         }
-        if self.settings.shows_page() {
+        if self.shows_page() {
             // The page stays; the tab now selected under it (hidden, as every other tab) shows
             // when the page goes.
             self.sync_explorer(cx);
@@ -1714,10 +1733,10 @@ impl WorkspaceView {
             .collect()
     }
 
-    /// The tab shown, left out of the attention count and jump: none while the settings page
+    /// The tab shown, left out of the attention count and jump: none while a page
     /// hides the selected tab.
     fn current_index(&self) -> Option<usize> {
-        (!self.settings.shows_page() && self.active < self.tabs.len()).then_some(self.active)
+        (!self.shows_page() && self.active < self.tabs.len()).then_some(self.active)
     }
 
     /// Select the next other tab needing attention; with none, the next one with a finished turn.
@@ -1766,31 +1785,31 @@ impl WorkspaceView {
         cx.notify();
     }
 
-    /// Whether the explorer is on screen: the settings page and the empty state (no tab) hide
+    /// Whether the explorer is on screen: a page (settings, Git) and the empty state (no tab) hide
     /// it (and its divider) without turning it off, so it comes back as it was (width,
     /// folder, expanded folders).
     fn explorer_shown(&self) -> bool {
-        self.explorer_visible && !self.settings.shows_page() && !self.tabs.is_empty()
+        self.explorer_visible && !self.shows_page() && !self.tabs.is_empty()
     }
 
-    /// The explorer button and shortcut: hide or show the explorer; while the settings page
+    /// The explorer button and shortcut: hide or show the explorer; while a page
     /// shows, go back to the selected tab with the explorer shown. With no tab, only the
     /// remembered state changes (it shows with the next tab).
     fn press_explorer_toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.settings.shows_page() && !self.tabs.is_empty() {
+        if self.shows_page() && !self.tabs.is_empty() {
             self.show_explorer(window, cx);
             return;
         }
         self.toggle_explorer(cx);
     }
 
-    /// Turn the explorer on in sight (the button or shortcut on the settings page, "Reveal
-    /// folder"): leaves the settings page first (the Settings row stays).
+    /// Turn the explorer on in sight (the button or shortcut on a page, "Reveal
+    /// folder"): leaves the page first (its row stays).
     fn show_explorer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !settings_file::file_panes(cx).allows(PaneEntry::ToggleExplorer) {
             return;
         }
-        if self.settings.shows_page() {
+        if self.shows_page() {
             self.activate(self.active, window, cx);
         }
         if !self.explorer_visible {
@@ -2011,7 +2030,7 @@ impl WorkspaceView {
                     .update(cx, |viewer, cx| viewer.forget_image(window, cx));
             }
         }
-        if !self.settings.shows_page() {
+        if !self.shows_page() {
             self.focus_active(window, cx);
         }
         cx.notify();
@@ -2232,11 +2251,11 @@ impl WorkspaceView {
             )
     }
 
-    /// Give the keyboard to the selected tab's terminal, or to the settings page while it
+    /// Give the keyboard to the selected tab's terminal, or to the page (settings, Git) while it
     /// shows, or to the empty state while no tab is open.
     fn focus_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.settings.shows_page() {
-            window.focus(self.settings.focus(), cx);
+        if let Some(focus) = self.page_focus(cx) {
+            window.focus(&focus, cx);
             return;
         }
         let Some(tab) = self.active_tab() else {
@@ -2249,6 +2268,10 @@ impl WorkspaceView {
     fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.settings.shows_page() {
             self.close_settings(window, cx);
+            return;
+        }
+        if self.git.shows_page() {
+            self.close_git(window, cx);
             return;
         }
         self.close_tab(self.active, window, cx);
@@ -2292,8 +2315,8 @@ fn copy_text(text: String, cx: &mut App) {
 
 impl Focusable for WorkspaceView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        if self.settings.shows_page() {
-            return self.settings.focus().clone();
+        if let Some(focus) = self.page_focus(cx) {
+            return focus;
         }
         match self.active_tab() {
             Some(tab) => tab.view.focus_handle(cx),
@@ -2308,9 +2331,10 @@ impl Render for WorkspaceView {
         self.hold_hover_cards(window, cx);
         let active = self
             .active_tab()
-            .filter(|_| !self.settings.shows_page())
+            .filter(|_| !self.shows_page())
             .map(|tab| tab.view.clone());
-        let empty_state = (self.tabs.is_empty() && !self.settings.shows_page())
+        let git_page = self.git.shown_page();
+        let empty_state = (self.tabs.is_empty() && !self.shows_page())
             .then(|| self.render_empty_state(window, cx));
         let file_button = if self.tabs.is_empty() && settings_file::file_panes(cx).panes_enabled() {
             SettingsFileButton::NeedsTab
@@ -2447,6 +2471,7 @@ impl Render for WorkspaceView {
                                 buttons.child(self.explorer_toggle(cx))
                             })
                             .child(about::about_button())
+                            .child(self.git_button(cx))
                             .child(self.settings_button(cx)),
                     ),
             )
@@ -2489,7 +2514,8 @@ impl Render for WorkspaceView {
                                         cx,
                                     ),
                                 )
-                            }),
+                            })
+                            .children(git_page),
                     )
                     .when_some(viewer, |content, viewer| {
                         content.child(self.viewer_divider(cx)).child(
@@ -2497,7 +2523,9 @@ impl Render for WorkspaceView {
                                 .flex_none()
                                 .w(px(viewer_width - DIVIDER_WIDTH))
                                 .h_full()
-                                .child(viewer),
+                                // Redrawn only when the viewer itself changes, not on each
+                                // terminal frame.
+                                .child(viewer.cached(StyleRefinement::default().size_full())),
                         )
                     }),
             )

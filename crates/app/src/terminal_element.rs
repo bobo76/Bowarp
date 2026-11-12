@@ -562,7 +562,8 @@ fn take_snapshot(
     // Re-arm before reading so output arriving mid-frame schedules another frame.
     view.session.ack_wakeup();
     let mut term = view.session.lock_term();
-    if view.search.refresh(&mut term) {
+    let search = view.search.refresh(&mut term);
+    if search.changed {
         cx.notify();
     }
     let grid = term.grid();
@@ -577,6 +578,10 @@ fn take_snapshot(
         focused,
         &view.search,
     );
+    drop(term);
+    if let Some(delay) = search.retry_in {
+        view.refresh_search_after(delay, cx);
+    }
     (snapshot, scroll_metrics)
 }
 

@@ -228,3 +228,21 @@ entry when the limitation is lifted.
 - Terminal colors changed while a tab runs: `COLORFGBG` keeps the value the tab started with,
   and programs that read the background color (OSC 11) only at start keep their first choice
   until restarted. Agents' own themes (Claude Code's `/theme`) are not changed.
+- Git page line staging: dragging a line selection past the top or bottom of the diff does not
+  scroll it (Shift+click or Shift+Up/Down extend further). Untracked, conflicted, binary and
+  too-large files, and type changes, stage only whole (an untracked file can be staged by line
+  once added). There is no undo: unstaging the same lines from the Staged diff reverses a
+  stage. Selecting part of a change at the end of a file without a final newline stages the
+  rest of that change too (git can't apply it otherwise).
+- Git page refresh: the page watches the git folder (`index`, `HEAD`), the top folder and the
+  folders of the changed files (up to 256). An edit elsewhere, such as a new file in a folder
+  with no change yet, shows on Refresh or the next watched change.
+- Git page sizes: at most 10,000 changed files are listed, and a diff over 8 MB isn't shown
+  (the file can still be staged whole). The diff has no syntax highlighting.
+- Git page commits: a commit waits up to 5 minutes for its hooks and can't be cancelled.
+  Signing that needs a passphrase prompt (GPG, SSH) can't be answered from the app: it fails,
+  or waits for the timeout while a GUI pinentry is pending. The "missing identity" hint reads
+  git's English message only. Unsent messages are kept per repository while the app runs, not
+  across restarts. No amend, sign-off or "stage all and commit".
+- Git page merge conflicts are listed (`!`) but can't be resolved or staged by line on the
+  page. No key opens the page (the title bar button does).

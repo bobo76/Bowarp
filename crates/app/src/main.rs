@@ -5,9 +5,11 @@
 
 mod about;
 mod assets;
+mod color;
 mod file_explorer;
 mod file_viewer;
 mod folder_watcher;
+mod git_page;
 mod history;
 mod history_popup;
 mod hooks;

@@ -15,20 +15,29 @@ fn terminal(text: &str, columns: u16, lines: u16) -> Term<VoidListener> {
     term
 }
 
+/// Refresh once the rebuild interval has passed since the last rebuild, so output is never
+/// held back.
+fn refresh(search: &mut TerminalSearch, term: &mut Term<VoidListener>) -> SearchRefresh {
+    let later = search
+        .last_rebuild
+        .map_or_else(Instant::now, |at| at + OUTPUT_REBUILD_INTERVAL);
+    search.refresh_at(term, later)
+}
+
 #[test]
 fn finds_scrollback_and_wraps_in_both_directions() {
     let mut term = terminal("needle\r\nother\r\nneedle\r\nlast", 20, 2);
     let mut search = TerminalSearch::default();
     search.set_query("needle").unwrap();
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     assert_eq!(search.matches.len(), 2);
     assert_eq!(search.current(), Some(1));
     search.step(SearchDirection::Down);
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     assert_eq!(search.current(), Some(0));
     assert!(term.grid().display_offset() > 0);
     search.step(SearchDirection::Up);
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     assert_eq!(search.current(), Some(1));
 }
 
@@ -37,7 +46,7 @@ fn matches_soft_wrapped_wide_characters() {
     let mut term = terminal("abcd\u{754c}needle", 6, 4);
     let mut search = TerminalSearch::default();
     search.set_query("\u{754c}nee").unwrap();
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     assert_eq!(search.matches.len(), 1);
     let range = &search.matches[0];
     assert_eq!(*range.start(), Point::new(0.into(), Column(4)));
@@ -59,7 +68,7 @@ fn empty_and_missing_queries_clear_results() {
     let mut search = TerminalSearch::default();
     for query in ["needle", "", "missing"] {
         search.set_query(query).unwrap();
-        search.refresh(&mut term);
+        refresh(&mut search, &mut term);
         assert_eq!(search.matches.len(), usize::from(query == "needle"));
         if query != "needle" {
             search.step(SearchDirection::Down);
@@ -74,22 +83,27 @@ fn refreshes_on_output_resize_and_alternate_screen() {
     let mut term = terminal("needle", 20, 3);
     let mut search = TerminalSearch::default();
     search.set_query("needle").unwrap();
-    assert!(search.refresh(&mut term));
-    assert!(!search.refresh(&mut term));
+    assert!(refresh(&mut search, &mut term).changed);
+    assert!(!refresh(&mut search, &mut term).changed);
     Processor::<StdSyncHandler>::new().advance(&mut term, b"\r\nneedle");
     search.invalidate();
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     assert_eq!(search.matches.len(), 2);
+    let before_resize = search.matches.clone();
     term.resize(TermDimensions::new(4, 3));
-    assert!(search.refresh(&mut term));
+    refresh(&mut search, &mut term);
     assert_eq!(search.matches.len(), 2);
+    assert_ne!(
+        search.matches, before_resize,
+        "the wrapped matches are found again"
+    );
     Processor::<StdSyncHandler>::new().advance(&mut term, b"\x1b[?1049h");
     search.invalidate();
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     assert!(search.matches.is_empty());
     Processor::<StdSyncHandler>::new().advance(&mut term, b"\x1b[?1049l");
     search.invalidate();
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     assert_eq!(search.matches.len(), 2);
 }
 
@@ -98,7 +112,7 @@ fn literal_metacharacters_and_uppercase_queries_ignore_case() {
     let mut term = terminal("Needle needle NEEDLE [a.*] C:\\src\\foo.rs", 60, 2);
     let mut search = TerminalSearch::default();
     search.set_query("NEEDLE").unwrap();
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     assert_eq!(search.matches.len(), 3);
     assert_eq!(
         search.highlight(Point::new(0.into(), Column(7))),
@@ -106,7 +120,7 @@ fn literal_metacharacters_and_uppercase_queries_ignore_case() {
     );
     for query in ["[a.*]", "c:\\SRC\\foo.rs"] {
         search.set_query(query).unwrap();
-        search.refresh(&mut term);
+        refresh(&mut search, &mut term);
         assert_eq!(search.matches.len(), 1);
     }
 }
@@ -116,11 +130,11 @@ fn output_does_not_force_scrolling_back_to_the_match() {
     let mut term = terminal("needle\r\nother\r\nlast", 20, 2);
     let mut search = TerminalSearch::default();
     search.set_query("needle").unwrap();
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     term.scroll_display(alacritty_terminal::grid::Scroll::Bottom);
     Processor::<StdSyncHandler>::new().advance(&mut term, b"\r\nmore");
     search.invalidate();
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     assert_eq!(term.grid().display_offset(), 0);
 }
 
@@ -129,12 +143,63 @@ fn unchanged_input_events_preserve_the_current_match() {
     let mut term = terminal("one one", 20, 2);
     let mut search = TerminalSearch::default();
     search.set_query("one").unwrap();
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     search.step(SearchDirection::Down);
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     search.set_query("one").unwrap();
-    assert!(!search.refresh(&mut term));
+    assert!(!refresh(&mut search, &mut term).changed);
     assert_eq!(search.current(), Some(1));
+}
+
+#[test]
+fn output_soon_after_a_rebuild_waits_for_the_interval() {
+    let mut term = terminal("needle", 20, 3);
+    let mut search = TerminalSearch::default();
+    search.set_query("needle").unwrap();
+    let start = Instant::now();
+    assert_eq!(search.refresh_at(&mut term, start).retry_in, None);
+    Processor::<StdSyncHandler>::new().advance(&mut term, b"\r\nneedle");
+    search.invalidate();
+
+    let soon = start + OUTPUT_REBUILD_INTERVAL / 4;
+    let held = search.refresh_at(&mut term, soon);
+    assert_eq!(search.matches.len(), 1, "the rebuild waits");
+    assert_eq!(
+        held,
+        SearchRefresh {
+            changed: false,
+            retry_in: Some(OUTPUT_REBUILD_INTERVAL * 3 / 4),
+        }
+    );
+
+    let due = search.refresh_at(&mut term, start + OUTPUT_REBUILD_INTERVAL);
+    assert_eq!(search.matches.len(), 2);
+    assert_eq!(
+        due,
+        SearchRefresh {
+            changed: true,
+            retry_in: None,
+        }
+    );
+}
+
+#[test]
+fn query_changes_and_resizes_rebuild_at_once() {
+    let mut term = terminal("needle other", 20, 3);
+    let mut search = TerminalSearch::default();
+    search.set_query("needle").unwrap();
+    let start = Instant::now();
+    search.refresh_at(&mut term, start);
+
+    search.set_query("other").unwrap();
+    search.refresh_at(&mut term, start);
+    assert_eq!(*search.matches[0].start(), Point::new(0.into(), Column(7)));
+
+    // Reflowed to " other" at the top, "needle" pushed into the scrollback.
+    term.resize(TermDimensions::new(6, 3));
+    let resized = search.refresh_at(&mut term, start);
+    assert_eq!(resized.retry_in, None);
+    assert_eq!(*search.matches[0].start(), Point::new(0.into(), Column(1)));
 }
 
 #[test]
@@ -142,16 +207,16 @@ fn rebuilding_keeps_the_active_match_or_clamps_its_old_index() {
     let mut term = terminal("one one one", 20, 3);
     let mut search = TerminalSearch::default();
     search.set_query("one").unwrap();
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     search.step(SearchDirection::Down);
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     search.invalidate();
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     assert_eq!(search.current(), Some(1));
 
     Processor::<StdSyncHandler>::new().advance(&mut term, b"\x1b[Hone\x1b[K");
     search.invalidate();
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     assert_eq!(search.matches.len(), 1);
     assert_eq!(search.current(), Some(0));
 }
@@ -161,7 +226,7 @@ fn navigation_without_a_current_match_starts_at_either_end() {
     let mut term = terminal("one one", 20, 3);
     let mut search = TerminalSearch::default();
     search.set_query("one").unwrap();
-    search.refresh(&mut term);
+    refresh(&mut search, &mut term);
     search.current = None;
     search.step(SearchDirection::Up);
     assert_eq!(search.current(), Some(1));

@@ -16,6 +16,7 @@ use serde_json::{Map, Value};
 
 use crate::AgentId;
 use crate::clipboard_guard::ClipboardPolicy;
+use crate::diff_colors::DiffColors;
 use crate::keymap::KeybindingOverlay;
 use crate::pane_width::{ExplorerWidth, ViewerFraction};
 use crate::remote_hosts::RemoteHosts;
@@ -122,6 +123,9 @@ pub struct Settings {
     /// action name binds the key, `null` unbinds it. Kept as written, unusable entries too.
     #[serde(deserialize_with = "lenient")]
     pub keybindings: KeybindingOverlay,
+    /// The Git page diff's colors; empty ones use their defaults.
+    #[serde(deserialize_with = "lenient")]
+    pub git_diff_colors: DiffColors,
     /// Fields this version doesn't know, written back as they were.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -392,7 +396,7 @@ impl<'de> Deserialize<'de> for FontSize {
 
 /// `deserialize_with` for every `Settings` field: a value of the wrong type (or `null`) gives
 /// `T::default()` and is dropped at the next save. Fails only on invalid JSON.
-fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+pub(crate) fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
     T: DeserializeOwned + Default,

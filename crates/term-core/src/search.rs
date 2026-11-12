@@ -1,5 +1,7 @@
 //! Search the terminal grid, including scrollback and soft-wrapped lines.
 
+use std::time::{Duration, Instant};
+
 use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Direction, Point};
@@ -7,15 +9,33 @@ use alacritty_terminal::term::Term;
 use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
 use workspace_model::layout::Direction as SearchDirection;
 
+/// While output keeps coming, the matches are rebuilt at most this often: each rebuild scans
+/// the whole scrollback under the terminal lock on the UI thread.
+const OUTPUT_REBUILD_INTERVAL: Duration = Duration::from_millis(200);
+
 #[derive(Default)]
 pub struct TerminalSearch {
     query: Option<String>,
     regex: Option<RegexSearch>,
     matches: Vec<Match>,
     current: Option<usize>,
-    dirty: bool,
+    /// The matches may no longer match the grid.
+    stale: bool,
+    /// When the matches were last rebuilt; `None` makes the next rebuild immediate.
+    last_rebuild: Option<Instant>,
     reveal: bool,
-    dimensions: Option<(usize, usize, usize)>,
+    /// (columns, screen lines): a resize rebuilds at once.
+    layout: Option<(usize, usize)>,
+    total_lines: Option<usize>,
+}
+
+/// What [`TerminalSearch::refresh`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SearchRefresh {
+    /// The match count or the active match changed, so the search bar must be drawn again.
+    pub changed: bool,
+    /// Output arrived too soon after the last rebuild: refresh again after this long.
+    pub retry_in: Option<Duration>,
 }
 
 impl TerminalSearch {
@@ -28,7 +48,8 @@ impl TerminalSearch {
         self.matches.clear();
         self.current = None;
         self.regex = None;
-        self.invalidate();
+        self.stale = true;
+        self.last_rebuild = None;
         self.reveal = true;
         if !query.is_empty() {
             let mut pattern = String::from("(?i)");
@@ -44,8 +65,10 @@ impl TerminalSearch {
         Ok(())
     }
 
+    /// New output: rebuild at the next refresh, or once [`OUTPUT_REBUILD_INTERVAL`] has passed
+    /// since the last rebuild.
     pub fn invalidate(&mut self) {
-        self.dirty = true;
+        self.stale = true;
     }
 
     pub fn matches(&self) -> &[Match] {
@@ -79,21 +102,52 @@ impl TerminalSearch {
         self.reveal = true;
     }
 
-    /// Recompute only on output, query changes, or resize. Reveal only on explicit search
-    /// navigation, so incoming output does not pull the viewport away from the reader.
-    pub fn refresh<T: EventListener>(&mut self, term: &mut Term<T>) -> bool {
+    /// Recompute only on output, query changes, or resize; output at most once per
+    /// [`OUTPUT_REBUILD_INTERVAL`]. Reveal only on explicit search navigation, so incoming
+    /// output does not pull the viewport away from the reader.
+    pub fn refresh<T: EventListener>(&mut self, term: &mut Term<T>) -> SearchRefresh {
+        self.refresh_at(term, Instant::now())
+    }
+
+    /// [`Self::refresh`] without waiting for the rebuild interval: navigation must land on the
+    /// grid's current matches.
+    pub fn refresh_now<T: EventListener>(&mut self, term: &mut Term<T>) -> SearchRefresh {
+        self.last_rebuild = None;
+        self.refresh(term)
+    }
+
+    fn refresh_at<T: EventListener>(&mut self, term: &mut Term<T>, now: Instant) -> SearchRefresh {
         if self.regex.is_none() {
-            return false;
+            return SearchRefresh::default();
         }
-        let dimensions = (term.columns(), term.screen_lines(), term.total_lines());
-        let refresh = self.dirty || self.dimensions != Some(dimensions);
-        if refresh {
-            self.dirty = false;
-            self.dimensions = Some(dimensions);
+        let layout = (term.columns(), term.screen_lines());
+        if self.layout != Some(layout) {
+            self.layout = Some(layout);
+            self.stale = true;
+            self.last_rebuild = None;
+        }
+        let total_lines = term.total_lines();
+        if self.total_lines != Some(total_lines) {
+            self.total_lines = Some(total_lines);
+            self.stale = true;
+        }
+        let wait = self
+            .last_rebuild
+            .map(|at| (at + OUTPUT_REBUILD_INTERVAL).saturating_duration_since(now))
+            .filter(|wait| !wait.is_zero());
+        let mut changed = false;
+        if self.stale && wait.is_none() {
+            let before = (self.matches.len(), self.current);
+            self.stale = false;
+            self.last_rebuild = Some(now);
             self.rebuild_matches(term);
+            changed = before != (self.matches.len(), self.current);
         }
         self.reveal_current(term);
-        refresh
+        SearchRefresh {
+            changed,
+            retry_in: wait.filter(|_| self.stale),
+        }
     }
 
     fn rebuild_matches<T: EventListener>(&mut self, term: &Term<T>) {

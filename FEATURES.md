@@ -99,6 +99,20 @@ directly to model APIs.
   (keeping the scroll position); find and replace in the open file. Links between documents
   open in the viewer. The viewer is resizable, and each tab keeps its own open file.
 
+## Git Page
+
+- Open a Git page from the title bar, in place of the selected tab, with its own sidebar row;
+  it and the Settings page take turns.
+- Pick any repository the open tabs are in, the selected tab's first; see its branch.
+- List the changed files in "Staged Changes" and "Changes" groups with their status letters;
+  stage or unstage a file, or all of them.
+- Show the selected file's unified diff (staged or unstaged side; an untracked file as all
+  added lines).
+- Stage or unstage a hunk or the selected lines from the diff, with the mouse or the keyboard.
+- Commit what is staged with a message (Ctrl+Enter); the repository's hooks run, and a failure
+  shows git's message and keeps the message typed.
+- Never change the working tree: the page changes only the index and makes commits.
+
 ## Agent Activity and Attention
 
 - Indicate when an agent is working, idle, waiting for user input or permission,

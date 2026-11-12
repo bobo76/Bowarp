@@ -5,6 +5,8 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.3.0
+
 - Drag a group header to move the group, with its tabs, in the sidebar.
 - Tab names, pins, order, groups and colors, and opened and closed tabs, are saved as they
   change instead of only when the window closes, so a crash or a killed session keeps them.
@@ -31,6 +33,12 @@ omitted unless they affect how the app is used.
   NFS, sshfs) no longer freezes the window: the file is looked up in the background.
 - Windows: deleting a folder link or junction in the file explorer works (it removed nothing
   and showed "permission denied"); the folder it points to is kept.
+- Git page (title bar button): see what changed in the repositories the tabs are in, stage or
+  unstage files, hunks or single lines from the diff, and commit with a message (Ctrl+Enter);
+  hooks run, and a failure shows git's message. The page never changes your files.
+- Settings has a Git page to choose the Git diff's colors: background, text, added and
+  removed lines. Added and removed lines now default
+  to `#14803D` and `#7F1D1D`, and a selected line shows lighter.
 
 ## 0.2.61
 
