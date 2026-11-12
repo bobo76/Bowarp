@@ -310,8 +310,11 @@ fn shows_the_diff_of_the_selected_file(cx: &mut gpui_kit::TestAppContext) {
         ]
     );
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    assert!(cx.debug_bounds("git-diff").is_some());
-    assert!(cx.debug_bounds("git-diff-hunk-0").is_some());
+    // `debug_bounds` needs debug assertions: release test runs skip the drawn checks.
+    if cfg!(debug_assertions) {
+        assert!(cx.debug_bounds("git-diff").is_some());
+        assert!(cx.debug_bounds("git-diff-hunk-0").is_some());
+    }
 
     // 2. Staged, the file leaves the selection to the row at its place; selected in the
     // Staged group, it shows its staged diff.

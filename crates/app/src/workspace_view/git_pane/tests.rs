@@ -2,25 +2,29 @@ use gpui_kit::Focusable;
 
 use super::super::tests::PanesHarness;
 
-/// (Git page shows, settings page shows, the selected tab shows, Git row drawn, Settings row
-/// drawn).
-fn pages(h: &mut PanesHarness) -> (bool, bool, bool, bool, bool) {
+/// Checks (Git page shows, settings page shows, the selected tab shows, Git row drawn,
+/// Settings row drawn). `debug_bounds` needs debug assertions: a release test run skips the
+/// two drawn rows.
+#[track_caller]
+fn assert_pages(h: &mut PanesHarness, expected: (bool, bool, bool, bool, bool)) {
     let workspace = h.workspace.clone();
     h.cx.update(|window, cx| window.draw(cx).clear(cx));
-    let rows = (
-        h.cx.debug_bounds("git-row").is_some(),
-        h.cx.debug_bounds("settings-row").is_some(),
-    );
-    h.cx.update(|_, cx| {
+    let shown = h.cx.update(|_, cx| {
         let workspace = workspace.read(cx);
         (
             workspace.git.shows_page(),
             workspace.settings.shows_page(),
             workspace.current_index().is_some(),
-            rows.0,
-            rows.1,
         )
-    })
+    });
+    assert_eq!(shown, (expected.0, expected.1, expected.2));
+    if cfg!(debug_assertions) {
+        let rows = (
+            h.cx.debug_bounds("git-row").is_some(),
+            h.cx.debug_bounds("settings-row").is_some(),
+        );
+        assert_eq!(rows, (expected.3, expected.4));
+    }
 }
 
 #[gpui::test]
@@ -29,7 +33,7 @@ fn git_page_replaces_the_tab_and_closing_gives_it_back(cx: &mut gpui_kit::TestAp
     let workspace = h.workspace.clone();
     h.cx.update(|window, cx| workspace.update(cx, |w, cx| w.open_git(window, cx)));
     h.cx.run_until_parked();
-    assert_eq!(pages(&mut h), (true, false, false, true, false));
+    assert_pages(&mut h, (true, false, false, true, false));
     h.cx.update(|window, cx| {
         let workspace = workspace.read(cx);
         assert!(workspace.shows_page());
@@ -39,7 +43,7 @@ fn git_page_replaces_the_tab_and_closing_gives_it_back(cx: &mut gpui_kit::TestAp
     // The button again, with the page focused, closes it.
     h.cx.update(|window, cx| workspace.update(cx, |w, cx| w.toggle_git(window, cx)));
     h.cx.run_until_parked();
-    assert_eq!(pages(&mut h), (false, false, true, false, false));
+    assert_pages(&mut h, (false, false, true, false, false));
     h.cx.update(|window, cx| {
         let workspace = workspace.read(cx);
         assert!(workspace.tabs[0].view.focus_handle(cx).is_focused(window));
@@ -57,11 +61,11 @@ fn git_and_settings_pages_take_turns(cx: &mut gpui_kit::TestAppContext) {
         })
     });
     h.cx.run_until_parked();
-    assert_eq!(pages(&mut h), (false, true, false, true, true));
+    assert_pages(&mut h, (false, true, false, true, true));
 
     h.cx.update(|window, cx| workspace.update(cx, |w, cx| w.open_git(window, cx)));
     h.cx.run_until_parked();
-    assert_eq!(pages(&mut h), (true, false, false, true, true));
+    assert_pages(&mut h, (true, false, false, true, true));
     h.cx.update(|window, cx| {
         assert!(workspace.read(cx).git.focus(cx).unwrap().is_focused(window));
     });
@@ -69,7 +73,7 @@ fn git_and_settings_pages_take_turns(cx: &mut gpui_kit::TestAppContext) {
     // Selecting the tab hides the page; both rows stay.
     h.cx.update(|window, cx| workspace.update(cx, |w, cx| w.activate(0, window, cx)));
     h.cx.run_until_parked();
-    assert_eq!(pages(&mut h), (false, false, true, true, true));
+    assert_pages(&mut h, (false, false, true, true, true));
 }
 
 #[gpui::test]

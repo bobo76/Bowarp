@@ -230,8 +230,11 @@ fn an_untracked_file_stages_only_whole(cx: &mut TestAppContext) {
     assert_eq!(fresh.map(|f| f.unstaged), Some(Some(Change::Untracked)));
     assert!(h.update(|page, _, _| page.lines.cursor().is_none()));
     h.cx.update(|window, cx| window.draw(cx).clear(cx));
-    assert!(h.cx.debug_bounds("git-diff-hunk-0").is_some());
-    assert!(h.cx.debug_bounds("git-hunk-apply-0").is_none());
+    // `debug_bounds` needs debug assertions: release test runs skip the drawn checks.
+    if cfg!(debug_assertions) {
+        assert!(h.cx.debug_bounds("git-diff-hunk-0").is_some());
+        assert!(h.cx.debug_bounds("git-hunk-apply-0").is_none());
+    }
     h.close(&folder);
 }
 
@@ -277,8 +280,11 @@ fn keys_move_over_changed_lines_and_stage_the_cursor_line(cx: &mut TestAppContex
     h.cx.simulate_keystrokes("down down");
     assert_eq!(h.cursor_text().as_deref(), Some("+new"));
     h.cx.update(|window, cx| window.draw(cx).clear(cx));
-    // The cursor's hunk shows its button without hover.
-    assert!(h.cx.debug_bounds("git-hunk-apply-1").is_some());
+    // The cursor's hunk shows its button without hover (`debug_bounds` needs debug
+    // assertions: release test runs skip the drawn checks).
+    if cfg!(debug_assertions) {
+        assert!(h.cx.debug_bounds("git-hunk-apply-1").is_some());
+    }
 
     // `U` is for a Staged diff: nothing happens here. `S` stages the cursor's line.
     h.cx.simulate_keystrokes("u");
@@ -322,7 +328,10 @@ fn mouse_selects_ranges_and_escape_clears_them(cx: &mut TestAppContext) {
     press(&mut h, plus, Modifiers::secondary_key());
     assert_eq!(selected(&mut h), [minus, new]);
     h.cx.update(|window, cx| window.draw(cx).clear(cx));
-    assert!(h.cx.debug_bounds("git-selection-bar").is_some());
+    // `debug_bounds` needs debug assertions: release test runs skip the drawn checks.
+    if cfg!(debug_assertions) {
+        assert!(h.cx.debug_bounds("git-selection-bar").is_some());
+    }
 
     // The first Escape clears the selection, the second gives the keyboard to the list.
     h.cx.simulate_keystrokes("escape");
