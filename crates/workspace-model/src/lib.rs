@@ -134,5 +134,5 @@ pub use window_background::{
     BLUR_NEEDS_OPACITY, BLUR_UNAVAILABLE, Backdrop, BlurControl, BlurSupport, MICA_FALLBACK,
     MICA_MIN_WINDOWS_BUILD, WindowBlur, WindowOpacity, WindowsSwitch, blur_options, shown_blur,
 };
-pub use window_state::{Rect, WindowMode, WindowState};
+pub use window_state::{GridSize, Rect, WindowMode, WindowState};
 pub use workspace_features::WorkspaceFeatures;

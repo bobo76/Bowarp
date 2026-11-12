@@ -64,6 +64,7 @@ use crate::shell_integration;
 use crate::shortcuts::{self, ALLOW_CLIPBOARD_KEY, DENY_CLIPBOARD_KEY};
 use crate::sidebar::TabStatus;
 use crate::terminal_element::{TerminalElement, to_hsla};
+use crate::terminal_size;
 use crate::workspace_view::CloseTab;
 
 const KEY_CONTEXT: &str = "Terminal";
@@ -210,9 +211,6 @@ pub enum StatusReporting {
     OutputActivity,
 }
 
-const INITIAL_TERMINAL_COLUMNS: u16 = 80;
-const INITIAL_TERMINAL_LINES: u16 = 24;
-
 /// One terminal session and its interaction state.
 pub struct TerminalView {
     pub(crate) session: Session,
@@ -315,7 +313,7 @@ impl SessionEvents {
             callback,
             receiver,
             spec,
-            size: TermDimensions::new(INITIAL_TERMINAL_COLUMNS, INITIAL_TERMINAL_LINES),
+            size: terminal_size::current(cx),
             palette,
         }
     }

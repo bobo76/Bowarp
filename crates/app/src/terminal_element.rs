@@ -24,6 +24,7 @@ use workspace_model::{Platform, installed_font_family};
 
 use crate::scrollbar::{ScrollMetrics, ScrollbarLayout, ScrollbarState};
 use crate::settings_file::{self, AppSettings};
+use crate::terminal_size;
 use crate::terminal_view::{GridGeometry, TerminalView};
 use crate::window_background;
 
@@ -217,13 +218,15 @@ impl Element for TerminalElement {
         let (columns, screen_lines) = fit_grid(grid_bounds, cell_width, line_height);
         let focused = self.focus_handle.is_focused(window);
 
+        let grid_size = TermDimensions {
+            columns,
+            lines: screen_lines,
+            cell_width: f32::from(cell_width) as u16,
+            cell_height: f32::from(line_height) as u16,
+        };
+        terminal_size::note(grid_size, cx);
         let (snapshot, scroll_metrics) = self.view.update(cx, |view, cx| {
-            view.session.resize(TermDimensions {
-                columns,
-                lines: screen_lines,
-                cell_width: f32::from(cell_width) as u16,
-                cell_height: f32::from(line_height) as u16,
-            });
+            view.session.resize(grid_size);
             take_snapshot(view, focused, cx)
         });
         let view = self.view.read(cx);

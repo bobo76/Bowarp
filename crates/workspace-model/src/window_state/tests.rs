@@ -13,6 +13,16 @@ fn windowed(bounds: Rect) -> WindowState {
     WindowState {
         bounds,
         mode: WindowMode::Windowed,
+        terminal: None,
+    }
+}
+
+fn grid(columns: u16, lines: u16) -> GridSize {
+    GridSize {
+        columns,
+        lines,
+        cell_width: 9,
+        cell_height: 18,
     }
 }
 
@@ -21,6 +31,7 @@ fn json_round_trip() {
     let state = WindowState {
         bounds: rect(-1200., 40.5, 1000., 650.),
         mode: WindowMode::Maximized,
+        terminal: Some(grid(120, 35)),
     };
     assert_eq!(WindowState::from_json(&state.to_json()), Some(state));
     assert!(state.to_json().contains("\"maximized\""));
@@ -31,6 +42,23 @@ fn missing_mode_is_windowed() {
     let text = r#"{"bounds":{"x":10,"y":20,"width":800,"height":600}}"#;
     let state = WindowState::from_json(text).unwrap();
     assert_eq!(state, windowed(rect(10., 20., 800., 600.)));
+}
+
+#[test]
+fn missing_or_out_of_range_terminal_size_keeps_the_window_bounds() {
+    let bounds = r#""bounds":{"x":10,"y":20,"width":800,"height":600}"#;
+    let with_terminal = |columns: u16, lines: u16| {
+        let terminal =
+            format!(r#"{{"columns":{columns},"lines":{lines},"cell_width":9,"cell_height":18}}"#);
+        WindowState::from_json(&format!(r#"{{{bounds},"terminal":{terminal}}}"#)).unwrap()
+    };
+    let without = WindowState::from_json(&format!("{{{bounds}}}")).unwrap();
+    assert_eq!(without.terminal, None);
+    assert!(!without.to_json().contains("terminal"));
+    for (columns, lines) in [(0, 30), (100, 0), (4097, 30), (100, 4097)] {
+        assert_eq!(with_terminal(columns, lines), without, "{columns}x{lines}");
+    }
+    assert_eq!(with_terminal(4096, 1).terminal, Some(grid(4096, 1)));
 }
 
 #[test]
@@ -86,16 +114,20 @@ fn maximized_and_full_screen_keep_the_saved_bounds_and_save_as_maximized() {
         let closing = WindowState {
             bounds: screen,
             mode,
+            terminal: Some(grid(200, 55)),
         };
+        // The terminal size is the closing window's: the next start is maximized too.
         let expected = WindowState {
             bounds: saved.bounds,
             mode: WindowMode::Maximized,
+            terminal: closing.terminal,
         };
         assert_eq!(closing.keeping_saved_bounds(Some(saved)), expected);
         // Nothing saved yet: what the platform reports is all there is.
         let reported = WindowState {
             bounds: screen,
             mode: WindowMode::Maximized,
+            terminal: closing.terminal,
         };
         assert_eq!(closing.keeping_saved_bounds(None), reported);
     }
@@ -106,6 +138,7 @@ fn windowed_replaces_the_saved_bounds() {
     let saved = WindowState {
         bounds: rect(30., 40., 900., 700.),
         mode: WindowMode::Maximized,
+        terminal: Some(grid(200, 55)),
     };
     let closing = windowed(rect(200., 100., 1200., 800.));
     assert_eq!(closing.keeping_saved_bounds(Some(saved)), closing);

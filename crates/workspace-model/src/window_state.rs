@@ -1,5 +1,5 @@
-//! Where the window was when it closed (position, size, maximized), saved as a small JSON file
-//! so the next start reopens it there.
+//! Where the window was when it closed (position, size, maximized) and the size its terminal
+//! had, saved as a small JSON file so the next start reopens it there.
 
 use std::fs;
 use std::io;
@@ -18,6 +18,9 @@ const MAX_SIZE: f32 = 16384.;
 /// How much of the window (in logical pixels, each way) must lie on a display for the saved
 /// position to be used.
 const MIN_VISIBLE: f32 = 48.;
+
+/// Most terminal columns or lines taken as real; more is treated as a damaged file.
+const MAX_GRID_CELLS: u16 = 4096;
 
 /// A rectangle in logical pixels, the platform's global screen coordinates.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -55,18 +58,38 @@ pub enum WindowMode {
     Fullscreen,
 }
 
+/// A terminal's grid in cells and its cell size in pixels, as reported to the pty.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GridSize {
+    pub columns: u16,
+    pub lines: u16,
+    pub cell_width: u16,
+    pub cell_height: u16,
+}
+
+impl GridSize {
+    fn is_usable(&self) -> bool {
+        let cells = 1..=MAX_GRID_CELLS;
+        cells.contains(&self.columns) && cells.contains(&self.lines)
+    }
+}
+
 /// The window's bounds and mode. For a maximized or fullscreen window the bounds are the size
-/// to restore to (see `keeping_saved_bounds`).
+/// to restore to (see `keeping_saved_bounds`). `terminal` is the size of the terminal it
+/// showed: tabs start at it, since resizing a shell at its prompt can lose the next key (Git
+/// Bash drops it).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WindowState {
     pub bounds: Rect,
     #[serde(default)]
     pub mode: WindowMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<GridSize>,
 }
 
 impl WindowState {
     /// The state saved at `path`; `None` when the file is missing, unreadable, not valid JSON
-    /// or holds an unusable size.
+    /// or holds an unusable window size. An unusable terminal size is only left out.
     pub fn load(path: &Path) -> Option<Self> {
         Self::from_json(&fs::read_to_string(path).ok()?)
     }
@@ -81,7 +104,8 @@ impl WindowState {
     }
 
     pub fn from_json(text: &str) -> Option<Self> {
-        let state: Self = serde_json::from_str(text).ok()?;
+        let mut state: Self = serde_json::from_str(text).ok()?;
+        state.terminal = state.terminal.filter(GridSize::is_usable);
         let Rect {
             x,
             y,
@@ -99,7 +123,7 @@ impl WindowState {
     /// the next start. A maximized window can't move, so the saved restore bounds are still
     /// the right ones. Without saved bounds, the reported ones are used. Full screen is saved
     /// as maximized, so the next start is not full screen (without a window manager's title
-    /// bar, only F11 would leave it).
+    /// bar, only F11 would leave it). The terminal size is always the closing window's.
     pub fn keeping_saved_bounds(self, saved: Option<WindowState>) -> Self {
         let mode = match self.mode {
             WindowMode::Fullscreen => WindowMode::Maximized,
@@ -111,6 +135,7 @@ impl WindowState {
             (mode, Some(saved)) => Self {
                 bounds: saved.bounds,
                 mode,
+                ..self
             },
         }
     }
