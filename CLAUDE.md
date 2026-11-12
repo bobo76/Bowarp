@@ -16,6 +16,7 @@ docs/known-limitations.md.
 cargo build                                    # build the whole workspace (needed: agentws-hook must sit next to the app binary)
 cargo run -p agent-workspace -- [shell|claude|copilot] [project-dir]
 cargo test                                     # all tests
+cargo test --release --workspace --locked      # what CI runs on branches (debug tests only on main)
 cargo test -p workspace-model settings::       # one crate, tests matching a path filter
 cargo test -p term-core --test session         # one integration test file
 cargo fmt --all --check
@@ -99,6 +100,9 @@ Cargo workspace, `crates/*`:
   `use super::*;`), one `tests` module per production module, platform tests gated inside it
   (e.g. `launcher/tests/unix.rs`). Integration tests in a crate's `tests/` use only public API;
   don't make private items public just for tests. See docs/code-quality.md.
+- Branch CI runs tests in release, where GPUI's `debug_bounds` records nothing: put
+  drawn-element checks behind `if cfg!(debug_assertions)` (or ignore the whole test with
+  `#[cfg_attr(not(debug_assertions), ignore = "...")]` when it checks nothing else).
 - UI code (`crates/app`): follow the UI thread and redraw rules in `crates/app/CLAUDE.md`
   (no slow work on the UI thread, notify only on a visible change, one terminal lock per frame).
 - Windows-specific path logic: write pure functions taking a `windows: bool` so it is unit-tested
