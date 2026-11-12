@@ -159,11 +159,7 @@ pub fn lines_added(dir: &Path) -> Option<u64> {
 /// `dir` is not in a repository, or HEAD has no commit yet.
 pub fn working_changes(dir: &Path) -> Option<WorkingChanges> {
     let deadline = Instant::now() + GIT_TIMEOUT;
-    let top = run_git(dir, &["rev-parse", "--show-toplevel"], deadline)?;
-    let top = PathBuf::from(native_separators(
-        top.trim_end_matches(['\n', '\r']),
-        cfg!(windows),
-    ));
+    let top = repo_top(dir, deadline)?;
     let numstat = run_git(
         &top,
         &[
@@ -177,17 +173,7 @@ pub fn working_changes(dir: &Path) -> Option<WorkingChanges> {
         ],
         deadline,
     )?;
-    let status = run_git(
-        &top,
-        &[
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-            "--no-renames",
-        ],
-        deadline,
-    )?;
+    let status = porcelain_status(&top, deadline)?;
     let counts = numstat_counts(&numstat);
     let mut untracked_read = 0;
     let files = status_entries(&status)
@@ -212,6 +198,52 @@ pub fn working_changes(dir: &Path) -> Option<WorkingChanges> {
         })
         .collect();
     Some(WorkingChanges { files })
+}
+
+/// The changed files of the repository containing `dir`, like [`working_changes`] but
+/// without line counts (all `None`): one `git status`, no diff and no file reads, for when
+/// only the kind of change matters. Unlike [`working_changes`], works before the first commit.
+/// Call it off the UI thread; `None` when git is missing or too slow, or `dir` is not in a
+/// repository.
+pub fn changed_files(dir: &Path) -> Option<WorkingChanges> {
+    let deadline = Instant::now() + GIT_TIMEOUT;
+    let top = repo_top(dir, deadline)?;
+    let status = porcelain_status(&top, deadline)?;
+    let files = status_entries(&status)
+        .into_iter()
+        .map(|(path, change)| ChangedFile {
+            path: top.join(native_separators(&path, cfg!(windows))),
+            change,
+            added: None,
+            removed: None,
+        })
+        .collect();
+    Some(WorkingChanges { files })
+}
+
+/// The top folder of the repository containing `dir`, with the platform's separators.
+fn repo_top(dir: &Path, deadline: Instant) -> Option<PathBuf> {
+    let top = run_git(dir, &["rev-parse", "--show-toplevel"], deadline)?;
+    Some(PathBuf::from(native_separators(
+        top.trim_end_matches(['\n', '\r']),
+        cfg!(windows),
+    )))
+}
+
+/// `git status` in machine form for the repository at `top`, untracked files listed one by
+/// one, read by [`status_entries`].
+fn porcelain_status(top: &Path, deadline: Instant) -> Option<String> {
+    run_git(
+        top,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--no-renames",
+        ],
+        deadline,
+    )
 }
 
 /// `path` as git prints it (always `/`-separated, even on Windows) with the platform's separator,

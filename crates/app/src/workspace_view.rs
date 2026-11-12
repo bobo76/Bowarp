@@ -27,8 +27,8 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     Action, AnyElement, App, AppContext, ClipboardItem, Context, CursorStyle, DragMoveEvent, Empty,
     Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
-    WeakEntity, Window, actions, div, px,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, StyleRefinement, Styled,
+    Subscription, Task, WeakEntity, Window, actions, div, px,
 };
 use term_core::{LaunchSpec, SessionKind};
 use workspace_model::layout::Direction;
@@ -2523,7 +2523,9 @@ impl Render for WorkspaceView {
                                 .flex_none()
                                 .w(px(viewer_width - DIVIDER_WIDTH))
                                 .h_full()
-                                .child(viewer),
+                                // Redrawn only when the viewer itself changes, not on each
+                                // terminal frame.
+                                .child(viewer.cached(StyleRefinement::default().size_full())),
                         )
                     }),
             )

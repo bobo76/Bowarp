@@ -1,6 +1,7 @@
-//! The file explorer panel: the selected tab's folder as a tree. Folders are read when they
-//! are expanded and re-read when a watcher on the expanded folders reports a change; after each
-//! read, git is asked off the UI thread which entries it ignores, and those are dimmed.
+//! The file explorer panel: the selected tab's folder as a tree. Folders are read off the UI
+//! thread when they are expanded and re-read when a watcher on the expanded folders reports a
+//! change; after each read, git is asked off the UI thread which entries it ignores, and those
+//! are dimmed.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -26,7 +27,7 @@ use workspace_model::file_tree::{
     self, DirEntry, EntryKind, ExpandedFolders, FileKind, TreeRow, entry_folder, entry_name,
     parent_folder, relative_path, validate_name,
 };
-use workspace_model::{FileChange, ignored_names, working_changes};
+use workspace_model::{FileChange, changed_files, ignored_names};
 
 use crate::assets::{
     FILE_ARCHIVE_ICON, FILE_CODE_ICON, FILE_DATA_ICON, FILE_IMAGE_ICON, FILES_ICON, FOLDER_UP_ICON,
@@ -112,6 +113,8 @@ pub struct FileExplorer {
     agents: Rc<[Launcher]>,
     expanded: ExpandedFolders,
     listings: HashMap<PathBuf, Listing>,
+    /// The folder reads running off the UI thread: replacing or dropping a task cancels it.
+    reads: HashMap<PathBuf, Task<()>>,
     /// The names git ignores in each open folder, as of git's last answer; a folder outside a
     /// repository (or whose check failed) has none.
     ignored: HashMap<PathBuf, HashSet<String>>,
@@ -177,7 +180,7 @@ impl FileExplorer {
             self.unchecked.extend(self.listings.keys().cloned());
         }
         for folder in folders {
-            self.read_listing(folder);
+            self.read_listing(folder, cx);
         }
         self.refresh(cx);
     }
@@ -189,6 +192,7 @@ impl FileExplorer {
             agents: agents.into(),
             expanded: ExpandedFolders::default(),
             listings: HashMap::new(),
+            reads: HashMap::new(),
             ignored: HashMap::new(),
             unchecked: HashSet::new(),
             ignore_checks: HashMap::new(),
@@ -248,6 +252,7 @@ impl FileExplorer {
         }
         // Folders left unwatched may have changed meanwhile.
         self.listings.clear();
+        self.reads.clear();
         self.ignored.clear();
         self.unchecked.clear();
         self.ignore_checks.clear();
@@ -281,8 +286,8 @@ impl FileExplorer {
         true
     }
 
-    /// Read the expanded folders not read yet, watch exactly the expanded ones, and rebuild
-    /// the rows.
+    /// Start reading the expanded folders not read yet (each read refreshes again, showing the
+    /// folders expanded inside it), watch exactly the expanded ones, and rebuild the rows.
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let Some(root) = self.root.clone() else {
             self.rows = Rc::new([]);
@@ -290,27 +295,25 @@ impl FileExplorer {
             cx.notify();
             return;
         };
-        let rows = loop {
-            let rows = self.tree_rows(&root);
-            let unread: Vec<PathBuf> = rows
-                .iter()
-                .filter(|row| row.expanded && !self.listings.contains_key(&row.path))
-                .map(|row| row.path.clone())
-                .collect();
-            if unread.is_empty() {
-                break rows;
-            }
-            for folder in unread {
-                self.read_listing(folder);
-            }
-        };
+        let rows = self.tree_rows(&root);
         let open: HashSet<PathBuf> = rows
             .iter()
             .filter(|row| row.expanded)
             .map(|row| row.path.clone())
             .collect();
+        let unread: Vec<PathBuf> = open
+            .iter()
+            .filter(|folder| {
+                !self.listings.contains_key(*folder) && !self.reads.contains_key(*folder)
+            })
+            .cloned()
+            .collect();
+        for folder in unread {
+            self.read_listing(folder, cx);
+        }
         // Unwatched folders may change: read them again when they are shown again.
         self.listings.retain(|folder, _| open.contains(folder));
+        self.reads.retain(|folder, _| open.contains(folder));
         self.ignored.retain(|folder, _| open.contains(folder));
         self.ignore_checks.retain(|folder, _| open.contains(folder));
         let unchecked = std::mem::take(&mut self.unchecked);
@@ -356,15 +359,42 @@ impl FileExplorer {
         }
     }
 
-    /// Read `folder` (again), and ask git about it at the next refresh unless its entries are
-    /// unchanged (a `.gitignore` change asks again for every folder).
-    fn read_listing(&mut self, folder: PathBuf) {
-        let listing = read_folder(&folder);
+    /// Read `folder` (again) off the UI thread, where a network or WSL folder could freeze the
+    /// window, replacing (cancelling) a read still running.
+    fn read_listing(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
+        let path = folder.clone();
+        let resolve = self.watches.needs_real_path(&folder);
+        let task = cx.spawn(async move |this, cx| {
+            if resolve {
+                // Watched before it is read, so a change made after the read is reported.
+                let asked = path.clone();
+                let real = cx
+                    .background_spawn(async move { fs::canonicalize(&asked).ok() })
+                    .await;
+                let watching = this.update(cx, |explorer, _| {
+                    explorer.watches.set_real_path(&path, real);
+                });
+                if watching.is_err() {
+                    return;
+                }
+            }
+            let read = path.clone();
+            let listing = cx.background_spawn(async move { read_folder(&read) }).await;
+            let _ = this.update(cx, |explorer, cx| explorer.set_listing(path, listing, cx));
+        });
+        self.reads.insert(folder, task);
+    }
+
+    /// A folder's entries as read: show them, and ask git about them unless they are unchanged
+    /// (a `.gitignore` change asks again for every folder).
+    fn set_listing(&mut self, folder: PathBuf, listing: Listing, cx: &mut Context<Self>) {
+        self.reads.remove(&folder);
         if self.listings.get(&folder) == Some(&listing) {
             return;
         }
         self.listings.insert(folder.clone(), listing);
         self.unchecked.insert(folder);
+        self.refresh(cx);
     }
 
     /// Ask git off the UI thread which entries of `folder`'s listing it ignores, replacing
@@ -545,7 +575,7 @@ impl FileExplorer {
         match result {
             Ok(Some(path)) => {
                 if let Some(folder) = path.parent() {
-                    self.read_listing(folder.to_path_buf());
+                    self.read_listing(folder.to_path_buf(), cx);
                 }
                 self.selected = Some(path);
             }
@@ -632,7 +662,7 @@ impl FileExplorer {
                 if let Some(folder) = path.parent()
                     && explorer.listings.contains_key(folder)
                 {
-                    explorer.read_listing(folder.to_path_buf());
+                    explorer.read_listing(folder.to_path_buf(), cx);
                 }
                 if explorer.selected.as_deref() == Some(path.as_path()) {
                     explorer.selected = None;
@@ -1107,7 +1137,7 @@ fn entry_chevron(row: &TreeRow, cx: &App) -> AnyElement {
 /// as the tree names them (git names them under the repository's real path, links resolved).
 /// Empty outside a repository or when git fails.
 fn changed_marks(root: &Path) -> HashMap<PathBuf, FileChange> {
-    let Some(changes) = working_changes(root) else {
+    let Some(changes) = changed_files(root) else {
         return HashMap::new();
     };
     let real_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());

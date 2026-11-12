@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme, IconName, Sizable};
@@ -78,8 +80,24 @@ impl TerminalView {
     fn close_terminal_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.search_bar = None;
         self.search = TerminalSearch::default();
+        self.search_retry = None;
         window.focus(&self.focus_handle, cx);
         cx.notify();
+    }
+
+    /// Draw again after `delay`, when the search held back a rebuild for output: the output
+    /// may have stopped, leaving no frame to rebuild in. One timer at a time.
+    pub(crate) fn refresh_search_after(&mut self, delay: Duration, cx: &mut Context<Self>) {
+        if self.search_retry.is_some() {
+            return;
+        }
+        self.search_retry = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            let _ = this.update(cx, |view, cx| {
+                view.search_retry = None;
+                cx.notify();
+            });
+        }));
     }
 
     fn step_terminal_search(
@@ -90,7 +108,7 @@ impl TerminalView {
     ) {
         {
             let mut term = self.session.lock_term();
-            self.search.refresh(&mut term);
+            self.search.refresh_now(&mut term);
             self.search.step(direction);
             self.search.refresh(&mut term);
         }

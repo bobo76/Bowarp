@@ -221,6 +221,8 @@ pub struct TerminalView {
     /// Folder the session was started in, used while the child's own cannot be read.
     launch_folder: Option<PathBuf>,
     location: Option<Location>,
+    /// Reads [`Self::location`] off the UI thread; dropping it cancels it.
+    location_read: Option<Task<()>>,
     /// How the program parses typed paths.
     pub(crate) shell: ShellSyntax,
     /// Agent status from hooks or progress reports once the provider sends its first one;
@@ -264,6 +266,8 @@ pub struct TerminalView {
     workspace_features: WorkspaceFeatures,
     pub(crate) search: TerminalSearch,
     search_bar: Option<search::SearchBar>,
+    /// Draws again once the search may rebuild for output it held back.
+    search_retry: Option<Task<()>>,
     title: Option<String>,
     /// A remote tab's host, as its launch named it.
     host: Option<String>,
@@ -436,18 +440,19 @@ impl TerminalView {
         let saved_cleared_seen = cx
             .try_global::<history::History>()
             .map_or(0, history::History::saved_cleared);
-        Self {
+        // A remote tab's folder is on its host: nothing here reads it.
+        let launch_folder = spec.cwd.clone().filter(|_| spec.host.is_none());
+        let mut view = Self {
             saved_cleared_seen,
             workspace_features: settings_file::workspace_features(cx),
             session,
             name: launcher::default_name(spec),
-            // A remote tab's folder is on its host: nothing here reads it.
-            launch_folder: spec.cwd.clone().filter(|_| spec.host.is_none()),
-            location: spec
-                .cwd
+            // The branch follows from `refresh_location` below.
+            location: launch_folder
                 .clone()
-                .filter(|_| spec.host.is_none())
-                .map(Location::read),
+                .map(|folder| Location { folder, head: None }),
+            location_read: None,
+            launch_folder,
             shell: launcher::shell_syntax(spec),
             agent: (reporting == StatusReporting::Hooks).then(|| AgentTracker::new(Instant::now())),
             subagents: Subagents::default(),
@@ -480,6 +485,7 @@ impl TerminalView {
                 ),
             search: TerminalSearch::default(),
             search_bar: None,
+            search_retry: None,
             title: None,
             host: spec.host.clone(),
             process: ProcessState::Running,
@@ -493,7 +499,9 @@ impl TerminalView {
             link_hover: LinkHover::default(),
             home: std::env::home_dir(),
             _session_events: session_events,
-        }
+        };
+        view.refresh_location(cx);
+        view
     }
 
     #[cfg(test)]
@@ -702,32 +710,43 @@ impl TerminalView {
         self.visible = true;
         let was_done = std::mem::take(&mut self.finished_unseen);
         let rang = std::mem::take(&mut self.bell_unseen);
-        if self.refresh_location() || was_done || rang {
+        self.refresh_location(cx);
+        if was_done || rang {
             cx.emit(TabChanged);
         }
         self.refresh_history(cx);
         cx.notify();
     }
 
-    /// Re-read the child's folder and its git branch. Returns whether either changed. When the
-    /// folder cannot be read (exited child, unsupported platform) the last known one is kept.
-    fn refresh_location(&mut self) -> bool {
+    /// Re-read the child's folder and its git branch off the UI thread (on a network share or a
+    /// WSL path the read can take long enough to freeze the window), telling the sidebar when
+    /// either changed. A newer read replaces one still running. When the folder cannot be read
+    /// (exited child, unsupported platform) the last known one is kept.
+    fn refresh_location(&mut self, cx: &mut Context<Self>) {
         let Some(folder) = self.current_folder() else {
-            return false;
+            return;
         };
-        let location = Some(Location::read(folder));
-        if location == self.location {
-            return false;
-        }
-        self.location = location;
-        true
+        let read = cx.background_spawn(async move { Location::read(folder) });
+        self.location_read = Some(cx.spawn(async move |this, cx| {
+            let location = read.await;
+            let _ = this.update(cx, |view, cx| view.set_location(location, cx));
+        }));
     }
 
-    /// Tell the sidebar something changed, refreshing the folder and branch first: a shell's
+    fn set_location(&mut self, location: Location, cx: &mut Context<Self>) {
+        self.location_read = None;
+        if self.location.as_ref() == Some(&location) {
+            return;
+        }
+        self.location = Some(location);
+        cx.emit(TabChanged);
+    }
+
+    /// Tell the sidebar something changed, refreshing the folder and branch too: a shell's
     /// title changes and output bursts end around `cd` and `git checkout`, and hook events
     /// follow Claude Code's commands, so the location is read then instead of polled.
     fn refresh_location_and_notify(&mut self, cx: &mut Context<Self>) {
-        self.refresh_location();
+        self.refresh_location(cx);
         cx.emit(TabChanged);
     }
 

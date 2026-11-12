@@ -2,7 +2,6 @@
 //! paths handed to the owner a batch at a time, and the explorer's set of watched folders.
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -113,12 +112,16 @@ fn deliver_batches<V: WatchesFolders>(
 }
 
 /// A set of folders kept watched, each watched once by its real path (what the watcher
-/// reports): a folder and a symlink to it share one watch.
+/// reports): a folder and a symlink to it share one watch. The real paths are looked up off the
+/// UI thread by the owner and handed in ([`Self::set_real_path`]); a folder is watched once
+/// its real path is known.
 pub struct WatchedFolders {
     watcher: FolderWatcher,
+    /// The folders to keep watched, as of the last sync.
+    open: HashSet<PathBuf>,
     /// Each watched real path, with the folders showing it.
     watched: HashMap<PathBuf, Vec<PathBuf>>,
-    /// The real path of each folder, so it is not looked up on every sync.
+    /// The real path of each open folder whose real path is known.
     real_paths: HashMap<PathBuf, PathBuf>,
 }
 
@@ -126,6 +129,7 @@ impl WatchedFolders {
     pub fn new(watcher: FolderWatcher) -> Self {
         Self {
             watcher,
+            open: HashSet::new(),
             watched: HashMap::new(),
             real_paths: HashMap::new(),
         }
@@ -137,8 +141,8 @@ impl WatchedFolders {
     }
 
     /// Forget the watched folders among `paths`: a watched folder reported about itself was
-    /// removed or replaced, and the watcher drops its watch then, so the next sync watches it
-    /// again.
+    /// removed or replaced, and the watcher drops its watch then, so it is watched again once
+    /// its real path is handed in again.
     pub fn forget_reported(&mut self, paths: &[PathBuf]) {
         for path in paths {
             if self.watched.remove(path).is_some() {
@@ -147,19 +151,37 @@ impl WatchedFolders {
         }
     }
 
-    /// Watch exactly the folders in `open`.
+    /// Whether the owner should look up `folder`'s real path: it is not known yet, and there
+    /// is a watcher to use it.
+    pub fn needs_real_path(&self, folder: &Path) -> bool {
+        self.watcher.is_available() && !self.real_paths.contains_key(folder)
+    }
+
+    /// `folder`'s real path as looked up (`None` when the folder is not there): watch it if it
+    /// is still open.
+    pub fn set_real_path(&mut self, folder: &Path, real: Option<PathBuf>) {
+        let Some(real) = real else {
+            return;
+        };
+        if !self.open.contains(folder) {
+            return;
+        }
+        self.real_paths.insert(folder.to_path_buf(), real);
+        self.apply();
+    }
+
+    /// Watch exactly the folders in `open` (those whose real path is known).
     pub fn sync(&mut self, open: HashSet<PathBuf>) {
+        self.real_paths.retain(|folder, _| open.contains(folder));
+        self.open = open;
+        self.apply();
+    }
+
+    fn apply(&mut self) {
         if !self.watcher.is_available() {
             return;
         }
-        self.real_paths.retain(|folder, _| open.contains(folder));
-        let mut watched: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
-        for folder in open {
-            watched
-                .entry(self.real_path_of(&folder))
-                .or_default()
-                .push(folder);
-        }
+        let mut watched = by_real_path(&self.open, &self.real_paths);
         for real in self.watched.keys() {
             if !watched.contains_key(real) {
                 self.watcher.unwatch(real);
@@ -178,18 +200,23 @@ impl WatchedFolders {
         });
         self.watched = watched;
     }
+}
 
-    fn real_path_of(&mut self, folder: &Path) -> PathBuf {
-        if let Some(real) = self.real_paths.get(folder) {
-            return real.clone();
+/// The open folders whose real path is known, grouped by that path.
+fn by_real_path(
+    open: &HashSet<PathBuf>,
+    real_paths: &HashMap<PathBuf, PathBuf>,
+) -> HashMap<PathBuf, Vec<PathBuf>> {
+    let mut watched: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    for folder in open {
+        if let Some(real) = real_paths.get(folder) {
+            watched
+                .entry(real.clone())
+                .or_default()
+                .push(folder.clone());
         }
-        // Not there (yet): look again next time.
-        let Ok(real) = fs::canonicalize(folder) else {
-            return folder.to_path_buf();
-        };
-        self.real_paths.insert(folder.to_path_buf(), real.clone());
-        real
     }
+    watched
 }
 
 #[cfg(test)]
@@ -217,6 +244,26 @@ mod tests {
         ) {
             self.batches.push(paths);
         }
+    }
+
+    #[test]
+    fn folders_are_grouped_by_real_path_once_it_is_known() {
+        let open: HashSet<PathBuf> = ["real", "link", "unresolved"]
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        let real_paths: HashMap<PathBuf, PathBuf> = [("real", "real"), ("link", "real")]
+            .into_iter()
+            .map(|(folder, real)| (PathBuf::from(folder), PathBuf::from(real)))
+            .collect();
+        let mut watched = by_real_path(&open, &real_paths);
+        let mut showing = watched.remove(Path::new("real")).unwrap();
+        showing.sort();
+        assert_eq!(showing, [PathBuf::from("link"), PathBuf::from("real")]);
+        assert!(
+            watched.is_empty(),
+            "a folder is not watched before its real path is known"
+        );
     }
 
     #[gpui::test]

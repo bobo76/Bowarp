@@ -99,6 +99,8 @@ Cargo workspace, `crates/*`:
   `use super::*;`), one `tests` module per production module, platform tests gated inside it
   (e.g. `launcher/tests/unix.rs`). Integration tests in a crate's `tests/` use only public API;
   don't make private items public just for tests. See docs/code-quality.md.
+- UI code (`crates/app`): follow the UI thread and redraw rules in `crates/app/CLAUDE.md`
+  (no slow work on the UI thread, notify only on a visible change, one terminal lock per frame).
 - Windows-specific path logic: write pure functions taking a `windows: bool` so it is unit-tested
   on Linux too. `#[cfg(windows)]` code is only compiled and linted by a native Windows build
   (works with the Visual Studio Build Tools, see docs/linux-build-on-windows.md) or Windows CI.

@@ -24,7 +24,7 @@ pub use launch::LaunchSpec;
 pub use mirror::{Mirror, MirrorListener};
 pub use palette::{Palette, dim};
 pub use prompt::{ExecutedCommand, OutputTap, PromptEvent, PromptInput};
-pub use search::TerminalSearch;
+pub use search::{SearchRefresh, TerminalSearch};
 pub use session::{
     EventCallback, FolderProbe, RemoteLink, Session, SessionEvent, SessionFeed, SessionListener,
     TermDimensions,

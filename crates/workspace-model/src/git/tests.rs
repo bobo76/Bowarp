@@ -264,9 +264,60 @@ fn counts_tracked_changes_and_untracked_files() {
 }
 
 #[test]
+fn changed_files_list_changes_without_counting_lines() {
+    let Some(repo) = init_repo() else {
+        return;
+    };
+    write(&repo.0.join("tracked.txt"), "one\n");
+    write(&repo.0.join("gone.txt"), "two\n");
+    write(&repo.0.join(".gitignore"), "ignored.txt\n");
+    assert!(git(&repo.0, &["add", "."]));
+    assert!(git(&repo.0, &["commit", "-q", "-m", "initial"]));
+    write(&repo.0.join("tracked.txt"), "one\nmore\n");
+    fs::remove_file(repo.0.join("gone.txt")).unwrap();
+    let nested = repo.0.join("src");
+    fs::create_dir_all(&nested).unwrap();
+    write(&nested.join("new.rs"), "fn main() {}\n");
+    write(&repo.0.join("ignored.txt"), "skipped\n");
+
+    let changes = changed_files(&nested).unwrap();
+    let top = fs::canonicalize(&repo.0).unwrap();
+    let found: Vec<(PathBuf, FileChange, Option<u64>, Option<u64>)> = changes
+        .files
+        .iter()
+        .map(|file| {
+            let path = fs::canonicalize(file.path.parent().unwrap())
+                .unwrap()
+                .join(file.path.file_name().unwrap());
+            (path, file.change, file.added, file.removed)
+        })
+        .collect();
+    assert_eq!(
+        found,
+        vec![
+            (top.join("gone.txt"), FileChange::Deleted, None, None),
+            (top.join("tracked.txt"), FileChange::Modified, None, None),
+            (top.join("src/new.rs"), FileChange::Untracked, None, None),
+        ]
+    );
+}
+
+#[test]
+fn changed_files_work_before_the_first_commit() {
+    let Some(repo) = init_repo() else {
+        return;
+    };
+    write(&repo.0.join("new.txt"), "a\n");
+    let changes = changed_files(&repo.0).unwrap();
+    assert_eq!(changes.files.len(), 1);
+    assert_eq!(changes.files[0].change, FileChange::Untracked);
+}
+
+#[test]
 fn no_diff_stat_outside_a_repository() {
     let folder = TempDir::new();
     assert_eq!(lines_added(&folder.0), None);
+    assert_eq!(changed_files(&folder.0), None);
 }
 
 #[test]

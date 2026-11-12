@@ -82,7 +82,8 @@ pub use file_pane_features::{
     FileLinkAction, FilePaneFeatures, PaneChange, PaneEntry, pane_change,
 };
 pub use git::{
-    ChangedFile, FileChange, GitHead, WorkingChanges, ignored_names, lines_added, working_changes,
+    ChangedFile, FileChange, GitHead, WorkingChanges, changed_files, ignored_names, lines_added,
+    working_changes,
 };
 pub use history::{
     CommandHistory, HistoryEntry, HistoryScope, HistorySelection, append_entry, clear_history_file,

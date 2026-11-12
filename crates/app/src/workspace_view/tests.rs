@@ -743,6 +743,85 @@ fn saving_over_a_file_changed_on_disk_asks_first(cx: &mut gpui_kit::TestAppConte
 }
 
 #[gpui::test]
+fn a_file_is_read_in_the_background_and_shown_again_when_it_changes(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut h = PanesHarness::new("viewer-reload", cx);
+    std::fs::write(&h.file, "first").unwrap();
+    let (workspace, file) = (h.workspace.clone(), h.file.clone());
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let id = workspace.tabs[0].id;
+            workspace.open_file_in(id, file, FilePlace::default(), window, cx);
+        });
+    });
+    let viewer = h.state().2.expect("viewer").upgrade().unwrap();
+    let text = |h: &mut PanesHarness| h.cx.update(|_, cx| viewer.read(cx).text_for_test(cx));
+    let reload = |h: &mut PanesHarness| {
+        let viewer = viewer.clone();
+        h.cx.update(|window, cx| {
+            viewer.update(cx, |viewer, cx| viewer.reload_for_test(window, cx))
+        });
+        h.cx.run_until_parked();
+    };
+    // The panel is open at once; the text comes when the read ends.
+    assert!(h.cx.update(|_, cx| viewer.read(cx).is_open()));
+    assert_eq!(text(&mut h), None);
+    h.cx.run_until_parked();
+    assert_eq!(text(&mut h).as_deref(), Some("first"));
+
+    std::fs::write(&h.file, "second").unwrap();
+    reload(&mut h);
+    assert_eq!(text(&mut h).as_deref(), Some("second"));
+    assert!(!h.cx.update(|_, cx| viewer.read(cx).is_dirty()));
+
+    // Unsaved edits are kept over a change on disk.
+    h.cx.update(|window, cx| {
+        viewer.update(cx, |viewer, cx| viewer.edit_for_test("mine", window, cx))
+    });
+    std::fs::write(&h.file, "third").unwrap();
+    reload(&mut h);
+    assert_eq!(text(&mut h).as_deref(), Some("mine"));
+
+    // A file gone for a moment keeps showing what was read.
+    h.mark_dirty(&viewer.downgrade(), false);
+    std::fs::remove_file(&h.file).unwrap();
+    reload(&mut h);
+    assert_eq!(text(&mut h).as_deref(), Some("mine"));
+}
+
+#[gpui::test]
+fn edits_typed_while_a_save_writes_stay_unsaved(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("viewer-save-race", cx);
+    h.open_file();
+    let viewer = h.state().2.expect("viewer").upgrade().unwrap();
+    let edit = |h: &mut PanesHarness, text: &'static str| {
+        let viewer = viewer.clone();
+        h.cx.update(|window, cx| {
+            viewer.update(cx, |viewer, cx| viewer.edit_for_test(text, window, cx))
+        });
+    };
+    let save = |h: &mut PanesHarness| {
+        let viewer = viewer.clone();
+        h.cx.update(|window, cx| viewer.update(cx, |viewer, cx| viewer.save_for_test(window, cx)));
+    };
+    edit(&mut h, "saved");
+    save(&mut h);
+    edit(&mut h, "typed later");
+    h.cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&h.file).unwrap(), "saved");
+    assert!(h.cx.update(|_, cx| viewer.read(cx).is_dirty()));
+
+    // Two saves in a row write one after the other: the last text wins, without a question.
+    save(&mut h);
+    edit(&mut h, "last");
+    save(&mut h);
+    h.cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&h.file).unwrap(), "last");
+    assert!(!h.cx.update(|_, cx| viewer.read(cx).is_dirty()));
+}
+
+#[gpui::test]
 fn file_panes_switch_off_after_discarding_every_edit(cx: &mut gpui_kit::TestAppContext) {
     let mut h = PanesHarness::new("panes-discard", cx);
     let viewer = h.open_dirty_viewer();
@@ -1386,6 +1465,8 @@ fn settings_page_hides_the_explorer_and_keeps_it_as_it_was(cx: &mut gpui_kit::Te
         let explorer = workspace.read(cx).explorer.clone();
         assert!(explorer.update(cx, |explorer, cx| explorer.reveal(&sub, cx)));
     });
+    // Folders are read off the UI thread.
+    h.cx.run_until_parked();
     // (page shows, explorer remembered on, on screen, width taken)
     let panes = |h: &mut PanesHarness| {
         h.workspace.read_with(&h.cx, |workspace, cx| {
