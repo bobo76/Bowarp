@@ -1,5 +1,7 @@
 use super::*;
 
+use workspace_model::{ChangedFile, FileChange};
+
 #[gpui::test]
 fn card_settings_stop_existing_clocks_and_skip_disabled_work(cx: &mut gpui_kit::TestAppContext) {
     use crate::terminal_view::{TabChanged, TerminalView};
@@ -149,6 +151,44 @@ fn card_settings_stop_existing_clocks_and_skip_disabled_work(cx: &mut gpui_kit::
     });
 }
 
+/// An answer from git: one file with `lines` added.
+fn changed(lines: u64) -> Option<Arc<WorkingChanges>> {
+    Some(Arc::new(WorkingChanges {
+        files: vec![ChangedFile {
+            path: PathBuf::from("/repo/a.rs"),
+            change: FileChange::Modified,
+            added: Some(lines),
+            removed: Some(0),
+        }],
+    }))
+}
+
+fn added(stat: &DiffStat) -> Option<u64> {
+    stat.changes.as_deref().map(WorkingChanges::lines_added)
+}
+
+#[test]
+fn card_lists_the_first_changes_relative_to_the_folder() {
+    let file = |path: &str| ChangedFile {
+        path: PathBuf::from(path),
+        change: FileChange::Untracked,
+        added: Some(1),
+        removed: Some(0),
+    };
+    let nested = Path::new("/repo").join("src").join("new.rs");
+    let mut files = vec![file(&nested.to_string_lossy()), file("/elsewhere/x.rs")];
+    files.extend((0..MAX_CARD_CHANGES).map(|i| file(&format!("/repo/f{i}"))));
+    let (listed, more) = card_changes(&WorkingChanges { files }, Path::new("/repo"), None);
+    assert_eq!(listed.len(), MAX_CARD_CHANGES);
+    assert_eq!(more, 2);
+    let label = |index: usize| listed[index].label.to_string();
+    assert_eq!(
+        label(0),
+        Path::new("src").join("new.rs").display().to_string()
+    );
+    assert_eq!(label(1), "/elsewhere/x.rs");
+}
+
 #[test]
 fn diff_stat_is_reused_for_the_same_folder_only_briefly() {
     let repo = Path::new("/repo");
@@ -156,7 +196,7 @@ fn diff_stat_is_reused_for_the_same_folder_only_briefly() {
     let now = Instant::now();
     assert!(stat.needs_run(repo, now));
     let generation = stat.start(repo);
-    assert!(stat.finish(generation, Some(3), now));
+    assert!(stat.finish(generation, changed(3), now));
 
     assert!(!stat.needs_run(repo, now + Duration::from_secs(1)));
     assert!(stat.needs_run(repo, now + DIFF_STAT_TTL));
@@ -171,10 +211,10 @@ fn diff_stat_runs_once_at_a_time_per_folder() {
     let generation = stat.start(repo);
     // However long git takes, opening the card again does not start another one.
     assert!(!stat.needs_run(repo, now + DIFF_STAT_TTL * 10));
-    assert!(stat.finish(generation, Some(3), now));
+    assert!(stat.finish(generation, changed(3), now));
     // A later run keeps showing the last answer until it has its own.
     stat.start(repo);
-    assert_eq!(stat.added, Some(3));
+    assert_eq!(added(&stat), Some(3));
 }
 
 #[test]
@@ -185,13 +225,13 @@ fn diff_stat_ignores_an_answer_for_a_folder_left_meanwhile() {
     let other = Path::new("/other");
     assert!(stat.needs_run(other, now));
     let new = stat.start(other);
-    assert_eq!(stat.added, None);
+    assert_eq!(added(&stat), None);
 
-    assert!(!stat.finish(old, Some(3), now));
-    assert_eq!(stat.added, None);
+    assert!(!stat.finish(old, changed(3), now));
+    assert_eq!(added(&stat), None);
     assert!(stat.running);
-    assert!(stat.finish(new, Some(7), now));
-    assert_eq!((stat.folder.as_path(), stat.added), (other, Some(7)));
+    assert!(stat.finish(new, changed(7), now));
+    assert_eq!((stat.folder.as_path(), added(&stat)), (other, Some(7)));
 }
 
 #[test]
@@ -200,7 +240,7 @@ fn cards_show_lines_added_only_for_the_folder_they_were_counted_in() {
     let (repo, now) = (Path::new("/repo"), Instant::now());
     let generation = cards.start_diff_stat(1, repo, now).unwrap();
     assert_eq!(cards.start_diff_stat(1, repo, now), None);
-    assert!(cards.finish_diff_stat(1, generation, Some(4), now));
+    assert!(cards.finish_diff_stat(1, generation, changed(4), now));
 
     assert_eq!(cards.lines_added(1, repo), Some(4));
     assert_eq!(cards.lines_added(1, Path::new("/other")), None);

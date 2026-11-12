@@ -10,6 +10,32 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Tabs saved as they change: rename, pin, color, group and move tabs, then kill the app
+  (`kill -9`) and start it again: the arrangement is back. A second window shows "Tabs in
+  this window aren't saved..." until closed; none with Restore previous tabs off.
+
+- Resume on restore: a Claude Code tab with a conversation, closed and reopened, shows the bar;
+  Resume it shows the old conversation (`--resume <id>`), Start new and typing a prompt hide
+  the bar; a conversation deleted from `~/.claude/projects` gives the warning and a fresh
+  Claude; `/clear` then close and reopen offers the new conversation; Copilot tabs show no bar.
+  The `agentws-hook` installed with the app must be the new one (it sends the id).
+
+- Changed files: the hover card lists them under `+N` and stays open while the pointer moves
+  onto the list; clicking a file opens it in that tab's viewer (also with the settings page
+  open, and for a non-selected tab). The explorer colors a file an agent writes within a
+  second, and its parent folders; colors in light and dark themes are readable. Windows paths
+  (`git rev-parse` gives `C:/...`) match the tree.
+
+- Tab Back / Forward / Last tab: the ← → buttons dim when there is nowhere to go and their
+  tooltips name the keys; Ctrl+Alt+Left/Right and Ctrl+` work from the terminal (not sent to
+  the program), also on Windows (AltGr layouts) and under GNOME, whose default workspace
+  switch also uses Ctrl+Alt+Left/Right; Settings → Keyboard lists and rebinds them.
+
+- Unsaved viewer edits: opening another file asks "Save changes?"; Save writes and goes on,
+  Discard drops, Cancel keeps; Save on a file changed on disk asks first, and its Cancel
+  cancels. Closing the window (title bar button, Alt+F4) with edits in two tabs asks once
+  (Save all saves both and closes; Discard closes; Cancel keeps all). Linux and Windows.
+
 Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in for ssh:
 
 - Settings → Remote hosts: Add host, type the three fields (the row title and "Connects with"
@@ -295,7 +321,6 @@ UX review, Tier 2 (small polish, one batch):
 - "Hold Shift to select" hint (#19): on the first drag in a mouse-reporting tab per run, an
   info toast "Hold Shift to select text". One flag.
 
-- Drag group headers to reorder groups (the group menu's Move up / down does it for now).
 - PowerShell: after an app restart, a restored PowerShell tab doesn't show its last command
   (the restored-tab suggestion that bash, zsh and Git Bash tabs get). Find whether the
   command is never saved for PowerShell tabs or saved but not offered on restore.

@@ -25,6 +25,7 @@ pub(super) const DEFINITION: AgentDefinition = AgentDefinition {
         environment: &[],
         inherited_markers: &[],
         shell_after_normal_exit: false,
+        resume_flag: None,
     },
     hooks: HookProtocol {
         artifact: HookArtifactPlan {

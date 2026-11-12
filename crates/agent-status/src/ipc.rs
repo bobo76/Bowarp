@@ -39,6 +39,8 @@ const MAX_TOKEN: usize = 64;
 const MAX_DESCRIPTION: usize = 80;
 const SUBAGENT_KEY: &str = "agent=";
 const KIND_KEY: &str = "kind=";
+/// The main agent's conversation id (Claude Code's `session_id`), which resumes it.
+const CONVERSATION_KEY: &str = "conv=";
 const DESCRIPTION_KEY: &str = " desc=";
 /// How long a connection may take to send its line; a hook sends it right after connecting.
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -65,6 +67,8 @@ pub struct AgentReport {
     pub subagent_kind: Option<String>,
     /// The description the main agent gave a subagent it is starting.
     pub description: Option<String>,
+    /// The main agent's conversation id, on its own hooks.
+    pub conversation: Option<String>,
 }
 
 impl AgentReport {
@@ -168,6 +172,13 @@ fn hook_line(agent: Option<AgentId>, session: u64, at: u64, input: &[u8]) -> io:
     }
     if let Some(subagent) = subagent {
         line.push_str(&format!(" {SUBAGENT_KEY}{subagent}"));
+    } else if let Some(conversation) = agent
+        .filter(|agent| agent.definition().launch.resume_flag.is_some())
+        .and_then(|_| field("session_id"))
+        .and_then(token)
+    {
+        // Only for agents that resume by it: nothing else reads it.
+        line.push_str(&format!(" {CONVERSATION_KEY}{conversation}"));
     }
     if event_name == "SubagentStart"
         && let Some(kind) = either("agent_type", "agentType").and_then(token)
@@ -232,6 +243,8 @@ fn parse_line(line: &str) -> Option<HookMessage> {
             report.subagent = Some(subagent.to_owned());
         } else if let Some(kind) = field.strip_prefix(KIND_KEY) {
             report.subagent_kind = Some(kind.to_owned());
+        } else if let Some(conversation) = field.strip_prefix(CONVERSATION_KEY) {
+            report.conversation = Some(conversation.to_owned());
         } else if report.detail.is_none() && !field.contains('=') {
             report.detail = Some(field.to_owned());
         }
@@ -618,9 +631,29 @@ mod tests {
             HookMessage {
                 session: 3,
                 at: 42,
-                report: report("Notification", Some("idle_prompt")),
+                report: AgentReport {
+                    conversation: Some("abc".to_owned()),
+                    ..report("Notification", Some("idle_prompt"))
+                },
             }
         );
+    }
+
+    #[test]
+    fn conversation_ids_come_only_from_the_main_agent() {
+        let line = |input: &[u8]| hook_line(Some(CLAUDE), 7, 1, input).unwrap();
+        let main = line(br#"{"session_id":"1b04-cf","hook_event_name":"Stop"}"#);
+        assert_eq!(main, "7 1 Stop conv=1b04-cf\n");
+        assert_eq!(
+            parse_line(&main).unwrap().report.conversation.as_deref(),
+            Some("1b04-cf")
+        );
+        // A subagent's hooks carry the main conversation's id too: not reported twice.
+        let sub = line(br#"{"session_id":"1b04","agent_id":"a1","hook_event_name":"Stop"}"#);
+        assert_eq!(parse_line(&sub).unwrap().report.conversation, None);
+        // An id that doesn't fit a wire field is left out.
+        let odd = line(br#"{"session_id":"a b","hook_event_name":"Stop"}"#);
+        assert_eq!(odd, "7 1 Stop\n");
     }
 
     #[test]

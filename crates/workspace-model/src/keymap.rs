@@ -383,6 +383,9 @@ pub fn action_label(action: &str) -> String {
         "ToggleExplorer" => "Show or hide the file explorer",
         "SearchTabs" => "Search tabs",
         "NextAttention" => "Next tab needing attention",
+        "GoBack" => "Back to the tab selected before",
+        "GoForward" => "Forward to the tab left with Back",
+        "LastTab" => "Switch with the last tab",
         short => {
             if let Some(number) = short.strip_prefix("SelectTab") {
                 return format!("Select tab {number}");

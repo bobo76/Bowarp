@@ -12,6 +12,7 @@ fn tab(kind: SavedKind, folder: &str) -> SavedTab {
         args: Vec::new(),
         folder: Some(folder.into()),
         last_command: None,
+        conversation: None,
         meta: TabMeta::default(),
     }
 }
@@ -160,6 +161,18 @@ fn damaged_files_are_rejected() {
     ] {
         assert_eq!(TabsState::from_json(text), None, "{text}");
     }
+}
+
+#[test]
+fn conversation_round_trip() {
+    let mut state = sample();
+    state.layout.pinned[0].conversation = Some("1b042bcf-1846".into());
+    let json = state.to_json();
+    assert!(
+        json.contains(r#""conversation": "1b042bcf-1846""#),
+        "{json}"
+    );
+    assert_eq!(TabsState::from_json(&json), Some(state));
 }
 
 #[test]

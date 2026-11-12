@@ -163,6 +163,12 @@ impl AgentId {
         self.definition().launch.environment
     }
 
+    /// The arguments that resume conversation `id`, when the agent can.
+    pub fn resume_args(self, id: &str) -> Option<[String; 2]> {
+        let flag = self.definition().launch.resume_flag?;
+        Some([flag.to_owned(), id.to_owned()])
+    }
+
     pub fn activity(self) -> ActivityPolicy {
         self.definition().status.activity
     }
@@ -277,6 +283,9 @@ pub struct LaunchPlan {
     pub inherited_markers: &'static [&'static str],
     /// A clean exit replaces the tab with a shell in the same folder.
     pub shell_after_normal_exit: bool,
+    /// The flag that resumes a conversation by the id its hooks report (`session_id`);
+    /// `None` when the agent can't.
+    pub resume_flag: Option<&'static str>,
 }
 
 /// How the agent's hooks are installed and how their reports read.

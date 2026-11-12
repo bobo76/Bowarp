@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use crate::file_tree::DirEntry;
 
 /// Length of the abbreviated commit id shown for a detached HEAD.
 const SHORT_COMMIT_LEN: usize = 7;
-/// How long [`lines_added`] waits for its `git` processes in all.
+/// How long [`working_changes`] waits for its `git` processes in all.
 const GIT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long [`ignored_names`] waits for `git check-ignore`.
 const CHECK_IGNORE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -81,40 +81,176 @@ fn find_git_dir(dir: &Path) -> Option<PathBuf> {
     })
 }
 
-/// Lines added in the working tree of the repository containing `dir`: changes to tracked
-/// files, staged or not, compared with HEAD (`git diff HEAD --numstat`), plus the lines of
-/// untracked files that are not ignored. Runs `git` processes, so call it off the UI thread and
-/// only on demand; gives up after [`GIT_TIMEOUT`]. `None` when git is missing or too slow, `dir`
-/// is not in a repository, or HEAD has no commit yet.
+/// How a file differs from HEAD in the working tree (staged or not).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FileChange {
+    Modified,
+    Added,
+    Deleted,
+    Untracked,
+    /// A merge conflict to resolve.
+    Conflicted,
+}
+
+/// A changed file of the repository, with its line counts (`None` for binary files, and for
+/// untracked files too large to read or past the first [`MAX_UNTRACKED_FILES`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangedFile {
+    /// Absolute: the repository's top folder joined with git's path.
+    pub path: PathBuf,
+    pub change: FileChange,
+    pub added: Option<u64>,
+    pub removed: Option<u64>,
+}
+
+/// The files of a repository's working tree that differ from HEAD, in git's order (by path).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WorkingChanges {
+    pub files: Vec<ChangedFile>,
+}
+
+impl WorkingChanges {
+    /// Lines added in all: changes to tracked files plus the lines of untracked files.
+    pub fn lines_added(&self) -> u64 {
+        self.files.iter().filter_map(|file| file.added).sum()
+    }
+
+    /// Each changed file's change, and each folder holding one marked as
+    /// [`FileChange::Modified`], up to the repository's top folder (not included), for marking
+    /// the tree. Deleted files are left out: the tree doesn't show them.
+    pub fn marks(&self) -> HashMap<PathBuf, FileChange> {
+        let mut marks = HashMap::new();
+        for file in &self.files {
+            if file.change == FileChange::Deleted {
+                continue;
+            }
+            marks.insert(file.path.clone(), file.change);
+            for folder in file.path.ancestors().skip(1) {
+                if marks.contains_key(folder) {
+                    break;
+                }
+                marks.insert(folder.to_path_buf(), FileChange::Modified);
+            }
+        }
+        marks
+    }
+}
+
+/// Lines added in the working tree of the repository containing `dir` (see
+/// [`WorkingChanges::lines_added`]). Same conditions and cost as [`working_changes`].
 pub fn lines_added(dir: &Path) -> Option<u64> {
+    working_changes(dir).map(|changes| changes.lines_added())
+}
+
+/// The changed files of the repository containing `dir`, compared with HEAD: tracked files
+/// changed, staged or not (`git status`, `git diff HEAD --numstat`), and untracked files that
+/// are not ignored, with their lines. Runs `git` processes, so call it off the UI thread and
+/// only on demand; gives up after [`GIT_TIMEOUT`]. `None` when git is missing or too slow,
+/// `dir` is not in a repository, or HEAD has no commit yet.
+pub fn working_changes(dir: &Path) -> Option<WorkingChanges> {
     let deadline = Instant::now() + GIT_TIMEOUT;
-    let tracked = run_git(
-        dir,
+    let top = run_git(dir, &["rev-parse", "--show-toplevel"], deadline)?;
+    let top = PathBuf::from(native_separators(
+        top.trim_end_matches(['\n', '\r']),
+        cfg!(windows),
+    ));
+    let numstat = run_git(
+        &top,
         &[
             "diff",
             "HEAD",
             "--numstat",
+            "-z",
+            "--no-renames",
             "--no-ext-diff",
             "--no-textconv",
         ],
         deadline,
     )?;
-    // `:/` lists the whole repository, not only `dir`, as the diff does; paths stay relative
-    // to `dir`.
-    let untracked = run_git(
-        dir,
+    let status = run_git(
+        &top,
         &[
-            "ls-files",
-            "--others",
-            "--exclude-standard",
+            "status",
+            "--porcelain=v1",
             "-z",
-            "--",
-            ":/",
+            "--untracked-files=all",
+            "--no-renames",
         ],
         deadline,
-    )
-    .unwrap_or_default();
-    Some(numstat_added(&tracked) + untracked_lines(dir, &untracked))
+    )?;
+    let counts = numstat_counts(&numstat);
+    let mut untracked_read = 0;
+    let files = status_entries(&status)
+        .into_iter()
+        .map(|(path, change)| {
+            let full = top.join(native_separators(&path, cfg!(windows)));
+            let (added, removed) = if change == FileChange::Untracked {
+                untracked_read += 1;
+                let lines = (untracked_read <= MAX_UNTRACKED_FILES)
+                    .then(|| file_lines(&full))
+                    .flatten();
+                (lines, lines.map(|_| 0))
+            } else {
+                counts.get(path.as_str()).copied().unwrap_or((None, None))
+            };
+            ChangedFile {
+                path: full,
+                change,
+                added,
+                removed,
+            }
+        })
+        .collect();
+    Some(WorkingChanges { files })
+}
+
+/// `path` as git prints it (always `/`-separated, even on Windows) with the platform's separator,
+/// so paths built from it display like the ones the user typed.
+fn native_separators(path: &str, windows: bool) -> String {
+    if windows {
+        path.replace('/', "\\")
+    } else {
+        path.to_string()
+    }
+}
+
+/// The entries of `git status --porcelain=v1 -z --no-renames` output: (path, change). Ignored
+/// entries (`!!`) are skipped.
+fn status_entries(output: &str) -> Vec<(String, FileChange)> {
+    output
+        .split('\0')
+        .filter_map(|entry| {
+            let (code, path) = (entry.get(..2)?, entry.get(3..)?);
+            if path.is_empty() {
+                return None;
+            }
+            let (index, tree) = (code.as_bytes()[0], code.as_bytes()[1]);
+            let change = match (index, tree) {
+                (b'?', b'?') => FileChange::Untracked,
+                (b'!', b'!') => return None,
+                (b'U', _) | (_, b'U') | (b'A', b'A') | (b'D', b'D') => FileChange::Conflicted,
+                (b'D', _) | (_, b'D') => FileChange::Deleted,
+                (b'A', _) => FileChange::Added,
+                _ => FileChange::Modified,
+            };
+            Some((path.to_string(), change))
+        })
+        .collect()
+}
+
+/// (added, removed) per path in `git diff --numstat -z --no-renames` output
+/// (`<added>\t<removed>\t<path>\0`). Binary files show `-`: `None`.
+fn numstat_counts(output: &str) -> HashMap<&str, (Option<u64>, Option<u64>)> {
+    output
+        .split('\0')
+        .filter_map(|entry| {
+            let mut fields = entry.splitn(3, '\t');
+            let added = fields.next()?.parse().ok();
+            let removed = fields.next()?.parse().ok();
+            let path = fields.next().filter(|path| !path.is_empty())?;
+            Some((path, (added, removed)))
+        })
+        .collect()
 }
 
 /// The names among `entries` (a folder's listing) that git ignores in `folder`
@@ -240,24 +376,16 @@ fn wait_until(child: &mut Child, deadline: Instant) -> Option<ExitStatus> {
     }
 }
 
-/// Lines in the untracked files of `git ls-files -z` output, relative to `dir`. Like
-/// `--numstat`, binary files count as nothing; so do files too large to read.
-fn untracked_lines(dir: &Path, listing: &str) -> u64 {
-    listing
-        .split('\0')
-        .filter(|path| !path.is_empty())
-        .take(MAX_UNTRACKED_FILES)
-        .map(|path| file_lines(&dir.join(path)))
-        .sum()
-}
-
-fn file_lines(path: &Path) -> u64 {
+/// The lines of an untracked file; `None` when it is binary, too large or unreadable (like
+/// `--numstat`, which shows `-` for binary files).
+fn file_lines(path: &Path) -> Option<u64> {
     let readable = fs::symlink_metadata(path)
         .is_ok_and(|meta| meta.is_file() && meta.len() <= MAX_UNTRACKED_FILE_BYTES);
     if !readable {
-        return 0;
+        return None;
     }
-    fs::read(path).map_or(0, |content| count_lines(&content))
+    let content = fs::read(path).ok()?;
+    (!content.contains(&0)).then(|| count_lines(&content))
 }
 
 /// Lines in a text file, counting a last line without a newline; `0` for binary content (a NUL
@@ -268,15 +396,6 @@ fn count_lines(content: &[u8]) -> u64 {
     }
     let newlines = content.iter().filter(|&&byte| byte == b'\n').count() as u64;
     newlines + u64::from(content.last().is_some_and(|&byte| byte != b'\n'))
-}
-
-/// Sum of the added-lines column of `git diff --numstat` output (`<added>\t<removed>\t<path>`).
-/// Binary files show `-` and count as nothing.
-fn numstat_added(numstat: &str) -> u64 {
-    numstat
-        .lines()
-        .filter_map(|line| line.split('\t').next()?.parse::<u64>().ok())
-        .sum()
 }
 
 #[cfg(test)]

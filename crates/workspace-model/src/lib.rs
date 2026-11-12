@@ -21,6 +21,7 @@ pub mod agents;
 mod attention;
 mod clipboard_guard;
 mod close_warning;
+mod conversation;
 mod file_pane_features;
 pub mod file_tree;
 pub mod file_view;
@@ -48,6 +49,7 @@ mod search;
 mod settings;
 mod subagents;
 mod tab;
+mod tab_history;
 mod tab_list;
 mod tabs_state;
 mod time;
@@ -71,11 +73,15 @@ pub use clipboard_guard::{
 };
 pub use close_warning::{
     AgentActivity, BusyReason, BusyTab, CloseTarget, CloseWarning, TabActivity, close_warning,
+    unsaved_edits_warning,
 };
+pub use conversation::Conversation;
 pub use file_pane_features::{
     FileLinkAction, FilePaneFeatures, PaneChange, PaneEntry, pane_change,
 };
-pub use git::{GitHead, ignored_names, lines_added};
+pub use git::{
+    ChangedFile, FileChange, GitHead, WorkingChanges, ignored_names, lines_added, working_changes,
+};
 pub use history::{
     CommandHistory, HistoryEntry, HistoryScope, HistorySelection, append_entry, clear_history_file,
     entry_line, is_recordable, remove_command,
@@ -117,6 +123,7 @@ pub use settings::{
 };
 pub use subagents::{Subagent, SubagentEvent, Subagents};
 pub use tab::{TabColor, TabMeta};
+pub use tab_history::TabHistory;
 pub use tab_list::{ListMove, list_entry, list_step, listed_tabs};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};
 pub use wheel::{WheelScroll, notch_lines};

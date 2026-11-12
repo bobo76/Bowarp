@@ -168,6 +168,7 @@ pub fn saved_tab(spec: &LaunchSpec, folder: Option<PathBuf>, meta: TabMeta) -> S
             .filter(utf8)
             .or_else(|| spec.cwd.clone().filter(utf8)),
         last_command: None,
+        conversation: None,
         meta,
     }
 }

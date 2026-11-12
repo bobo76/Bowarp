@@ -3,6 +3,7 @@ mod clipboard_notice;
 mod link_hover;
 mod pointer;
 mod remote;
+mod resume;
 mod search;
 
 use std::borrow::Cow;
@@ -39,9 +40,9 @@ use term_core::{
 use workspace_model::file_tree::{self, ShellSyntax, TypeError, cd_command};
 use workspace_model::{
     ActivityPolicy, AgentActivity, AgentId, BusyReason, COMMAND_LABEL_CHARS, ClipboardGuard,
-    InPlaceAgent, Leftover, Location, ProgressState, RUNNING_AFTER, RunEnd, RunEndOutcome,
-    RunningBadge, Shortcut, Subagent, SubagentEvent, Subagents, TabActivity, TabAtEnd,
-    WorkspaceFeatures, agents, command_label, running_badge, shows_exit_toast,
+    Conversation, InPlaceAgent, Leftover, Location, ProgressState, RUNNING_AFTER, RunEnd,
+    RunEndOutcome, RunningBadge, Shortcut, Subagent, SubagentEvent, Subagents, TabActivity,
+    TabAtEnd, WorkspaceFeatures, agents, command_label, running_badge, shows_exit_toast,
 };
 
 use self::agent_tracker::AgentTracker;
@@ -49,6 +50,7 @@ use self::link_hover::LinkHover;
 use self::pointer::PointerState;
 use self::remote::Disconnect;
 pub use self::remote::RemoteAction;
+pub use self::resume::{ResumeConversation, ResumeFailed};
 use crate::file_viewer::FilePlace;
 use crate::history;
 use crate::history_popup::HistoryPopup;
@@ -226,6 +228,8 @@ pub struct TerminalView {
     agent: Option<AgentTracker>,
     /// The agent's running subagents, from its hooks.
     subagents: Subagents,
+    /// The agent's conversation, saved with the tab to resume it at the next start.
+    conversation: Conversation,
     mode: AgentModeState,
     /// The agent finished a turn while the tab was hidden; cleared when it is shown. Kept
     /// after an in-place agent's run ends (the shell tab shows Ready for review).
@@ -447,6 +451,7 @@ impl TerminalView {
             shell: launcher::shell_syntax(spec),
             agent: (reporting == StatusReporting::Hooks).then(|| AgentTracker::new(Instant::now())),
             subagents: Subagents::default(),
+            conversation: Conversation::default(),
             mode: spec
                 .kind
                 .agent()
@@ -750,6 +755,7 @@ impl TerminalView {
         let Some(agent) = self.status_kind().agent() else {
             return;
         };
+        self.track_conversation(report, cx);
         let event = report.decode(agent);
         if let Some(subagent_event) = report.subagent_event(agent) {
             self.apply_subagent_event(agent, subagent_event, event, at, cx);
@@ -1080,6 +1086,10 @@ impl TerminalView {
         }
         self.subagents.clear();
         cx.emit(TabChanged);
+        if self.resume_failed(code) {
+            cx.emit(ResumeFailed);
+            return;
+        }
         // A failed agent keeps its last screen, so its error can be read.
         if self.kind().has_shell_fallback() && code == Some(0) {
             cx.emit(AgentExited);
@@ -1343,6 +1353,8 @@ impl EventEmitter<AgentNotice> for TerminalView {}
 impl EventEmitter<OpenFileRequest> for TerminalView {}
 impl EventEmitter<LastCommandChanged> for TerminalView {}
 impl EventEmitter<RemoteAction> for TerminalView {}
+impl EventEmitter<ResumeConversation> for TerminalView {}
+impl EventEmitter<ResumeFailed> for TerminalView {}
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -1397,6 +1409,7 @@ impl Render for TerminalView {
         let exit_banner = self.exit_banner(cx);
         let search_bar = self.render_terminal_search(cx);
         let clipboard_banner = self.clipboard_banner(cx);
+        let resume_banner = self.resume_banner(cx);
         // The banner sits below the grid, which shrinks by its height, so no output is hidden.
         div()
             .size_full()
@@ -1406,6 +1419,7 @@ impl Render for TerminalView {
             .flex()
             .flex_col()
             .children(clipboard_banner)
+            .children(resume_banner)
             .children(search_bar)
             .child(
                 view.relative()

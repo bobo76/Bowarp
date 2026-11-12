@@ -5,11 +5,30 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Drag a group header to move the group, with its tabs, in the sidebar.
+- Tab names, pins, order, groups and colors, and opened and closed tabs, are saved as they
+  change instead of only when the window closes, so a crash or a killed session keeps them.
+- A second window (started while another runs) says that its tabs are not saved or restored.
+- A restored Claude Code tab offers to resume the conversation it had when the window closed
+  (Resume it / Start new, in a bar above the terminal); a conversation Claude Code no longer
+  has starts a new one with a warning.
+- See what the agent changed: the tab's hover card lists the changed files under `+N` (with
+  their status and line counts), and clicking one opens it in the viewer. The file explorer
+  colors changed files and the folders holding them.
+- Back and Forward through the tabs you selected, like a browser: ← → buttons in the sidebar
+  header and Ctrl+Alt+Left / Ctrl+Alt+Right. Ctrl+` switches with the last tab selected.
+  Closed tabs drop out of the history. All three can be rebound on Settings → Keyboard.
+- File viewer: "Discard changes?" is now "Save changes?" with Save (the default, Enter),
+  Discard and Cancel, when opening another file or closing the viewer or the tab.
+- Closing the window asks about files with unsaved edits in the viewer (Save all / Discard /
+  Cancel) instead of dropping the edits.
 - Remote tabs: a session whose scrollback is too large to send at once (dense truecolor
   output) attaches again with its oldest scrollback lines left out, instead of disconnecting
   every tab on that host. The server no longer keeps a closed session's screen in memory.
 - Holding Ctrl over a network path (`\\host\share\…`) in terminal output no longer freezes the
   window on Windows while it tries to reach that host; such paths are not links.
+- Holding Ctrl over a path on a network drive or mount that does not answer (a mapped drive,
+  NFS, sshfs) no longer freezes the window: the file is looked up in the background.
 - Windows: deleting a folder link or junction in the file explorer works (it removed nothing
   and showed "permission denied"); the folder it points to is kept.
 

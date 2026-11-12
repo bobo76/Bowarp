@@ -15,12 +15,19 @@ fn wait_for_exit(session: &term_core::Session) {
 #[test]
 fn default_bindings_name_workspace_actions() {
     let bindings = default_bindings();
-    assert_eq!(bindings.len(), 20);
+    assert_eq!(bindings.len(), 23);
     assert!(
         bindings
             .iter()
             .all(|shortcut| shortcut.action.starts_with("workspace::"))
     );
+    for shortcut in &bindings {
+        assert!(
+            gpui_kit::Keystroke::parse(&shortcut.keys).is_ok(),
+            "{}",
+            shortcut.keys
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -72,6 +79,10 @@ fn last_command_events_and_history_deletion_are_flushed_with_the_final_snapshot(
     let workspace = captured.borrow().clone().unwrap();
     let mut cx = VisualTestContext::from_window(window.into(), cx);
     cx.run_until_parked();
+    // Opening a tab saves the layout at once: one snapshot per tab opened.
+    let next = || snapshots.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!(next().layout.tabs().len(), 1);
+    assert_eq!(next().layout.tabs().len(), 2);
     cx.update(|_, cx| {
         workspace.update(cx, |workspace, cx| {
             for tab in &workspace.tabs {
@@ -147,6 +158,120 @@ fn last_command_events_and_history_deletion_are_flushed_with_the_final_snapshot(
     // A retained workspace must not keep writing after the lock can change owners.
     workspace.read_with(&cx, |workspace, cx| workspace.save_tabs(cx));
     assert!(snapshots.try_recv().is_err());
+}
+
+#[gpui::test]
+fn a_guest_window_says_its_tabs_are_not_saved(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("guest-notice", cx);
+    let workspace = h.workspace.clone();
+    let set_restore = |h: &mut PanesHarness, on: bool| {
+        h.cx.update(|_, cx| {
+            settings_file::update(cx, |settings| {
+                settings.restore_tabs = FeatureSwitch::new(on);
+            })
+        });
+    };
+    let note = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| workspace.note_guest_window(window, cx));
+        });
+        h.cx.run_until_parked();
+        h.cx.update(|window, cx| window.notifications(cx).len())
+    };
+    // "Restore previous tabs" off: no window saves tabs, nothing to say.
+    set_restore(&mut h, false);
+    assert_eq!(note(&mut h), 0);
+    set_restore(&mut h, true);
+    assert_eq!(note(&mut h), 1);
+}
+
+/// Arranging tabs saves at once, not only at window close: a crash keeps the arrangement.
+#[cfg(unix)]
+#[gpui::test]
+fn arranging_tabs_saves_them_at_once(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::VisualTestContext;
+    use gpui_kit::component::Root;
+    use std::cell::RefCell;
+    use std::sync::mpsc;
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        settings_file::init_in_memory(cx);
+        crate::terminal_element::init(cx);
+        crate::terminal_view::init(cx);
+        init(cx);
+    });
+    let (saved, snapshots) = mpsc::channel();
+    let writer = Rc::new(tabs_file::TabsWriter::for_test(move |state| {
+        saved.send(state).unwrap();
+    }));
+    let captured = Rc::new(RefCell::new(None));
+    let capture = captured.clone();
+    let window = cx.add_window(move |window, cx| {
+        let (_, messages) = futures::channel::mpsc::unbounded();
+        let workspace =
+            cx.new(|cx| WorkspaceView::new(Rc::from([]), None, messages, writer, window, cx));
+        workspace.update(cx, |workspace, cx| {
+            let spec = LaunchSpec::new(
+                SessionKind::Shell,
+                Some("/bin/sh".into()),
+                vec!["-c".into(), "exit 0".into()],
+                None,
+            );
+            for _ in 0..2 {
+                workspace.open_tab(spec.clone(), window, cx).unwrap();
+                wait_for_exit(&workspace.tabs.last().unwrap().view.read(cx).session);
+            }
+        });
+        *capture.borrow_mut() = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let workspace = captured.borrow().clone().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    let last = || {
+        let mut state = snapshots.recv_timeout(Duration::from_secs(10)).unwrap();
+        while let Ok(newer) = snapshots.recv_timeout(Duration::from_millis(100)) {
+            state = newer;
+        }
+        state
+    };
+    assert_eq!(last().layout.tabs().len(), 2);
+    let ids: Vec<u64> = workspace.read_with(&cx, |workspace, _| {
+        workspace.tabs.iter().map(|tab| tab.id).collect()
+    });
+    let command = |cx: &mut VisualTestContext, id: u64, command: TabCommand| {
+        cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.run_tab_command(id, command, window, cx)
+            })
+        });
+        cx.run_until_parked();
+    };
+
+    command(&mut cx, ids[1], TabCommand::SetColor(Some(TabColor::Pink)));
+    assert_eq!(last().layout.tabs()[1].meta.color, Some(TabColor::Pink));
+    command(&mut cx, ids[1], TabCommand::TogglePin);
+    assert_eq!(last().layout.pinned.len(), 1, "pinned");
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.start_rename(RenameTarget::Tab(ids[0]), RenameOrigin::Menu, window, cx);
+            let input = workspace.renaming.as_ref().unwrap().input.clone();
+            input.update(cx, |input, cx| input.set_value("api", window, cx));
+            workspace.commit_rename(window, cx);
+        })
+    });
+    cx.run_until_parked();
+    let state = last();
+    assert!(
+        state
+            .layout
+            .tabs()
+            .iter()
+            .any(|tab| tab.meta.custom_name.as_deref() == Some("api"))
+    );
+    command(&mut cx, ids[0], TabCommand::Close);
+    assert_eq!(last().layout.tabs().len(), 1, "closed");
 }
 
 /// A window with one tab, an in-memory settings file and a text file to open.
@@ -1111,6 +1236,94 @@ fn busy_tabs_are_asked_about_before_closing(cx: &mut gpui_kit::TestAppContext) {
 }
 
 #[gpui::test]
+fn back_forward_and_last_tab_follow_the_selected_tabs(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("tab-history", cx);
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            for _ in 0..3 {
+                let spec = workspace.tabs[0].spec.clone();
+                workspace.open_tab(spec, window, cx).unwrap();
+                wait_for_exit(&workspace.tabs.last().unwrap().view.read(cx).session);
+            }
+        })
+    });
+    h.cx.run_until_parked();
+    let ids: Vec<u64> = workspace.read_with(&h.cx, |workspace, _| {
+        workspace.tabs.iter().map(|tab| tab.id).collect()
+    });
+    let run = |h: &mut PanesHarness,
+               f: fn(&mut WorkspaceView, &mut Window, &mut Context<WorkspaceView>)| {
+        h.cx.update(|window, cx| workspace.update(cx, |workspace, cx| f(workspace, window, cx)));
+        h.cx.run_until_parked();
+        h.workspace
+            .read_with(&h.cx, |workspace, _| workspace.active_tab().unwrap().id)
+    };
+    let select = |h: &mut PanesHarness, id: u64| {
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                let index = workspace.tab_index(id).unwrap();
+                workspace.activate(index, window, cx);
+            })
+        });
+    };
+    select(&mut h, ids[0]);
+    select(&mut h, ids[2]);
+    select(&mut h, ids[3]);
+    assert_eq!(run(&mut h, WorkspaceView::go_back), ids[2]);
+    assert_eq!(run(&mut h, WorkspaceView::go_back), ids[0]);
+    assert_eq!(run(&mut h, WorkspaceView::go_forward), ids[2]);
+    // Last tab switches between two tabs.
+    assert_eq!(run(&mut h, WorkspaceView::last_tab), ids[0]);
+    assert_eq!(run(&mut h, WorkspaceView::last_tab), ids[2]);
+
+    // A closed tab leaves the history: Back skips it.
+    select(&mut h, ids[1]);
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let index = workspace.tab_index(ids[2]).unwrap();
+            workspace.close_tab(index, window, cx);
+        })
+    });
+    h.cx.run_until_parked();
+    assert_eq!(run(&mut h, WorkspaceView::go_back), ids[0]);
+}
+
+#[gpui::test]
+fn closing_the_window_asks_about_unsaved_viewer_edits(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("close-unsaved", cx);
+    let workspace = h.workspace.clone();
+    let allow_close_or_ask = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| workspace.allow_close_or_ask(window, cx))
+        })
+    };
+    let dialog = |h: &mut PanesHarness| h.cx.update(|window, cx| window.has_active_dialog(cx));
+    assert!(allow_close_or_ask(&mut h), "nothing unsaved: no question");
+
+    let viewer = h.open_dirty_viewer();
+    assert!(!allow_close_or_ask(&mut h));
+    h.cx.run_until_parked();
+    assert!(dialog(&mut h));
+    // Asked once, however often the window manager repeats its close.
+    assert!(!allow_close_or_ask(&mut h));
+    h.cx.run_until_parked();
+    h.cx.simulate_keystrokes("escape");
+    h.cx.run_until_parked();
+    assert!(!dialog(&mut h), "one question only");
+    assert!(h.cx.update(|_, cx| viewer.upgrade().unwrap().read(cx).is_dirty()));
+
+    // Cancelled: a new close asks again.
+    assert!(!allow_close_or_ask(&mut h));
+    h.cx.run_until_parked();
+    assert!(dialog(&mut h));
+    h.cx.simulate_keystrokes("escape");
+    h.cx.run_until_parked();
+    h.mark_dirty(&viewer, false);
+    assert!(allow_close_or_ask(&mut h));
+}
+
+#[gpui::test]
 fn settings_page_hides_the_viewer_and_opening_a_file_shows_the_tab(
     cx: &mut gpui_kit::TestAppContext,
 ) {
@@ -1527,6 +1740,93 @@ fn settings_page_stays_after_the_last_tab_and_closing_it_shows_the_empty_state(
         assert!(!workspace.settings.shows_page());
         assert!(workspace.empty_focus.is_focused(window));
     });
+}
+
+/// A restored Claude Code tab offers its conversation; Resume restarts the agent with the
+/// resume flag, and a resume the agent fails at once (here `exit 1`, like a conversation it no
+/// longer has) starts it again on a new one. `sh` stands in for the agent.
+#[cfg(unix)]
+#[gpui::test]
+fn a_restored_agent_tab_offers_to_resume_its_conversation(cx: &mut gpui_kit::TestAppContext) {
+    use workspace_model::agents::CLAUDE;
+    use workspace_model::{SavedItem, SavedKind, SavedLayout, SavedTab};
+
+    let mut h = PanesHarness::new("resume", cx);
+    let workspace = h.workspace.clone();
+    let saved = SavedTab {
+        kind: SavedKind::Agent(CLAUDE),
+        program: Some("/bin/sh".into()),
+        args: vec!["-c".into(), "exit 1".into()],
+        folder: Some(h.folder.clone()),
+        last_command: None,
+        conversation: Some("1b04-cf".into()),
+        meta: TabMeta::default(),
+    };
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let layout = SavedLayout {
+                pinned: Vec::new(),
+                items: vec![SavedItem::Tab(saved)],
+            };
+            let state = TabsState {
+                layout,
+                selected: None,
+            };
+            assert!(workspace.restore(state, window, cx));
+        })
+    });
+    let agent_view = |h: &mut PanesHarness| {
+        h.workspace.read_with(&h.cx, |workspace, _| {
+            let tab = workspace
+                .tabs
+                .iter()
+                .find(|tab| tab.spec.kind == SessionKind::Agent(CLAUDE))
+                .unwrap();
+            (tab.view.clone(), tab.spec.args.clone())
+        })
+    };
+    let wait = |h: &mut PanesHarness, view: &Entity<TerminalView>| {
+        h.cx.update(|_, cx| wait_for_exit(&view.read(cx).session));
+        h.cx.run_until_parked();
+    };
+    let (restored, _) = agent_view(&mut h);
+    wait(&mut h, &restored);
+    h.cx.update(|_, cx| {
+        let view = restored.read(cx);
+        assert_eq!(view.resume_offer_for_test(), Some("1b04-cf"));
+        assert_eq!(
+            view.conversation(),
+            Some("1b04-cf"),
+            "kept if left unanswered"
+        );
+    });
+
+    // The restart happens as the answer is given; its exit is read only once parked.
+    h.cx.update(|_, cx| restored.update(cx, |view, cx| view.answer_resume(true, cx)));
+    let (resumed, args) = agent_view(&mut h);
+    assert_ne!(resumed, restored, "the agent started again");
+    assert_eq!(
+        args,
+        ["-c", "exit 1"],
+        "the tab keeps its launch without the flag"
+    );
+    h.cx.update(|_, cx| {
+        let view = resumed.read(cx);
+        assert_eq!(view.resume_offer_for_test(), None);
+        assert_eq!(view.conversation(), Some("1b04-cf"));
+    });
+
+    // It exits at once: a new conversation starts in its place.
+    wait(&mut h, &resumed);
+    let (fresh, _) = agent_view(&mut h);
+    assert_ne!(fresh, resumed);
+    wait(&mut h, &fresh);
+    h.cx.update(|_, cx| assert_eq!(fresh.read(cx).conversation(), None));
+    assert_eq!(
+        agent_view(&mut h).0,
+        fresh,
+        "a plain failure isn't a failed resume"
+    );
 }
 
 #[gpui::test]

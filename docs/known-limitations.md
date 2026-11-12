@@ -9,7 +9,7 @@ entry when the limitation is lifted.
   or its agent is Working or Waiting. Never busy: cmd tabs (no `C` mark), shells without the
   integration's marks (a shell started inside a tab, ssh), jobs left running in the
   background (`&`), Copilot before its first progress report and agents without status
-  hooks. Closing the window still drops unsaved file viewer edits without asking.
+  hooks.
 - In-app notifications off drops only the agent status toasts (Needs attention / Waiting for
   permission / Waiting for your reply, Ready for review, Agent finished on a clean exit); a
   toast already shown stays until it hides. A background agent that exits with a nonzero or
@@ -115,8 +115,9 @@ entry when the limitation is lifted.
   commands.
 - Last-command saves go through a background writer: a crash can lose queued or in-flight
   updates, including a command just deleted from HISTORY.
-- Tab names, pins, order, groups and colors reach `tabs.json` only at window close or a
-  shell's next last-command change: a crash loses those made since.
+- Tab names, pins, order, groups, colors, opened and closed tabs are saved as they change;
+  each tab's folder and conversation only with the next such change, a last command or the
+  window closing, so a crash can bring a tab back in an earlier folder.
 - Restore previous tabs off: `tabs.json` is kept unread and unwritten (the one exception:
   "Clear saved session commands" and forgetting a command remove just the matching
   `last_command` values from it, on the tabs writer thread), so the next
@@ -164,6 +165,14 @@ entry when the limitation is lifted.
   leave the terminal and viewer below their usual minimums), and saved in pixels
   (`file_explorer_width`) with the same rules as the viewer width: once when the drag ends,
   not on the settings page, not while the file is broken, other instances after a reload.
+- Resuming a restored Claude Code tab: Claude Code starts on a new conversation while the bar
+  asks, and Resume restarts it (the new one, still empty, is dropped). The bar has no keyboard
+  shortcut. The conversation is saved with the tab's next layout change, last command or the
+  window closing, so after a crash an earlier conversation may be offered. Copilot CLI tabs can't resume.
+- File explorer colors of changed files: git is asked again when an open folder's entries or
+  files change, or the tab's folder changes; a commit, checkout or stash made while nothing
+  in the open folders is written shows once something is, or the tab is selected again. A file
+  changed only in a folder that is not expanded colors its folders, not itself, until shown.
 - File explorer dimming of git-ignored entries: git is asked again for a folder only when it is
   read again (expanded, or its entries change), and for every open folder when a `.gitignore`
   in one of them changes; a change to `.git/info/exclude` or the global excludes file, or a
@@ -175,7 +184,7 @@ entry when the limitation is lifted.
   tab's viewer starts empty after turning it on again (the explorer stays hidden until its
   button or Ctrl+Shift+| is used). `tabs.json` never held a tab's open file, and no file
   associations are saved anywhere, so nothing of either is kept. The unsaved-edit prompt is
-  the viewer's Discard/Cancel one (there is no Save choice), asked once per file; a pending
+  the viewer's Save/Discard/Cancel one, asked once per file; a pending
   chain blocks a second one, and Cancel (or Esc) ends it.
   The switch is written off and then back on while the prompt is open, so
   settings.json briefly reads off (a second running instance or a reload may read it), a hand
