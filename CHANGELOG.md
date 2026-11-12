@@ -5,6 +5,11 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.3.1
+
+- Git Bash: accepting the restored last command (Right arrow) after a restart no longer
+  sometimes loses its first letter. Tabs now start at the terminal's size instead of 80x24.
+
 ## 0.3.0
 
 - Drag a group header to move the group, with its tabs, in the sidebar.
@@ -31,8 +36,6 @@ omitted unless they affect how the app is used.
   window on Windows while it tries to reach that host; such paths are not links.
 - Holding Ctrl over a path on a network drive or mount that does not answer (a mapped drive,
   NFS, sshfs) no longer freezes the window: the file is looked up in the background.
-- Git Bash: accepting the restored last command (Right arrow) after a restart no longer
-  sometimes loses its first letter. Tabs now start at the terminal's size instead of 80x24.
 - Windows: deleting a folder link or junction in the file explorer works (it removed nothing
   and showed "permission denied"); the folder it points to is kept.
 - Git page (title bar button): see what changed in the repositories the tabs are in, stage or
