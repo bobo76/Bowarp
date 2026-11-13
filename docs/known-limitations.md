@@ -18,6 +18,12 @@ entry when the limitation is lifted.
   single-line paste outside bracketed paste can still hold control bytes (ESC sequences such as
   keypad Enter, or a control key the shell binds to accept-line) that run it, without a
   question.
+- The terminal's right-click menu offers Open link / Copy link for a path only when the file
+  lookup answers within 300 ms (a slow network mount opens the menu without them). Copy link
+  copies a file link's resolved path, not the text as printed (`:42` is dropped). Clear
+  scrollback on a remote tab clears this window's copy only: the server keeps its scrollback,
+  and a reconnect shows it again. Clear scrollback is unavailable while a full-screen program
+  (vim, less) shows; leave it first.
 - In-app notifications off drops only the agent status toasts (Needs attention / Waiting for
   permission / Waiting for your reply, Ready for review, Agent finished on a clean exit); a
   toast already shown stays until it hides. A background agent that exits with a nonzero or

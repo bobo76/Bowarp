@@ -1,5 +1,6 @@
 mod agent_tracker;
 mod clipboard_notice;
+mod context_menu;
 mod link_hover;
 mod paste;
 mod pointer;
@@ -48,6 +49,7 @@ use workspace_model::{
 };
 
 use self::agent_tracker::AgentTracker;
+use self::context_menu::TerminalMenu;
 use self::link_hover::LinkHover;
 use self::pointer::PointerState;
 use self::remote::Disconnect;
@@ -88,6 +90,8 @@ actions!(
         PasteOrSend,
         Find,
         CloseFind,
+        SelectAll,
+        ClearScrollback,
         AllowClipboard,
         DenyClipboard
     ]
@@ -122,6 +126,9 @@ fn default_bindings() -> Vec<Shortcut> {
             &AllowClipboard,
         ),
         bind(&format!("ctrl-shift-{DENY_CLIPBOARD_KEY}"), &DenyClipboard),
+        // No key by default: every free key is one a program may want.
+        Shortcut::unbound(SelectAll.name(), Some(KEY_CONTEXT)),
+        Shortcut::unbound(ClearScrollback.name(), Some(KEY_CONTEXT)),
     ]
 }
 
@@ -286,6 +293,8 @@ pub struct TerminalView {
     /// `None` when the shell has none.
     cd_file: Option<PathBuf>,
     pointer: PointerState,
+    /// The right-click menu (`context_menu.rs`).
+    context_menu: TerminalMenu,
     pub(crate) scrollbar: ScrollbarState,
     pub(crate) link_hover: LinkHover,
     /// For links to `~/` paths.
@@ -505,6 +514,7 @@ impl TerminalView {
                 .get(shell_integration::CD_FILE_ENV)
                 .map(PathBuf::from),
             pointer: PointerState::default(),
+            context_menu: TerminalMenu::default(),
             scrollbar: ScrollbarState::default(),
             link_hover: LinkHover::default(),
             home: std::env::home_dir(),
@@ -719,6 +729,7 @@ impl TerminalView {
         self.visible = false;
         self.history_popup = None;
         self.link_hover = LinkHover::default();
+        self.close_context_menu();
         // A wakeup sent before the next paint would never be acknowledged by `prepaint`.
         self.session.ack_wakeup();
     }
@@ -1224,7 +1235,35 @@ impl TerminalView {
         true
     }
 
+    fn on_select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_all(cx);
+    }
+
+    /// Select the scrollback and the screen; on Linux the selection is also the primary one,
+    /// as after a mouse selection.
+    fn select_all(&mut self, cx: &mut Context<Self>) {
+        write_primary(self.session.select_all(), cx);
+        cx.notify();
+    }
+
+    fn on_clear_scrollback(&mut self, _: &ClearScrollback, _: &mut Window, cx: &mut Context<Self>) {
+        self.clear_scrollback(cx);
+    }
+
+    /// Drop the scrollback: the view goes to the bottom, search matches in it go now (not
+    /// after the output throttle), and the link under a held Ctrl is looked at again.
+    fn clear_scrollback(&mut self, cx: &mut Context<Self>) {
+        self.session.clear_scrollback();
+        self.search.refresh_now(&mut self.session.lock_term());
+        self.refresh_link_hover(cx);
+        cx.notify();
+    }
+
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        // The open menu has the keyboard, and its keys bubble up here: not for the program.
+        if self.context_menu.is_open() {
+            return;
+        }
         let consumed = self.restart_on_enter(event, cx)
             || self.handle_history_key(&event.keystroke, cx)
             || self.handle_scrollback_shortcut(&event.keystroke, cx)
@@ -1372,6 +1411,16 @@ impl TerminalView {
     }
 }
 
+/// Make `text` the primary selection, as a mouse selection does (Linux only).
+fn write_primary(text: Option<String>, cx: &mut App) {
+    #[cfg(target_os = "linux")]
+    if let Some(text) = text.filter(|text| !text.is_empty()) {
+        cx.write_to_primary(ClipboardItem::new_string(text));
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (text, cx);
+}
+
 fn is_shift_only(modifiers: &Modifiers) -> bool {
     modifiers.shift && !modifiers.control && !modifiers.alt
 }
@@ -1423,6 +1472,8 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::on_paste_or_send))
             .on_action(cx.listener(Self::on_allow_clipboard))
             .on_action(cx.listener(Self::on_deny_clipboard))
+            .on_action(cx.listener(Self::on_select_all))
+            .on_action(cx.listener(Self::on_clear_scrollback))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
@@ -1436,6 +1487,7 @@ impl Render for TerminalView {
             .on_mouse_up_out(MouseButton::Right, cx.listener(Self::on_mouse_up));
 
         let history_popup = self.render_history_popup(cx);
+        let context_menu = self.render_context_menu();
         let exit_banner = self.exit_banner(cx);
         let search_bar = self.render_terminal_search(cx);
         let clipboard_banner = self.clipboard_banner(cx);
@@ -1457,7 +1509,8 @@ impl Render for TerminalView {
                     .flex_col()
                     .child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
                     .children(exit_banner)
-                    .children(history_popup),
+                    .children(history_popup)
+                    .children(context_menu),
             )
     }
 }

@@ -121,6 +121,7 @@ refuses), an error toast says why and stays until dismissed.
 | Esc (while terminal search is open) | Close search and return to the terminal |
 | Shift+PageUp / Shift+PageDown | Scroll the history by a page |
 | Click a link | Open it (use Ctrl/Cmd+click when the program tracks the mouse) |
+| Right-click | Terminal menu (Shift+right-click when the program tracks the mouse) |
 
 Pasting text with a line break asks first ("Paste 3 lines? They will run as commands.", with a
 preview) when the program hasn't turned on bracketed paste: each line break then reaches it as
@@ -153,6 +154,13 @@ removes highlights without resetting the scroll position. Results update as outp
 and the terminal resizes. Search cannot retrieve output already evicted from scrollback or
 transcript text held internally by a program; alternate-screen programs search their current
 screen.
+
+Right-clicking the terminal opens its menu: Copy (only with a selection), Paste (asking first
+like the keys), Select all, Search and Clear scrollback, each with its shortcut when one is
+bound. On a link it starts with Open link and Copy link (a file link copies its path). The
+selection stays. Select all and Clear scrollback have no default key; bind one with
+`SelectAll` / `ClearScrollback` (see Keyboard shortcuts). When a program tracks the mouse, the
+right button goes to it; Shift+right-click opens the menu.
 
 Links in the output are underlined in blue with a hand cursor on hover. Click to open a URL
 (`http`, `https`, `ftp`) or an OSC 8 hyperlink in the browser, or a file path or `file://` URL
@@ -806,9 +814,11 @@ paste with Ctrl+Shift+V only:
 
 Keys are written as GPUI keystrokes: modifiers `ctrl`, `alt`, `shift`, `super` (Windows key)
 joined by `-` to a key (`a`, `f5`, `tab`, `escape`, `insert`, `pageup`; a capital letter
-adds Shift: `ctrl-V` is `ctrl-shift-v`); a space separates the keystrokes of a sequence (`ctrl-k ctrl-c`). Actions: `Copy`, `CopyOrSend`,
-`Paste`, `PasteOrSend`, `Find`, `CloseFind`, `AllowClipboard`, `DenyClipboard` (in the
-terminal); `NewTab`, `DuplicateTab`, `CloseTab`, `NextTab`, `PreviousTab`, `SelectTab1` to
+adds Shift: `ctrl-V` is `ctrl-shift-v`); a space separates the keystrokes of a sequence
+(`ctrl-k ctrl-c`). Actions: `Copy`, `CopyOrSend`, `Paste`, `PasteOrSend`, `Find`, `CloseFind`,
+`AllowClipboard`, `DenyClipboard`, `SelectAll`, `ClearScrollback` (in the terminal; the last
+two have no default key); `NewTab`, `DuplicateTab`, `CloseTab`, `NextTab`, `PreviousTab`,
+`SelectTab1` to
 `SelectTab9`, `ToggleSidebar`, `ToggleExplorer`, `SearchTabs`, `NextAttention`,
 `ToggleFullScreen` (anywhere in the window); `RenameTab` (only while the tab list has the
 keyboard). `terminal::Paste` and `workspace::NewTab` also

@@ -167,6 +167,14 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   trailing newline counts: it runs at once). No switch and no "don't ask again": it is a
   safeguard. [pipeline]
 
+- **Terminal right-click menu**: Copy, Paste, Select all, Search, Clear scrollback, and on a
+  link (found under the pointer, no Ctrl needed) Open link and Copy link first, then a
+  separator. Right-click keeps the selection. Shortcuts shown are the bound keys; Select all
+  and Clear scrollback get new actions with no default key (bindable in the settings file),
+  so no key is taken from programs. With mouse reporting on, plain right-click still goes to
+  the program and Shift+right-click opens the menu. Paste goes through the paste question.
+  [pipeline]
+
 ## Window attention and title
 
 - **OS attention covers every tab, the selected one included**: a tab turning Needs attention

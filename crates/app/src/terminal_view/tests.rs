@@ -221,7 +221,16 @@ fn repeated_hooks_titles_and_output_do_not_repeat_agent_notices(cx: &mut gpui_ki
 #[test]
 fn default_bindings_name_terminal_actions() {
     let bindings = default_bindings();
-    assert_eq!(bindings.len(), 9);
+    assert_eq!(bindings.len(), 11);
+    let keyless: Vec<_> = bindings
+        .iter()
+        .filter(|shortcut| shortcut.keys.is_empty())
+        .map(|shortcut| shortcut.action)
+        .collect();
+    assert_eq!(
+        keyless,
+        ["terminal::SelectAll", "terminal::ClearScrollback"]
+    );
     assert!(
         bindings
             .iter()
@@ -1328,4 +1337,167 @@ fn a_middle_click_paste_whose_lines_would_run_asks_first(cx: &mut gpui_kit::Test
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert_eq!(*typed.lock().unwrap(), b"a\rb\r".to_vec());
+}
+
+#[gpui::test]
+fn right_click_opens_the_menu_unless_the_program_tracks_the_mouse(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use gpui_kit::component::{Root, WindowExt};
+    use gpui_kit::{Modifiers, MouseButton, point, px};
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        settings_file::init_in_memory(cx);
+        crate::terminal_element::init(cx);
+    });
+    let spec = LaunchSpec::new(SessionKind::Shell, Some("sh".into()), Vec::new(), None);
+    let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (session, feed) = Session::remote(
+        1,
+        SessionKind::Shell,
+        TermDimensions::new(40, 5),
+        Palette::default(),
+        Arc::new(|_| {}),
+        Box::new(RecordingLink(typed.clone())),
+    );
+    let view = cx.new(|cx| TerminalView::from_test_session(session, &spec, cx));
+    let root = view.clone();
+    let window = cx.add_window(move |window, cx| Root::new(root, window, cx));
+    let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+    let right_click = |cx: &mut gpui_kit::VisualTestContext, modifiers: Modifiers| {
+        let at = point(px(20.0), px(20.0));
+        cx.simulate_mouse_down(at, MouseButton::Right, modifiers);
+        cx.simulate_mouse_up(at, MouseButton::Right, modifiers);
+        cx.run_until_parked();
+    };
+    let menu_open = |cx: &mut gpui_kit::VisualTestContext| {
+        cx.update(|_, cx| view.read(cx).context_menu.is_open())
+    };
+    let terminal_focused = |cx: &mut gpui_kit::VisualTestContext| {
+        cx.update(|window, cx| view.read(cx).focus_handle.is_focused(window))
+    };
+    let take = |typed: &Arc<std::sync::Mutex<Vec<u8>>>| std::mem::take(&mut *typed.lock().unwrap());
+    let handle = view.read_with(&cx, |view, _| view.focus_handle.clone());
+    cx.update(|window, cx| handle.focus(window, cx));
+    feed.output(b"hello");
+    view.update(&mut cx, |view, _| {
+        view.session.select_all();
+    });
+
+    // The menu takes the keyboard, keeps the selection, and its keys don't reach the program.
+    right_click(&mut cx, Modifiers::default());
+    assert!(menu_open(&mut cx));
+    assert!(!terminal_focused(&mut cx));
+    assert_eq!(
+        view.read_with(&cx, |view, _| view.session.selection_text())
+            .as_deref(),
+        Some("hello")
+    );
+    cx.simulate_keystrokes("x");
+    assert_eq!(take(&typed), b"");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(!menu_open(&mut cx));
+    assert!(terminal_focused(&mut cx), "Esc gives the keyboard back");
+
+    // Hiding the tab closes it.
+    right_click(&mut cx, Modifiers::default());
+    view.update(&mut cx, |view, _| view.hide());
+    assert!(!menu_open(&mut cx));
+    view.update(&mut cx, |view, cx| view.show(cx));
+
+    // A program tracking the mouse gets the plain right button; Shift opens the menu.
+    feed.output(b"\x1b[?1000h");
+    right_click(&mut cx, Modifiers::default());
+    assert!(!menu_open(&mut cx));
+    assert!(
+        !take(&typed).is_empty(),
+        "the press and release are reported"
+    );
+    right_click(&mut cx, Modifiers::shift());
+    assert!(menu_open(&mut cx));
+    assert_eq!(take(&typed), b"");
+
+    // Paste asks about lines. The first Down lands on the disabled Copy (gpui-component
+    // starts at index 0), whose Enter would do nothing without a selection.
+    view.update(&mut cx, |view, _| view.session.clear_selection());
+    cx.simulate_keystrokes("escape");
+    right_click(&mut cx, Modifiers::shift());
+    cx.update(|_, cx| cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("a\nb\n".into())));
+    cx.simulate_keystrokes("down down enter");
+    cx.run_until_parked();
+    assert!(!menu_open(&mut cx));
+    assert!(
+        cx.update(|window, cx| window.has_active_dialog(cx)),
+        "the paste question"
+    );
+    assert_eq!(take(&typed), b"");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(take(&typed), b"a\rb\r");
+    assert!(terminal_focused(&mut cx));
+}
+
+#[gpui::test]
+fn clearing_the_scrollback_drops_its_search_matches_at_once(cx: &mut gpui_kit::TestAppContext) {
+    let spec = LaunchSpec::new(SessionKind::Shell, Some("sh".into()), Vec::new(), None);
+    let (session, feed) = Session::remote(
+        1,
+        SessionKind::Shell,
+        TermDimensions::new(20, 3),
+        Palette::default(),
+        Arc::new(|_| {}),
+        Box::new(NoLink),
+    );
+    let view = cx.new(|cx| TerminalView::from_test_session(session, &spec, cx));
+    feed.output(b"x1\r\nx2\r\nx3\r\nx4\r\nx5");
+    view.update(cx, |view, cx| {
+        view.search.set_query("x").unwrap();
+        view.search.refresh_now(&mut view.session.lock_term());
+        assert_eq!(view.search.matches().len(), 5);
+        view.session.scroll_display(Scroll::Top);
+        view.clear_scrollback(cx);
+        assert_eq!(view.search.matches().len(), 3);
+        assert_eq!(view.session.display_offset(), 0);
+    });
+}
+
+#[gpui::test]
+fn the_menu_on_a_url_copies_the_link(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::Root;
+    use gpui_kit::{Modifiers, MouseButton, point, px};
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        settings_file::init_in_memory(cx);
+        crate::terminal_element::init(cx);
+    });
+    let spec = LaunchSpec::new(SessionKind::Shell, Some("sh".into()), Vec::new(), None);
+    let (session, feed) = Session::remote(
+        1,
+        SessionKind::Shell,
+        TermDimensions::new(40, 5),
+        Palette::default(),
+        Arc::new(|_| {}),
+        Box::new(NoLink),
+    );
+    let view = cx.new(|cx| TerminalView::from_test_session(session, &spec, cx));
+    let root = view.clone();
+    let window = cx.add_window(move |window, cx| Root::new(root, window, cx));
+    let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+    let url = "https://example.com/menu";
+    feed.output(format!("{url}\r\n{url}\r\n{url}").as_bytes());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    let at = point(px(20.0), px(20.0));
+    cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::default());
+    cx.simulate_mouse_up(at, MouseButton::Right, Modifiers::default());
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| view.read(cx).context_menu.is_open()));
+    // Open link, then Copy link.
+    cx.simulate_keystrokes("down down enter");
+    cx.run_until_parked();
+    let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(copied.as_deref(), Some(url));
 }

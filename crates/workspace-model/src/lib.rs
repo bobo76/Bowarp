@@ -56,6 +56,7 @@ mod tab;
 mod tab_history;
 mod tab_list;
 mod tabs_state;
+mod terminal_menu;
 mod time;
 mod wheel;
 mod window_background;
@@ -135,6 +136,7 @@ pub use tab::{TabColor, TabMeta};
 pub use tab_history::TabHistory;
 pub use tab_list::{ListMove, list_entry, list_step, listed_tabs};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};
+pub use terminal_menu::{TerminalMenuEntry, TerminalMenuState, terminal_menu};
 pub use wheel::{WheelScroll, notch_lines};
 pub use window_background::{
     BLUR_NEEDS_OPACITY, BLUR_UNAVAILABLE, Backdrop, BlurControl, BlurSupport, MICA_FALLBACK,

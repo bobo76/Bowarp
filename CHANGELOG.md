@@ -5,6 +5,15 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.3.7
+
+- Right-click in the terminal for a menu: Copy, Paste, Select all, Search and Clear
+  scrollback, plus Open link and Copy link on a link; each entry shows its shortcut. When a
+  program tracks the mouse, Shift+right-click opens it. Clear scrollback is unavailable while
+  a full-screen program shows.
+- Add "Select all" and "Clear scrollback" terminal actions, with no default key, which can be
+  bound on the Keyboard settings page.
+
 ## 0.3.6
 
 - Ask before pasting text with line breaks when the program hasn't turned on bracketed paste

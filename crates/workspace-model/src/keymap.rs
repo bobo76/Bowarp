@@ -178,6 +178,15 @@ impl Shortcut {
             context,
         }
     }
+
+    /// An action the settings file can bind, with no key by default (no binding is made).
+    pub fn unbound(action: &'static str, context: Option<&'static str>) -> Self {
+        Self::new(String::new(), action, context)
+    }
+
+    fn has_keys(&self) -> bool {
+        !self.keys.is_empty()
+    }
 }
 
 /// Why an overlay entry is skipped.
@@ -237,9 +246,10 @@ struct Override {
 
 impl Keymap {
     /// `defaults` with `overlay` applied. The actions that can be bound are the ones the
-    /// defaults use, each in its default's context. `normalize` reads a key as keystrokes and
-    /// writes them in one spelling (`shift-ctrl-V` and `ctrl-shift-v` are one key), or says
-    /// why it can't; defaults it can't read are kept as written.
+    /// defaults use (keyless ones too, [`Shortcut::unbound`]), each in its default's context.
+    /// `normalize` reads a key as keystrokes and writes them in one spelling (`shift-ctrl-V`
+    /// and `ctrl-shift-v` are one key), or says why it can't; defaults it can't read are kept
+    /// as written.
     pub fn new(
         defaults: Vec<Shortcut>,
         overlay: &KeybindingOverlay,
@@ -413,7 +423,7 @@ fn camel_case_to_words(name: &str) -> String {
 fn keys_for<'a>(shortcuts: &'a [Shortcut], action: &'a str) -> impl Iterator<Item = &'a str> + 'a {
     shortcuts
         .iter()
-        .filter(move |shortcut| shortcut.action == action)
+        .filter(move |shortcut| shortcut.action == action && shortcut.has_keys())
         .map(|shortcut| shortcut.keys.as_str())
 }
 
@@ -460,6 +470,7 @@ fn push_override(
 fn merge(defaults: &[Shortcut], overrides: Vec<Override>) -> Vec<Shortcut> {
     let mut bindings: Vec<Shortcut> = defaults
         .iter()
+        .filter(|shortcut| shortcut.has_keys())
         .filter(|shortcut| overrides.iter().all(|entry| entry.keys != shortcut.keys))
         .cloned()
         .collect();

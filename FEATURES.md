@@ -15,7 +15,8 @@ directly to model APIs.
   first) and agents, each with its own icon.
 - Support normal interactive CLI behavior, including permission prompts,
   cancellation, multiline input, colors, and terminal resizing.
-- Provide copy/paste, text selection, scrollback, and terminal search.
+- Provide copy/paste, text selection, scrollback, and terminal search, also from a
+  right-click menu (with Open and Copy link on a link).
 - Ask before pasting text whose line breaks would run as commands (the program hasn't
   turned on bracketed paste), with a preview of the lines.
 - Search terminal output and retained scrollback with Ctrl+Shift+F: case-insensitive literal

@@ -49,7 +49,7 @@ impl TerminalView {
     }
 
     /// What reads as a link under `position`, if anything.
-    fn link_candidate(&self, position: Point<Pixels>) -> Option<LinkCandidate> {
+    pub(super) fn link_candidate(&self, position: Point<Pixels>) -> Option<LinkCandidate> {
         let cell = self.cell_under(position)?;
         let folder = self.current_folder();
         terminal_links::candidate_at(&self.session, cell, folder.as_deref(), self.home.as_deref())
@@ -200,8 +200,9 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Open a Ctrl+clicked link: a URL in the browser, a file in the viewer.
-    fn open_link(&mut self, target: LinkTarget, cx: &mut Context<Self>) {
+    /// Open a Ctrl+clicked link, or one chosen in the right-click menu: a URL in the browser,
+    /// a file in the viewer.
+    pub(super) fn open_link(&mut self, target: LinkTarget, cx: &mut Context<Self>) {
         match target {
             LinkTarget::Url(url) => cx.open_url(&url),
             LinkTarget::File { path, place } => cx.emit(OpenFileRequest { path, place }),

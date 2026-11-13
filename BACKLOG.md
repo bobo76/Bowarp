@@ -10,6 +10,14 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Terminal right-click menu:
+
+- Windows: right-click in a cmd and a PowerShell tab opens the menu with the shortcut hints;
+  Copy, Paste (two lines into cmd asks first), Select all, Search, Clear scrollback and, on a
+  URL, Open link / Copy link work; in Claude Code (mouse tracking) a plain right-click goes to
+  the program and Shift+right-click opens the menu.
+- macOS: the hints show the Cmd keys, and Ctrl+click is not taken for the menu.
+
 Multi-line paste warning:
 
 - Windows: pasting two lines into a cmd tab and into a PowerShell tab asks "Paste 2 lines?";
@@ -374,16 +382,12 @@ behavior"); items below name their switch where they need one.
 UX review, top 10 by value per cost ([reviews/ux-review.md](reviews/ux-review.md), IDs are
 its items), regrouped into steps, in order:
 
-1. Right-click menu in the terminal (E1): today the right button only reaches programs that
-   track the mouse (`terminal_view.rs:1422`). Copy (disabled without a selection), Paste,
-   Select all, Search, Clear scrollback; on a link: Open, Copy link. With mouse reporting on,
-   Shift+right-click opens it. Each entry shows its shortcut.
-2. Shell tab names (#4, the user chose option A on 2026-11-13): a shell row shows the
+1. Shell tab names (#4, the user chose option A on 2026-11-13): a shell row shows the
    program's title (`user@host: ~/path`), so shells in different folders look the same. With
    shell integration, name the tab by the running command, else the folder's last component;
    the program title moves to the hover card. A custom name always wins; agent tabs keep
    their titles.
-3. Explorer Delete to the trash (F5): Delete is permanent today (`file_explorer.rs:1071`).
+2. Explorer Delete to the trash (F5): Delete is permanent today (`file_explorer.rs:1071`).
    Move to the system trash (Recycle Bin, freedesktop trash); keep the permanent delete with
    today's wording where no trash exists (network mounts, WSL paths). Check the new
    dependency with `cargo deny`.
