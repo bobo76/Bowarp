@@ -160,7 +160,10 @@ program wrapped onto the next line counts as one.
 
 When the program exits, a bar below the terminal says so, with its exit code (the terminal
 gives up the bar's height, so no output is hidden); the history stays readable until the tab
-is closed. When Claude Code or Copilot CLI quits, the tab instead starts the default shell in
+is closed or restarted, and the cursor is hidden. **Restart** on the bar, Enter in the
+terminal or "Restart" in the tab menu starts the same program again in the tab, with the
+arguments it was opened with, in its last folder (a remote tab on its host); the tab keeps its
+name, color, group and place, and the scrollback is cleared (Claude Code and Copilot CLI start a new conversation). When Claude Code or Copilot CLI quits, the tab instead starts the default shell in
 the agent's last folder and becomes a shell tab (icon, status, saved as a shell); the agent's
 output is not kept.
 
@@ -355,7 +358,8 @@ Run the extension's tests with `node --test .\crates\app\copilot-extension\bridg
 | light grey | Recent output (shell or Copilot) |
 | none | No recent output |
 | none | Status unavailable (agent status off): a quiet Claude Code tab while the status hooks could not start |
-| hollow ring | Exited |
+| grey hollow ring | Exited with code 0 |
+| red with a cross | Exited with a nonzero code, or without one; the card says `Exited (3)` or `Exited (no exit code)` |
 
 Ready for review marks an unread Working-to-Idle transition, not confirmation that the
 agent's work is correct. Selecting the tab acknowledges it and restores Idle; a turn that
@@ -835,7 +839,8 @@ higher and tagged `v<version>`; finishing a milestone bumps `minor`.
 - **Quitting an agent:** when Claude Code or
   Copilot CLI exits in its tab with code 0, the tab starts a new default shell in the agent's
   last folder and becomes a shell tab; the agent's output is not kept. When it exits with an
-  error, the tab stays as it was ("Exited"), so the error can be read. The agent keeps
+  error, the tab stays as it was ("Exited (N)"), so the error can be read, and Restart
+  starts it again. The agent keeps
   running directly (no shell around it), which:
   - starts faster: no shell startup files (`.bashrc`, `nvm`, `conda`) run before it;
   - uses less memory: no idle shell waiting behind every agent tab;

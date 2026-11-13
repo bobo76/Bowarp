@@ -30,8 +30,12 @@ pub struct Palette {
     list_active_border: u32,
     /// Buttons, switch tracks and sliders: background, hover, pressed, text. `None` keeps stock.
     primary: Option<[u32; 4]>,
-    /// Working, NeedsAttention, ReadyForReview/Idle, Running, Active, Quiet/Unavailable/Exited.
-    pub status: [u32; 6],
+    /// Working, NeedsAttention, ReadyForReview/Idle, Running, Active,
+    /// Quiet/Unavailable/Disconnected, Exited with code 0 (a failed exit takes `failed_exit`,
+    /// or `danger` in the dark theme).
+    pub status: [u32; 7],
+    /// The failed-exit badge: darker than stock `danger` to reach 3:1 on the sidebar.
+    pub failed_exit: u32,
 }
 
 pub const SOFT_LIGHT: Palette = Palette {
@@ -55,7 +59,10 @@ pub const SOFT_LIGHT: Palette = Palette {
     list_active: "#2D6FD626",
     list_active_border: 0x2D6FD6,
     primary: None,
-    status: [0x1F63C9, 0x9A5800, 0x1A7F37, 0x0B7568, 0x5F5A53, 0x8F897F],
+    status: [
+        0x1F63C9, 0x9A5800, 0x1A7F37, 0x0B7568, 0x5F5A53, 0x8F897F, 0x77726A,
+    ],
+    failed_exit: 0xC62828,
 };
 
 pub const SEPIA: Palette = Palette {
@@ -79,7 +86,10 @@ pub const SEPIA: Palette = Palette {
     list_active: "#8B5E3C26",
     list_active_border: 0x8B5E3C,
     primary: Some([0x5B4636, 0x4A3828, 0x3B2F22, 0xF6EEDC]),
-    status: [0x1F5AA6, 0x8A4700, 0x2D6A27, 0x0A665A, 0x5A4A39, 0x938168],
+    status: [
+        0x1F5AA6, 0x8A4700, 0x2D6A27, 0x0A665A, 0x5A4A39, 0x938168, 0x7D6C55,
+    ],
+    failed_exit: 0xB42318,
 };
 
 const PALETTES: [&Palette; 2] = [&SOFT_LIGHT, &SEPIA];

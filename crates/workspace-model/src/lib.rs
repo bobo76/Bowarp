@@ -23,6 +23,7 @@ mod clipboard_guard;
 mod close_warning;
 mod conversation;
 mod diff_colors;
+mod exit_status;
 mod file_pane_features;
 pub mod file_tree;
 pub mod file_view;
@@ -79,6 +80,7 @@ pub use close_warning::{
 };
 pub use conversation::Conversation;
 pub use diff_colors::{DiffColors, RgbaColor};
+pub use exit_status::{contrast_ratio, exit_failed, exit_label};
 pub use file_pane_features::{
     FileLinkAction, FilePaneFeatures, PaneChange, PaneEntry, pane_change,
 };

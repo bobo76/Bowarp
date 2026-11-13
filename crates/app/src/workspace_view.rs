@@ -3,6 +3,7 @@ mod divider_drag;
 mod empty_state;
 mod git_pane;
 mod reconnect;
+mod restart;
 mod settings_pane;
 mod sidebar_rows;
 mod spinner_clock;
@@ -68,7 +69,7 @@ use crate::sidebar::{self, SIDEBAR_WIDTH, TabStatus};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
 use crate::terminal_view::{
-    AgentExited, AgentNotice, LastCommandChanged, OpenFileRequest, RemoteAction,
+    AgentExited, AgentNotice, LastCommandChanged, OpenFileRequest, RemoteAction, RestartTab,
     ResumeConversation, ResumeFailed, StatusReporting, TabChanged, TerminalView,
 };
 use crate::window_bounds;
@@ -203,7 +204,7 @@ pub enum TabOwnership {
 }
 
 /// What the workspace follows of a tab's session view (`listen_to_tab`).
-type TabSubscriptions = [Subscription; 8];
+type TabSubscriptions = [Subscription; 9];
 
 struct Tab {
     /// The first session's id, which stays with the tab when tabs move (and when an agent's
@@ -717,7 +718,7 @@ impl WorkspaceView {
     }
 
     /// Follow tab `tab_id`'s session view: what it shows, its agent exiting, files it opens,
-    /// agent notices, its last command and a remote tab's Reconnect or Start new.
+    /// agent notices, its last command, a remote tab's Reconnect or Start new and Restart.
     fn listen_to_tab(
         &mut self,
         tab_id: u64,
@@ -774,6 +775,13 @@ impl WorkspaceView {
                 workspace.start_new_conversation(tab_id, window, cx);
             },
         );
+        let restart = cx.subscribe_in(
+            view,
+            window,
+            move |workspace, _, _: &RestartTab, window, cx| {
+                workspace.restart_tab(tab_id, window, cx);
+            },
+        );
         [
             changed,
             exited,
@@ -783,6 +791,7 @@ impl WorkspaceView {
             remote,
             resume,
             resume_failed,
+            restart,
         ]
     }
 
@@ -1479,6 +1488,7 @@ impl WorkspaceView {
         let own_group = self.layout.group_of(id).map(|group| group.id);
         Some(TabMenuState {
             can_reconnect: self.can_reconnect(id, cx),
+            can_restart: self.can_restart(id, cx),
             pinned: self.layout.is_pinned(id),
             has_custom_name: tab.meta.custom_name.is_some(),
             other_groups: self
@@ -1511,6 +1521,11 @@ impl WorkspaceView {
         let location = self.tabs[index].view.read(cx).location().cloned();
         match command {
             TabCommand::Reconnect => self.reconnect(id, window, cx),
+            // After the menu closed and gave the keyboard back to the old terminal, which
+            // hands it to the new one.
+            TabCommand::Restart => cx.defer_in(window, move |workspace, window, cx| {
+                workspace.restart_tab(id, window, cx);
+            }),
             TabCommand::Duplicate => self.duplicate_tab(index, window, cx),
             TabCommand::TogglePin => {
                 self.layout.toggle_pin(id);

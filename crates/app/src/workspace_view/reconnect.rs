@@ -1,6 +1,7 @@
 //! Remote tabs whose connection was lost (docs/remote.md): Reconnect attaches again to their
 //! sessions on the server, Start new runs the program there again once its session is gone.
-//! Both run off the UI thread; the tab then shows the new session in place.
+//! Both run off the UI thread; the tab then shows the new session in place. Restarting an
+//! exited remote tab takes the Start new path.
 
 use std::io;
 use std::path::PathBuf;
@@ -162,13 +163,29 @@ impl WorkspaceView {
         let Some(index) = self.tab_index(tab_id) else {
             return;
         };
+        if self.tabs[index]
+            .view
+            .update(cx, |view, cx| view.begin_start_new(cx))
+        {
+            self.start_again_on_host(tab_id, window, cx);
+        }
+    }
+
+    /// Start tab `tab_id`'s launch again on its host, in the folder it was last in there, off
+    /// this thread; the tab then shows the new session. The caller marked the tab as starting.
+    pub(super) fn start_again_on_host(
+        &mut self,
+        tab_id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.tab_index(tab_id) else {
+            return;
+        };
         let tab = &self.tabs[index];
         let mut spec = tab.spec.clone();
         if let Some(folder) = tab.view.read(cx).remote_folder() {
             spec.cwd = Some(PathBuf::from(folder));
-        }
-        if !tab.view.update(cx, |view, cx| view.begin_start_new(cx)) {
-            return;
         }
         let id = self.next_session_id;
         let (events, started) = match TerminalView::start_remote(id, &spec, cx) {
@@ -201,7 +218,13 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Back to Start new, or to Restart for an exited tab.
         self.end_reconnect(tab_id, true, cx);
+        if let Some(index) = self.tab_index(tab_id) {
+            self.tabs[index]
+                .view
+                .update(cx, |view, cx| view.end_restart(cx));
+        }
         let program = launch_name(spec);
         let host = spec.host.as_deref().unwrap_or_default();
         log::error!("failed to start {program} on {host}: {err}");

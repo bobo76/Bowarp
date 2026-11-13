@@ -3,6 +3,7 @@ mod clipboard_notice;
 mod link_hover;
 mod pointer;
 mod remote;
+mod restart;
 mod resume;
 mod search;
 
@@ -50,6 +51,7 @@ use self::link_hover::LinkHover;
 use self::pointer::PointerState;
 use self::remote::Disconnect;
 pub use self::remote::RemoteAction;
+pub use self::restart::RestartTab;
 pub use self::resume::{ResumeConversation, ResumeFailed};
 use crate::file_viewer::FilePlace;
 use crate::history;
@@ -270,6 +272,10 @@ pub struct TerminalView {
     /// A remote tab's host, as its launch named it.
     host: Option<String>,
     process: ProcessState,
+    /// A remote exited tab's restart is under way (off this thread): set by
+    /// [`Self::begin_restart`], cleared by [`Self::end_restart`] when it fails; on success the
+    /// view is replaced.
+    restarting: bool,
     /// Set by the shell integration marks; agent sessions keep their hook status instead.
     running_command: Option<RunningCommand>,
     /// Where [`Self::change_dir`] leaves the folder for the shell's hidden cd key binding;
@@ -487,6 +493,7 @@ impl TerminalView {
             title: None,
             host: spec.host.clone(),
             process: ProcessState::Running,
+            restarting: false,
             running_command: None,
             cd_file: spec
                 .env
@@ -622,6 +629,14 @@ impl TerminalView {
         self.title.as_deref().unwrap_or(&self.name)
     }
 
+    /// The program's exit code once it exited with one.
+    fn exit_code(&self) -> Option<i32> {
+        match self.process {
+            ProcessState::Exited(code) => code,
+            ProcessState::Running | ProcessState::Disconnected(_) => None,
+        }
+    }
+
     pub fn tab_status(&self) -> TabStatus {
         // A bell asks for the user like a waiting prompt, for programs without status hooks; so
         // does a clipboard write waiting for an answer.
@@ -635,11 +650,11 @@ impl TerminalView {
                 AgentStatus::Idle => TabStatus::Idle,
                 AgentStatus::Working => TabStatus::Working,
                 AgentStatus::NeedsAttention => TabStatus::NeedsAttention,
-                AgentStatus::Exited => TabStatus::Exited,
+                AgentStatus::Exited => TabStatus::Exited(self.exit_code()),
             };
         }
         match self.process {
-            ProcessState::Exited(_) => TabStatus::Exited,
+            ProcessState::Exited(code) => TabStatus::Exited(code),
             ProcessState::Disconnected(_) => TabStatus::Disconnected,
             // Left by an in-place agent's run until the tab is selected.
             ProcessState::Running if self.finished_unseen => TabStatus::ReadyForReview,
@@ -1215,7 +1230,8 @@ impl TerminalView {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let consumed = self.handle_history_key(&event.keystroke, cx)
+        let consumed = self.restart_on_enter(event, cx)
+            || self.handle_history_key(&event.keystroke, cx)
             || self.handle_scrollback_shortcut(&event.keystroke, cx)
             || self.forward_key(event, cx);
         if consumed {
@@ -1372,6 +1388,7 @@ impl EventEmitter<LastCommandChanged> for TerminalView {}
 impl EventEmitter<RemoteAction> for TerminalView {}
 impl EventEmitter<ResumeConversation> for TerminalView {}
 impl EventEmitter<ResumeFailed> for TerminalView {}
+impl EventEmitter<RestartTab> for TerminalView {}
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -1450,6 +1467,17 @@ impl Render for TerminalView {
 }
 
 impl TerminalView {
+    /// The exit bar's text: the exit code, or that a restart is under way.
+    fn exit_message(&self, code: Option<i32>) -> String {
+        if self.restarting {
+            return format!("Starting {} again…", self.name);
+        }
+        match code {
+            Some(code) => format!("Process exited with code {code}"),
+            None => "Process exited".to_string(),
+        }
+    }
+
     /// A bar below the terminal once the program exited, so a finished tab is told apart from
     /// a quiet one without looking at the sidebar.
     fn exit_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1460,10 +1488,8 @@ impl TerminalView {
                 return Some(self.disconnect_banner(disconnect, cx));
             }
         };
-        let message = match code {
-            Some(code) => format!("Process exited with code {code}"),
-            None => "Process exited".to_string(),
-        };
+        let message = self.exit_message(code);
+        let restart = self.restart_button(cx);
         let theme = cx.theme();
         let banner = div()
             .flex_none()
@@ -1478,13 +1504,14 @@ impl TerminalView {
             .border_t_1()
             .border_color(theme.border)
             .text_color(theme.secondary_foreground)
-            .child(message)
+            .child(div().flex_1().min_w_0().child(message))
             .child(
                 div()
                     .text_xs()
                     .text_color(theme.muted_foreground)
                     .child(shortcuts::with_shortcut("Close the tab", &CloseTab, cx)),
-            );
+            )
+            .children(restart);
         Some(banner.into_any_element())
     }
 }

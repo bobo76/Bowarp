@@ -5,6 +5,16 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.3.4
+
+- Restart an exited tab in place: a Restart button on the exit bar, Enter on the exited tab,
+  or Restart in the tab menu starts the same program again in its last folder (remote tabs on
+  their host), keeping the tab's name, color and place. The scrollback is cleared; Claude Code
+  and Copilot CLI start a new conversation.
+- Mark a tab whose program failed (nonzero or unknown exit code) with a red badge and `×`,
+  and show "Exited (3)" in its hover card; a clean exit keeps a grey ring, now easier to see.
+- Hide the cursor once a tab's program has exited.
+
 ## 0.3.3
 
 - Open the window when the start fails instead of quitting silently (on Windows the app

@@ -19,7 +19,12 @@ fn searchable_term(text: &str) -> (Term<VoidListener>, TerminalSearch) {
 fn search_paints_all_matches_and_distinguishes_the_active_match() {
     let (mut term, mut search) = searchable_term("one one");
     let palette = Palette::default();
-    let painted = snapshot(term.renderable_content(), &palette, false, &search);
+    let painted = snapshot(
+        term.renderable_content(),
+        &palette,
+        CursorDisplay::Unfocused,
+        &search,
+    );
     let colors: Vec<_> = painted
         .backgrounds
         .iter()
@@ -34,7 +39,12 @@ fn search_paints_all_matches_and_distinguishes_the_active_match() {
     );
     search.step(workspace_model::layout::Direction::Down);
     search.refresh(&mut term);
-    let painted = snapshot(term.renderable_content(), &palette, false, &search);
+    let painted = snapshot(
+        term.renderable_content(),
+        &palette,
+        CursorDisplay::Unfocused,
+        &search,
+    );
     let colors: Vec<_> = painted
         .backgrounds
         .iter()
@@ -50,7 +60,7 @@ fn search_paints_all_matches_and_distinguishes_the_active_match() {
     let painted = snapshot(
         term.renderable_content(),
         &palette,
-        false,
+        CursorDisplay::Unfocused,
         &TerminalSearch::default(),
     );
     assert!(painted.backgrounds.0.is_empty());
@@ -69,11 +79,31 @@ fn selection_takes_precedence_over_search_highlights() {
     let painted = snapshot(
         term.renderable_content(),
         &Palette::default(),
-        false,
+        CursorDisplay::Unfocused,
         &search,
     );
     assert_eq!(painted.backgrounds.0[0].color, Palette::default().selection);
     assert_eq!(painted.backgrounds.0[1].color, Palette::default().search);
+}
+
+#[test]
+fn an_exited_grid_shows_no_cursor() {
+    let (term, search) = searchable_term("$ ");
+    let palette = Palette::default();
+    let running = snapshot(
+        term.renderable_content(),
+        &palette,
+        CursorDisplay::Focused,
+        &search,
+    );
+    assert!(running.cursor.is_some());
+    let exited = snapshot(
+        term.renderable_content(),
+        &palette,
+        CursorDisplay::Hidden,
+        &search,
+    );
+    assert!(exited.cursor.is_none());
 }
 
 #[test]
@@ -82,7 +112,7 @@ fn search_does_not_reveal_hidden_text() {
     let painted = snapshot(
         term.renderable_content(),
         &Palette::default(),
-        false,
+        CursorDisplay::Unfocused,
         &search,
     );
     let matched = &painted.batches[0];

@@ -2614,3 +2614,153 @@ fn a_failed_start_shows_the_error_until_a_tab_opens(cx: &mut gpui_kit::TestAppCo
     assert_eq!(heading, "Invalid command line");
     h.cx.run_until_parked();
 }
+
+#[cfg(unix)]
+#[gpui::test]
+fn enter_on_an_exited_tab_restarts_its_launch_in_place(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::VisualTestContext;
+    use gpui_kit::component::Root;
+    use std::cell::RefCell;
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        settings_file::init(cx);
+        crate::terminal_element::init(cx);
+        crate::terminal_view::init(cx);
+        init(cx);
+    });
+    let folder = std::env::temp_dir();
+    let spec = LaunchSpec::new(
+        SessionKind::Shell,
+        Some("/bin/sh".into()),
+        vec!["-c".into(), "exit 3".into()],
+        Some(folder.clone()),
+    );
+    let captured = Rc::new(RefCell::new(None));
+    let capture = captured.clone();
+    let window = cx.add_window(move |window, cx| {
+        let (_, messages) = futures::channel::mpsc::unbounded();
+        let writer = Rc::new(tabs_file::TabsWriter::new(false));
+        let workspace =
+            cx.new(|cx| WorkspaceView::new(Rc::from([]), None, messages, writer, window, cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_tab(spec, window, cx).unwrap();
+            workspace.tabs[0].meta.custom_name = Some("mine".into());
+            workspace.tabs[0].meta.color = Some(TabColor::Pink);
+            wait_for_exit(&workspace.tabs[0].view.read(cx).session);
+        });
+        *capture.borrow_mut() = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let workspace = captured.borrow().clone().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    let (tab_id, original) = workspace.read_with(&cx, |workspace, cx| {
+        let view = workspace.tabs[0].view.clone();
+        assert_eq!(
+            view.read(cx).tab_status(),
+            sidebar::TabStatus::Exited(Some(3))
+        );
+        assert!(workspace.can_restart(workspace.tabs[0].id, cx));
+        (workspace.tabs[0].id, view)
+    });
+    cx.update(|window, cx| {
+        window.focus(&original.focus_handle(cx), cx);
+        window.draw(cx).clear(cx);
+        for modified in ["ctrl-enter", "shift-enter"] {
+            window.dispatch_keystroke(gpui_kit::Keystroke::parse(modified).unwrap(), cx);
+        }
+    });
+    workspace.read_with(&cx, |workspace, _| {
+        assert_eq!(
+            workspace.tabs[0].view, original,
+            "a modified Enter does not restart"
+        );
+    });
+    cx.update(|window, cx| {
+        // Synchronously, so the new child's output drains before the executor polls it.
+        window.dispatch_keystroke(gpui_kit::Keystroke::parse("enter").unwrap(), cx);
+    });
+    workspace.read_with(&cx, |workspace, cx| {
+        let tab = &workspace.tabs[0];
+        assert_eq!(workspace.tabs.len(), 1);
+        assert_eq!(tab.id, tab_id, "the same tab, in its place");
+        assert_ne!(tab.view, original, "a new session");
+        assert_eq!(tab.meta.custom_name.as_deref(), Some("mine"));
+        assert_eq!(tab.meta.color, Some(TabColor::Pink));
+        assert_eq!(tab.spec.args, ["-c", "exit 3"], "the saved arguments only");
+        assert_eq!(tab.spec.cwd.as_deref(), Some(folder.as_path()));
+        wait_for_exit(&tab.view.read(cx).session);
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        let view = workspace.read(cx).tabs[0].view.clone();
+        assert!(
+            view.focus_handle(cx).is_focused(window),
+            "the keyboard follows"
+        );
+    });
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn a_failed_local_restart_keeps_the_exited_view_and_toasts_once(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::VisualTestContext;
+    use gpui_kit::component::Root;
+    use std::cell::RefCell;
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        settings_file::init(cx);
+        crate::terminal_element::init(cx);
+        crate::terminal_view::init(cx);
+        init(cx);
+    });
+    let script =
+        std::env::temp_dir().join(format!("agentws-restart-gone-{}.sh", std::process::id()));
+    std::fs::write(&script, "#!/bin/sh\nexit 3\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let spec = LaunchSpec::new(
+        SessionKind::Shell,
+        Some(script.to_string_lossy().into_owned()),
+        Vec::new(),
+        Some(std::env::temp_dir()),
+    );
+    let captured = Rc::new(RefCell::new(None));
+    let capture = captured.clone();
+    let window = cx.add_window(move |window, cx| {
+        let (_, messages) = futures::channel::mpsc::unbounded();
+        let writer = Rc::new(tabs_file::TabsWriter::new(false));
+        let workspace =
+            cx.new(|cx| WorkspaceView::new(Rc::from([]), None, messages, writer, window, cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_tab(spec, window, cx).unwrap();
+            wait_for_exit(&workspace.tabs[0].view.read(cx).session);
+        });
+        *capture.borrow_mut() = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let workspace = captured.borrow().clone().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    std::fs::remove_file(&script).unwrap();
+    let original = workspace.read_with(&cx, |workspace, _| workspace.tabs[0].view.clone());
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let id = workspace.tabs[0].id;
+            workspace.restart_tab(id, window, cx);
+        });
+    });
+    cx.run_until_parked();
+    workspace.read_with(&cx, |workspace, cx| {
+        assert_eq!(workspace.tabs[0].view, original, "the exited view stays");
+        assert!(
+            workspace.can_restart(workspace.tabs[0].id, cx),
+            "and can try again"
+        );
+    });
+    assert_eq!(cx.update(|window, cx| window.notifications(cx).len()), 1);
+}

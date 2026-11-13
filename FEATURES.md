@@ -117,6 +117,8 @@ directly to model APIs.
 
 - Indicate when an agent is working, idle, waiting for user input or permission,
   or has exited, when reliable status information is available.
+  - A tab whose program exited with a failure (nonzero or unknown code) is marked apart
+    from a clean exit, and an exited tab can be restarted in place, in its last folder.
   - A working Copilot tab shows a slowly turning ring left of its title in the sidebar
     (Claude Code animates its own title, so a Claude Code tab shows the ring only once renamed);
     still when activity animations are off.

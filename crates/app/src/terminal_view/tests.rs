@@ -988,7 +988,7 @@ fn a_shell_exiting_mid_run_leaves_an_exited_shell_tab(cx: &mut gpui_kit::TestApp
         assert_eq!(view.tab_status(), TabStatus::ReadyForReview);
         view.on_session_event(SessionEvent::Exited(Some(1)), cx);
         assert_eq!(view.status_kind(), SessionKind::Shell);
-        assert_eq!(view.tab_status(), TabStatus::Exited, "Exited wins");
+        assert_eq!(view.tab_status(), TabStatus::Exited(Some(1)), "Exited wins");
     });
     cx.run_until_parked();
     assert_eq!(
@@ -1035,7 +1035,7 @@ fn an_agent_mark_after_the_shell_exited_is_ignored(cx: &mut gpui_kit::TestAppCon
         view.on_session_event(SessionEvent::Exited(Some(0)), cx);
         view.on_session_event(SessionEvent::AgentStarted(CLAUDE), cx);
         assert_eq!(view.status_kind(), SessionKind::Shell);
-        assert_eq!(view.tab_status(), TabStatus::Exited);
+        assert_eq!(view.tab_status(), TabStatus::Exited(Some(0)));
     });
 }
 
@@ -1136,4 +1136,43 @@ fn a_disconnected_remote_tab_reconnects_or_starts_new(cx: &mut gpui_kit::TestApp
         assert!(!view.begin_start_new(cx));
         assert_eq!(view.tab_status(), TabStatus::Disconnected);
     });
+}
+
+#[gpui::test]
+fn a_restart_under_way_blocks_enter_until_it_ends(cx: &mut gpui_kit::TestAppContext) {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let (view, _notices, _events) = in_place_shell(cx);
+    let restarts = Rc::new(Cell::new(0));
+    let counted = restarts.clone();
+    let _subscription = cx.update(|cx| {
+        cx.subscribe(&view, move |_, _: &RestartTab, _| {
+            counted.set(counted.get() + 1)
+        })
+    });
+    let press = |key: &str, is_held: bool| gpui_kit::KeyDownEvent {
+        keystroke: gpui_kit::Keystroke::parse(key).unwrap(),
+        is_held,
+        prefer_character_input: false,
+    };
+    view.update(cx, |view, cx| {
+        assert!(!view.begin_restart(cx), "a running tab does not restart");
+        view.on_session_event(SessionEvent::Exited(Some(1)), cx);
+        assert!(view.can_restart());
+        assert!(!view.restart_on_enter(&press("ctrl-enter", false), cx));
+        assert!(!view.restart_on_enter(&press("shift-enter", false), cx));
+        assert!(
+            !view.restart_on_enter(&press("enter", true), cx),
+            "a held key"
+        );
+        assert!(view.begin_restart(cx));
+        assert!(!view.can_restart());
+        assert!(!view.restart_on_enter(&press("enter", false), cx));
+        assert!(!view.begin_restart(cx), "only one at a time");
+        view.end_restart(cx);
+        assert!(view.can_restart());
+        assert!(view.restart_on_enter(&press("enter", false), cx));
+    });
+    assert_eq!(restarts.get(), 1);
 }

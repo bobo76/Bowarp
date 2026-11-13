@@ -137,6 +137,16 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
 - **Hover card under the cursor when a hold ends** (rename, menu, dialog, drag) stays hidden
   until the pointer leaves the row, like Windows/VS Code tooltips. [UX agent]
 
+- **Restart an exited tab**: a primary "Restart" button on the exit bar's right, as the
+  remote bar's Reconnect (the "Close the tab" hint stays), plus "Restart" first in the tab
+  menu while exited, like Reconnect. Enter on the dead tab restarts; other keys still do
+  nothing. The tooltip names the program and says the scrollback is cleared. A remote exited
+  tab restarts on its host; a tab that fell back to a shell restarts the shell. A crashed
+  agent restarts in a new conversation (the step's "no --continue"); its tooltip says so. [pipeline]
+- **Failed exit badge**: a filled danger-red badge with a `×` (a hollow ring at 12 px has no
+  room for it), so it isn't told by color alone; light palettes use a darker red to reach 3:1; hover card "Exited (3)" or "Exited (no exit code)"; code 0 stays grey ("Exited"),
+  at >= 3:1 against the sidebar in every theme. [pipeline]
+
 ## Toasts
 
 - **Attention toast**: the jump key is in a tooltip only, worded "Go to the next tab needing
