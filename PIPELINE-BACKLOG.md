@@ -75,6 +75,8 @@ Prompt contents:
 - Rules:
   - Follow the existing code style.
   - Put pure logic in a non-UI crate with unit tests.
+  - Keep each new function to one concern and ~15 lines (agent 2's FM IPL pass flags longer
+    ones, and splitting them later costs agent 3 a refactor and a re-check).
 - Verify with `cargo fmt`, `cargo clippy --all-targets`, `cargo build` and `cargo test`; when the step has UI, run only the touched crate's tests first, drive the app, then run the full suite once (a fix found in the app then costs no second full run). If the step has UI, drive the app with the scripts in `pipeline/tools/` (see "UI test tools"); don't set up the display by hand. Say up front which parts the harness can't drive.
 - Update `BACKLOG.md`: remove the step from "Next steps" and add the checks the harness couldn't drive under "Fixed, not tested yet" (the rest of the cleanup happens after Verification). Add any new known limitation to `docs/known-limitations.md`. No test counts or verification records in `BACKLOG.md`; the test count goes in the `end` log line.
 - Update `README.md` where it describes the behaviour the step changes (not `CHANGELOG.md`); grep README, docs and code comments for stale wording of the changed behaviour.
