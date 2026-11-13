@@ -50,6 +50,14 @@ The first tab runs a shell by default. To start with an agent or in another fold
 cargo run -p agent-workspace -- [shell|claude|copilot] [project-dir]
 ```
 
+A folder that doesn't exist (or is a file) opens the tab in the home folder, with a warning
+naming it until dismissed. Unknown arguments, or a first tab that cannot start (its program
+and, for a shell, the fallback shell too), never close the app: the window opens on the empty
+state with the error above its buttons (the usage for bad arguments; Retry and Open settings
+for a failed start, Retry focused), and the launcher buttons open in the requested folder.
+With restored tabs, bad arguments show as an error toast instead. Any tab opening clears the
+error. The same messages are printed to stderr.
+
 Clippy, rustfmt and cargo-deny checks, locally and in CI: [docs/code-quality.md](docs/code-quality.md). Building and
 testing on a Windows machine, natively (Visual Studio Build Tools) or as a Linux build (Docker or
 WSL): [docs/linux-build-on-windows.md](docs/linux-build-on-windows.md).

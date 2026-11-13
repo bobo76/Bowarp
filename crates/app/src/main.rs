@@ -40,7 +40,6 @@ mod window_bounds;
 mod workspace_view;
 
 use std::path::PathBuf;
-use std::process;
 use std::rc::Rc;
 
 use agent_status::{AGENT_ENV, PIPE_ENV, SESSION_ENV};
@@ -48,22 +47,24 @@ use futures::channel::mpsc;
 use gpui_kit::component::TitleBar;
 use gpui_kit::{App, AppContext, Context, Window, WindowDecorations, WindowOptions};
 use term_core::{LaunchSpec, SessionKind};
-use workspace_model::{AgentId, HOOK_PROGRAM_ENV, agents};
+use workspace_model::{AgentId, HOOK_PROGRAM_ENV, StartError, agents, folder_fallback};
 
 use crate::hooks::AgentHooks;
 use crate::instance_lock::InstanceLock;
 use crate::workspace_view::{TabOwnership, WorkspaceView};
 
 /// Usage: `agent-workspace [--remote <host>] [shell|claude|copilot] [project-dir]`. `None`
-/// without arguments.
-fn launch_spec_from_args() -> Option<LaunchSpec> {
-    match parse_launch_args(std::env::args().skip(1), || std::env::current_dir().ok()) {
-        Ok(spec) => spec,
-        Err(message) => {
+/// without arguments; bad arguments are printed and returned as the error the window shows.
+fn launch_spec_from_args() -> Result<Option<LaunchSpec>, StartError> {
+    parse_launch_args(std::env::args().skip(1), || std::env::current_dir().ok()).map_err(
+        |message| {
             eprintln!("agent-workspace: {message}\n{}", usage());
-            process::exit(2);
-        }
-    }
+            StartError::InvalidArguments {
+                message,
+                usage: usage(),
+            }
+        },
+    )
 }
 
 /// The launch the arguments (without the program name) ask for; `current_dir` is the folder
@@ -122,15 +123,15 @@ fn usage() -> String {
     format!("usage: agent-workspace [--remote <host>] [{selectors}] [project-dir]")
 }
 
-fn validate_requested_folder(requested: Option<&LaunchSpec>) {
-    if let Some(folder) = requested
-        .filter(|spec| spec.host.is_none())
-        .and_then(|spec| spec.cwd.as_ref())
-        .filter(|folder| !folder.is_dir())
-    {
-        eprintln!("agent-workspace: not a directory: {}", folder.display());
-        process::exit(2);
-    }
+/// A requested folder on this machine that is not a folder: the tab opens in the home folder
+/// instead. Returns the warning naming it. Checked here, before the UI thread runs.
+fn replace_missing_folder(requested: Option<&mut LaunchSpec>) -> Option<String> {
+    let spec = requested.filter(|spec| spec.host.is_none())?;
+    let folder = spec.cwd.as_ref().filter(|folder| !folder.is_dir())?;
+    eprintln!("agent-workspace: not a directory: {}", folder.display());
+    let (fallback, warning) = folder_fallback(folder, std::env::home_dir());
+    spec.cwd = fallback;
+    Some(warning)
 }
 
 type HookMessages = mpsc::UnboundedReceiver<agent_status::HookMessage>;
@@ -155,15 +156,17 @@ struct WorkspaceStartup {
     hook_messages: HookMessages,
     /// Shown once at start when the hooks could not start.
     hooks_warning: Option<String>,
+    /// Shown once at start when the requested folder is not a folder.
+    folder_warning: Option<String>,
     ownership: TabOwnership,
     tabs_writer: Rc<tabs_file::TabsWriter>,
-    requested: Option<LaunchSpec>,
+    requested: Result<Option<LaunchSpec>, StartError>,
 }
 
 fn main() {
     scrub_inherited_agent_env();
-    let requested = launch_spec_from_args();
-    validate_requested_folder(requested.as_ref());
+    let mut requested = launch_spec_from_args();
+    let folder_warning = replace_missing_folder(requested.as_mut().ok().and_then(Option::as_mut));
     let launchers: Rc<[launcher::Launcher]> = launcher::discover().into();
     let (hooks, hook_messages, hooks_warning) = start_hooks();
     // Only the first running instance reopens and saves the tabs; a later one opens just the
@@ -210,6 +213,7 @@ fn main() {
                     hooks,
                     hook_messages,
                     hooks_warning,
+                    folder_warning,
                     ownership,
                     tabs_writer,
                     requested,
@@ -233,12 +237,18 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
     let shell_setting = settings_file::settings(cx)
         .default_shell()
         .map(str::to_owned);
-    let requested = startup.requested.map(|spec| {
-        // A remote shell is the server's default one.
-        if spec.kind == SessionKind::Shell && spec.program.is_none() && spec.host.is_none() {
-            return launcher::startup_shell(&startup.launchers, shell_setting.as_deref(), spec.cwd);
-        }
-        spec
+    let requested = startup.requested.map(|requested| {
+        requested.map(|spec| {
+            // A remote shell is the server's default one.
+            if spec.kind == SessionKind::Shell && spec.program.is_none() && spec.host.is_none() {
+                return launcher::startup_shell(
+                    &startup.launchers,
+                    shell_setting.as_deref(),
+                    spec.cwd,
+                );
+            }
+            spec
+        })
     });
     let initial = InitialTabs {
         ownership: startup.ownership,
@@ -265,6 +275,9 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
             if let Some(warning) = startup.hooks_warning {
                 workspace.warn_agent_status_off(warning, window, cx);
             }
+            if let Some(warning) = startup.folder_warning {
+                workspace.warn_until_dismissed(warning, window, cx);
+            }
             if startup.ownership == TabOwnership::Guest {
                 workspace.note_guest_window(window, cx);
             }
@@ -290,69 +303,43 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
 
 struct InitialTabs {
     ownership: TabOwnership,
-    requested: Option<LaunchSpec>,
+    /// The tab the command line asks for, or why it could not be read.
+    requested: Result<Option<LaunchSpec>, StartError>,
     default_shell: LaunchSpec,
 }
 
+/// Restore the saved tabs, then open the requested tab, else the default shell when no tab
+/// was restored; bad arguments show in the empty state, or in a toast beside restored tabs. A
+/// remote tab opens after a local one, once connected: when its host cannot be reached, the
+/// window keeps a tab and a notification says why.
 fn restore_or_open_first_tab(
     workspace: &mut WorkspaceView,
     initial: InitialTabs,
     window: &mut Window,
     cx: &mut Context<WorkspaceView>,
 ) {
-    // A remote tab opens after a local one, once connected: when its host cannot be reached,
-    // the window keeps a tab and a notification says why.
-    let (requested, remote) = match initial.requested {
-        Some(spec) if spec.host.is_some() => (None, Some(spec)),
-        requested => (requested, None),
-    };
     let restored = initial.ownership == TabOwnership::Owner
         && tabs_file::load(settings_file::workspace_features(cx))
             .is_some_and(|state| workspace.restore(state, window, cx));
-    if restored {
-        if let Some(spec) = requested {
-            workspace.open_requested_tab(spec, window, cx);
+    let (requested, remote) = match initial.requested {
+        Ok(Some(spec)) if spec.host.is_some() => (Ok(None), Some(spec)),
+        requested => (requested, None),
+    };
+    match (requested, restored) {
+        (Err(error), true) => workspace.warn_start_error(&error, window, cx),
+        (Err(error), false) => workspace.show_start_failure(error, None, window, cx),
+        (Ok(Some(spec)), true) => workspace.open_requested_tab(spec, window, cx),
+        (Ok(None), true) => {}
+        (Ok(requested), false) => {
+            let spec = requested.unwrap_or(initial.default_shell);
+            workspace.open_first_tab(spec, window, cx);
         }
-    } else {
-        open_first_tab(
-            workspace,
-            requested.unwrap_or(initial.default_shell),
-            window,
-            cx,
-        );
     }
     if let Some(spec) = remote {
         // Deferred: the notification layer exists once the window is built.
         cx.defer_in(window, move |workspace, window, cx| {
             workspace.open_requested_tab(spec, window, cx);
         });
-    }
-}
-
-fn open_first_tab(
-    workspace: &mut WorkspaceView,
-    spec: LaunchSpec,
-    window: &mut Window,
-    cx: &mut Context<WorkspaceView>,
-) {
-    // An installed but broken shell falls back to the platform's automatic shell.
-    let fallback = (spec.kind == SessionKind::Shell && spec.program.is_some())
-        .then(|| LaunchSpec::shell(spec.cwd.clone()));
-    let mut program = launcher::launch_name(&spec).to_owned();
-    let mut started = workspace.open_tab(spec, window, cx);
-    if let (Err(err), Some(fallback)) = (&started, fallback) {
-        eprintln!("agent-workspace: failed to start {program}: {err}");
-        let failure = format!("Could not start {program}: {err}");
-        program = launcher::launch_name(&fallback).to_owned();
-        started = workspace.open_tab(fallback, window, cx);
-        if started.is_ok() {
-            workspace.warn_shell_fallback(failure, window, cx);
-        }
-    }
-    if let Err(err) = started {
-        eprintln!("agent-workspace: failed to start {program}: {err}");
-        instance_lock::release_own();
-        process::exit(1)
     }
 }
 
@@ -404,5 +391,35 @@ mod tests {
             let error = parse(&[kind]).unwrap_err();
             assert!(error.contains(&format!("{kind:?}")), "{error}");
         }
+    }
+
+    #[test]
+    fn a_requested_folder_that_is_not_one_opens_in_the_home_folder() {
+        let mut missing = parse(&["claude", "/nonexistent/agentws-missing"])
+            .unwrap()
+            .unwrap();
+        let warning = replace_missing_folder(Some(&mut missing)).expect("a warning");
+        assert!(
+            warning.contains("/nonexistent/agentws-missing"),
+            "{warning}"
+        );
+        assert_eq!(missing.cwd, std::env::home_dir());
+
+        let folder = std::env::temp_dir();
+        let mut existing = parse(&["shell", folder.to_str().unwrap()])
+            .unwrap()
+            .unwrap();
+        assert_eq!(replace_missing_folder(Some(&mut existing)), None);
+        assert_eq!(existing.cwd, Some(folder));
+
+        // A remote folder is checked on the server.
+        let mut remote = parse(&["--remote", "box", "claude", "/nonexistent/agentws-missing"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(replace_missing_folder(Some(&mut remote)), None);
+        assert_eq!(
+            remote.cwd,
+            Some(PathBuf::from("/nonexistent/agentws-missing"))
+        );
     }
 }

@@ -173,7 +173,27 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
 - **With no tab**: the explorer is hidden (state remembered), "Open settings file" is disabled
   ("Open a tab to view the file"), search and groups work as usual. [UX agent]
 - **Next start with zero saved tabs** restores the groups and opens the default shell as
-  usual, so there is always a tab after launch. [UX agent]
+  usual, so there is always a tab after launch, unless the start failed (below). [UX agent]
+- **A start that leaves no tab never exits**: the empty state shows an error block above its
+  launchers, the panel. Bad arguments get "Invalid command line", the message and the usage,
+  and no Retry (it would fail the same way), focus on the default shell button. A failed
+  requested shell (after its fallback) or agent gets "Could not start <program>", the error,
+  Retry (primary, focused: re-runs the same launch, fallback included) and "Open settings";
+  launchers open in that launch's folder. Text wraps and is never colour alone. Kept apart
+  from a new panel so the user always has another way to get a tab. The stderr lines stay.
+  [UX agent]
+- **Panel or toast**: the panel only when start ends with no tab. With restored tabs, bad
+  arguments are a persistent error toast (message and usage) and a failed requested tab
+  keeps today's error toast; a guest never restores, so it gets the panel. No shell is opened
+  in place of a failed agent: the panel's default button is one key away. [UX agent]
+- **Panel lifetime**: any tab opening (Retry, a launcher, `+`, new-tab key) clears the error
+  for good; closing that tab later shows the plain empty state. A failed Retry keeps the
+  panel, replaces the error and adds a "tried N times" line so the press visibly did
+  something; a failed launcher button toasts as in the plain empty state. [UX agent]
+- **Requested folder that is missing or not a folder** (a file too): the tab still opens, in
+  the home folder, with a persistent warning naming the path, like the fallback-shell
+  warning; same for agents, restored or guest windows. Remote folders aren't checked
+  locally. Rejected: a file's parent folder (a guess the user didn't ask for). [UX agent]
 
 ## Settings page and file panes
 

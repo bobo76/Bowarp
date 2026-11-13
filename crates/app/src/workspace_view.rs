@@ -6,6 +6,7 @@ mod reconnect;
 mod settings_pane;
 mod sidebar_rows;
 mod spinner_clock;
+mod start_failure;
 mod tab_card;
 mod tab_list;
 mod tab_search;
@@ -43,6 +44,7 @@ use self::divider_drag::DividerDrag;
 use self::git_pane::GitPane;
 use self::settings_pane::SettingsPane;
 use self::spinner_clock::SpinnerClock;
+use self::start_failure::StartFailure;
 use self::tab_card::TabCards;
 use self::tab_list::TabList;
 use self::tab_search::TabSearch;
@@ -318,6 +320,9 @@ pub struct WorkspaceView {
     /// The folder of the tab whose closing left no tab: where the next new tab starts (memory
     /// only). Cleared when a tab opens.
     last_closed_folder: Option<PathBuf>,
+    /// Why start-up left the window without a tab, shown in the empty state (set by
+    /// `show_start_failure`, cleared for good when a tab opens).
+    start_failure: Option<StartFailure>,
     /// The sidebar menu (tab, group, `+`) that is open, if any.
     menu: OpenMenu,
     search: TabSearch,
@@ -366,10 +371,7 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) {
         let message = format!("{failure}. Started a fallback shell instead.");
-        // Startup runs before the notification layer's root exists.
-        cx.defer_in(window, move |_, window, cx| {
-            window.push_notification(Notification::warning(message).autohide(false), cx);
-        });
+        self.warn_until_dismissed(message, window, cx);
     }
 
     /// The status hooks could not start: say so until dismissed. A fixed id, so it never
@@ -471,6 +473,7 @@ impl WorkspaceView {
             empty_focus: cx.focus_handle(),
             focus_empty_default: false,
             last_closed_folder: None,
+            start_failure: None,
             menu: OpenMenu::default(),
             search: TabSearch::new(window, cx),
             tab_list: TabList::new(cx),
@@ -561,6 +564,7 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) {
         self.last_closed_folder = None;
+        self.start_failure = None;
         match place {
             NewTabPlace::End => self.layout.add(id),
             NewTabPlace::After(tab) => self.layout.add_after(id, tab),

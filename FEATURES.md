@@ -147,6 +147,9 @@ directly to model APIs.
 - When agent status can't start (its helper missing next to the app, or its listener
   failing), say so once per start in a warning that stays until dismissed, with the cause
   and the fix, and show quiet agent tabs as "Status unavailable".
+- Always open the window, even when the start fails: bad command-line arguments or a
+  program that can't start show the error (with Retry where it can help) in place of the
+  terminal, and a folder that doesn't exist opens the tab in the home folder with a warning.
 
 ## Workspace Persistence
 

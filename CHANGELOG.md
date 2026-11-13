@@ -5,6 +5,15 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.3.3
+
+- Open the window when the start fails instead of quitting silently (on Windows the app
+  seemed not to start): bad command-line arguments show the error and the usage in place of
+  the terminal (or in a toast when saved tabs were restored), and a shell or agent that can't
+  start shows the error with Retry and Open settings, next to the usual new-tab buttons.
+- Open a tab in the home folder, with a warning naming the path, when the folder given on the
+  command line doesn't exist or isn't a folder.
+
 ## 0.3.2
 
 - Ask the OS for attention when a tab needs attention or is ready for review while the window

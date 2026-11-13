@@ -48,6 +48,7 @@ mod remote_hosts;
 mod running;
 mod search;
 mod settings;
+mod start_error;
 mod subagents;
 mod tab;
 mod tab_history;
@@ -124,6 +125,7 @@ pub use settings::{
     DependentState, FeatureSwitch, FontSize, Settings, SettingsFile, SettingsLoad, TabCardField,
     TabCardFields, TerminalColors, UiTheme, installed_font_family, settings_backup_path,
 };
+pub use start_error::{StartError, folder_fallback};
 pub use subagents::{Subagent, SubagentEvent, Subagents};
 pub use tab::{TabColor, TabMeta};
 pub use tab_history::TabHistory;

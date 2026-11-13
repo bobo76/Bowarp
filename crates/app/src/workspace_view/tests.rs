@@ -2538,3 +2538,79 @@ fn window_title_and_attention_follow_the_tabs(cx: &mut gpui_kit::TestAppContext)
     assert_eq!(title(&mut h), "(1) other \u{2014} Agent Workspace");
     assert_eq!(requests(&mut h), 1);
 }
+
+/// A first tab that would not start leaves the window open with the error in the empty state:
+/// the launchers start in its folder, a failed Retry counts, and a new tab clears the error.
+#[cfg(unix)]
+#[gpui::test]
+fn a_failed_start_shows_the_error_until_a_tab_opens(cx: &mut gpui_kit::TestAppContext) {
+    use workspace_model::StartError;
+    use workspace_model::agents::CLAUDE;
+
+    let mut h = PanesHarness::new("start-failure", cx);
+    let workspace = h.workspace.clone();
+    let missing = LaunchSpec::new(
+        SessionKind::Agent(CLAUDE),
+        Some("/nonexistent/agentws-missing".into()),
+        Vec::new(),
+        Some(h.folder.clone()),
+    );
+    let details = |h: &mut PanesHarness| {
+        h.workspace.read_with(&h.cx, |workspace, _| {
+            workspace
+                .start_failure
+                .as_ref()
+                .map(|failure| (failure.error.heading(), failure.error.details()))
+        })
+    };
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.close_tab(0, window, cx);
+            workspace.open_first_tab(missing.clone(), window, cx);
+        })
+    });
+    h.cx.run_until_parked();
+    let (heading, lines) = details(&mut h).expect("the error shows");
+    assert_eq!(heading, "Could not start /nonexistent/agentws-missing");
+    assert_eq!(lines.len(), 1, "no attempt count yet: {lines:?}");
+    h.cx.update(|window, cx| {
+        let workspace = workspace.read(cx);
+        assert!(workspace.tabs.is_empty());
+        assert_eq!(workspace.last_closed_folder.as_ref(), Some(&h.folder));
+        assert!(workspace.empty_focus.is_focused(window));
+    });
+
+    h.cx.update(|window, cx| workspace.update(cx, |w, cx| w.retry_start(window, cx)));
+    let (_, lines) = details(&mut h).expect("still shown after a failed Retry");
+    assert_eq!(lines.last().map(String::as_str), Some("Tried 2 times."));
+
+    let shell = LaunchSpec::new(
+        SessionKind::Shell,
+        Some("/bin/sh".into()),
+        vec!["-c".into(), "exit 0".into()],
+        None,
+    );
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_tab(shell, window, cx).unwrap();
+            wait_for_exit(&workspace.tabs[0].view.read(cx).session);
+        })
+    });
+    assert_eq!(details(&mut h), None, "a new tab clears it for good");
+
+    // Bad arguments: no Retry; the error replaces nothing else.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let error = StartError::InvalidArguments {
+                message: "unknown session kind \"bogus\"".into(),
+                usage: "usage: agent-workspace".into(),
+            };
+            workspace.show_start_failure(error, None, window, cx);
+            workspace.retry_start(window, cx);
+            assert_eq!(workspace.tabs.len(), 1, "Retry starts nothing");
+        })
+    });
+    let (heading, _) = details(&mut h).unwrap();
+    assert_eq!(heading, "Invalid command line");
+    h.cx.run_until_parked();
+}

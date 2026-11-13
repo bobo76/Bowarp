@@ -21,6 +21,10 @@ entry when the limitation is lifted.
   tabs: X11 and Windows ignore a request from the active window. Windows flashes the taskbar
   button once. Programs that ring the bell in the selected tab, or a tab whose status is
   already Needs attention, ask nothing new.
+- Start failures: Retry in the empty state re-runs the launch as resolved at start, so a
+  default shell changed meanwhile in Settings is not picked up by Retry (the launcher buttons
+  and Ctrl+Shift+T use it). A folder named with `--remote` is not checked before connecting.
+  Only start-up shows the error in the empty state; a tab that fails to open later toasts.
 - Agent status off (`agentws-hook` missing or the status listener could not start): Claude
   Code tabs fall back to output activity ("Status unavailable" when quiet) and a bell asks for
   attention as in a shell; a Copilot CLI permission prompt reads Working, not Needs attention,
