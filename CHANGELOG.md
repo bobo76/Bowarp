@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.3.8
+
+- Add a "Changed files" piece to Settings → Tab hover card for the list of changed files
+  under +N. It is off initially, so the hover card now shows only +N until it is turned on;
+  it needs Changes on.
+
 ## 0.3.7
 
 - Right-click in the terminal for a menu: Copy, Paste, Select all, Search and Clear

@@ -279,11 +279,13 @@ an answer. Click the chevron and ring to fold the list in or out (per tab, not s
 subagent shows from its `SubagentStart` hook to its `SubagentStop`; the tab keeps its own status
 (Idle once the main turn ends, even while background subagents work).
 
-Appearance → Tab hover card controls the card and its Status, Location, Changes, Program
-title and Session kind pieces (all on initially). The tab name and Ctrl+number shortcut
-always remain. Program title appears when a custom name hides it. Turning the card off
-disables, but remembers, the piece switches; turning every piece off also hides the card.
-Changes off skips `git diff`; Status off stops the card's clock. Group cards are unaffected.
+Appearance → Tab hover card controls the card and its Status, Location, Changes, Changed
+files, Program title and Session kind pieces (all on initially except Changed files). The tab
+name and Ctrl+number shortcut always remain. Program title appears when a custom name hides
+it. Changed files lists the changed files under the `+N` line, each clickable to open; it
+needs Changes and doesn't keep the card shown alone. Turning the card off disables, but
+remembers, the piece switches; turning every piece off also hides the card. Changes off
+skips `git diff`; Status off stops the card's clock. Group cards are unaffected.
 Appearance → Group hover cards (on) turns the cards beside group headers off (a collapsed
 group still shows its status); Activity animations (on) off makes the Running badge and a
 working spinner static and starts no animation timers. Both apply live and are

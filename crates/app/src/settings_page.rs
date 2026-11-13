@@ -681,7 +681,7 @@ fn tab_card_group() -> SettingGroup {
         fn(&Settings) -> bool,
         fn(&mut Settings, bool),
     );
-    let pieces: [Piece; 5] = [
+    let pieces: [Piece; 6] = [
         (
             "Status",
             "Status chip, command and elapsed working or running time.",
@@ -699,6 +699,12 @@ fn tab_card_group() -> SettingGroup {
             "Lines added in the working tree (+N from git diff).",
             |s| s.tab_card.changes,
             |s, v| s.tab_card.changes = v,
+        ),
+        (
+            "Changed files",
+            "The changed files under +N, clickable to open (needs Changes).",
+            |s| s.tab_card.changed_files,
+            |s, v| s.tab_card.changed_files = v,
         ),
         (
             "Program title",

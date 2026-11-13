@@ -291,7 +291,7 @@ impl WorkspaceView {
         let location = view.location();
         let now = Instant::now();
         let (changes, more_changes) = fields
-            .keep(TabCardField::Changes, || {
+            .keep(TabCardField::ChangedFiles, || {
                 let location = location?;
                 let changes = self.cards.changes(id, &location.folder)?;
                 Some(card_changes(

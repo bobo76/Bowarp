@@ -204,6 +204,8 @@ pub enum TabCardField {
     Status,
     Location,
     Changes,
+    /// The changed files under the `+N` line; needs [`TabCardField::Changes`] too.
+    ChangedFiles,
     ProgramTitle,
     SessionKind,
 }
@@ -219,6 +221,9 @@ pub struct TabCardFields {
     pub location: bool,
     #[serde(deserialize_with = "lenient_enabled")]
     pub changes: bool,
+    /// Off initially (a missing or non-boolean value reads as off).
+    #[serde(deserialize_with = "lenient")]
+    pub changed_files: bool,
     #[serde(deserialize_with = "lenient_enabled")]
     pub program_title: bool,
     #[serde(deserialize_with = "lenient_enabled")]
@@ -232,6 +237,7 @@ impl Default for TabCardFields {
             status: true,
             location: true,
             changes: true,
+            changed_files: false,
             program_title: true,
             session_kind: true,
         }
@@ -239,6 +245,7 @@ impl Default for TabCardFields {
 }
 
 impl TabCardFields {
+    /// Whether the card shows at all. `changed_files` doesn't count: it is part of `changes`.
     pub fn active(self) -> bool {
         self.enabled
             && (self.status
@@ -254,6 +261,7 @@ impl TabCardFields {
                 TabCardField::Status => self.status,
                 TabCardField::Location => self.location,
                 TabCardField::Changes => self.changes,
+                TabCardField::ChangedFiles => self.changes && self.changed_files,
                 TabCardField::ProgramTitle => self.program_title,
                 TabCardField::SessionKind => self.session_kind,
             }

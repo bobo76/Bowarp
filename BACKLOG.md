@@ -10,6 +10,12 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Tab hover card "Changed files" piece:
+
+- In a repo with changes: Settings → Tab hover card shows "Changed files" (off) below
+  "Changes"; the hovered tab's card shows `+N` without the file list. On: the list appears
+  live, files open on click; Changes off hides both; Tab hover card off disables the row.
+
 Terminal right-click menu:
 
 - Windows: right-click in a cmd and a PowerShell tab opens the menu with the shortcut hints;
@@ -379,6 +385,28 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
+- Git page switch and shortcut: switch "Git page" (on). Off: no title-bar button, no sidebar
+  row, the page closes if shown (keeping commit drafts) and none of its `git` work runs. A key
+  opens the page on the selected tab's repository and, pressed again, goes back to the tab
+  (Ctrl+Shift+G by default, free today; Cmd+Shift+G on macOS), not sent to the terminal,
+  listed and rebindable on Settings → Keyboard, shown in the title-bar button's tooltip; it
+  does nothing while the switch is off.
+- Git status outside the Git page, one switch "Git status in tabs and explorer" (on). Off: no
+  branch under tab names (the folder shows instead), no changed-file coloring and no
+  git-ignored dimming in the explorer, no `+N` in the hover card (its Changes option shown
+  disabled with the caption), and no `git` runs or watches for them. The Git page is
+  unaffected.
+- Agent status switch for agent tabs, "Agent status" (on), the parent of "Agent status for
+  agents typed at the prompt" (shown disabled under it). Off: new Claude Code and Copilot
+  tabs start without the generated `--settings` hooks and the plugin, and show "Recent
+  activity" like a shell, with no Working / Waiting / Ready for review, toasts or attention
+  requests. Applies to agents started afterwards; running ones keep theirs. The hook listener
+  may still start (other features need it) but tells no tab anything.
+- Background tab marks, switch "Bell and finished-command marks" (on): off means a bell, or a
+  long command ending, in a tab that isn't selected leaves no mark. Merge with the planned
+  "Long-command completion status" switch below, or keep that one under it; decide when
+  building.
+
 UX review, top 10 by value per cost ([reviews/ux-review.md](reviews/ux-review.md), IDs are
 its items), regrouped into steps, in order:
 
@@ -628,7 +656,7 @@ limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the comma
 - Open the Git page on a tab's repository from its hover card's `+N`.
 - Git page diff: syntax highlighting (the file viewer's tree-sitter highlighting could provide
   it), word-level highlights inside changed lines, and a side-by-side view.
-- Git page, smaller items: stash, amend, a key to open the page, line staging of untracked
+- Git page, smaller items: stash, amend, line staging of untracked
   files (intent-to-add), cancelling a long commit hook.
 
 ## Parked ideas
