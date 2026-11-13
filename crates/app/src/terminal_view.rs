@@ -1,6 +1,7 @@
 mod agent_tracker;
 mod clipboard_notice;
 mod link_hover;
+mod paste;
 mod pointer;
 mod remote;
 mod restart;
@@ -276,6 +277,9 @@ pub struct TerminalView {
     /// [`Self::begin_restart`], cleared by [`Self::end_restart`] when it fails; on success the
     /// view is replaced.
     restarting: bool,
+    /// The multi-line paste question is open (`paste.rs`): set when it opens, cleared when it
+    /// closes by any way out.
+    paste_question_open: bool,
     /// Set by the shell integration marks; agent sessions keep their hook status instead.
     running_command: Option<RunningCommand>,
     /// Where [`Self::change_dir`] leaves the folder for the shell's hidden cd key binding;
@@ -494,6 +498,7 @@ impl TerminalView {
             host: spec.host.clone(),
             process: ProcessState::Running,
             restarting: false,
+            paste_question_open: false,
             running_command: None,
             cd_file: spec
                 .env
@@ -1219,16 +1224,6 @@ impl TerminalView {
         true
     }
 
-    /// Send text as a paste; false when there is no text to send.
-    fn paste(&mut self, text: Option<String>, cx: &mut Context<Self>) -> bool {
-        let Some(text) = text.filter(|text| !text.is_empty()) else {
-            return false;
-        };
-        let bytes = keys::paste_bytes(&text, self.mode());
-        self.send_input(bytes.into(), cx);
-        true
-    }
-
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         let consumed = self.restart_on_enter(event, cx)
             || self.handle_history_key(&event.keystroke, cx)
@@ -1359,20 +1354,21 @@ impl TerminalView {
         true
     }
 
-    fn on_paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        self.paste_clipboard(cx);
+    fn on_paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        self.paste_clipboard(window, cx);
     }
 
     /// Without text on the clipboard, the key goes on to the program as `^V`: Claude Code then
     /// reads a copied image from the clipboard itself.
-    fn on_paste_or_send(&mut self, _: &PasteOrSend, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.paste_clipboard(cx) {
+    fn on_paste_or_send(&mut self, _: &PasteOrSend, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.paste_clipboard(window, cx) {
             cx.propagate();
         }
     }
 
-    fn paste_clipboard(&mut self, cx: &mut Context<Self>) -> bool {
-        self.paste(cx.read_from_clipboard().and_then(|item| item.text()), cx)
+    fn paste_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let text = cx.read_from_clipboard().and_then(|item| item.text());
+        self.paste(text, window, cx)
     }
 }
 

@@ -16,6 +16,8 @@ directly to model APIs.
 - Support normal interactive CLI behavior, including permission prompts,
   cancellation, multiline input, colors, and terminal resizing.
 - Provide copy/paste, text selection, scrollback, and terminal search.
+- Ask before pasting text whose line breaks would run as commands (the program hasn't
+  turned on bracketed paste), with a preview of the lines.
 - Search terminal output and retained scrollback with Ctrl+Shift+F: case-insensitive literal
   matching, visible match highlights, a current/total count, Enter/Shift+Enter navigation
   with wrapping, and Escape to close.

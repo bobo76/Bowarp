@@ -122,6 +122,11 @@ refuses), an error toast says why and stays until dismissed.
 | Shift+PageUp / Shift+PageDown | Scroll the history by a page |
 | Click a link | Open it (use Ctrl/Cmd+click when the program tracks the mouse) |
 
+Pasting text with a line break asks first ("Paste 3 lines? They will run as commands.", with a
+preview) when the program hasn't turned on bracketed paste: each line break then reaches it as
+Enter, so the lines would run at once (cmd, a nested shell, `cat`). Shells that bracket pastes
+(bash, zsh, fish) take the paste without a question. Enter pastes, Esc cancels.
+
 Ctrl+C, Tab and Shift+Tab always go to the program. When a program tracks the mouse (Claude
 Code does), clicks and the wheel go to it; hold Shift to select text locally. On Linux a
 selection is also copied to the primary selection, and middle-click pastes it. A wheel notch

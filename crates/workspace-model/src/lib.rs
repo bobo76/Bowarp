@@ -43,6 +43,7 @@ mod location;
 mod notification_features;
 mod osc133;
 pub mod pane_width;
+mod paste_warning;
 mod platform;
 mod progress;
 mod remote_hosts;
@@ -113,6 +114,7 @@ pub use layout::{
 pub use location::{Location, display_path};
 pub use notification_features::{NotificationFeatures, ToastKind, exit_toast_kind};
 pub use osc133::{CommandLine, Osc133Scanner, PromptMark, new_mark_token};
+pub use paste_warning::{PasteWarning, paste_warning};
 pub use platform::Platform;
 pub use progress::{ProgressScanner, ProgressState};
 pub use remote_hosts::{

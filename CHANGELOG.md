@@ -5,6 +5,13 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.3.6
+
+- Ask before pasting text with line breaks when the program hasn't turned on bracketed paste
+  (cmd, a nested shell, plain ssh), where each line would run as a command at once: "Paste 4
+  lines?" with a preview, Paste (Enter) or Cancel (Esc). Applies to Ctrl+Shift+V,
+  Shift+Insert, Ctrl+V and the middle click.
+
 ## 0.3.5
 
 - Size the file viewer from the space the sidebar and explorer leave, and keep the terminal

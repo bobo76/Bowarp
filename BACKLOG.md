@@ -10,6 +10,13 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Multi-line paste warning:
+
+- Windows: pasting two lines into a cmd tab and into a PowerShell tab asks "Paste 2 lines?";
+  Cancel sends nothing, Paste runs both. In a WSL bash tab (bracketed paste on) it doesn't ask.
+- Plain `ssh` to a host whose shell has bracketed paste on doesn't ask; in a nested `sh` it
+  asks.
+
 Viewer width from the free space:
 
 - Windows, at 100% and at a 150% display scale: with the sidebar and explorer open, the
@@ -367,20 +374,16 @@ behavior"); items below name their switch where they need one.
 UX review, top 10 by value per cost ([reviews/ux-review.md](reviews/ux-review.md), IDs are
 its items), regrouped into steps, in order:
 
-1. Multi-line paste warning (F6): outside bracketed-paste mode every newline becomes Enter
-   (`keys.rs:66`), so in cmd, a nested shell or plain ssh a pasted snippet runs at once. When
-   the terminal isn't in bracketed-paste mode and the text has a newline, ask once ("Paste 4
-   lines? They will run as commands") with a preview. A safeguard, so no switch.
-2. Right-click menu in the terminal (E1): today the right button only reaches programs that
+1. Right-click menu in the terminal (E1): today the right button only reaches programs that
    track the mouse (`terminal_view.rs:1422`). Copy (disabled without a selection), Paste,
    Select all, Search, Clear scrollback; on a link: Open, Copy link. With mouse reporting on,
    Shift+right-click opens it. Each entry shows its shortcut.
-3. Shell tab names (#4, the user chose option A on 2026-11-13): a shell row shows the
+2. Shell tab names (#4, the user chose option A on 2026-11-13): a shell row shows the
    program's title (`user@host: ~/path`), so shells in different folders look the same. With
    shell integration, name the tab by the running command, else the folder's last component;
    the program title moves to the hover card. A custom name always wins; agent tabs keep
    their titles.
-4. Explorer Delete to the trash (F5): Delete is permanent today (`file_explorer.rs:1071`).
+3. Explorer Delete to the trash (F5): Delete is permanent today (`file_explorer.rs:1071`).
    Move to the system trash (Recycle Bin, freedesktop trash); keep the permanent delete with
    today's wording where no trash exists (network mounts, WSL paths). Check the new
    dependency with `cargo deny`.

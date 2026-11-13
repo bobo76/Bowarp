@@ -10,6 +10,14 @@ entry when the limitation is lifted.
   integration's marks (a shell started inside a tab, ssh), jobs left running in the
   background (`&`), Copilot before its first progress report and agents without status
   hooks.
+- The multi-line paste question goes by the bracketed-paste mode only: a program that hasn't
+  turned it on asks before every paste with a line break, also when it would not run the
+  lines (an editor, PowerShell's PSReadLine without bracketed paste), and one that has turned
+  it on never asks, whatever it does with the lines. Exited tabs don't ask. A preview line is
+  cut by characters, so wide characters or a narrow window can clip it without the `…`. A
+  single-line paste outside bracketed paste can still hold control bytes (ESC sequences such as
+  keypad Enter, or a control key the shell binds to accept-line) that run it, without a
+  question.
 - In-app notifications off drops only the agent status toasts (Needs attention / Waiting for
   permission / Waiting for your reply, Ready for review, Agent finished on a clean exit); a
   toast already shown stays until it hides. A background agent that exits with a nonzero or

@@ -129,7 +129,13 @@ impl TerminalView {
             MouseButton::Left => self.start_selection(event, cx),
             #[cfg(target_os = "linux")]
             MouseButton::Middle => {
-                self.paste(cx.read_from_primary().and_then(|item| item.text()), cx);
+                let text = cx.read_from_primary().and_then(|item| item.text());
+                // After this click: GPUI gives a clicked element the focus once its handlers
+                // ran, which would take it back from the paste question's dialog.
+                let view = cx.entity();
+                window.defer(cx, move |window, cx| {
+                    view.update(cx, |view, cx| view.paste(text, window, cx));
+                });
             }
             _ => {}
         }

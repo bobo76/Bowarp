@@ -157,6 +157,16 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   notifications off or only shell tabs, fixed id. Stacked above the fallback-shell warning,
   not merged. [UX agent]
 
+## Paste
+
+- **Multi-line paste warning**: a modal question like the busy-close one ("Paste 4 lines?
+  They will run as commands."), with a monospace preview of the first lines (rest summed up),
+  Paste (default, Enter) and Cancel (Esc); the keyboard goes back to the terminal. Asked for
+  each such paste, from every path (Ctrl+Shift+V, Shift+Insert, Ctrl+V, middle click), when
+  the program hasn't turned on bracketed paste and the text has a line break (a single
+  trailing newline counts: it runs at once). No switch and no "don't ask again": it is a
+  safeguard. [pipeline]
+
 ## Window attention and title
 
 - **OS attention covers every tab, the selected one included**: a tab turning Needs attention
