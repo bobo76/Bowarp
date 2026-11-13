@@ -405,6 +405,17 @@ its tab, expanding its group; click its close button to dismiss it without switc
 let it disappear automatically. A newer notice for the same tab replaces the previous one.
 There is no sound or OS notification.
 
+When any tab, the selected one included, turns Needs attention or Ready for review (or its
+agent finishes a turn) while the window is not the active one, or while the Settings or Git
+page shows, the window asks the system for attention once: the taskbar button flashes on
+Windows, the window is marked urgent on X11 (nothing on Wayland). Activating the window clears
+it. It follows the In-app notifications switch.
+
+The window title names what it shows: "<tab name> — Agent Workspace" (the name the sidebar
+shows), "Settings — Agent Workspace" or "Git — Agent Workspace" while those pages show, plain
+"Agent Workspace" with no tab open. While N tabs need attention (the selected one included,
+Ready for review not counted) it starts with "(N) ", whatever the notifications switch says.
+
 Right-click a row or use its `⋮` button for the tab menu: duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
 and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working
 directory, rename (F2 in the tab list; Enter keeps, Escape cancels, an empty name goes back to
@@ -720,8 +731,8 @@ Settings → Workspace has three switches, all on by default (`restore_tabs`,
 Settings → Notifications has one switch, **In-app notifications** (`in_app_notifications`, on
 by default; missing or non-boolean means on). Off (applies live): no toast appears when a
 background tab's agent needs attention, is ready for review or exits cleanly; the sidebar
-status, status dots and attention badges are unchanged, and a toast already on screen stays
-until it hides. An agent that exits with a nonzero or unknown exit code still shows its toast.
+status, status dots, attention badges and the "(N)" in the window title are unchanged, no
+attention request goes to the system, and a toast already on screen stays until it hides. An agent that exits with a nonzero or unknown exit code still shows its toast.
 Toasts that answer something you did (save or delete errors, history cleared, failed starts)
 and the persistent fallback-shell warning always show.
 

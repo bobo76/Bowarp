@@ -151,6 +151,15 @@ impl TabStatus {
         }
     }
 
+    /// Whether a tab going from `before` to this status asks for the user's eye: it turned
+    /// Needs attention or Ready for review, or, as the selected tab (which never shows Ready
+    /// for review), its agent finished a turn.
+    pub fn wants_user_after(self, before: Self) -> bool {
+        before != self
+            && (matches!(self, Self::NeedsAttention | Self::ReadyForReview)
+                || (before == Self::Working && self == Self::Idle))
+    }
+
     /// What "jump to the next tab needing attention" makes of this status.
     pub fn attention(self) -> Option<Attention> {
         match self {
@@ -1524,6 +1533,23 @@ mod tests {
                 }
             }
         });
+    }
+
+    #[test]
+    fn a_tab_wants_the_user_when_it_turns_waiting_or_finishes_a_turn() {
+        use TabStatus::*;
+        assert!(NeedsAttention.wants_user_after(Working));
+        assert!(NeedsAttention.wants_user_after(Idle));
+        assert!(ReadyForReview.wants_user_after(Working));
+        assert!(ReadyForReview.wants_user_after(Running));
+        assert!(Idle.wants_user_after(Working));
+        // No change, or a change the user caused or doesn't need to see.
+        assert!(!NeedsAttention.wants_user_after(NeedsAttention));
+        assert!(!Working.wants_user_after(NeedsAttention));
+        assert!(!Idle.wants_user_after(ReadyForReview));
+        assert!(!Idle.wants_user_after(NeedsAttention));
+        assert!(!Exited.wants_user_after(Working));
+        assert!(!Quiet.wants_user_after(Active));
     }
 
     #[test]

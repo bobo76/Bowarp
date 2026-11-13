@@ -147,6 +147,18 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   notifications off or only shell tabs, fixed id. Stacked above the fallback-shell warning,
   not merged. [UX agent]
 
+## Window attention and title
+
+- **OS attention covers every tab, the selected one included**: a tab turning Needs attention
+  or Ready for review while the window isn't active (or Settings/Git shows) asks the OS once
+  per change; in-place agents in shell tabs count. Follows "In-app notifications". [pipeline]
+- **Window title**: the tab's name as the sidebar shows it (custom name, else program title),
+  kept current when that name changes; "Settings — " / "Git — " while those pages show; plain
+  "Agent Workspace" with no tab. "(N) " counts every tab needing attention, the selected one
+  included (seen from other apps), not Ready for review; it is status, so the notifications
+  switch doesn't hide it; it prefixes page titles too. Set only when the string changes.
+  A page shown in the active window asks nothing: the OS ignores it (known limitation). [pipeline]
+
 ## New tabs and the empty state
 
 - **Placement**: every in-window new tab (`+`, Ctrl+Shift+T, explorer entries, duplicate) opens

@@ -1,10 +1,10 @@
 //! What the workspace knows about its tabs beyond the terminal itself: where each session
 //! works, which git branch that folder is on, what the user set on each tab (name, color), and
 //! how tabs are laid out (pinned, groups, order), which tabs a sidebar search matches and which
-//! tab wants attention next, how long a session has been in its status, and where the window
-//! and its tabs were when it closed, which running instance owns that save, which icon each
-//! new-tab launcher shows, the file explorer's tree, how the file viewer shows a file and how
-//! wide it is, the links in terminal output and documents, the
+//! tab wants attention next, the window's title, how long a session has been in its status, and
+//! where the window and its tabs were when it closed, which running instance owns that save,
+//! which icon each new-tab launcher shows, the file explorer's tree, how the file viewer shows
+//! a file and how wide it is, the links in terminal output and documents, the
 //! shell commands run in the app (history), the shell integration marks (OSC 133) in a shell's
 //! output, the progress reports (OSC 9;4) in a program's output, how a running command is
 //! labeled and badged, which tabs closing would interrupt, which clipboard writes wait for the
@@ -67,7 +67,7 @@ pub use agents::{
     Presentation, SessionKind, StatusPolicy, SubagentHooks, agents, apply_environment,
     is_spawn_tool, reads_unnamed_subagent_start,
 };
-pub use attention::{Attention, next_attention, waiting_count};
+pub use attention::{Attention, TitleSubject, next_attention, waiting_count, window_title};
 pub use clipboard_guard::{
     CLIPBOARD_PREVIEW_CHARS, ClipboardAnswer, ClipboardGuard, ClipboardNotice, ClipboardOffer,
     ClipboardPolicy, ClipboardTarget, ClipboardWrites,

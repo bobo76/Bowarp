@@ -2452,3 +2452,89 @@ fn the_tab_list_cannot_take_the_keyboard_without_a_tab(cx: &mut gpui_kit::TestAp
         });
     }
 }
+
+#[gpui::test]
+fn window_title_and_attention_follow_the_tabs(cx: &mut gpui_kit::TestAppContext) {
+    use term_core::SessionEvent;
+
+    let mut h = PanesHarness::new("window-title", cx);
+    let workspace = h.workspace.clone();
+    let title = |h: &mut PanesHarness| h.cx.window_title().unwrap_or_default();
+    let requests = |h: &mut PanesHarness| {
+        h.workspace
+            .read_with(&h.cx, |workspace, _| workspace.attention_requests)
+    };
+    let name =
+        h.cx.update(|_, cx| WorkspaceView::tab_name(&workspace.read(cx).tabs[0], cx));
+    assert_eq!(
+        title(&mut h),
+        format!("{name} \u{2014} {}", about::APP_NAME)
+    );
+
+    // A rename shows at once; the Settings page names itself.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let id = workspace.tabs[0].id;
+            workspace.start_rename(RenameTarget::Tab(id), RenameOrigin::Menu, window, cx);
+            let input = workspace.renaming.as_ref().unwrap().input.clone();
+            input.update(cx, |input, cx| input.set_value("build", window, cx));
+            workspace.commit_rename(window, cx);
+        })
+    });
+    h.cx.run_until_parked();
+    assert_eq!(title(&mut h), "build \u{2014} Agent Workspace");
+    h.cx.update(|window, cx| workspace.update(cx, |w, cx| w.open_settings(window, cx)));
+    h.cx.run_until_parked();
+    assert_eq!(title(&mut h), "Settings \u{2014} Agent Workspace");
+    h.cx.update(|window, cx| workspace.update(cx, |w, cx| w.activate(0, window, cx)));
+    h.cx.run_until_parked();
+    assert_eq!(title(&mut h), "build \u{2014} Agent Workspace");
+
+    // A second tab, selected: a bell in the first one (hidden) makes it need attention.
+    let ring_first = |h: &mut PanesHarness| {
+        let workspace = h.workspace.clone();
+        h.cx.update(|_, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.tabs[0].view.update(cx, |view, cx| {
+                    view.revive_for_test();
+                    view.dispatch_test_event(SessionEvent::Bell, cx);
+                });
+            })
+        });
+        h.cx.run_until_parked();
+    };
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let spec = workspace.tabs[0].spec.clone();
+            workspace.open_tab(spec, window, cx).unwrap();
+            wait_for_exit(&workspace.tabs[1].view.read(cx).session);
+            workspace.tabs[1].meta.rename("other");
+        })
+    });
+    h.cx.run_until_parked();
+    assert_eq!(title(&mut h), "other \u{2014} Agent Workspace");
+    assert_eq!(
+        requests(&mut h),
+        0,
+        "opening and selecting a tab asks nothing"
+    );
+    ring_first(&mut h);
+    assert_eq!(title(&mut h), "(1) other \u{2014} Agent Workspace");
+    assert_eq!(requests(&mut h), 1, "a test window is never active");
+    // Seeing the tab clears it; the count includes the selected tab.
+    h.cx.update(|window, cx| workspace.update(cx, |w, cx| w.activate(0, window, cx)));
+    h.cx.run_until_parked();
+    assert_eq!(title(&mut h), "build \u{2014} Agent Workspace");
+
+    // The "In-app notifications" switch gates the request, not the count.
+    h.cx.update(|window, cx| {
+        settings_file::update(cx, |settings| {
+            settings.in_app_notifications = FeatureSwitch::new(false);
+        });
+        workspace.update(cx, |w, cx| w.activate(1, window, cx));
+    });
+    h.cx.run_until_parked();
+    ring_first(&mut h);
+    assert_eq!(title(&mut h), "(1) other \u{2014} Agent Workspace");
+    assert_eq!(requests(&mut h), 1);
+}

@@ -136,6 +136,9 @@ directly to model APIs.
 - Show aggregate status on collapsed groups, such as the number of working
   sessions, running shell commands and sessions needing attention.
 - Make sessions needing attention easy to locate and select.
+- Ask the OS for attention (taskbar flash, urgency hint) when a tab needs attention or is
+  ready for review while the window is in the background, and name the selected tab and the
+  number of tabs needing attention in the window title.
 - Support completion and attention notifications with user-configurable sound.
 - When reliable agent status is unavailable, label terminal output activity as
   "recent activity" rather than claiming the agent is thinking or working.

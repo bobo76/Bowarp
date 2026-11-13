@@ -10,6 +10,16 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Window attention and title:
+
+- Windows: with another window active, a Claude tab asking for permission (selected or not)
+  flashes the taskbar button once; activating the window stops it. Nothing flashes while the
+  app is the active window.
+- A real X11 desktop (GNOME/KDE on Xorg): the urgency mark (highlighted taskbar entry) appears
+  and clears when the window is focused.
+- The taskbar / Alt+Tab label follows the selected tab, its "(N)" count and the Settings / Git
+  pages (Windows and a Linux desktop).
+
 Git page, page and file staging:
 
 - Two tabs in different repositories and one outside any: the picker lists the two, the
@@ -331,53 +341,50 @@ Optional behavior gets one switch per major feature, not per action (FEATURES.md
 behavior"); items below name their switch where they need one.
 
 UX review, top 10 by value per cost ([reviews/ux-review.md](reviews/ux-review.md), IDs are
-its items), in order:
+its items), regrouped into steps, in order:
 
-1. Ask the OS for attention (#11, needs the user's yes): when a tab turns Needs attention or
-   Ready for review while the window isn't active (Settings shown counts as background), call
-   `Window::request_attention` (Windows taskbar flash, X11 urgency; nothing on Wayland).
-   Follows the "In-app notifications" switch; cleared when the window activates. A system
-   notification (`show_system_notification`) and sound come later.
-2. Start failures open the window (#15): bad arguments (`main.rs:62`), a folder that isn't a
+1. Start failures open the window (#15): bad arguments (`main.rs:62`), a folder that isn't a
    directory (`main.rs:130`) and the shell plus its fallback failing (`main.rs:351`) print to
    stderr and exit, so on Windows the app seems not to start. A missing folder opens the tab
    in the home folder with an error toast naming it; a total start failure or bad arguments
    open the window with an error panel in the terminal area (message or usage, "Open
    settings", Retry). Keep the stderr lines.
-3. Restart an exited tab (#17): a "Restart" button on the exit bar, and Enter while the tab
-   has the keyboard, start the same launch spec in the tab's last folder through
-   `replace_tab_session` (as `fall_back_to_shell` does); the tab keeps name, color, group and
-   place, scrollback is cleared (say so in the tooltip), agents restart with their saved
-   arguments (no `--continue`). Hide the cursor on a dead grid.
-4. Viewer width from the free space (#2): `viewer_width` takes `fraction * row` of the whole
+2. Exited tabs, two parts that ship together:
+   - Restart an exited tab (#17): a "Restart" button on the exit bar, and Enter while the tab
+     has the keyboard, start the same launch spec in the tab's last folder through
+     `replace_tab_session` (as `fall_back_to_shell` does); the tab keeps name, color, group
+     and place, scrollback is cleared (say so in the tooltip), agents restart with their
+     saved arguments (no `--continue`). Hide the cursor on a dead grid.
+   - Failed exit on the row (#6): Exited is the Quiet grey ring whatever the code
+     (`sidebar.rs:122`). A nonzero or unknown code gets a red ring with a small `×` and
+     "Exited (3)" in the hover card; code 0 keeps the grey ring, raised to >= 3:1 contrast.
+3. Viewer width from the free space (#2): `viewer_width` takes `fraction * row` of the whole
    window, capped so the terminal keeps only 240 px (`pane_width.rs:14-21`), ~28 columns with
    the sidebar and explorer open. Take the fraction of `row - fixed` and raise
    `MIN_TERMINAL_WIDTH` to ~60 columns (480 px); the viewer minimum (240) still wins in a
    window too narrow for both. Pure function, unit-tested; saved `file_viewer_fraction` values
    keep loading.
-5. Multi-line paste warning (F6): outside bracketed-paste mode every newline becomes Enter
+4. Multi-line paste warning (F6): outside bracketed-paste mode every newline becomes Enter
    (`keys.rs:66`), so in cmd, a nested shell or plain ssh a pasted snippet runs at once. When
    the terminal isn't in bracketed-paste mode and the text has a newline, ask once ("Paste 4
    lines? They will run as commands") with a preview. A safeguard, so no switch.
-6. Failed exit on the row (#6): Exited is the Quiet grey ring whatever the code
-   (`sidebar.rs:122`). A nonzero or unknown code gets a red ring with a small `×` and
-   "Exited (3)" in the hover card; code 0 keeps the grey ring, raised to >= 3:1 contrast.
-7. Right-click menu in the terminal (E1): today the right button only reaches programs that
+5. Right-click menu in the terminal (E1): today the right button only reaches programs that
    track the mouse (`terminal_view.rs:1422`). Copy (disabled without a selection), Paste,
    Select all, Search, Clear scrollback; on a link: Open, Copy link. With mouse reporting on,
    Shift+right-click opens it. Each entry shows its shortcut.
-8. Shell tab names (#4, needs the user): a shell row shows the program's title
-   (`user@host: ~/path`), so shells in different folders look the same. With shell
-   integration, name the tab by the running command, else the folder's last component; the
-   program title moves to the hover card. A custom name always wins; agent tabs keep their
-   titles.
-9. Explorer Delete to the trash (F5): Delete is permanent today (`file_explorer.rs:1071`).
+6. Shell tab names (#4, the user chose option A on 2026-11-13): a shell row shows the
+   program's title (`user@host: ~/path`), so shells in different folders look the same. With
+   shell integration, name the tab by the running command, else the folder's last component;
+   the program title moves to the hover card. A custom name always wins; agent tabs keep
+   their titles.
+7. Explorer Delete to the trash (F5): Delete is permanent today (`file_explorer.rs:1071`).
    Move to the system trash (Recycle Bin, freedesktop trash); keep the permanent delete with
    today's wording where no trash exists (network mounts, WSL paths). Check the new
    dependency with `cargo deny`.
-10. Window title follows the selected tab (#12): "<tab name> — Agent Workspace", prefixed
-    "(N) " while N tabs need attention, "Settings — Agent Workspace" while Settings shows. Set
-    only on selection, rename and status change (today fixed at `workspace_view.rs:430`).
+
+- System notification and sound for agent attention (follow-up of #11): beside the window's
+  attention request, `show_system_notification` and a sound, so the Settings / Git page in
+  the active window (where the request does nothing) also gets a signal.
 
 - Remote host status and control, in order (each ships alone):
   1. Start and Stop on Settings → Remote hosts: Start runs the daemon on the host over ssh;

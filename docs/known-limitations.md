@@ -16,6 +16,11 @@ entry when the limitation is lifted.
   unknown code still toasts, as do user-action feedback (save, delete, clear history, start
   failures) and the persistent fallback-shell and agent-status-off warnings. Agent toasts are
   keyed per tab, so a new one replaces the tab's earlier one.
+- The window's attention request (taskbar flash, X11 urgency) does nothing on Wayland, and
+  nothing while the app is the active window, also when the Settings or Git page hides the
+  tabs: X11 and Windows ignore a request from the active window. Windows flashes the taskbar
+  button once. Programs that ring the bell in the selected tab, or a tab whose status is
+  already Needs attention, ask nothing new.
 - Agent status off (`agentws-hook` missing or the status listener could not start): Claude
   Code tabs fall back to output activity ("Status unavailable" when quiet) and a bell asks for
   attention as in a shell; a Copilot CLI permission prompt reads Working, not Needs attention,

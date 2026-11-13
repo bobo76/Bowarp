@@ -5,6 +5,14 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.3.2
+
+- Ask the OS for attention when a tab needs attention or is ready for review while the window
+  is in the background (taskbar flash on Windows, urgency hint on X11; nothing on Wayland).
+  Follows the "In-app notifications" setting.
+- Show the selected tab's name in the window title, prefixed "(N)" while N tabs need
+  attention; "Settings" or "Git" while those pages show.
+
 ## 0.3.1
 
 - Git Bash: accepting the restored last command (Right arrow) after a restart no longer
