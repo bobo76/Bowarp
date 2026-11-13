@@ -5,6 +5,13 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.3.5
+
+- Size the file viewer from the space the sidebar and explorer leave, and keep the terminal
+  at least 480 px (about 60 columns) wide beside it. A saved viewer width now gives a
+  narrower viewer than before. Dragging the divider in a window too narrow for both panes
+  no longer changes the saved width.
+
 ## 0.3.4
 
 - Restart an exited tab in place: a Restart button on the exit bar, Enter on the exited tab,

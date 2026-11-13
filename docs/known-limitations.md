@@ -166,14 +166,16 @@ entry when the limitation is lifted.
   tabs only: open and restored tabs keep the shell they started with. On Unix, when `$SHELL`
   isn't listed, the first tab runs it but Ctrl+Shift+T opens the first listed shell (the
   page then says just "Automatic").
-- File viewer width: saved as a share of the window (`file_viewer_fraction`, 0-1 in the
-  file; the 240 px minimums for the viewer and the terminal still apply) when a divider drag
-  ends or the divider is double-clicked, not on the settings page. Another running instance
-  shows it only after it reloads the settings file (see above). While the file is broken the
-  width isn't saved (the file is left for the user to fix) and lasts until the file is read
-  again. A drag whose release the app misses (a right or middle button released outside the
-  window, or on Windows a focus change such as Alt+Tab mid-drag) keeps the dragged width and
-  saves it at the next mouse release anywhere; it is lost only if the app quits first.
+- File viewer width: saved as a share of the width the sidebar and explorer leave
+  (`file_viewer_fraction`, 0-1 in the file; the viewer's 240 px and the terminal's 480 px
+  minimums still apply) when a divider drag ends or the divider is double-clicked, not on the
+  settings page. Another running instance shows it only after it reloads the settings file
+  (see above). While the file is broken the width isn't saved (the file is left for the user
+  to fix) and lasts until the file is read again. A drag whose release the app misses (a
+  right or middle button released outside the window, or on Windows a focus change such as
+  Alt+Tab mid-drag) keeps the dragged width and saves it at the next mouse release anywhere;
+  it is lost only if the app quits first. A fraction saved by an earlier version (a share of
+  the whole window) now gives a narrower viewer, as the same share of the free width.
 - File explorer width: dragged by the 6 px strip on the explorer's right edge (double-click
   for 300 px), kept between 150 and 600 px whatever the window size (a narrow window can
   leave the terminal and viewer below their usual minimums), and saved in pixels

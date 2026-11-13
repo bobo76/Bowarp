@@ -2243,19 +2243,23 @@ impl WorkspaceView {
         }
     }
 
-    /// The file viewer's share of the window width: the one being dragged, else the saved one
+    /// The file viewer's share of the free width: the one being dragged, else the saved one
     /// (which follows the settings file when it is reloaded).
     fn viewer_fraction(&self, cx: &App) -> f32 {
         self.viewer_drag
             .current(|| settings_file::settings(cx).file_viewer_fraction.get())
     }
 
-    /// Follow a divider drag in memory only: [`Self::end_divider_drag`] saves it.
+    /// Follow a divider drag in memory only: [`Self::end_divider_drag`] saves it. A window too
+    /// narrow for both panes keeps the saved width (the divider can't move).
     fn drag_divider(&mut self, event: &DragMoveEvent<ViewerDivider>, cx: &mut Context<Self>) {
         let row = event.bounds;
         let x = f32::from(event.event.position.x - row.origin.x);
-        let fraction =
-            pane_width::fraction_at(x, f32::from(row.size.width), self.fixed_panes_width(cx));
+        let Some(fraction) =
+            pane_width::fraction_at(x, f32::from(row.size.width), self.fixed_panes_width(cx))
+        else {
+            return;
+        };
         if self.viewer_drag.follow(fraction, self.viewer_fraction(cx)) {
             cx.notify();
         }

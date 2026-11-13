@@ -531,9 +531,10 @@ itself, or a file's parent folder.
 
 A file clicked in the explorer (or a path Ctrl+clicked in the terminal) opens in a panel right
 of the terminal (closed with its `×`). Each tab has its own: selecting a tab shows the file it
-had open, or no panel. Drag the divider on the panel's left edge to resize it (both the panel
-and the terminal keep at least 240 px); double-click it for the default 45% of the window. The
-width is the same in every tab, follows window resizes and is not saved yet.
+had open, or no panel. Drag the divider on the panel's left edge to resize it (the panel keeps
+at least 240 px, the terminal 480 px, about 60 columns, unless the window is too narrow for
+both); double-click it for the default 45% of the space the sidebar and explorer leave. The
+width is the same in every tab, follows window resizes and is saved in the settings file.
 
 Markdown, JSON and SVG have two views, picked in the panel's header:
 
