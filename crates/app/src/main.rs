@@ -32,6 +32,7 @@ mod tab_menu;
 mod tabs_file;
 mod terminal_element;
 mod terminal_links;
+mod terminal_size;
 mod terminal_view;
 mod ui_dimensions;
 mod window_background;
@@ -220,6 +221,7 @@ fn main() {
 }
 
 fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
+    terminal_size::init(cx);
     // Client decorations work on Wayland without server-side decorations, too.
     let options = WindowOptions {
         window_bounds: Some(window_bounds::initial(cx)),
@@ -277,7 +279,7 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
                 }
                 workspace.read(cx).save_tabs_and_flush(cx);
             }
-            window_bounds::save(window.window_bounds());
+            window_bounds::save(window.window_bounds(), cx);
             true
         });
         workspace

@@ -49,6 +49,11 @@ Git page, line and hunk staging:
 - Keys in the diff: Up/Down over changed lines only, Shift+Up/Down, `S`/`U`, Shift+`S`/`U`,
   Escape twice; the right-click menu and the selection bar.
 
+- Tabs start at the terminal's size: on Windows, with several Git Bash tabs, close and
+  restart the app, click each tab and press Right arrow on the restored command: it comes
+  back whole (it lost its first letter about one time in four). `window.json` has a
+  `terminal` entry; opening a new tab doesn't redraw its prompt (no resize).
+
 - Tabs saved as they change: rename, pin, color, group and move tabs, then kill the app
   (`kill -9`) and start it again: the arrangement is back. A second window shows "Tabs in
   this window aren't saved..." until closed; none with Restore previous tabs off.

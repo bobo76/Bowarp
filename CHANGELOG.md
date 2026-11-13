@@ -5,6 +5,11 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.3.1
+
+- Git Bash: accepting the restored last command (Right arrow) after a restart no longer
+  sometimes loses its first letter. Tabs now start at the terminal's size instead of 80x24.
+
 ## 0.3.0
 
 - Drag a group header to move the group, with its tabs, in the sidebar.

@@ -113,6 +113,11 @@ entry when the limitation is lifted.
   shell (the saved tabs don't record one). Starting an older version rewrites a long history
   file without shells (all of it then shows only under "All") and keeps only its newest 2 000
   commands.
+- Git Bash can drop the next key after its terminal is resized while it waits at the prompt
+  (a bug below the app, in MSYS2's console layer). Tabs start at the size the terminal last
+  had, saved in `window.json`, so restarting no longer triggers it; resizing the window or a
+  pane, or a tab whose panes leave the terminal another size, still can (an accepted
+  suggestion then loses its first letter). The first start without a saved size uses 80x24.
 - Last-command saves go through a background writer: a crash can lose queued or in-flight
   updates, including a command just deleted from HISTORY.
 - Tab names, pins, order, groups, colors, opened and closed tabs are saved as they change;

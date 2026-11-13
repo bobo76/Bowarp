@@ -1099,7 +1099,7 @@ impl WorkspaceView {
     /// and the window bounds first.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_tabs_and_flush(cx);
-        window_bounds::close(window);
+        window_bounds::close(window, cx);
     }
 
     /// Open a tab right below the selected one, or show why it failed.
