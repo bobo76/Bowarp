@@ -104,8 +104,9 @@ directly to model APIs.
 
 ## Git Page
 
-- Open a Git page from the title bar, in place of the selected tab, with its own sidebar row;
-  it and the Settings page take turns.
+- Open a Git page from the title bar or with a key (pressed again, back to the tab), on the
+  selected tab's repository, in place of the selected tab, with its own sidebar row; it and the
+  Settings page take turns. A switch turns the page off.
 - Pick any repository the open tabs are in, the selected tab's first; see its branch.
 - List the changed files in "Staged Changes" and "Changes" groups with their status letters;
   stage or unstage a file, or all of them.

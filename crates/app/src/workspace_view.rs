@@ -62,8 +62,8 @@ use crate::settings_file;
 use crate::settings_page::{self, SettingsFileButton};
 use crate::shell_integration;
 use crate::shortcuts::{
-    self, ATTENTION_KEY, CLOSE_TAB_KEY, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY, SEARCH_KEY,
-    SIDEBAR_KEY,
+    self, ATTENTION_KEY, CLOSE_TAB_KEY, DUPLICATE_TAB_KEY, EXPLORER_KEY, GIT_PAGE_KEYS,
+    NEW_TAB_KEY, SEARCH_KEY, SIDEBAR_KEY,
 };
 use crate::sidebar::{self, SIDEBAR_WIDTH, TabStatus};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
@@ -91,6 +91,7 @@ actions!(
         CloseTab,
         ToggleSidebar,
         ToggleExplorer,
+        ToggleGitPage,
         SearchTabs,
         NextAttention,
         GoBack,
@@ -149,6 +150,7 @@ fn default_bindings() -> Vec<Shortcut> {
         bind("ctrl-alt-right", &GoForward),
         bind("ctrl-`", &LastTab),
         bind(&format!("ctrl-{EXPLORER_KEY}"), &ToggleExplorer),
+        bind(GIT_PAGE_KEYS, &ToggleGitPage),
         bind("ctrl-1", &SelectTab1),
         bind("ctrl-2", &SelectTab2),
         bind("ctrl-3", &SelectTab3),
@@ -486,7 +488,7 @@ impl WorkspaceView {
             launchers,
             hooks,
             settings: SettingsPane::new(cx),
-            git: GitPane::default(),
+            git: GitPane::new(window, cx),
             _hook_messages: hook_task,
             _explorer_events: explorer_events,
             _file_panes_observer: file_panes_observer,
@@ -2497,6 +2499,10 @@ impl Render for WorkspaceView {
                 workspace.press_explorer_toggle(window, cx);
                 cx.stop_propagation();
             }))
+            .capture_action(cx.listener(|workspace, _: &ToggleGitPage, window, cx| {
+                workspace.toggle_git_page(window, cx);
+                cx.stop_propagation();
+            }))
             .capture_action(cx.listener(|workspace, _: &SearchTabs, window, cx| {
                 workspace.focus_search(window, cx);
                 cx.stop_propagation();
@@ -2580,7 +2586,9 @@ impl Render for WorkspaceView {
                                 buttons.child(self.explorer_toggle(cx))
                             })
                             .child(about::about_button())
-                            .child(self.git_button(cx))
+                            .when(self.git.enabled(), |buttons| {
+                                buttons.child(self.git_button(cx))
+                            })
                             .child(self.settings_button(cx)),
                     ),
             )

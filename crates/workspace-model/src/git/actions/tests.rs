@@ -349,3 +349,25 @@ fn commits_in_a_new_repository() {
     assert!(status.branch.is_some());
     assert!(status.files.is_empty());
 }
+
+fn entry(name: &str) -> RepoEntry {
+    RepoEntry {
+        root: PathBuf::from(format!("/work/{name}")),
+        git_dir: PathBuf::from(format!("/work/{name}/.git")),
+        name: name.to_owned(),
+    }
+}
+
+#[test]
+fn the_selected_tabs_repository_wins_then_the_shown_one_then_the_first() {
+    let found = [entry("a"), entry("b"), entry("c")];
+    let pick = |selected: Option<&str>, shown: Option<&str>| {
+        choose_repo(&found, selected.map(entry), shown.map(entry)).map(|repo| repo.name)
+    };
+    assert_eq!(pick(Some("c"), Some("b")).as_deref(), Some("c"));
+    assert_eq!(pick(None, Some("b")).as_deref(), Some("b"));
+    assert_eq!(pick(None, None).as_deref(), Some("a"));
+    // Neither listed any more (a tab moved or closed): the first.
+    assert_eq!(pick(Some("gone"), Some("old")).as_deref(), Some("a"));
+    assert_eq!(choose_repo(&[], Some(entry("a")), Some(entry("b"))), None);
+}

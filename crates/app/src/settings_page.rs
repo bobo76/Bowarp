@@ -502,6 +502,21 @@ fn workspace_groups() -> Vec<SettingGroup> {
             )
             .keywords(["files", "explorer", "viewer", "editor", "panes", "folder"]),
         ),
+        SettingGroup::new().title("Git").item(
+            switch_row(
+                "Git page",
+                "Show the Git page (Ctrl+Shift+G, the title bar button) to stage, unstage \
+                 and commit in the selected tab's repository. Off: the button is hidden and \
+                 the shortcut does nothing, the page and its sidebar row close, no new \
+                 git command runs for it, and commit messages being written are kept while the \
+                 app runs.",
+                SettingsField::new(
+                    |settings| settings.git_page.is_on(),
+                    |settings, value| settings.git_page = FeatureSwitch::new(value),
+                ),
+            )
+            .keywords(["git", "commit", "stage", "diff", "repository", "changes"]),
+        ),
     ]
 }
 

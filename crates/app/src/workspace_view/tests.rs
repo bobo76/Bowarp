@@ -15,7 +15,7 @@ fn wait_for_exit(session: &term_core::Session) {
 #[test]
 fn default_bindings_name_workspace_actions() {
     let bindings = default_bindings();
-    assert_eq!(bindings.len(), 23);
+    assert_eq!(bindings.len(), 24);
     assert!(
         bindings
             .iter()

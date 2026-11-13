@@ -78,7 +78,7 @@ impl Harness {
         let page = captured.borrow().clone().unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
         let folders = vec![folder.to_path_buf()];
-        cx.update(|window, cx| page.update(cx, |page, cx| page.show(folders, window, cx)));
+        cx.update(|window, cx| page.update(cx, |page, cx| page.show(folders, None, window, cx)));
         cx.run_until_parked();
         Self { page, cx }
     }

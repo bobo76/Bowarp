@@ -105,6 +105,7 @@ refuses), an error toast says why and stays until dismissed.
 | Tab or Down (in the search field) | Move the keyboard into the tab list: Up / Down / Home / End select tabs, Enter, Esc or Tab go to the terminal (clearing the search; see Search and attention) |
 | F2 (in the tab list) | Rename the selected tab; the list gets the keyboard back afterwards. In the terminal, F2 goes to the program |
 | Ctrl+Shift+\| | Hide or show the file explorer (also the title bar button; the key that types `\|`) |
+| Ctrl+Shift+G | Show the Git page on the selected tab's repository; again, back to the tab (Cmd+Shift+G on macOS; also the title bar button) |
 | Ctrl+Shift+A | Go to the next tab needing attention; with none, the next one that is Ready for review |
 | F11 | Full screen on or off, also from a dialog (F11 is not sent to the program; on Linux the window manager applies it). Quitting in full screen starts maximized next time |
 
@@ -581,10 +582,13 @@ unless it has unsaved edits, which are kept.
 
 ## Git page
 
-The branch button in the title bar (before the gear) opens the Git page in place of the
-selected tab and adds a Git row under the tabs, like the Settings page; the two take turns.
-Select a tab to go back, select the row to return, and close the row with its × or
-Ctrl+Shift+W. Clicking the button again while the page has the keyboard closes it.
+The branch button in the title bar (before the gear) or Ctrl+Shift+G (Cmd+Shift+G on macOS;
+rebindable on Settings → Keyboard) opens the Git page in place of the selected tab, on the
+selected tab's repository when it is in one, and adds a Git row under the tabs, like the
+Settings page; the two take turns. Select a tab to go back, select the row to return (to the
+repository it showed), and close the row with its × or Ctrl+Shift+W. Ctrl+Shift+G again while
+the page shows goes back to the tab; clicking the button again while the page has the
+keyboard does too. The **Git page** switch (Settings → Workspace) turns the page off.
 
 The header's repository picker lists every repository the open tabs are in, the selected
 tab's first, with the current branch and a Refresh button. The page refreshes by itself when
@@ -733,8 +737,8 @@ Missing or wrong-typed booleans each default to true. Changes apply live.
 
 ### Workspace switches
 
-Settings → Workspace has three switches, all on by default (`restore_tabs`,
-`remember_last_command`, `file_panes`; missing or non-boolean means on).
+Settings → Workspace has four switches, all on by default (`restore_tabs`,
+`remember_last_command`, `file_panes`, `git_page`; missing or non-boolean means on).
 
 - **Restore previous tabs** off: the next start opens one fresh default tab, and `tabs.json`
   is neither read nor written (it is kept as it is, so turning the switch on again restores
@@ -753,6 +757,10 @@ Settings → Workspace has three switches, all on by default (`restore_tabs`,
   asks "Open externally?" and opens the file with the system's application; "Open settings
   file" does the same. The pane widths (`file_viewer_fraction`, `file_explorer_width`) are kept.
   Turned on again, the panes work as before; files closed meanwhile stay closed.
+- **Git page** off (applies live): the title bar button goes and Ctrl+Shift+G does nothing; a
+  shown Git page closes with its sidebar row (the selected tab shows again) and no new `git`
+  command runs for it. Commit messages being written are kept while the app runs. Turned on
+  again, the button returns; the row comes back when the page is opened.
 
 ### Notifications
 

@@ -109,6 +109,12 @@ pub fn file_panes(cx: &App) -> FilePaneFeatures {
         })
 }
 
+/// Whether the "Git page" switch is on. On while settings aren't loaded (unit tests).
+pub fn git_page(cx: &App) -> bool {
+    cx.try_global::<AppSettings>()
+        .is_none_or(|settings| settings.0.settings().git_page.is_on())
+}
+
 /// What the "In-app notifications" switch allows. On while settings aren't loaded (unit tests).
 pub fn notifications(cx: &App) -> NotificationFeatures {
     cx.try_global::<AppSettings>()

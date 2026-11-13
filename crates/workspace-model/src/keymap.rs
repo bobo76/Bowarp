@@ -391,6 +391,7 @@ pub fn action_label(action: &str) -> String {
         "CloseTab" => "Close tab",
         "ToggleSidebar" => "Show or hide the sidebar",
         "ToggleExplorer" => "Show or hide the file explorer",
+        "ToggleGitPage" => "Show the Git page, or go back to the tab",
         "SearchTabs" => "Search tabs",
         "NextAttention" => "Next tab needing attention",
         "GoBack" => "Back to the tab selected before",

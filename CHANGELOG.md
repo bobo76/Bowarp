@@ -5,6 +5,17 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.3.9
+
+- Open the Git page with Ctrl+Shift+G (Cmd+Shift+G on macOS); pressed again, it goes back to
+  the tab. The key is never sent to the terminal, shows in the title bar button's tooltip and
+  can be rebound on the Keyboard settings page.
+- The Git page now opens on the selected tab's repository, from the key or the title bar
+  button.
+- Add a "Git page" switch (Settings → Workspace, on): off hides the title bar button, closes
+  the page and its sidebar row and makes the key do nothing; commit messages being written
+  are kept.
+
 ## 0.3.8
 
 - Add a "Changed files" piece to Settings → Tab hover card for the list of changed files

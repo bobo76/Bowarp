@@ -86,8 +86,12 @@ pub fn init(cx: &mut App) {
 /// Something to do with `git`, in the order asked.
 enum Op {
     /// List the repositories of these folders (the selected tab's first) and read the status
-    /// of the chosen one (kept when still listed, else the first).
-    FindRepos(Vec<PathBuf>),
+    /// of the chosen one: the repository of `selected` (the selected tab's folder) when given
+    /// and in one, else the one shown when still listed, else the first.
+    FindRepos {
+        folders: Vec<PathBuf>,
+        selected: Option<PathBuf>,
+    },
     /// Show this repository.
     Choose(RepoEntry),
     Refresh,
@@ -272,10 +276,17 @@ impl GitPage {
     }
 
     /// The page shows: list the repositories of `folders` (the tabs' folders, the selected
-    /// tab's first) and read the chosen one's status, then watch it.
-    pub fn show(&mut self, folders: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+    /// tab's first) and read the chosen one's status, then watch it. The one chosen is the
+    /// repository `selected` (the selected tab's folder) is in, when given and in one.
+    pub fn show(
+        &mut self,
+        folders: Vec<PathBuf>,
+        selected: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.shown = true;
-        self.enqueue(Op::FindRepos(folders), window, cx);
+        self.enqueue(Op::FindRepos { folders, selected }, window, cx);
     }
 
     /// The page is hidden: stop watching (a running op still finishes).
@@ -1037,7 +1048,7 @@ fn run_op(op: Op, repo: Option<RepoEntry>) -> OpDone {
         commit: None,
     };
     match op {
-        Op::FindRepos(folders) => done.find_repos(&folders),
+        Op::FindRepos { folders, selected } => done.find_repos(&folders, selected.as_deref()),
         Op::Choose(chosen) => done.repo = Some(chosen),
         Op::Refresh | Op::ReadDiff => {}
         Op::Change(target, change) => {
@@ -1051,15 +1062,11 @@ fn run_op(op: Op, repo: Option<RepoEntry>) -> OpDone {
 }
 
 impl OpDone {
-    /// List the repositories of `folders`, keeping the one shown when still listed, else the
-    /// first.
-    fn find_repos(&mut self, folders: &[PathBuf]) {
+    /// List the repositories of `folders` and choose one (`git::choose_repo`).
+    fn find_repos(&mut self, folders: &[PathBuf], selected: Option<&Path>) {
         let found = git::repos_of(folders);
-        let kept = self
-            .repo
-            .take()
-            .filter(|repo| found.iter().any(|entry| entry.root == repo.root));
-        self.repo = kept.or_else(|| found.first().cloned());
+        let selected = selected.and_then(git::locate);
+        self.repo = git::choose_repo(&found, selected, self.repo.take());
         self.repos = Some(found);
     }
 

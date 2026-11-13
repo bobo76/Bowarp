@@ -104,6 +104,10 @@ pub struct Settings {
     /// system's handler; the pane widths below are kept. See [`crate::FilePaneFeatures`].
     #[serde(deserialize_with = "lenient")]
     pub file_panes: FeatureSwitch<true>,
+    /// The Git page, its title-bar button and its key. Off closes the page (commit drafts
+    /// stay in memory) and runs no `git` for it.
+    #[serde(deserialize_with = "lenient")]
+    pub git_page: FeatureSwitch<true>,
     /// Toasts about agents (needs attention, ready for review, exited); status dots and
     /// badges stay either way. See [`crate::NotificationFeatures`].
     #[serde(deserialize_with = "lenient")]

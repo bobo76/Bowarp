@@ -96,7 +96,7 @@ fn lists_and_stages_the_changes_of_a_tab_repository(cx: &mut gpui_kit::TestAppCo
     let outside = std::env::temp_dir();
     cx.update(|window, cx| {
         page.update(cx, |page, cx| {
-            page.show(vec![outside, folder.join(".")], window, cx)
+            page.show(vec![outside, folder.join(".")], None, window, cx)
         });
     });
     cx.run_until_parked();
@@ -186,7 +186,7 @@ fn a_change_asked_before_another_repository_shows_stays_in_its_own(
     let page = captured.borrow().clone().unwrap();
     let mut cx = VisualTestContext::from_window(window.into(), cx);
     let folders = vec![first.clone(), second.clone()];
-    cx.update(|window, cx| page.update(cx, |page, cx| page.show(folders, window, cx)));
+    cx.update(|window, cx| page.update(cx, |page, cx| page.show(folders, None, window, cx)));
     cx.run_until_parked();
 
     // Picking the second repository starts reading it; Space on the first one's file, still
@@ -263,7 +263,9 @@ fn shows_the_diff_of_the_selected_file(cx: &mut gpui_kit::TestAppContext) {
     let page = captured.borrow().clone().unwrap();
     let mut cx = VisualTestContext::from_window(window.into(), cx);
     cx.update(|window, cx| {
-        page.update(cx, |page, cx| page.show(vec![folder.clone()], window, cx));
+        page.update(cx, |page, cx| {
+            page.show(vec![folder.clone()], None, window, cx)
+        });
     });
     cx.run_until_parked();
 
@@ -435,7 +437,7 @@ fn a_commit_keeps_the_selected_unstaged_file(cx: &mut gpui_kit::TestAppContext) 
     let page = captured.borrow().clone().unwrap();
     let mut cx = VisualTestContext::from_window(window.into(), cx);
     let folders = vec![folder.clone()];
-    cx.update(|window, cx| page.update(cx, |page, cx| page.show(folders, window, cx)));
+    cx.update(|window, cx| page.update(cx, |page, cx| page.show(folders, None, window, cx)));
     cx.run_until_parked();
 
     // The selected file is the status's second; the commit leaves it the only one, so the old
@@ -473,4 +475,45 @@ fn a_commit_keeps_the_selected_unstaged_file(cx: &mut gpui_kit::TestAppContext) 
 
     page.update(&mut cx, |page, _| page.hide());
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[gpui::test]
+fn shows_the_selected_tabs_repository_when_given_else_keeps_the_shown_one(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use gpui_kit::component::Root;
+    use gpui_kit::{AppContext, VisualTestContext};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let (Some(first), Some(second)) = (temp_repo("pick-first"), temp_repo("pick-second")) else {
+        eprintln!("git not available, skipping");
+        return;
+    };
+    cx.update(gpui_kit::init);
+    let captured = Rc::new(RefCell::new(None));
+    let capture = captured.clone();
+    let window = cx.add_window(move |window, cx| {
+        let page = cx.new(|cx| GitPage::new(window, cx));
+        *capture.borrow_mut() = Some(page.clone());
+        Root::new(page, window, cx)
+    });
+    let page = captured.borrow().clone().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let name = |folder: &Path| folder.file_name().unwrap().to_string_lossy().into_owned();
+    let mut show = |selected: Option<PathBuf>| {
+        let folders = vec![first.clone(), second.clone()];
+        cx.update(|window, cx| {
+            page.update(cx, |page, cx| page.show(folders, selected, window, cx))
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| page.read(cx).repo_name().map(str::to_string))
+    };
+
+    assert_eq!(show(None), Some(name(&first)));
+    assert_eq!(show(Some(second.join("."))), Some(name(&second)));
+    // Coming back without a selected folder (the sidebar row) keeps the one shown.
+    assert_eq!(show(None), Some(name(&second)));
+    // A selected folder outside any repository keeps it too.
+    assert_eq!(show(Some(std::env::temp_dir())), Some(name(&second)));
 }

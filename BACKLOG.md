@@ -10,6 +10,18 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Git page switch and key:
+
+- In the app: Ctrl+Shift+G from a terminal running a program (e.g. `cat`) opens the page and
+  sends nothing to it; again goes back to the tab. With two tabs in different repositories,
+  the key and the button show the selected tab's repository; the sidebar row returns to the
+  one shown. The button's tooltip reads "Git (Ctrl+Shift+G)"; Settings → Keyboard lists
+  "Show the Git page, or go back to the tab" and a rebind applies.
+- Settings → Workspace → Git page off with a commit message typed: page, row and button go,
+  the key does nothing; on again and reopened, the message is still there.
+- macOS: Cmd+Shift+G opens the page and the tooltip shows it. Windows: Ctrl+Shift+G in cmd,
+  PowerShell and WSL tabs.
+
 Tab hover card "Changed files" piece:
 
 - In a repo with changes: Settings → Tab hover card shows "Changed files" (off) below
@@ -385,12 +397,6 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Git page switch and shortcut: switch "Git page" (on). Off: no title-bar button, no sidebar
-  row, the page closes if shown (keeping commit drafts) and none of its `git` work runs. A key
-  opens the page on the selected tab's repository and, pressed again, goes back to the tab
-  (Ctrl+Shift+G by default, free today; Cmd+Shift+G on macOS), not sent to the terminal,
-  listed and rebindable on Settings → Keyboard, shown in the title-bar button's tooltip; it
-  does nothing while the switch is off.
 - Git status outside the Git page, one switch "Git status in tabs and explorer" (on). Off: no
   branch under tab names (the folder shows instead), no changed-file coloring and no
   git-ignored dimming in the explorer, no `+N` in the hover card (its Changes option shown

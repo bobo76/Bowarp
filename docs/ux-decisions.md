@@ -249,6 +249,16 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
 - **Plain `S` / `U` keys in the diff** (Shift for the hunk), since the diff never passes keys
   to a terminal. Tab and Shift+Tab walk message, list and diff; Tab in the message moves on
   rather than indenting. [plan]
+- **Opening picks the selected tab's repository**: the key and the title-bar button show the
+  repository the selected tab is in; when it is in none, the one shown stays (else the
+  first). Returning through the sidebar's Git row keeps the repository shown. Ctrl+Shift+G
+  toggles on the page being shown, not on its focus (the button keeps its focus rule).
+  [pipeline]
+- **"Git page" switch off** closes a shown page like Ctrl+Shift+W on its row (the selected
+  tab, or the empty state, gets the keyboard) and keeps the page with its commit drafts,
+  hidden and not watching. While off the button and row are gone and the key and every other
+  entry do nothing; turned back on, the button returns and the row only when the page opens.
+  [pipeline]
 
 ## Remote hosts (Settings page)
 

@@ -1011,6 +1011,23 @@ fn file_panes_switch_defaults_on_round_trips_and_falls_back_when_mistyped() {
 }
 
 #[test]
+fn git_page_switch_defaults_on_round_trips_and_falls_back_when_mistyped() {
+    assert!(Settings::default().git_page.is_on());
+    let off = Settings {
+        git_page: FeatureSwitch::new(false),
+        ..Settings::default()
+    };
+    let json = off.to_json().unwrap();
+    let value: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["git_page"], Value::Bool(false));
+    assert_eq!(Settings::from_json(&json).unwrap(), off);
+    for wrong in ["\"no\"", "0", "null", "[]"] {
+        let settings = Settings::from_json(&format!(r#"{{"git_page": {wrong}}}"#)).unwrap();
+        assert!(settings.git_page.is_on(), "{wrong}");
+    }
+}
+
+#[test]
 fn keybindings_are_kept_as_written_and_mistyped_gives_none() {
     let text = r#"{"keybindings": {"ctrl-v": null, "ctrl-shift-v": "Paste", "x": 3}}"#;
     let settings = Settings::from_json(text).unwrap();
