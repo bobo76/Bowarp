@@ -74,6 +74,9 @@ enum Pending {
     List {
         reply: mpsc::Sender<Result<Vec<SessionInfo>, String>>,
     },
+    Show {
+        reply: mpsc::Sender<Result<Vec<String>, String>>,
+    },
 }
 
 impl Pending {
@@ -81,6 +84,7 @@ impl Pending {
         match self {
             Self::Attach { reply, .. } => drop(reply.send(Err(message))),
             Self::List { reply } => drop(reply.send(Err(message))),
+            Self::Show { reply } => drop(reply.send(Err(message))),
         }
     }
 }
@@ -224,6 +228,19 @@ impl Client {
         self.inner
             .request(Pending::List { reply }, |request| ClientMessage::List {
                 request,
+            })?;
+        wait(&answer)
+    }
+
+    /// A session's screen as text, one line per row, after its scrollback when `scrollback`
+    /// is set (the oldest lines dropped beyond a frame). Does not attach or resize it.
+    pub fn show(&self, session: u64, scrollback: bool) -> io::Result<Vec<String>> {
+        let (reply, answer) = mpsc::channel();
+        self.inner
+            .request(Pending::Show { reply }, |request| ClientMessage::Show {
+                request,
+                session,
+                scrollback,
             })?;
         wait(&answer)
     }
@@ -407,6 +424,12 @@ impl Inner {
                 if let Some(Pending::List { reply }) = self.pending.lock().unwrap().remove(&request)
                 {
                     let _ = reply.send(Ok(sessions));
+                }
+            }
+            ServerMessage::Text { request, lines } => {
+                if let Some(Pending::Show { reply }) = self.pending.lock().unwrap().remove(&request)
+                {
+                    let _ = reply.send(Ok(lines));
                 }
             }
             ServerMessage::Output { session, bytes } => {

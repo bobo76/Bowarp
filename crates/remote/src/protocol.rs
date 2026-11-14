@@ -15,7 +15,7 @@ use std::io::{self, ErrorKind, Read, Write};
 use term_core::TermDimensions;
 
 /// Bumped on any change to the messages: both sides must speak the same version.
-pub const PROTOCOL_VERSION: u16 = 5;
+pub const PROTOCOL_VERSION: u16 = 6;
 
 /// No frame is longer: a peer that sends one is broken (or not speaking this protocol).
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -107,6 +107,13 @@ pub enum ClientMessage {
     },
     /// The answer to [`ServerMessage::Ping`], sent at once.
     Pong,
+    /// The session's screen as text, without attaching (the pty keeps its size): answered by
+    /// [`ServerMessage::Text`], with the scrollback first when `scrollback` is set.
+    Show {
+        request: u32,
+        session: u64,
+        scrollback: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,6 +159,11 @@ pub enum ServerMessage {
     /// [`ClientMessage::Pong`]. A network that dropped leaves the connection open between the
     /// server and its proxy, so only a round trip through ssh shows the client is gone.
     Ping,
+    /// The answer to [`ClientMessage::Show`]: one line per terminal row, oldest first.
+    Text {
+        request: u32,
+        lines: Vec<String>,
+    },
 }
 
 mod tag {
@@ -165,6 +177,7 @@ mod tag {
     pub const CLOSE: u8 = 8;
     pub const IDENTIFY: u8 = 9;
     pub const PONG: u8 = 10;
+    pub const SHOW: u8 = 11;
 
     pub const ATTACHED: u8 = 65;
     pub const SESSIONS: u8 = 66;
@@ -174,6 +187,7 @@ mod tag {
     pub const FAILED: u8 = 70;
     pub const FOLDER_CHANGED: u8 = 71;
     pub const PING: u8 = 72;
+    pub const TEXT: u8 = 73;
 }
 
 impl ClientMessage {
@@ -211,6 +225,15 @@ impl ClientMessage {
             Self::Resize { session, size } => out.tag(tag::RESIZE).u64(*session).size(*size),
             Self::Close { session } => out.tag(tag::CLOSE).u64(*session),
             Self::Pong => out.tag(tag::PONG),
+            Self::Show {
+                request,
+                session,
+                scrollback,
+            } => out
+                .tag(tag::SHOW)
+                .u32(*request)
+                .u64(*session)
+                .flag(*scrollback),
         };
         out.finish()
     }
@@ -267,6 +290,11 @@ impl ClientMessage {
                 session: input.u64()?,
             },
             tag::PONG => Self::Pong,
+            tag::SHOW => Self::Show {
+                request: input.u32()?,
+                session: input.u64()?,
+                scrollback: input.flag()?,
+            },
             other => return Err(invalid(format!("unknown client message {other}"))),
         };
         input.end()?;
@@ -304,6 +332,14 @@ impl ServerMessage {
                 out.tag(tag::FOLDER_CHANGED).u64(*session).str(folder)
             }
             Self::Ping => out.tag(tag::PING),
+            Self::Text { request, lines } => {
+                out.tag(tag::TEXT).u32(*request);
+                out.u32(lines.len() as u32);
+                for line in lines {
+                    out.str(line);
+                }
+                &mut out
+            }
         };
         out.finish()
     }
@@ -344,6 +380,10 @@ impl ServerMessage {
                 folder: input.str()?,
             },
             tag::PING => Self::Ping,
+            tag::TEXT => Self::Text {
+                request: input.u32()?,
+                lines: input.list(Decoder::str)?,
+            },
             other => return Err(invalid(format!("unknown server message {other}"))),
         };
         input.end()?;
@@ -426,26 +466,23 @@ impl Encoder {
         self.bytes(text.as_bytes())
     }
 
+    fn flag(&mut self, value: bool) -> &mut Self {
+        self.0.push(u8::from(value));
+        self
+    }
+
     fn opt_str(&mut self, text: Option<&str>) -> &mut Self {
-        match text {
-            Some(text) => {
-                self.0.push(1);
-                self.str(text)
-            }
-            None => {
-                self.0.push(0);
-                self
-            }
+        self.flag(text.is_some());
+        if let Some(text) = text {
+            self.str(text);
         }
+        self
     }
 
     fn opt_i32(&mut self, value: Option<i32>) -> &mut Self {
-        match value {
-            Some(value) => {
-                self.0.push(1);
-                self.0.extend_from_slice(&value.to_le_bytes());
-            }
-            None => self.0.push(0),
+        self.flag(value.is_some());
+        if let Some(value) = value {
+            self.0.extend_from_slice(&value.to_le_bytes());
         }
         self
     }
@@ -460,12 +497,9 @@ impl Encoder {
     fn info(&mut self, info: &SessionInfo) -> &mut Self {
         self.u64(info.id).str(&info.kind).size(info.size);
         self.opt_str(info.title.as_deref());
-        match info.exit {
-            Some(code) => {
-                self.0.push(1);
-                self.opt_i32(code);
-            }
-            None => self.0.push(0),
+        self.flag(info.exit.is_some());
+        if let Some(code) = info.exit {
+            self.opt_i32(code);
         }
         self.opt_str(info.folder.as_deref());
         self.u32(info.clients.len() as u32);

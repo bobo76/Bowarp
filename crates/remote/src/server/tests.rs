@@ -696,3 +696,45 @@ fn a_closed_session_frees_its_terminal_copy() {
     // The program's output reader lets go once the hang-up ends it.
     wait_until("the fan-out to be freed", || fanout.strong_count() == 0);
 }
+
+#[test]
+fn show_prints_a_session_without_attaching_or_resizing_it() {
+    let server = Server::new();
+    let (client, _, _) = connect(&server);
+    let script = "for i in 1 2 3 4 5 6 7 8; do echo line-$i; done; exit 0";
+    let remote = client
+        .spawn(shell(Some(script)), size(20, 4), quiet())
+        .unwrap();
+    wait_until("the exit", || remote.session.has_exited());
+    let id = remote.info.id;
+    let (viewer, _, _) = connect(&server);
+    // An exited session still shows its last screen, without the trailing empty row.
+    assert_eq!(
+        viewer.show(id, false).unwrap(),
+        ["line-6", "line-7", "line-8"]
+    );
+    let all: Vec<String> = (1..=8).map(|i| format!("line-{i}")).collect();
+    assert_eq!(viewer.show(id, true).unwrap(), all);
+    let info = viewer.list().unwrap().remove(0);
+    assert_eq!(info.size, size(20, 4));
+    assert_eq!(info.clients.len(), 1);
+    let err = viewer.show(id + 1, false).err().unwrap();
+    assert!(
+        err.to_string().contains(&format!("no session {}", id + 1)),
+        "{err}"
+    );
+    assert!(viewer.is_connected());
+}
+
+#[test]
+fn shown_text_drops_the_oldest_lines_beyond_a_frame_but_never_the_screen() {
+    let lines = |texts: &[&str]| -> Vec<String> { texts.iter().map(|&t| t.into()).collect() };
+    // Each line costs its length plus 4.
+    let mut text = lines(&["aaaa", "bb", "c", "dd"]);
+    drop_oldest_to_fit(&mut text, 2, 30);
+    assert_eq!(text, lines(&["aaaa", "bb", "c", "dd"]));
+    drop_oldest_to_fit(&mut text, 2, 21);
+    assert_eq!(text, lines(&["bb", "c", "dd"]));
+    drop_oldest_to_fit(&mut text, 2, 0);
+    assert_eq!(text, lines(&["c", "dd"]));
+}

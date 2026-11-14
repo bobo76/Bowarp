@@ -468,6 +468,21 @@ impl Server {
                 }
             }
             ClientMessage::Close { session } => self.close(session),
+            ClientMessage::Show {
+                request,
+                session,
+                scrollback,
+            } => match self.session(session) {
+                Some(hosted) => {
+                    outbox.send(hosted.text(request, scrollback));
+                }
+                None => {
+                    outbox.send(ServerMessage::Failed {
+                        request,
+                        message: format!("no session {session}"),
+                    });
+                }
+            },
         }
     }
 
@@ -602,6 +617,25 @@ impl Server {
 }
 
 impl Hosted {
+    /// The answer to [`ClientMessage::Show`]: the mirror's text, read without attaching or
+    /// resizing, so also for an exited session.
+    fn text(&self, request: u32, scrollback: bool) -> ServerMessage {
+        let (mut lines, screen) = {
+            let fanout = self.fanout.lock().unwrap();
+            let screen = usize::from(fanout.mirror.size().lines);
+            (fanout.mirror.text(scrollback), screen)
+        };
+        // The peer refuses a longer frame: the oldest scrollback goes instead.
+        let envelope = ServerMessage::Text {
+            request,
+            lines: Vec::new(),
+        }
+        .encode()
+        .len();
+        drop_oldest_to_fit(&mut lines, screen, MAX_FRAME.saturating_sub(envelope));
+        ServerMessage::Text { request, lines }
+    }
+
     fn info(&self) -> SessionInfo {
         self.info_locked(&self.fanout.lock().unwrap())
     }
@@ -637,6 +671,24 @@ struct Connection<'a> {
     outbox: &'a Outbox,
     /// Set by [`ClientMessage::Identify`].
     identity: Option<ClientIdentity>,
+}
+
+/// Drop the oldest of `lines` until they encode (each a length and its text) within
+/// `max_bytes`, keeping the last `keep` (the screen) whatever their size.
+fn drop_oldest_to_fit(lines: &mut Vec<String>, keep: usize, max_bytes: usize) {
+    const LENGTH: usize = size_of::<u32>();
+    let droppable = lines.len().saturating_sub(keep);
+    let mut excess = lines
+        .iter()
+        .map(|line| LENGTH + line.len())
+        .sum::<usize>()
+        .saturating_sub(max_bytes);
+    let mut dropped = 0;
+    while excess > 0 && dropped < droppable {
+        excess = excess.saturating_sub(LENGTH + lines[dropped].len());
+        dropped += 1;
+    }
+    lines.drain(..dropped);
 }
 
 fn launch_spec(spec: &SpawnSpec) -> io::Result<LaunchSpec> {

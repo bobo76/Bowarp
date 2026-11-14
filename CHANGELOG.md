@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.4.3
+
+- `agentws-server show <id> [--scrollback]` prints a session's screen (and its history) as
+  plain text on the server, without attaching, so the tab showing it keeps its size. The app
+  and `agentws-server` must be updated together (protocol version 6).
+
 ## 0.4.2
 
 - An app whose network dropped leaves `agentws-server list` within about 45 s, without

@@ -67,6 +67,16 @@ fn client_messages() -> Vec<ClientMessage> {
         },
         ClientMessage::Close { session: 3 },
         ClientMessage::Pong,
+        ClientMessage::Show {
+            request: 11,
+            session: u64::MAX,
+            scrollback: true,
+        },
+        ClientMessage::Show {
+            request: 12,
+            session: 3,
+            scrollback: false,
+        },
     ]
 }
 
@@ -126,6 +136,14 @@ fn server_messages() -> Vec<ServerMessage> {
             message: "no such session".into(),
         },
         ServerMessage::Ping,
+        ServerMessage::Text {
+            request: 5,
+            lines: vec!["$ ls -é".into(), String::new(), "あい".into()],
+        },
+        ServerMessage::Text {
+            request: 6,
+            lines: Vec::new(),
+        },
     ]
 }
 

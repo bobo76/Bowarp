@@ -8,8 +8,12 @@
 //!   state, attached clients, their machines and title, tab-separated.
 //! - `agentws-server status`: whether this user's server runs, with this program's version and
 //!   protocol and the server's session count, as `key=value` lines. Never starts the server.
+//! - `agentws-server show <id> [--scrollback]`: print the session's screen as plain text, one
+//!   line per row without the trailing empty rows, after its scrollback with `--scrollback`.
+//!   Does not attach: the pty keeps its size. An exited session shows its last screen.
 //! - `agentws-server close <id>`: end one of them.
 
+use std::io::Write as _;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -19,7 +23,7 @@ use agentws_remote::{Client, transport};
 const DEFAULT_IDLE_EXIT: Duration = Duration::from_secs(60);
 
 const USAGE: &str = "usage: agentws-server proxy | serve [--idle-exit <seconds>] | list | \
-                     status | close <id> | --version";
+                     status | show <id> [--scrollback] | close <id> | --version";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -35,6 +39,10 @@ fn main() -> ExitCode {
         },
         ["list"] => list(&name),
         ["status"] => status(&name),
+        ["show", id] | ["show", id, "--scrollback"] => match id.parse::<u64>() {
+            Ok(id) => show(&name, id, args.len() == 3),
+            Err(_) => return usage(),
+        },
         ["close", id] => match id.parse::<u64>() {
             Ok(id) => close(&name, id),
             Err(_) => return usage(),
@@ -135,6 +143,28 @@ fn status(name: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+fn show(name: &str, id: u64, scrollback: bool) -> std::io::Result<()> {
+    let lines = client(name)?.show(id, scrollback)?;
+    closed_pipe_is_done(print_lines(&lines))
+}
+
+fn print_lines(lines: &[String]) -> std::io::Result<()> {
+    let mut out = std::io::stdout().lock();
+    for line in lines {
+        writeln!(out, "{line}")?;
+    }
+    out.flush()
+}
+
+/// A reader that quit early (`show 3 --scrollback | head`) is not an error: stop quietly, like
+/// git and coreutils do.
+fn closed_pipe_is_done(result: std::io::Result<()>) -> std::io::Result<()> {
+    match result {
+        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        other => other,
+    }
+}
+
 fn close(name: &str, id: u64) -> std::io::Result<()> {
     let client = client(name)?;
     if !client.list()?.iter().any(|info| info.id == id) {
@@ -168,5 +198,14 @@ mod tests {
     #[test]
     fn a_machine_name_cannot_break_the_columns() {
         assert_eq!(machines(&["a\tb,c\nd".into()]), "a?b?c?d");
+    }
+
+    #[test]
+    fn a_closed_pipe_ends_show_quietly_but_other_write_errors_stay() {
+        use std::io::{Error, ErrorKind};
+        assert!(closed_pipe_is_done(Err(Error::from(ErrorKind::BrokenPipe))).is_ok());
+        assert!(closed_pipe_is_done(Ok(())).is_ok());
+        let other = closed_pipe_is_done(Err(Error::from(ErrorKind::PermissionDenied)));
+        assert_eq!(other.unwrap_err().kind(), ErrorKind::PermissionDenied);
     }
 }

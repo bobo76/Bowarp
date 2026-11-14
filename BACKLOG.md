@@ -55,6 +55,10 @@ Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in
   within about 45 s `agentws-server list` on the host drops that client, with no sshd setting
   (`ClientAliveInterval` unset), and its `agentws-server proxy` process exits.
 
+- Show (rebuild app and server: protocol 6): over real ssh, `agentws-server show <id>` on the
+  host prints a remote Claude Code tab's screen (and `--scrollback` its history too) while the
+  tab stays the same size and `list` still counts one client.
+
 - Remote tab marker: a remote tab's row shows only the server icon on its second line until
   its folder is known (over a slow real ssh); a host renamed in Settings → Remote hosts shows
   its new name in the next hover card; Location off in the tab card settings hides the host
@@ -416,8 +420,6 @@ Tabs whose programs run on another machine through `agentws-server` over ssh; de
 limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the command line
 (`--remote <host>`); next steps, in order:
 
-- `agentws-server show <id>`: print the session's screen (the server's mirror, as plain text,
-  `--scrollback` for the history too) without attaching, so the pty size is unchanged.
 - Restore: `tabs.json` saves a remote tab's host and session id; on start, attach to it again
   (or offer to start a new one when it is gone); a host's running sessions not shown in a tab
   are listed to attach.

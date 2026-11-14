@@ -68,6 +68,8 @@ and the app can attach to them again, like tmux.
 - **Protocol** (`agentws_remote::protocol`): length-prefixed binary frames, a version in the
   hello; both sides must run the same protocol version. The hello holds only the version, in
   every protocol, so a server of another version can always decode it and say so.
+  `Show` asks for a session's text without attaching; the server answers `Text` (its mirror's
+  rows) or `Failed` for an unknown id.
 - **Ping.** Past the hellos, the server sends `Ping` to each connection every 15 s and the
   client answers `Pong` at once. A connection the server hears nothing from (any message
   counts) for 45 s is dropped: it leaves every session (and `list`'s clients) and the server
@@ -103,6 +105,11 @@ and the app can attach to them again, like tmux.
    `agentws-server list` / `close <id>` on the server show and end its sessions (`list`
    prints one line per session: id, kind, state, attached clients, their machine names
    comma-separated (`-` for none, `?` for a client that gave none), title, tab-separated);
+   `agentws-server show <id> [--scrollback]` prints a session's screen as plain text (one line
+   per row, trailing blanks and trailing empty rows dropped; with `--scrollback`, its history
+   first, the oldest lines dropped beyond 16 MiB), read from the server's copy of the
+   terminal: it does not attach, so the pty keeps its size and `list` does not count it, and
+   an exited session shows its last screen;
    `agentws-server status` shows whether the daemon runs (never starting it), with the
    installed program's version and protocol and the daemon's session count, as `key=value`
    lines (exit 0 either way). Check on the settings page runs it over ssh. With the
@@ -143,7 +150,7 @@ Build the app and `agentws-server` from the same commit: a protocol version mism
 
 ## Status
 
-Done: protocol, server, daemon and proxy (`agentws-server`, with `list`, `close` and
+Done: protocol, server, daemon and proxy (`agentws-server`, with `list`, `show`, `close` and
 `status`), client, snapshot, remote sessions in the app's tabs, from the `+` menu's host
 submenus (hosts set on the settings page) or the command line (`--remote <host>`), and the
 remote folder: shown on the tab, and where agents and new tabs opened from it start;
