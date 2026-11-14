@@ -66,6 +66,7 @@ fn client_messages() -> Vec<ClientMessage> {
             size: size(),
         },
         ClientMessage::Close { session: 3 },
+        ClientMessage::Pong,
     ]
 }
 
@@ -124,6 +125,7 @@ fn server_messages() -> Vec<ServerMessage> {
             request: 4,
             message: "no such session".into(),
         },
+        ServerMessage::Ping,
     ]
 }
 

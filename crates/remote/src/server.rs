@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::io::{self, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -32,6 +32,11 @@ use crate::protocol::{
 /// attach again to get a fresh snapshot.
 const MAX_QUEUED_BYTES: usize = 32 * 1024 * 1024;
 
+/// How often each connection is sent a [`ServerMessage::Ping`].
+const PING_INTERVAL: Duration = Duration::from_secs(15);
+/// A connection the server hears nothing from for this long is dropped: three pings missed.
+const SILENCE_LIMIT: Duration = Duration::from_secs(45);
+
 /// The sessions this server runs. Cheap to clone; every connection shares it.
 #[derive(Clone, Default)]
 pub struct Server {
@@ -46,6 +51,31 @@ struct Inner {
     connections: AtomicUsize,
     /// When the last connection ended or the last session was closed.
     idle_since: Mutex<Option<Instant>>,
+    ping: PingTimes,
+}
+
+/// When connections are pinged and dropped: constants, shorter in tests.
+#[derive(Clone, Copy)]
+struct PingTimes {
+    interval: Duration,
+    silence_limit: Duration,
+}
+
+impl Default for PingTimes {
+    fn default() -> Self {
+        Self {
+            interval: PING_INTERVAL,
+            silence_limit: SILENCE_LIMIT,
+        }
+    }
+}
+
+/// What the reader and the watchdog of one connection share.
+struct Liveness {
+    /// When the connection's last frame arrived.
+    last_heard: Mutex<Instant>,
+    /// Set once the watchdog dropped the connection as dead.
+    dropped: AtomicBool,
 }
 
 struct Hosted {
@@ -145,6 +175,8 @@ struct Outbox {
     sender: Sender<ServerMessage>,
     queued: Arc<AtomicUsize>,
     overflowed: Arc<AtomicBool>,
+    /// A ping is owed: the writer sends it ahead of the queued messages.
+    ping_due: Arc<AtomicBool>,
 }
 
 impl Outbox {
@@ -154,8 +186,17 @@ impl Outbox {
             sender,
             queued: Arc::new(AtomicUsize::new(0)),
             overflowed: Arc::new(AtomicBool::new(false)),
+            ping_due: Arc::new(AtomicBool::new(false)),
         };
         (outbox, receiver)
+    }
+
+    /// Have a ping written before the messages already queued, so that a slow link is not
+    /// taken for a dead one while it drains a backlog. The queued `Ping` only wakes a
+    /// writer blocked on an empty queue: the writer never writes it.
+    fn ping(&self) {
+        self.ping_due.store(true, Ordering::Release);
+        let _ = self.sender.send(ServerMessage::Ping);
     }
 
     /// Queue a message; `false` once the connection is gone or too far behind.
@@ -189,6 +230,21 @@ impl Server {
         Self::default()
     }
 
+    /// A server that pings every `interval` and drops a connection silent for
+    /// `silence_limit`.
+    #[cfg(all(test, unix))]
+    fn with_ping(interval: Duration, silence_limit: Duration) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                ping: PingTimes {
+                    interval,
+                    silence_limit,
+                },
+                ..Inner::default()
+            }),
+        }
+    }
+
     /// How long the server had no connection and no session; `None` while it has either.
     pub fn idle_for(&self) -> Option<Duration> {
         if self.inner.connections.load(Ordering::Acquire) > 0 || !self.sessions().is_empty() {
@@ -206,8 +262,15 @@ impl Server {
         self.sessions().get(&id).cloned()
     }
 
-    /// Serve one client connection until it ends: blocks.
-    pub fn serve_connection(&self, reader: impl Read, writer: impl Write + Send + 'static) {
+    /// Serve one client connection until it ends: blocks. `hang_up` ends the connection for
+    /// both sides from another thread, so that a blocked read returns: called when the client
+    /// stopped answering pings.
+    pub fn serve_connection(
+        &self,
+        reader: impl Read,
+        writer: impl Write + Send + 'static,
+        hang_up: impl FnOnce() + Send + 'static,
+    ) {
         self.inner.connections.fetch_add(1, Ordering::AcqRel);
         let client = self.inner.next_client.fetch_add(1, Ordering::AcqRel);
         let (outbox, receiver) = Outbox::new();
@@ -216,24 +279,36 @@ impl Server {
             .spawn({
                 let queued = outbox.queued.clone();
                 let overflowed = outbox.overflowed.clone();
-                move || write_messages(writer, &receiver, &queued, &overflowed)
+                let ping_due = outbox.ping_due.clone();
+                move || write_messages(writer, &receiver, &queued, &overflowed, &ping_due)
             });
         match writer_thread {
             Ok(_) => {
-                if let Err(err) = self.read_messages(client, &outbox, reader) {
+                if let Err(err) = self.read_messages(client, &outbox, reader, hang_up) {
                     log::info!("client {client}: {err}");
                 }
             }
             Err(err) => log::warn!("client {client}: no writer thread: {err}"),
         }
-        for hosted in self.sessions().values() {
-            hosted.fanout.lock().unwrap().clients.remove(&client);
-        }
+        self.drop_viewers(client);
         *self.inner.idle_since.lock().unwrap() = Some(Instant::now());
         self.inner.connections.fetch_sub(1, Ordering::AcqRel);
     }
 
-    fn read_messages(&self, client: u64, outbox: &Outbox, mut reader: impl Read) -> io::Result<()> {
+    /// Take the connection out of every session: it gets no more output and is not counted.
+    fn drop_viewers(&self, client: u64) {
+        for hosted in self.sessions().values() {
+            hosted.fanout.lock().unwrap().clients.remove(&client);
+        }
+    }
+
+    fn read_messages(
+        &self,
+        client: u64,
+        outbox: &Outbox,
+        mut reader: impl Read,
+        hang_up: impl FnOnce() + Send + 'static,
+    ) -> io::Result<()> {
         let Some(frame) = read_frame(&mut reader)? else {
             return Ok(());
         };
@@ -260,24 +335,87 @@ impl Server {
                 ));
             }
         }
+        // After the hello: the client expects the server's hello first. The watchdog ends
+        // when `_stop` drops, as this returns.
+        let (liveness, _stop) = self.watch(client, outbox.clone(), hang_up)?;
         let mut connection = Connection {
             client,
             outbox,
             identity: None,
         };
         while let Some(frame) = read_frame(&mut reader)? {
-            if outbox.overflowed.load(Ordering::Acquire) {
+            if outbox.overflowed.load(Ordering::Acquire) || liveness.dropped.load(Ordering::Acquire)
+            {
                 return Ok(());
             }
+            *liveness.last_heard.lock().unwrap() = Instant::now();
             self.handle(&mut connection, ClientMessage::decode(&frame)?);
         }
         Ok(())
     }
 
+    /// Start the connection's watchdog thread: it pings the client and, once the connection
+    /// has been silent for the silence limit, drops it from every session and hangs up. It
+    /// ends then, or when the returned sender is dropped.
+    fn watch(
+        &self,
+        client: u64,
+        outbox: Outbox,
+        hang_up: impl FnOnce() + Send + 'static,
+    ) -> io::Result<(Arc<Liveness>, Sender<()>)> {
+        let liveness = Arc::new(Liveness {
+            last_heard: Mutex::new(Instant::now()),
+            dropped: AtomicBool::new(false),
+        });
+        let (stop, stopped) = mpsc::channel();
+        let (server, watched) = (self.clone(), liveness.clone());
+        thread::Builder::new()
+            .name(format!("agentws-ping-{client}"))
+            .spawn(move || {
+                if !server.ping_until_silent(&watched, &outbox, &stopped) {
+                    return;
+                }
+                watched.dropped.store(true, Ordering::Release);
+                log::info!("client {client}: no answer to pings, dropping the connection");
+                server.drop_viewers(client);
+                hang_up();
+            })?;
+        Ok((liveness, stop))
+    }
+
+    /// Ping the connection every interval: `true` once it has been silent for the silence
+    /// limit, `false` when `stopped` says the connection ended. Sleeps in between.
+    fn ping_until_silent(
+        &self,
+        liveness: &Liveness,
+        outbox: &Outbox,
+        stopped: &Receiver<()>,
+    ) -> bool {
+        let times = self.inner.ping;
+        let mut next_ping = Instant::now() + times.interval;
+        loop {
+            let now = Instant::now();
+            let silent_at = *liveness.last_heard.lock().unwrap() + times.silence_limit;
+            if now >= silent_at {
+                return true;
+            }
+            if now >= next_ping {
+                outbox.ping();
+                next_ping = now + times.interval;
+            }
+            let wake = next_ping.min(silent_at);
+            match stopped.recv_timeout(wake.saturating_duration_since(now)) {
+                Err(RecvTimeoutError::Timeout) => {}
+                Ok(()) | Err(RecvTimeoutError::Disconnected) => return false,
+            }
+        }
+    }
+
     fn handle(&self, connection: &mut Connection, message: ClientMessage) {
         let (client, outbox) = (connection.client, connection.outbox);
         match message {
-            ClientMessage::Hello { .. } => {}
+            // A pong only had to arrive: the reader noted when.
+            ClientMessage::Hello { .. } | ClientMessage::Pong => {}
             ClientMessage::Identify(identity) => connection.identity = Some(identity),
             ClientMessage::Spawn {
                 request,
@@ -524,17 +662,29 @@ fn launch_spec(spec: &SpawnSpec) -> io::Result<LaunchSpec> {
 }
 
 /// Write queued messages until the connection or the queue ends; flushes once the queue is
-/// empty, so a burst of output goes out in few writes.
+/// empty, so a burst of output goes out in few writes. A ping that is due goes out before the
+/// next message, whole frames only.
 fn write_messages(
     writer: impl Write,
     receiver: &Receiver<ServerMessage>,
     queued: &AtomicUsize,
     overflowed: &AtomicBool,
+    ping_due: &AtomicBool,
 ) {
     let mut writer = BufWriter::with_capacity(64 * 1024, writer);
     while let Ok(message) = receiver.recv() {
         let mut next = Some(message);
         while let Some(message) = next.take() {
+            if ping_due.swap(false, Ordering::AcqRel)
+                && write_frame(&mut writer, &ServerMessage::Ping.encode()).is_err()
+            {
+                return;
+            }
+            // Only a wake-up for the ping above (see `Outbox::ping`).
+            if message == ServerMessage::Ping {
+                next = receiver.try_recv().ok();
+                continue;
+            }
             let last = matches!(message, ServerMessage::Failed { request: 0, .. });
             if write_frame(&mut writer, &message.encode()).is_err() {
                 return;

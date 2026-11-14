@@ -44,12 +44,16 @@ Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in
 
 - Attached clients (rebuild app and server: protocol 3): over real ssh, `agentws-server list`
   on the host shows 1 in the clients column for a tab's session and 2 once a second app
-  attaches to it; pulling one app's network keeps it counted until sshd drops the connection
-  (sooner with `ClientAliveInterval` set), then 1.
+  attaches to it; pulling one app's network keeps it counted for up to about 45 s (the
+  server's ping), then 1.
 
 - Named clients (rebuild app and server: protocol 4): over real ssh, `agentws-server list`
   names the Windows machine in the machines column; kill the app's ssh (or pull the network),
   Reconnect: still 1 client, named once, at once.
+
+- Ping (rebuild app and server: protocol 5): over real ssh, pull the Windows app's network:
+  within about 45 s `agentws-server list` on the host drops that client, with no sshd setting
+  (`ClientAliveInterval` unset), and its `agentws-server proxy` process exits.
 
 - Remote tab marker: a remote tab's row shows only the server icon on its second line until
   its folder is known (over a slow real ssh); a host renamed in Settings → Remote hosts shows
@@ -412,7 +416,6 @@ Tabs whose programs run on another machine through `agentws-server` over ssh; de
 limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the command line
 (`--remote <host>`); next steps, in order:
 
-- Ping: a ping in the protocol drops a dead connection without relying on sshd.
 - `agentws-server show <id>`: print the session's screen (the server's mirror, as plain text,
   `--scrollback` for the history too) without attaching, so the pty size is unchanged.
 - Restore: `tabs.json` saves a remote tab's host and session id; on start, attach to it again

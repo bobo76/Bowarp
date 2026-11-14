@@ -6,14 +6,16 @@
 //! side sending [`ClientMessage::Hello`] / [`ServerMessage::Hello`] with its
 //! [`PROTOCOL_VERSION`]; a server that does not speak the client's version answers with
 //! [`ServerMessage::Failed`] and closes the connection. The hellos hold only the version, in
-//! every protocol, so that a server of another version can always say so.
+//! every protocol, so that a server of another version can always say so. Past the hellos,
+//! the server sends [`ServerMessage::Ping`] every 15 s and the client answers
+//! [`ClientMessage::Pong`]: a connection the server hears nothing from for 45 s is dropped.
 
 use std::io::{self, ErrorKind, Read, Write};
 
 use term_core::TermDimensions;
 
 /// Bumped on any change to the messages: both sides must speak the same version.
-pub const PROTOCOL_VERSION: u16 = 4;
+pub const PROTOCOL_VERSION: u16 = 5;
 
 /// No frame is longer: a peer that sends one is broken (or not speaking this protocol).
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -46,8 +48,8 @@ pub struct SessionInfo {
     pub folder: Option<String>,
     /// The machine name of each client attached when this was read, also for an exited
     /// session, sorted; empty for a client that did not name itself. A client whose network
-    /// dropped counts until the server notices its connection is gone or it attaches again. In
-    /// `Attached`, the client attaching is not counted yet.
+    /// dropped counts until it misses the server's pings ([`ServerMessage::Ping`]) or attaches
+    /// again. In `Attached`, the client attaching is not counted yet.
     pub clients: Vec<String>,
 }
 
@@ -103,6 +105,8 @@ pub enum ClientMessage {
     Close {
         session: u64,
     },
+    /// The answer to [`ServerMessage::Ping`], sent at once.
+    Pong,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -144,6 +148,10 @@ pub enum ServerMessage {
         request: u32,
         message: String,
     },
+    /// Sent regularly once the hellos are exchanged: the client answers
+    /// [`ClientMessage::Pong`]. A network that dropped leaves the connection open between the
+    /// server and its proxy, so only a round trip through ssh shows the client is gone.
+    Ping,
 }
 
 mod tag {
@@ -156,6 +164,7 @@ mod tag {
     pub const RESIZE: u8 = 7;
     pub const CLOSE: u8 = 8;
     pub const IDENTIFY: u8 = 9;
+    pub const PONG: u8 = 10;
 
     pub const ATTACHED: u8 = 65;
     pub const SESSIONS: u8 = 66;
@@ -164,6 +173,7 @@ mod tag {
     pub const EXITED: u8 = 69;
     pub const FAILED: u8 = 70;
     pub const FOLDER_CHANGED: u8 = 71;
+    pub const PING: u8 = 72;
 }
 
 impl ClientMessage {
@@ -200,6 +210,7 @@ impl ClientMessage {
             Self::Input { session, bytes } => out.tag(tag::INPUT).u64(*session).bytes(bytes),
             Self::Resize { session, size } => out.tag(tag::RESIZE).u64(*session).size(*size),
             Self::Close { session } => out.tag(tag::CLOSE).u64(*session),
+            Self::Pong => out.tag(tag::PONG),
         };
         out.finish()
     }
@@ -255,6 +266,7 @@ impl ClientMessage {
             tag::CLOSE => Self::Close {
                 session: input.u64()?,
             },
+            tag::PONG => Self::Pong,
             other => return Err(invalid(format!("unknown client message {other}"))),
         };
         input.end()?;
@@ -291,6 +303,7 @@ impl ServerMessage {
             Self::FolderChanged { session, folder } => {
                 out.tag(tag::FOLDER_CHANGED).u64(*session).str(folder)
             }
+            Self::Ping => out.tag(tag::PING),
         };
         out.finish()
     }
@@ -330,6 +343,7 @@ impl ServerMessage {
                 session: input.u64()?,
                 folder: input.str()?,
             },
+            tag::PING => Self::Ping,
             other => return Err(invalid(format!("unknown server message {other}"))),
         };
         input.end()?;

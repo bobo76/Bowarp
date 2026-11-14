@@ -68,7 +68,8 @@ pub fn serve(name: &str, idle_exit: Option<Duration>) -> io::Result<()> {
                     .name("agentws-connection".into())
                     .spawn(move || {
                         let (reader, writer) = halves(stream);
-                        server.serve_connection(reader, writer);
+                        let hang_up = reader.hang_up();
+                        server.serve_connection(reader, writer, hang_up);
                     });
                 if let Err(err) = spawned {
                     log::warn!("no thread for a connection: {err}");
@@ -175,6 +176,27 @@ impl Write for StreamHalf {
         (&*self.0).flush()
     }
 }
+
+impl StreamHalf {
+    /// What ends the connection for both sides from any thread: a blocked read returns, and
+    /// the peer (the proxy) reads the end of the stream and exits. Named pipes have no such
+    /// call: on Windows it does nothing, and the connection ends when the proxy does.
+    pub(crate) fn hang_up(&self) -> impl FnOnce() + Send + 'static {
+        let stream = self.0.clone();
+        move || shut_down(&stream)
+    }
+}
+
+#[cfg(unix)]
+fn shut_down(stream: &Stream) {
+    let Stream::UdSocket(socket) = stream;
+    if let Err(err) = socket.inner().shutdown(std::net::Shutdown::Both) {
+        log::info!("hanging up: {err}");
+    }
+}
+
+#[cfg(not(unix))]
+fn shut_down(_stream: &Stream) {}
 
 /// A reader and a writer for `stream`, for two threads.
 pub fn halves(stream: Stream) -> (StreamHalf, StreamHalf) {

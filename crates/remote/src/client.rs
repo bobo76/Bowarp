@@ -389,6 +389,8 @@ impl Inner {
     fn handle(self: &Arc<Self>, message: ServerMessage) {
         match message {
             ServerMessage::Hello { .. } => {}
+            // Fails only once the connection is gone, which the reader hears anyway.
+            ServerMessage::Ping => drop(self.send(ClientMessage::Pong)),
             ServerMessage::Attached {
                 request,
                 info,

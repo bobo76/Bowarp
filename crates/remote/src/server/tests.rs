@@ -20,6 +20,18 @@ fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
     }
 }
 
+/// Serve `server_end` on a thread; hanging up shuts the socket down.
+fn serve(server: &Server, server_end: UnixStream) {
+    let server = server.clone();
+    thread::spawn(move || {
+        let reader = server_end.try_clone().unwrap();
+        let socket = server_end.try_clone().unwrap();
+        server.serve_connection(reader, server_end, move || {
+            drop(socket.shutdown(Shutdown::Both));
+        });
+    });
+}
+
 /// A client connected to `server`, its end of the connection (to cut it), and a receiver of
 /// its disconnect reason.
 fn connect(server: &Server) -> (Client, UnixStream, Receiver<String>) {
@@ -32,11 +44,7 @@ fn connect_as(
     identity: Option<ClientIdentity>,
 ) -> (Client, UnixStream, Receiver<String>) {
     let (client_end, server_end) = UnixStream::pair().unwrap();
-    let server = server.clone();
-    thread::spawn(move || {
-        let reader = server_end.try_clone().unwrap();
-        server.serve_connection(reader, server_end);
-    });
+    serve(server, server_end);
     let (disconnected, reason) = mpsc::channel();
     let cut = client_end.try_clone().unwrap();
     let client = Client::connect(
@@ -383,11 +391,7 @@ fn a_client_attaching_again_to_an_exited_session_replaces_its_lost_connection() 
 /// A connection speaking the protocol by hand: past the hello, with no identity yet.
 fn raw_connect(server: &Server) -> UnixStream {
     let (mut client_end, server_end) = UnixStream::pair().unwrap();
-    let serving = server.clone();
-    thread::spawn(move || {
-        let reader = server_end.try_clone().unwrap();
-        serving.serve_connection(reader, server_end);
-    });
+    serve(server, server_end);
     let hello = ClientMessage::Hello {
         version: PROTOCOL_VERSION,
     };
@@ -452,6 +456,98 @@ fn an_identity_applies_only_to_the_attaches_that_follow_it() {
 }
 
 #[test]
+fn a_connection_that_stops_answering_is_dropped_and_hung_up() {
+    let server = Server::with_ping(Duration::from_millis(50), Duration::from_millis(500));
+    let (first, _, _) = connect(&server);
+    let one = first.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    // A client whose network dropped after it attached: it sends nothing, not even pongs.
+    let mut silent = raw_connect(&server);
+    let attach = ClientMessage::Attach {
+        request: 1,
+        session: one.info.id,
+        size: size(40, 6),
+    };
+    let answer = raw_request(&mut silent, 1, &attach);
+    assert!(
+        matches!(answer, ServerMessage::Attached { .. }),
+        "{answer:?}"
+    );
+    assert_eq!(first.list().unwrap()[0].clients.len(), 2);
+    wait_until("the server to drop the silent client", || {
+        first.list().unwrap()[0].clients.len() == 1
+    });
+    // It was pinged, then hung up on: its stream ends, and so does the connection.
+    silent.set_read_timeout(Some(TIMEOUT)).unwrap();
+    let mut pinged = false;
+    while let Ok(Some(frame)) = read_frame(&mut silent) {
+        pinged |= ServerMessage::decode(&frame).unwrap() == ServerMessage::Ping;
+    }
+    assert!(pinged);
+    wait_until("the connection to end", || {
+        server.inner.connections.load(Ordering::Acquire) == 1
+    });
+    assert!(first.is_connected());
+}
+
+#[test]
+fn a_ping_is_written_ahead_of_the_output_queued_for_a_slow_client() {
+    const BACKLOG: usize = 8_000_000;
+    const BEFORE_BACKLOG_DRAINS: usize = 2 * 1024 * 1024;
+    // A silence limit far above the test: the client reads late but is not dropped.
+    let server = Server::with_ping(Duration::from_secs(1), Duration::from_secs(30));
+    let (first, _, _) = connect(&server);
+    // The burst starts after the attach, so it all queues for the client that isn't reading.
+    let script = format!("sleep 0.1; head -c {BACKLOG} /dev/zero | tr '\\0' x; sleep 30");
+    let one = first
+        .spawn(shell(Some(&script)), size(40, 6), quiet())
+        .unwrap();
+    let mut slow = raw_connect(&server);
+    let attach = ClientMessage::Attach {
+        request: 1,
+        session: one.info.id,
+        size: size(40, 6),
+    };
+    let answer = raw_request(&mut slow, 1, &attach);
+    assert!(
+        matches!(answer, ServerMessage::Attached { .. }),
+        "{answer:?}"
+    );
+    // The burst is queued and a ping is due (at 1 s) by the time the client starts reading.
+    thread::sleep(Duration::from_millis(1800));
+    slow.set_read_timeout(Some(TIMEOUT)).unwrap();
+    let mut output = 0;
+    loop {
+        let frame = read_frame(&mut slow)
+            .unwrap()
+            .expect("the connection ended");
+        match ServerMessage::decode(&frame).unwrap() {
+            ServerMessage::Output { bytes, .. } => output += bytes.len(),
+            // Pings sent before the burst sit in the socket's buffer, ahead of the output.
+            ServerMessage::Ping if output > 0 => break,
+            _ => {}
+        }
+    }
+    assert!(
+        output < BEFORE_BACKLOG_DRAINS,
+        "the ping came after {output} of {BACKLOG} bytes of queued output"
+    );
+}
+
+#[test]
+fn a_client_answering_pings_stays_attached_while_idle() {
+    // A limit long enough that a loaded CI machine stalling a thread doesn't drop the client.
+    let server = Server::with_ping(Duration::from_millis(50), Duration::from_millis(500));
+    let (client, _, reason) = connect(&server);
+    let _one = client.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    // Idle for several silence limits: only its pongs show it is there.
+    thread::sleep(Duration::from_millis(1500));
+    assert!(client.is_connected());
+    assert!(reason.try_recv().is_err());
+    assert_eq!(client.list().unwrap()[0].clients.len(), 1);
+    assert_eq!(server.inner.connections.load(Ordering::Acquire), 1);
+}
+
+#[test]
 fn bad_requests_fail_without_ending_the_connection() {
     let server = Server::new();
     let (client, _, _) = connect(&server);
@@ -495,11 +591,7 @@ fn a_launch_becomes_a_spawn_spec() {
 fn another_protocol_version_is_refused() {
     let server = Server::new();
     let (mut client_end, server_end) = UnixStream::pair().unwrap();
-    let serving = server.clone();
-    thread::spawn(move || {
-        let reader = server_end.try_clone().unwrap();
-        serving.serve_connection(reader, server_end);
-    });
+    serve(&server, server_end);
     let hello = ClientMessage::Hello {
         version: PROTOCOL_VERSION + 1,
     };

@@ -68,13 +68,22 @@ and the app can attach to them again, like tmux.
 - **Protocol** (`agentws_remote::protocol`): length-prefixed binary frames, a version in the
   hello; both sides must run the same protocol version. The hello holds only the version, in
   every protocol, so a server of another version can always decode it and say so.
+- **Ping.** Past the hellos, the server sends `Ping` to each connection every 15 s and the
+  client answers `Pong` at once. A connection the server hears nothing from (any message
+  counts) for 45 s is dropped: it leaves every session (and `list`'s clients) and the server
+  shuts its socket down, so the proxy reads the end and exits. Pinging goes from the server
+  because its socket leads to the local proxy, which stays up when the network drops: only a
+  round trip through ssh shows the client is gone. One watchdog thread per connection, which
+  sleeps until the next ping or deadline and ends with the connection. The ping is written
+  ahead of the output queued for the connection (between whole frames), so a slow link draining
+  a backlog still answers in time; the 32 MiB limit above is what ends a client too far behind.
 - **Client identity.** Right after the hello the app sends `Identify`: a random id made once
   per install (the file `client-id` in the config folder) and its machine name (Windows
   `COMPUTERNAME`, else the host name). A connection attaching to a session that still holds
   another connection with the same id replaces it there at once: the app lost that
   connection and reconnected, so it is counted and named once. The old connection itself is
-  left to end when the server notices it is dead (another instance of the same install may
-  still use it). `list`, `status` and `close` send no identity and never attach.
+  left to end when it misses the pings (another instance of the same install may still use
+  it). `list`, `status` and `close` send no identity and never attach.
 
 ## Trying it
 
@@ -170,9 +179,12 @@ Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 - Closing the app ends its remote sessions, like local ones.
 - An exited session stays listed until a client closes it, and keeps counting the clients
   attached to it.
-- A client whose network dropped still counts in `list`'s clients until sshd on the server
-  notices the dead connection or the same app attaches again (Reconnect): set sshd's
-  `ClientAliveInterval` (off by default) to bound that.
+- A client whose network dropped still counts in `list`'s clients for up to about 45 s (the
+  ping), or until the same app attaches again (Reconnect).
+- On a Windows server the named pipe cannot be shut down from another thread: a silent
+  client leaves the sessions after 45 s, but its connection and proxy stay until ssh ends.
+- A proxy blocked writing output to an ssh whose network dropped never reads the end of its
+  socket: it stays until ssh ends, though the server dropped its connection after 45 s.
 - App instances on one machine share the install id. Harmless while an instance only attaches
   its own sessions; once one can attach another's (Restore), two instances showing the same
   session would replace each other in it: the id should then be made per instance.

@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.4.2
+
+- An app whose network dropped leaves `agentws-server list` within about 45 s, without
+  configuring sshd: the server pings each app and drops one that stops answering. The app
+  and `agentws-server` must be updated together (protocol version 5).
+
 ## 0.4.1
 
 - `agentws-server list` names the machine of each attached app, in a column after the client
