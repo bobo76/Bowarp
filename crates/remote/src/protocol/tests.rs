@@ -17,6 +17,7 @@ fn info() -> SessionInfo {
         title: Some("vim — é".into()),
         exit: Some(Some(-2)),
         folder: Some("/home/me/é project".into()),
+        clients: vec!["laptop".into(), String::new(), "bureau-é".into()],
     }
 }
 
@@ -25,6 +26,14 @@ fn client_messages() -> Vec<ClientMessage> {
         ClientMessage::Hello {
             version: PROTOCOL_VERSION,
         },
+        ClientMessage::Identify(ClientIdentity {
+            id: "0123456789abcdef0123456789abcdef".into(),
+            machine: "LAPTOP-É".into(),
+        }),
+        ClientMessage::Identify(ClientIdentity {
+            id: String::new(),
+            machine: String::new(),
+        }),
         ClientMessage::Spawn {
             request: 7,
             spec: SpawnSpec {
@@ -57,6 +66,17 @@ fn client_messages() -> Vec<ClientMessage> {
             size: size(),
         },
         ClientMessage::Close { session: 3 },
+        ClientMessage::Pong,
+        ClientMessage::Show {
+            request: 11,
+            session: u64::MAX,
+            scrollback: true,
+        },
+        ClientMessage::Show {
+            request: 12,
+            session: 3,
+            scrollback: false,
+        },
     ]
 }
 
@@ -82,6 +102,7 @@ fn server_messages() -> Vec<ServerMessage> {
                 },
                 SessionInfo {
                     exit: Some(None),
+                    clients: Vec::new(),
                     ..info()
                 },
             ],
@@ -113,6 +134,15 @@ fn server_messages() -> Vec<ServerMessage> {
         ServerMessage::Failed {
             request: 4,
             message: "no such session".into(),
+        },
+        ServerMessage::Ping,
+        ServerMessage::Text {
+            request: 5,
+            lines: vec!["$ ls -é".into(), String::new(), "あい".into()],
+        },
+        ServerMessage::Text {
+            request: 6,
+            lines: Vec::new(),
         },
     ]
 }
@@ -200,4 +230,10 @@ fn a_frame_the_peer_would_refuse_is_not_written() {
         read_frame(&mut written.as_slice()).unwrap().unwrap().len(),
         MAX_FRAME
     );
+}
+
+#[test]
+fn the_hello_is_only_the_version_so_any_server_decodes_it() {
+    let hello = ClientMessage::Hello { version: 0x0304 }.encode();
+    assert_eq!(hello, [tag::HELLO, 0x04, 0x03]);
 }

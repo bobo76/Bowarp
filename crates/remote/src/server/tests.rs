@@ -20,20 +20,37 @@ fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
     }
 }
 
-/// A client connected to `server`, its end of the connection (to cut it), and a receiver of
-/// its disconnect reason.
-fn connect(server: &Server) -> (Client, UnixStream, Receiver<String>) {
-    let (client_end, server_end) = UnixStream::pair().unwrap();
+/// Serve `server_end` on a thread; hanging up shuts the socket down.
+fn serve(server: &Server, server_end: UnixStream) {
     let server = server.clone();
     thread::spawn(move || {
         let reader = server_end.try_clone().unwrap();
-        server.serve_connection(reader, server_end);
+        let socket = server_end.try_clone().unwrap();
+        server.serve_connection(reader, server_end, move || {
+            drop(socket.shutdown(Shutdown::Both));
+        });
     });
+}
+
+/// A client connected to `server`, its end of the connection (to cut it), and a receiver of
+/// its disconnect reason.
+fn connect(server: &Server) -> (Client, UnixStream, Receiver<String>) {
+    connect_as(server, None)
+}
+
+/// As [`connect`], identified as `identity`.
+fn connect_as(
+    server: &Server,
+    identity: Option<ClientIdentity>,
+) -> (Client, UnixStream, Receiver<String>) {
+    let (client_end, server_end) = UnixStream::pair().unwrap();
+    serve(server, server_end);
     let (disconnected, reason) = mpsc::channel();
     let cut = client_end.try_clone().unwrap();
     let client = Client::connect(
         client_end.try_clone().unwrap(),
         client_end,
+        identity,
         Box::new(move |why| drop(disconnected.send(why))),
     )
     .unwrap();
@@ -254,6 +271,283 @@ fn clients_follow_each_others_resizes_and_closes() {
 }
 
 #[test]
+fn a_session_lists_its_attached_clients_but_not_the_one_listing() {
+    let server = Server::new();
+    let (first, _, _) = connect(&server);
+    let (second, cut, reason) = connect(&server);
+    let (lister, _, _) = connect(&server);
+    let one = first.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    assert_eq!(lister.list().unwrap()[0].clients.len(), 1);
+    let _two = second.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    assert_eq!(lister.list().unwrap()[0].clients.len(), 2);
+    cut.shutdown(Shutdown::Both).unwrap();
+    reason.recv_timeout(TIMEOUT).unwrap();
+    wait_until("the server to drop the cut client", || {
+        lister.list().unwrap()[0].clients.len() == 1
+    });
+}
+
+fn identity(id: &str, machine: &str) -> Option<ClientIdentity> {
+    Some(ClientIdentity {
+        id: id.into(),
+        machine: machine.into(),
+    })
+}
+
+#[test]
+fn a_session_names_the_machines_of_its_attached_clients() {
+    let server = Server::new();
+    let (first, _, _) = connect_as(&server, identity("id-one", "laptop"));
+    let (second, _, _) = connect_as(&server, identity("id-two", "desktop"));
+    let (anonymous, _, _) = connect(&server);
+    let (lister, _, _) = connect(&server);
+    let one = first.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    assert_eq!(lister.list().unwrap()[0].clients, ["laptop"]);
+    let _two = second.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    let _three = anonymous.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    assert_eq!(lister.list().unwrap()[0].clients, ["", "desktop", "laptop"]);
+}
+
+#[test]
+fn a_client_attaching_again_replaces_its_lost_connection_at_once() {
+    let server = Server::new();
+    let (lost, cut, reason) = connect_as(&server, identity("install", "laptop"));
+    let (lister, _, _) = connect(&server);
+    let one = lost.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    // The same install connects again while the server still holds the lost connection.
+    let (again, _, _) = connect_as(&server, identity("install", "laptop"));
+    let attached = again.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    assert_eq!(attached.info.clients, Vec::<String>::new());
+    assert_eq!(lister.list().unwrap()[0].clients, ["laptop"]);
+    // The old connection is left open (another instance may use it), out of the session.
+    assert!(lost.is_connected());
+    cut.shutdown(Shutdown::Both).unwrap();
+    reason.recv_timeout(TIMEOUT).unwrap();
+    wait_until("the server to end the lost connection", || {
+        server.inner.connections.load(Ordering::Acquire) == 2
+    });
+    attached.session.write(b"echo still here\n".to_vec());
+    wait_until("output on the new connection", || {
+        screen_contains(&attached, "still here")
+    });
+    assert_eq!(lister.list().unwrap()[0].clients, ["laptop"]);
+}
+
+#[test]
+fn clients_without_an_id_or_with_an_empty_one_are_never_replaced() {
+    let server = Server::new();
+    let (first, _, _) = connect(&server);
+    let (second, _, _) = connect(&server);
+    let (empty, _, _) = connect_as(&server, identity("", "a"));
+    let (empty_too, _, _) = connect_as(&server, identity("", "b"));
+    let (lister, _, _) = connect(&server);
+    let one = first.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    let _two = second.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    let _three = empty.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    let _four = empty_too.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    assert_eq!(lister.list().unwrap()[0].clients, ["", "", "a", "b"]);
+}
+
+#[test]
+fn a_client_attaching_after_the_exit_is_counted_and_told_of_it() {
+    let server = Server::new();
+    let (first, _, _) = connect(&server);
+    let (lister, _, _) = connect(&server);
+    let one = first
+        .spawn(shell(Some("exit 5")), size(30, 4), quiet())
+        .unwrap();
+    wait_until("the exit", || one.session.has_exited());
+    assert_eq!(lister.list().unwrap()[0].clients.len(), 1);
+    let (second, _, _) = connect(&server);
+    let (callback, seen) = events();
+    let late = second
+        .attach(one.info.id, size(30, 4), view(callback))
+        .unwrap();
+    assert!(late.session.has_exited());
+    assert_eq!(late.session.exit_code(), Some(5));
+    assert_eq!(lister.list().unwrap()[0].clients.len(), 2);
+    wait_until("the exit event", || {
+        seen.lock()
+            .unwrap()
+            .contains(&SessionEvent::Exited(Some(5)))
+    });
+}
+
+#[test]
+fn a_client_attaching_again_to_an_exited_session_replaces_its_lost_connection() {
+    let server = Server::new();
+    let (lost, _, _) = connect_as(&server, identity("install", "laptop"));
+    let (lister, _, _) = connect(&server);
+    let one = lost
+        .spawn(shell(Some("exit 5")), size(30, 4), quiet())
+        .unwrap();
+    wait_until("the exit", || one.session.has_exited());
+    let (again, _, _) = connect_as(&server, identity("install", "laptop"));
+    let attached = again.attach(one.info.id, size(30, 4), quiet()).unwrap();
+    assert_eq!(attached.session.exit_code(), Some(5));
+    assert_eq!(lister.list().unwrap()[0].clients, ["laptop"]);
+}
+
+/// A connection speaking the protocol by hand: past the hello, with no identity yet.
+fn raw_connect(server: &Server) -> UnixStream {
+    let (mut client_end, server_end) = UnixStream::pair().unwrap();
+    serve(server, server_end);
+    let hello = ClientMessage::Hello {
+        version: PROTOCOL_VERSION,
+    };
+    write_frame(&mut client_end, &hello.encode()).unwrap();
+    let frame = read_frame(&mut client_end).unwrap().unwrap();
+    assert!(matches!(
+        ServerMessage::decode(&frame).unwrap(),
+        ServerMessage::Hello { .. }
+    ));
+    client_end
+}
+
+/// Send `message` on a raw connection and wait for the server's answer to `request`.
+fn raw_request(stream: &mut UnixStream, request: u32, message: &ClientMessage) -> ServerMessage {
+    write_frame(stream, &message.encode()).unwrap();
+    loop {
+        let frame = read_frame(stream).unwrap().unwrap();
+        match ServerMessage::decode(&frame).unwrap() {
+            answer @ (ServerMessage::Attached { request: id, .. }
+            | ServerMessage::Failed { request: id, .. })
+                if id == request =>
+            {
+                return answer;
+            }
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn an_identity_applies_only_to_the_attaches_that_follow_it() {
+    let server = Server::new();
+    let (first, _, _) = connect(&server);
+    let (lister, _, _) = connect(&server);
+    let one = first.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    let two = first.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    let mut raw = raw_connect(&server);
+    let attach = |request, session| ClientMessage::Attach {
+        request,
+        session,
+        size: size(40, 6),
+    };
+    let answer = raw_request(&mut raw, 1, &attach(1, one.info.id));
+    assert!(
+        matches!(answer, ServerMessage::Attached { .. }),
+        "{answer:?}"
+    );
+    let late = ClientMessage::Identify(identity("install", "raw-box").unwrap());
+    write_frame(&mut raw, &late.encode()).unwrap();
+    let answer = raw_request(&mut raw, 2, &attach(2, two.info.id));
+    assert!(
+        matches!(answer, ServerMessage::Attached { .. }),
+        "{answer:?}"
+    );
+    let sessions = lister.list().unwrap();
+    assert_eq!(sessions[0].clients, ["", ""]);
+    assert_eq!(sessions[1].clients, ["", "raw-box"]);
+    // The same install attaching session one keeps the viewer that attached unnamed.
+    let (again, _, _) = connect_as(&server, identity("install", "laptop"));
+    let _three = again.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    assert_eq!(lister.list().unwrap()[0].clients, ["", "", "laptop"]);
+}
+
+#[test]
+fn a_connection_that_stops_answering_is_dropped_and_hung_up() {
+    let server = Server::with_ping(Duration::from_millis(50), Duration::from_millis(500));
+    let (first, _, _) = connect(&server);
+    let one = first.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    // A client whose network dropped after it attached: it sends nothing, not even pongs.
+    let mut silent = raw_connect(&server);
+    let attach = ClientMessage::Attach {
+        request: 1,
+        session: one.info.id,
+        size: size(40, 6),
+    };
+    let answer = raw_request(&mut silent, 1, &attach);
+    assert!(
+        matches!(answer, ServerMessage::Attached { .. }),
+        "{answer:?}"
+    );
+    assert_eq!(first.list().unwrap()[0].clients.len(), 2);
+    wait_until("the server to drop the silent client", || {
+        first.list().unwrap()[0].clients.len() == 1
+    });
+    // It was pinged, then hung up on: its stream ends, and so does the connection.
+    silent.set_read_timeout(Some(TIMEOUT)).unwrap();
+    let mut pinged = false;
+    while let Ok(Some(frame)) = read_frame(&mut silent) {
+        pinged |= ServerMessage::decode(&frame).unwrap() == ServerMessage::Ping;
+    }
+    assert!(pinged);
+    wait_until("the connection to end", || {
+        server.inner.connections.load(Ordering::Acquire) == 1
+    });
+    assert!(first.is_connected());
+}
+
+#[test]
+fn a_ping_is_written_ahead_of_the_output_queued_for_a_slow_client() {
+    const BACKLOG: usize = 8_000_000;
+    const BEFORE_BACKLOG_DRAINS: usize = 2 * 1024 * 1024;
+    // A silence limit far above the test: the client reads late but is not dropped.
+    let server = Server::with_ping(Duration::from_secs(1), Duration::from_secs(30));
+    let (first, _, _) = connect(&server);
+    // The burst starts after the attach, so it all queues for the client that isn't reading.
+    let script = format!("sleep 0.1; head -c {BACKLOG} /dev/zero | tr '\\0' x; sleep 30");
+    let one = first
+        .spawn(shell(Some(&script)), size(40, 6), quiet())
+        .unwrap();
+    let mut slow = raw_connect(&server);
+    let attach = ClientMessage::Attach {
+        request: 1,
+        session: one.info.id,
+        size: size(40, 6),
+    };
+    let answer = raw_request(&mut slow, 1, &attach);
+    assert!(
+        matches!(answer, ServerMessage::Attached { .. }),
+        "{answer:?}"
+    );
+    // The burst is queued and a ping is due (at 1 s) by the time the client starts reading.
+    thread::sleep(Duration::from_millis(1800));
+    slow.set_read_timeout(Some(TIMEOUT)).unwrap();
+    let mut output = 0;
+    loop {
+        let frame = read_frame(&mut slow)
+            .unwrap()
+            .expect("the connection ended");
+        match ServerMessage::decode(&frame).unwrap() {
+            ServerMessage::Output { bytes, .. } => output += bytes.len(),
+            // Pings sent before the burst sit in the socket's buffer, ahead of the output.
+            ServerMessage::Ping if output > 0 => break,
+            _ => {}
+        }
+    }
+    assert!(
+        output < BEFORE_BACKLOG_DRAINS,
+        "the ping came after {output} of {BACKLOG} bytes of queued output"
+    );
+}
+
+#[test]
+fn a_client_answering_pings_stays_attached_while_idle() {
+    // A limit long enough that a loaded CI machine stalling a thread doesn't drop the client.
+    let server = Server::with_ping(Duration::from_millis(50), Duration::from_millis(500));
+    let (client, _, reason) = connect(&server);
+    let _one = client.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    // Idle for several silence limits: only its pongs show it is there.
+    thread::sleep(Duration::from_millis(1500));
+    assert!(client.is_connected());
+    assert!(reason.try_recv().is_err());
+    assert_eq!(client.list().unwrap()[0].clients.len(), 1);
+    assert_eq!(server.inner.connections.load(Ordering::Acquire), 1);
+}
+
+#[test]
 fn bad_requests_fail_without_ending_the_connection() {
     let server = Server::new();
     let (client, _, _) = connect(&server);
@@ -297,11 +591,7 @@ fn a_launch_becomes_a_spawn_spec() {
 fn another_protocol_version_is_refused() {
     let server = Server::new();
     let (mut client_end, server_end) = UnixStream::pair().unwrap();
-    let serving = server.clone();
-    thread::spawn(move || {
-        let reader = server_end.try_clone().unwrap();
-        serving.serve_connection(reader, server_end);
-    });
+    serve(&server, server_end);
     let hello = ClientMessage::Hello {
         version: PROTOCOL_VERSION + 1,
     };
@@ -330,6 +620,7 @@ fn the_client_hears_when_the_server_goes_away() {
     let client = Client::connect(
         client_end.try_clone().unwrap(),
         client_end,
+        None,
         Box::new(move |why| drop(disconnected.send(why))),
     )
     .unwrap();
@@ -404,4 +695,46 @@ fn a_closed_session_frees_its_terminal_copy() {
     server.close(id);
     // The program's output reader lets go once the hang-up ends it.
     wait_until("the fan-out to be freed", || fanout.strong_count() == 0);
+}
+
+#[test]
+fn show_prints_a_session_without_attaching_or_resizing_it() {
+    let server = Server::new();
+    let (client, _, _) = connect(&server);
+    let script = "for i in 1 2 3 4 5 6 7 8; do echo line-$i; done; exit 0";
+    let remote = client
+        .spawn(shell(Some(script)), size(20, 4), quiet())
+        .unwrap();
+    wait_until("the exit", || remote.session.has_exited());
+    let id = remote.info.id;
+    let (viewer, _, _) = connect(&server);
+    // An exited session still shows its last screen, without the trailing empty row.
+    assert_eq!(
+        viewer.show(id, false).unwrap(),
+        ["line-6", "line-7", "line-8"]
+    );
+    let all: Vec<String> = (1..=8).map(|i| format!("line-{i}")).collect();
+    assert_eq!(viewer.show(id, true).unwrap(), all);
+    let info = viewer.list().unwrap().remove(0);
+    assert_eq!(info.size, size(20, 4));
+    assert_eq!(info.clients.len(), 1);
+    let err = viewer.show(id + 1, false).err().unwrap();
+    assert!(
+        err.to_string().contains(&format!("no session {}", id + 1)),
+        "{err}"
+    );
+    assert!(viewer.is_connected());
+}
+
+#[test]
+fn shown_text_drops_the_oldest_lines_beyond_a_frame_but_never_the_screen() {
+    let lines = |texts: &[&str]| -> Vec<String> { texts.iter().map(|&t| t.into()).collect() };
+    // Each line costs its length plus 4.
+    let mut text = lines(&["aaaa", "bb", "c", "dd"]);
+    drop_oldest_to_fit(&mut text, 2, 30);
+    assert_eq!(text, lines(&["aaaa", "bb", "c", "dd"]));
+    drop_oldest_to_fit(&mut text, 2, 21);
+    assert_eq!(text, lines(&["bb", "c", "dd"]));
+    drop_oldest_to_fit(&mut text, 2, 0);
+    assert_eq!(text, lines(&["c", "dd"]));
 }

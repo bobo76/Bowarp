@@ -10,6 +10,69 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in for ssh:
+
+- Settings → Remote hosts: Add host, type the three fields (the row title and "Connects with"
+  line follow), Remove host on a middle host (the fields below show the right values); a host
+  edited by hand in `settings.json` shows on the page. Linux and Windows.
+- `+` menu: a submenu per host with a destination, none for a host without one; Shell, Claude
+  Code and Copilot CLI open on the host in its home folder, named "Shell (host)"; the window
+  stays responsive while connecting (toast "Connecting to ..."), and two tabs started quickly
+  on a host share one ssh connection.
+- An unreachable host (wrong name, refused key, missing server program): the error toast
+  shows ssh's message and stays until closed; `--remote <unreachable>` the same, after the
+  local tab opens.
+
+- Windows app to a Linux host over real ssh (`ssh.exe` with a key): the tab opens without a
+  console window flashing up, typing, resizing, colors and Claude Code's full screen work;
+  pulling the network shows the tab Disconnected, and `agentws-server list` on the host
+  still shows the session.
+- Reconnect (rebuild app and server): pulling the network (or killing the tab's `ssh`) turns
+  its remote tabs Disconnected (unplug badge, banner "Connection to <host> lost: ..." with
+  Reconnect, not "Process exited"); Reconnect from the banner or the tab's right-click menu
+  shows "Reconnecting to <host>…", then the screen comes back and typing works, in place
+  (name, color, group, focus kept), for all the host's disconnected tabs at once over one
+  ssh. Host still unreachable: an error toast, and the tab can try again. A session that
+  exited meanwhile shows "Process exited with code N"; one closed with `agentws-server close`
+  shows "The session is gone ..." with Start new, which starts the same program in its last
+  folder. Linux and Windows.
+
+- Remote folder (rebuild app and server: protocol 2): `cd` in a remote shell tab updates the
+  folder on its card and row; with it selected, Claude Code from the `+` menu, "New tab"
+  (Ctrl+T) and Duplicate open on the host in that folder; a shell picked by name opens here;
+  `/exit` in a remote Claude tab falls back to the host's shell in the same folder.
+
+- Attached clients (rebuild app and server: protocol 3): over real ssh, `agentws-server list`
+  on the host shows 1 in the clients column for a tab's session and 2 once a second app
+  attaches to it; pulling one app's network keeps it counted for up to about 45 s (the
+  server's ping), then 1.
+
+- Named clients (rebuild app and server: protocol 4): over real ssh, `agentws-server list`
+  names the Windows machine in the machines column; kill the app's ssh (or pull the network),
+  Reconnect: still 1 client, named once, at once.
+
+- Ping (rebuild app and server: protocol 5): over real ssh, pull the Windows app's network:
+  within about 45 s `agentws-server list` on the host drops that client, with no sshd setting
+  (`ClientAliveInterval` unset), and its `agentws-server proxy` process exits.
+
+- Show (rebuild app and server: protocol 6): over real ssh, `agentws-server show <id>` on the
+  host prints a remote Claude Code tab's screen (and `--scrollback` its history too) while the
+  tab stays the same size and `list` still counts one client.
+
+- Remote tab marker: a remote tab's row shows only the server icon on its second line until
+  its folder is known (over a slow real ssh); a host renamed in Settings → Remote hosts shows
+  its new name in the next hover card; Location off in the tab card settings hides the host
+  line. On Windows: the server icon on the row and the card.
+
+- Remote host status (rebuild app and server): over real ssh, Check on Settings → Remote
+  hosts shows "Server running, N sessions" / "Server not running" with the version; a host
+  that is off or unknown shows "Unreachable: ..." within ssh's 10 s connect timeout; a server
+  built before `status` shows "Server too old to report status"; a daemon left running from
+  an older protocol after updating the program shows "A server of another version is
+  running"; an app of another protocol shows "speaks protocol N, this app M". Quitting the
+  app mid-check leaves no `ssh` running past its timeout. On Windows: no console window
+  flashes up during a check.
+
 Git page switch and key:
 
 - In the app: Ctrl+Shift+G from a terminal running a program (e.g. `cat`) opens the page and
@@ -146,52 +209,6 @@ Git page, line and hunk staging:
   Discard drops, Cancel keeps; Save on a file changed on disk asks first, and its Cancel
   cancels. Closing the window (title bar button, Alt+F4) with edits in two tabs asks once
   (Save all saves both and closes; Discard closes; Cancel keeps all). Linux and Windows.
-
-Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in for ssh:
-
-- Settings → Remote hosts: Add host, type the three fields (the row title and "Connects with"
-  line follow), Remove host on a middle host (the fields below show the right values); a host
-  edited by hand in `settings.json` shows on the page. Linux and Windows.
-- `+` menu: a submenu per host with a destination, none for a host without one; Shell, Claude
-  Code and Copilot CLI open on the host in its home folder, named "Shell (host)"; the window
-  stays responsive while connecting (toast "Connecting to ..."), and two tabs started quickly
-  on a host share one ssh connection.
-- An unreachable host (wrong name, refused key, missing server program): the error toast
-  shows ssh's message and stays until closed; `--remote <unreachable>` the same, after the
-  local tab opens.
-
-- Windows app to a Linux host over real ssh (`ssh.exe` with a key): the tab opens without a
-  console window flashing up, typing, resizing, colors and Claude Code's full screen work;
-  pulling the network shows the tab Disconnected, and `agentws-server list` on the host
-  still shows the session.
-- Reconnect (rebuild app and server): pulling the network (or killing the tab's `ssh`) turns
-  its remote tabs Disconnected (unplug badge, banner "Connection to <host> lost: ..." with
-  Reconnect, not "Process exited"); Reconnect from the banner or the tab's right-click menu
-  shows "Reconnecting to <host>…", then the screen comes back and typing works, in place
-  (name, color, group, focus kept), for all the host's disconnected tabs at once over one
-  ssh. Host still unreachable: an error toast, and the tab can try again. A session that
-  exited meanwhile shows "Process exited with code N"; one closed with `agentws-server close`
-  shows "The session is gone ..." with Start new, which starts the same program in its last
-  folder. Linux and Windows.
-
-- Remote folder (rebuild app and server: protocol 2): `cd` in a remote shell tab updates the
-  folder on its card and row; with it selected, Claude Code from the `+` menu, "New tab"
-  (Ctrl+T) and Duplicate open on the host in that folder; a shell picked by name opens here;
-  `/exit` in a remote Claude tab falls back to the host's shell in the same folder.
-
-- Remote tab marker: a remote tab's row shows only the server icon on its second line until
-  its folder is known (over a slow real ssh); a host renamed in Settings → Remote hosts shows
-  its new name in the next hover card; Location off in the tab card settings hides the host
-  line. On Windows: the server icon on the row and the card.
-
-- Remote host status (rebuild app and server): over real ssh, Check on Settings → Remote
-  hosts shows "Server running, N sessions" / "Server not running" with the version; a host
-  that is off or unknown shows "Unreachable: ..." within ssh's 10 s connect timeout; a server
-  built before `status` shows "Server too old to report status"; a daemon left running from
-  an older protocol after updating the program shows "A server of another version is
-  running"; an app of another protocol shows "speaks protocol N, this app M". Quitting the
-  app mid-check leaves no `ssh` running past its timeout. On Windows: no console window
-  flashes up during a check.
 
 Subagent list (Claude Code 2.1.316, Copilot CLI 1.0.105):
 
@@ -396,6 +413,34 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
+
+### Remote sessions
+
+Tabs whose programs run on another machine through `agentws-server` over ssh; design and
+limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the command line
+(`--remote <host>`); next steps, in order:
+
+- Restore: `tabs.json` saves a remote tab's host and session id; on start, attach to it again
+  (or offer to start a new one when it is gone); a host's running sessions not shown in a tab
+  are listed to attach.
+- Shell integration and status on the server: the server writes the integration scripts and
+  sets the mark token, forwards `CommandStarted/Finished/Executed`, `AgentStarted/Finished`
+  and progress as protocol events; agents get their hook settings and the server's own
+  `HookServer`, whose reports are forwarded to the app.
+- Git branch and `~` folder for remote tabs: the server reads the branch (`workspace-model`
+  git, in the folder from `/proc`) and sends it with `FolderChanged`, and sends its home
+  folder in the hello so the tab shows the folder shortened to `~`. Protocol bump; the card,
+  row and hover card show them like a local tab's.
+- File explorer for remote tabs: until built, the explorer shows "Files on <host> aren't
+  available yet" instead of "No folder". Then a request/reply pair in the protocol (answered
+  off the UI thread) for folder listings and file reads, run by `workspace-model` file tree
+  on the server: first read-only (tree, git-ignored dimming, viewer), then refresh on change
+  (a watcher on the server), then create, rename and delete.
+- Server on Windows: build and test `agentws-server` there (named pipe, detached start).
+- Packaging: ship `agentws-server` in the Linux release and document installing it on the
+  server (README); a version check that names both versions when they differ.
+
+### General
 
 - Git status outside the Git page, one switch "Git status in tabs and explorer" (on). Off: no
   branch under tab names (the folder shows instead), no changed-file coloring and no
@@ -606,42 +651,6 @@ UX review, Tier 2 (small polish, one batch):
   keyboard, the idle window keeps redrawing (about 22 CPU ticks/s in Xvfb, even after going
   back to the terminal; a fresh start idles at 0-2). Find what keeps notifying (cursor blink of
   the unfocused input?) and stop it.
-
-### Remote sessions
-
-Tabs whose programs run on another machine through `agentws-server` over ssh; design and
-limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the command line
-(`--remote <host>`); next steps, in order:
-
-- Attached clients in `agentws-server list`: a `clients` count in `SessionInfo` (the size of
-  the session's fan-out client map), printed as a column. Changes the wire format: bump the
-  protocol version. A client lost to a network drop still counts until its ssh connection
-  times out on the server side (sshd's `ClientAliveInterval`, off by default).
-- Reconnecting clients known by the server: the app sends a stable id (per install) and its
-  machine name in `Hello`; a client attaching again with the same id replaces its lost
-  connection (dropped from the session at once, counted once), and `agentws-server list` names
-  the attached clients. A ping in the protocol drops a dead connection without relying on sshd.
-- `agentws-server show <id>`: print the session's screen (the server's mirror, as plain text,
-  `--scrollback` for the history too) without attaching, so the pty size is unchanged.
-- Restore: `tabs.json` saves a remote tab's host and session id; on start, attach to it again
-  (or offer to start a new one when it is gone); a host's running sessions not shown in a tab
-  are listed to attach.
-- Shell integration and status on the server: the server writes the integration scripts and
-  sets the mark token, forwards `CommandStarted/Finished/Executed`, `AgentStarted/Finished`
-  and progress as protocol events; agents get their hook settings and the server's own
-  `HookServer`, whose reports are forwarded to the app.
-- Git branch and `~` folder for remote tabs: the server reads the branch (`workspace-model`
-  git, in the folder from `/proc`) and sends it with `FolderChanged`, and sends its home
-  folder in the hello so the tab shows the folder shortened to `~`. Protocol bump; the card,
-  row and hover card show them like a local tab's.
-- File explorer for remote tabs: until built, the explorer shows "Files on <host> aren't
-  available yet" instead of "No folder". Then a request/reply pair in the protocol (answered
-  off the UI thread) for folder listings and file reads, run by `workspace-model` file tree
-  on the server: first read-only (tree, git-ignored dimming, viewer), then refresh on change
-  (a watcher on the server), then create, rename and delete.
-- Server on Windows: build and test `agentws-server` there (named pipe, detached start).
-- Packaging: ship `agentws-server` in the Linux release and document installing it on the
-  server (README); a version check that names both versions when they differ.
 
 ### Git
 

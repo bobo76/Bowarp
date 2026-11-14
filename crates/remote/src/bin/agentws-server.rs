@@ -4,11 +4,16 @@
 //!   (starting it when none runs) and relays stdin and stdout to it.
 //! - `agentws-server serve [--idle-exit <seconds>]`: run the server in the foreground. It
 //!   exits after the given time (default 60, 0 = never) with no session and no connection.
-//! - `agentws-server list`: the sessions this user's server runs.
+//! - `agentws-server list`: the sessions this user's server runs, one per line: id, kind,
+//!   state, attached clients, their machines and title, tab-separated.
 //! - `agentws-server status`: whether this user's server runs, with this program's version and
 //!   protocol and the server's session count, as `key=value` lines. Never starts the server.
+//! - `agentws-server show <id> [--scrollback]`: print the session's screen as plain text, one
+//!   line per row without the trailing empty rows, after its scrollback with `--scrollback`.
+//!   Does not attach: the pty keeps its size. An exited session shows its last screen.
 //! - `agentws-server close <id>`: end one of them.
 
+use std::io::Write as _;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -18,7 +23,7 @@ use agentws_remote::{Client, transport};
 const DEFAULT_IDLE_EXIT: Duration = Duration::from_secs(60);
 
 const USAGE: &str = "usage: agentws-server proxy | serve [--idle-exit <seconds>] | list | \
-                     status | close <id> | --version";
+                     status | show <id> [--scrollback] | close <id> | --version";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -34,6 +39,10 @@ fn main() -> ExitCode {
         },
         ["list"] => list(&name),
         ["status"] => status(&name),
+        ["show", id] | ["show", id, "--scrollback"] => match id.parse::<u64>() {
+            Ok(id) => show(&name, id, args.len() == 3),
+            Err(_) => return usage(),
+        },
         ["close", id] => match id.parse::<u64>() {
             Ok(id) => close(&name, id),
             Err(_) => return usage(),
@@ -62,7 +71,7 @@ fn client(name: &str) -> std::io::Result<Client> {
     let stream = transport::connect(name)
         .map_err(|err| std::io::Error::new(err.kind(), format!("no server running: {err}")))?;
     let (reader, writer) = transport::halves(stream);
-    Client::connect(reader, writer, Box::new(|_| {}))
+    Client::connect(reader, writer, None, Box::new(|_| {}))
 }
 
 fn list(name: &str) -> std::io::Result<()> {
@@ -78,9 +87,35 @@ fn list(name: &str) -> std::io::Result<()> {
             Some(None) => "exited".to_owned(),
         };
         let title = info.title.as_deref().unwrap_or("");
-        println!("{}\t{kind}\t{state}\t{title}", info.id);
+        let clients = info.clients.len();
+        let machines = machines(&info.clients);
+        println!(
+            "{}\t{kind}\t{state}\t{clients}\t{machines}\t{title}",
+            info.id
+        );
     }
     Ok(())
+}
+
+/// The attached clients' machine names, comma-separated: `?` for one that gave no name, `-`
+/// for none.
+fn machines(clients: &[String]) -> String {
+    if clients.is_empty() {
+        return "-".to_owned();
+    }
+    let names: Vec<String> = clients.iter().map(|name| column_safe(name)).collect();
+    names.join(",")
+}
+
+/// `name` as one item of the machines column: a client sends any text, and a tab, newline or
+/// comma in it would break the line's columns.
+fn column_safe(name: &str) -> String {
+    if name.is_empty() {
+        return "?".to_owned();
+    }
+    name.chars()
+        .map(|c| if c.is_control() || c == ',' { '?' } else { c })
+        .collect()
 }
 
 /// Exits 0 whether or not the server runs; an error only when reaching or asking it failed.
@@ -108,6 +143,28 @@ fn status(name: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+fn show(name: &str, id: u64, scrollback: bool) -> std::io::Result<()> {
+    let lines = client(name)?.show(id, scrollback)?;
+    closed_pipe_is_done(print_lines(&lines))
+}
+
+fn print_lines(lines: &[String]) -> std::io::Result<()> {
+    let mut out = std::io::stdout().lock();
+    for line in lines {
+        writeln!(out, "{line}")?;
+    }
+    out.flush()
+}
+
+/// A reader that quit early (`show 3 --scrollback | head`) is not an error: stop quietly, like
+/// git and coreutils do.
+fn closed_pipe_is_done(result: std::io::Result<()>) -> std::io::Result<()> {
+    match result {
+        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        other => other,
+    }
+}
+
 fn close(name: &str, id: u64) -> std::io::Result<()> {
     let client = client(name)?;
     if !client.list()?.iter().any(|info| info.id == id) {
@@ -125,4 +182,30 @@ fn close(name: &str, id: u64) -> std::io::Result<()> {
 fn usage() -> ExitCode {
     eprintln!("{USAGE}");
     ExitCode::from(2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn machines_are_comma_separated_with_placeholders() {
+        assert_eq!(machines(&[]), "-");
+        assert_eq!(machines(&["box".into()]), "box");
+        assert_eq!(machines(&[String::new(), "a".into(), "b".into()]), "?,a,b");
+    }
+
+    #[test]
+    fn a_machine_name_cannot_break_the_columns() {
+        assert_eq!(machines(&["a\tb,c\nd".into()]), "a?b?c?d");
+    }
+
+    #[test]
+    fn a_closed_pipe_ends_show_quietly_but_other_write_errors_stay() {
+        use std::io::{Error, ErrorKind};
+        assert!(closed_pipe_is_done(Err(Error::from(ErrorKind::BrokenPipe))).is_ok());
+        assert!(closed_pipe_is_done(Ok(())).is_ok());
+        let other = closed_pipe_is_done(Err(Error::from(ErrorKind::PermissionDenied)));
+        assert_eq!(other.unwrap_err().kind(), ErrorKind::PermissionDenied);
+    }
 }

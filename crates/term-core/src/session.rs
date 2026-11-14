@@ -10,10 +10,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg, State};
-use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::grid::{Dimensions, Row, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
+use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::{self, ClipboardType, Term, TermMode};
 use alacritty_terminal::tty;
 use alacritty_terminal::vte::ansi::{ClearMode, Handler, Processor, StdSyncHandler};
@@ -683,13 +684,49 @@ impl Session {
 /// The visible screen as text, one string per line with trailing blanks trimmed.
 pub(crate) fn screen_text<L>(term: &Term<L>) -> Vec<String> {
     let grid = term.grid();
-    (0..grid.screen_lines())
-        .map(|line| {
-            let row = &grid[Line(line as i32)];
-            let text: String = (0..grid.columns()).map(|col| row[Column(col)].c).collect();
-            text.trim_end().to_string()
-        })
+    (0..grid.screen_lines() as i32)
+        .map(|line| row_text(&grid[Line(line)]))
         .collect()
+}
+
+/// The scrollback (oldest first) when `scrollback` is set, then the screen, as text: one
+/// string per row as in [`screen_text`], without the trailing empty rows. A wrapped line stays
+/// one string per row.
+pub(crate) fn term_text<L>(term: &Term<L>, scrollback: bool) -> Vec<String> {
+    let grid = term.grid();
+    let first = if scrollback {
+        -(grid.history_size() as i32)
+    } else {
+        0
+    };
+    let mut lines: Vec<String> = (first..grid.screen_lines() as i32)
+        .map(|line| row_text(&grid[Line(line)]))
+        .collect();
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    lines
+}
+
+/// A row's characters with trailing blanks trimmed: a wide character once (not its spacer),
+/// with its combining characters.
+fn row_text(row: &Row<Cell>) -> String {
+    let mut text = String::new();
+    for column in 0..row.len() {
+        let cell = &row[Column(column)];
+        if cell
+            .flags
+            .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+        {
+            continue;
+        }
+        text.push(cell.c);
+        if let Some(extra) = cell.zerowidth() {
+            text.extend(extra);
+        }
+    }
+    text.truncate(text.trim_end().len());
+    text
 }
 
 impl Drop for Session {
