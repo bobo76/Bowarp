@@ -83,7 +83,8 @@ and the app can attach to them again, like tmux.
 3. Add the host on the settings page (Remote hosts) and open a tab from its `+` submenu, or
    run `agent-workspace --remote <host> [shell|claude|copilot] [folder on the host]` (a
    destination or a host's name) to open the remote tab after the usual local one.
-   `agentws-server list` / `close <id>` on the server show and end its sessions;
+   `agentws-server list` / `close <id>` on the server show and end its sessions (`list`
+   prints one line per session: id, kind, state, attached clients, title, tab-separated);
    `agentws-server status` shows whether the daemon runs (never starting it), with the
    installed program's version and protocol and the daemon's session count, as `key=value`
    lines (exit 0 either way). Check on the settings page runs it over ssh. With the
@@ -156,4 +157,7 @@ Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 - A remote agent that exits cleanly keeps its last screen: its tab doesn't go on as a shell.
 - Reconnect is manual: the app does not retry a lost connection by itself.
 - Closing the app ends its remote sessions, like local ones.
-- An exited session stays listed until a client closes it.
+- An exited session stays listed until a client closes it, and keeps counting the clients
+  attached to it.
+- A client whose network dropped still counts in `list`'s clients until sshd on the server
+  notices the dead connection: set its `ClientAliveInterval` (off by default) to bound that.

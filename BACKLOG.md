@@ -42,6 +42,11 @@ Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in
   (Ctrl+T) and Duplicate open on the host in that folder; a shell picked by name opens here;
   `/exit` in a remote Claude tab falls back to the host's shell in the same folder.
 
+- Attached clients (rebuild app and server: protocol 3): over real ssh, `agentws-server list`
+  on the host shows 1 in the clients column for a tab's session and 2 once a second app
+  attaches to it; pulling one app's network keeps it counted until sshd drops the connection
+  (sooner with `ClientAliveInterval` set), then 1.
+
 - Remote tab marker: a remote tab's row shows only the server icon on its second line until
   its folder is known (over a slow real ssh); a host renamed in Settings → Remote hosts shows
   its new name in the next hover card; Location off in the tab card settings hides the host
@@ -403,10 +408,6 @@ Tabs whose programs run on another machine through `agentws-server` over ssh; de
 limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the command line
 (`--remote <host>`); next steps, in order:
 
-- Attached clients in `agentws-server list`: a `clients` count in `SessionInfo` (the size of
-  the session's fan-out client map), printed as a column. Changes the wire format: bump the
-  protocol version. A client lost to a network drop still counts until its ssh connection
-  times out on the server side (sshd's `ClientAliveInterval`, off by default).
 - Reconnecting clients known by the server: the app sends a stable id (per install) and its
   machine name in `Hello`; a client attaching again with the same id replaces its lost
   connection (dropped from the session at once, counted once), and `agentws-server list` names

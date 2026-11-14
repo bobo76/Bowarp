@@ -12,7 +12,7 @@ use std::io::{self, ErrorKind, Read, Write};
 use term_core::TermDimensions;
 
 /// Bumped on any change to the messages: both sides must speak the same version.
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 
 /// No frame is longer: a peer that sends one is broken (or not speaking this protocol).
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -43,6 +43,10 @@ pub struct SessionInfo {
     pub exit: Option<Option<i32>>,
     /// The program's current folder on the server, when it can be read.
     pub folder: Option<String>,
+    /// How many clients were attached when this was read, also for an exited session. A client
+    /// whose network dropped counts until the server notices its connection is gone. In
+    /// `Attached`, the client attaching is not counted yet.
+    pub clients: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -426,7 +430,7 @@ impl Encoder {
             }
             None => self.0.push(0),
         }
-        self.opt_str(info.folder.as_deref())
+        self.opt_str(info.folder.as_deref()).u32(info.clients)
     }
 }
 
@@ -530,6 +534,7 @@ impl Decoder<'_> {
                 None
             },
             folder: self.opt_str()?,
+            clients: self.u32()?,
         })
     }
 }

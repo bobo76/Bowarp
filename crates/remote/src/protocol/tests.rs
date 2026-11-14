@@ -17,6 +17,7 @@ fn info() -> SessionInfo {
         title: Some("vim — é".into()),
         exit: Some(Some(-2)),
         folder: Some("/home/me/é project".into()),
+        clients: u32::MAX - 1,
     }
 }
 
@@ -82,6 +83,7 @@ fn server_messages() -> Vec<ServerMessage> {
                 },
                 SessionInfo {
                     exit: Some(None),
+                    clients: 0,
                     ..info()
                 },
             ],

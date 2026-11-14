@@ -254,6 +254,48 @@ fn clients_follow_each_others_resizes_and_closes() {
 }
 
 #[test]
+fn a_session_lists_its_attached_clients_but_not_the_one_listing() {
+    let server = Server::new();
+    let (first, _, _) = connect(&server);
+    let (second, cut, reason) = connect(&server);
+    let (lister, _, _) = connect(&server);
+    let one = first.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    assert_eq!(lister.list().unwrap()[0].clients, 1);
+    let _two = second.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    assert_eq!(lister.list().unwrap()[0].clients, 2);
+    cut.shutdown(Shutdown::Both).unwrap();
+    reason.recv_timeout(TIMEOUT).unwrap();
+    wait_until("the server to drop the cut client", || {
+        lister.list().unwrap()[0].clients == 1
+    });
+}
+
+#[test]
+fn a_client_attaching_after_the_exit_is_counted_and_told_of_it() {
+    let server = Server::new();
+    let (first, _, _) = connect(&server);
+    let (lister, _, _) = connect(&server);
+    let one = first
+        .spawn(shell(Some("exit 5")), size(30, 4), quiet())
+        .unwrap();
+    wait_until("the exit", || one.session.has_exited());
+    assert_eq!(lister.list().unwrap()[0].clients, 1);
+    let (second, _, _) = connect(&server);
+    let (callback, seen) = events();
+    let late = second
+        .attach(one.info.id, size(30, 4), view(callback))
+        .unwrap();
+    assert!(late.session.has_exited());
+    assert_eq!(late.session.exit_code(), Some(5));
+    assert_eq!(lister.list().unwrap()[0].clients, 2);
+    wait_until("the exit event", || {
+        seen.lock()
+            .unwrap()
+            .contains(&SessionEvent::Exited(Some(5)))
+    });
+}
+
+#[test]
 fn bad_requests_fail_without_ending_the_connection() {
     let server = Server::new();
     let (client, _, _) = connect(&server);

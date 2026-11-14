@@ -380,16 +380,13 @@ impl Server {
         }) {
             return;
         }
-        match exit {
-            Some(code) => {
-                outbox.send(ServerMessage::Exited {
-                    session: hosted.id,
-                    code,
-                });
-            }
-            None => {
-                fanout.clients.insert(client, outbox.clone());
-            }
+        // Counted even after the exit: it still shows the session, until it closes it.
+        fanout.clients.insert(client, outbox.clone());
+        if let Some(code) = exit {
+            outbox.send(ServerMessage::Exited {
+                session: hosted.id,
+                code,
+            });
         }
     }
 
@@ -429,6 +426,7 @@ impl Hosted {
             title: fanout.title.clone(),
             exit: fanout.exit,
             folder: fanout.folder.clone(),
+            clients: u32::try_from(fanout.clients.len()).unwrap_or(u32::MAX),
         }
     }
 

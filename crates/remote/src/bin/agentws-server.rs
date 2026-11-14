@@ -78,7 +78,7 @@ fn list(name: &str) -> std::io::Result<()> {
             Some(None) => "exited".to_owned(),
         };
         let title = info.title.as_deref().unwrap_or("");
-        println!("{}\t{kind}\t{state}\t{title}", info.id);
+        println!("{}\t{kind}\t{state}\t{}\t{title}", info.id, info.clients);
     }
     Ok(())
 }
