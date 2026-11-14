@@ -4,7 +4,8 @@
 //!   (starting it when none runs) and relays stdin and stdout to it.
 //! - `agentws-server serve [--idle-exit <seconds>]`: run the server in the foreground. It
 //!   exits after the given time (default 60, 0 = never) with no session and no connection.
-//! - `agentws-server list`: the sessions this user's server runs.
+//! - `agentws-server list`: the sessions this user's server runs, one per line: id, kind,
+//!   state, attached clients, their machines and title, tab-separated.
 //! - `agentws-server status`: whether this user's server runs, with this program's version and
 //!   protocol and the server's session count, as `key=value` lines. Never starts the server.
 //! - `agentws-server close <id>`: end one of them.
@@ -62,7 +63,7 @@ fn client(name: &str) -> std::io::Result<Client> {
     let stream = transport::connect(name)
         .map_err(|err| std::io::Error::new(err.kind(), format!("no server running: {err}")))?;
     let (reader, writer) = transport::halves(stream);
-    Client::connect(reader, writer, Box::new(|_| {}))
+    Client::connect(reader, writer, None, Box::new(|_| {}))
 }
 
 fn list(name: &str) -> std::io::Result<()> {
@@ -78,9 +79,35 @@ fn list(name: &str) -> std::io::Result<()> {
             Some(None) => "exited".to_owned(),
         };
         let title = info.title.as_deref().unwrap_or("");
-        println!("{}\t{kind}\t{state}\t{}\t{title}", info.id, info.clients);
+        let clients = info.clients.len();
+        let machines = machines(&info.clients);
+        println!(
+            "{}\t{kind}\t{state}\t{clients}\t{machines}\t{title}",
+            info.id
+        );
     }
     Ok(())
+}
+
+/// The attached clients' machine names, comma-separated: `?` for one that gave no name, `-`
+/// for none.
+fn machines(clients: &[String]) -> String {
+    if clients.is_empty() {
+        return "-".to_owned();
+    }
+    let names: Vec<String> = clients.iter().map(|name| column_safe(name)).collect();
+    names.join(",")
+}
+
+/// `name` as one item of the machines column: a client sends any text, and a tab, newline or
+/// comma in it would break the line's columns.
+fn column_safe(name: &str) -> String {
+    if name.is_empty() {
+        return "?".to_owned();
+    }
+    name.chars()
+        .map(|c| if c.is_control() || c == ',' { '?' } else { c })
+        .collect()
 }
 
 /// Exits 0 whether or not the server runs; an error only when reaching or asking it failed.
@@ -125,4 +152,21 @@ fn close(name: &str, id: u64) -> std::io::Result<()> {
 fn usage() -> ExitCode {
     eprintln!("{USAGE}");
     ExitCode::from(2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn machines_are_comma_separated_with_placeholders() {
+        assert_eq!(machines(&[]), "-");
+        assert_eq!(machines(&["box".into()]), "box");
+        assert_eq!(machines(&[String::new(), "a".into(), "b".into()]), "?,a,b");
+    }
+
+    #[test]
+    fn a_machine_name_cannot_break_the_columns() {
+        assert_eq!(machines(&["a\tb,c\nd".into()]), "a?b?c?d");
+    }
 }

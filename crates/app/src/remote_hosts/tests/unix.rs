@@ -28,7 +28,7 @@ fn hosts(server: &Server) -> (RemoteHosts, Arc<AtomicU32>, Sockets) {
             server.serve_connection(reader, server_end);
         });
         kept.lock().unwrap().push(client_end.try_clone()?);
-        Client::connect(client_end.try_clone()?, client_end, Box::new(|_| {}))
+        Client::connect(client_end.try_clone()?, client_end, None, Box::new(|_| {}))
     }));
     (hosts, connects, sockets)
 }

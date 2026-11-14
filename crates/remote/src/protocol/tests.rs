@@ -17,7 +17,7 @@ fn info() -> SessionInfo {
         title: Some("vim — é".into()),
         exit: Some(Some(-2)),
         folder: Some("/home/me/é project".into()),
-        clients: u32::MAX - 1,
+        clients: vec!["laptop".into(), String::new(), "bureau-é".into()],
     }
 }
 
@@ -26,6 +26,14 @@ fn client_messages() -> Vec<ClientMessage> {
         ClientMessage::Hello {
             version: PROTOCOL_VERSION,
         },
+        ClientMessage::Identify(ClientIdentity {
+            id: "0123456789abcdef0123456789abcdef".into(),
+            machine: "LAPTOP-É".into(),
+        }),
+        ClientMessage::Identify(ClientIdentity {
+            id: String::new(),
+            machine: String::new(),
+        }),
         ClientMessage::Spawn {
             request: 7,
             spec: SpawnSpec {
@@ -83,7 +91,7 @@ fn server_messages() -> Vec<ServerMessage> {
                 },
                 SessionInfo {
                     exit: Some(None),
-                    clients: 0,
+                    clients: Vec::new(),
                     ..info()
                 },
             ],
@@ -202,4 +210,10 @@ fn a_frame_the_peer_would_refuse_is_not_written() {
         read_frame(&mut written.as_slice()).unwrap().unwrap().len(),
         MAX_FRAME
     );
+}
+
+#[test]
+fn the_hello_is_only_the_version_so_any_server_decodes_it() {
+    let hello = ClientMessage::Hello { version: 0x0304 }.encode();
+    assert_eq!(hello, [tag::HELLO, 0x04, 0x03]);
 }

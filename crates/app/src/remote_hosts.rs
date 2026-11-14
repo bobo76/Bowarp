@@ -11,16 +11,19 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
 use agentws_remote::status::{self, CheckOutcome, HostCheck};
-use agentws_remote::{Client, LocalView, SpawnSpec};
+use agentws_remote::{Client, ClientIdentity, LocalView, SpawnSpec};
 use futures::channel::oneshot;
 use gpui_kit::{App, Global};
 use term_core::{EventCallback, LaunchSpec, Palette, Session, TermDimensions};
 
-use crate::settings_file;
+use crate::{settings_file, window_bounds};
+
+/// The file in the config folder holding this install's id for servers.
+const CLIENT_ID_FILE: &str = "client-id";
 
 /// How the remote shell finds `agentws-server` for a host the settings don't list.
 pub const SERVER_PROGRAM_ENV: &str = "AGENTWS_REMOTE_SERVER";
@@ -409,8 +412,23 @@ fn connect_over_ssh(target: &Target) -> io::Result<Client> {
     let name = target.destination.clone();
     Client::over_command(
         command,
+        Some(identity().clone()),
         Box::new(move |reason| log::warn!("connection to {name} ended: {reason}")),
     )
+}
+
+/// Who this app is to servers, read (or made) once per run, on the first connection's thread.
+fn identity() -> &'static ClientIdentity {
+    static IDENTITY: OnceLock<ClientIdentity> = OnceLock::new();
+    IDENTITY.get_or_init(|| {
+        let Some(path) = window_bounds::config_file(CLIENT_ID_FILE) else {
+            return ClientIdentity::unsaved();
+        };
+        ClientIdentity::load_or_create(&path).unwrap_or_else(|err| {
+            log::warn!("client id in {}: {err}", path.display());
+            ClientIdentity::unsaved()
+        })
+    })
 }
 
 #[cfg(test)]

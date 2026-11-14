@@ -5,14 +5,15 @@
 //! bytes, an optional value is a `0`/`1` byte then the value. A connection starts with each
 //! side sending [`ClientMessage::Hello`] / [`ServerMessage::Hello`] with its
 //! [`PROTOCOL_VERSION`]; a server that does not speak the client's version answers with
-//! [`ServerMessage::Failed`] and closes the connection.
+//! [`ServerMessage::Failed`] and closes the connection. The hellos hold only the version, in
+//! every protocol, so that a server of another version can always say so.
 
 use std::io::{self, ErrorKind, Read, Write};
 
 use term_core::TermDimensions;
 
 /// Bumped on any change to the messages: both sides must speak the same version.
-pub const PROTOCOL_VERSION: u16 = 3;
+pub const PROTOCOL_VERSION: u16 = 4;
 
 /// No frame is longer: a peer that sends one is broken (or not speaking this protocol).
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -43,10 +44,21 @@ pub struct SessionInfo {
     pub exit: Option<Option<i32>>,
     /// The program's current folder on the server, when it can be read.
     pub folder: Option<String>,
-    /// How many clients were attached when this was read, also for an exited session. A client
-    /// whose network dropped counts until the server notices its connection is gone. In
+    /// The machine name of each client attached when this was read, also for an exited
+    /// session, sorted; empty for a client that did not name itself. A client whose network
+    /// dropped counts until the server notices its connection is gone or it attaches again. In
     /// `Attached`, the client attaching is not counted yet.
-    pub clients: u32,
+    pub clients: Vec<String>,
+}
+
+/// Who a client is: see [`ClientMessage::Identify`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClientIdentity {
+    /// Stable per install of the app: a client attaching with the id of an earlier connection
+    /// replaces that connection in the session (its network dropped). Empty never matches.
+    pub id: String,
+    /// The client machine's name, shown by `agentws-server list`.
+    pub machine: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +66,11 @@ pub enum ClientMessage {
     Hello {
         version: u16,
     },
+    /// Who this client is: sent right after the hello by a client that attaches to sessions
+    /// (the app), not by one that only lists or closes them. It applies to the attaches that
+    /// follow it, not to earlier ones on the connection. Not in the hello itself, so a
+    /// server of an older protocol still decodes the hello and reports the version mismatch.
+    Identify(ClientIdentity),
     /// Start a session and attach to it: answered by [`ServerMessage::Attached`].
     Spawn {
         request: u32,
@@ -138,6 +155,7 @@ mod tag {
     pub const INPUT: u8 = 6;
     pub const RESIZE: u8 = 7;
     pub const CLOSE: u8 = 8;
+    pub const IDENTIFY: u8 = 9;
 
     pub const ATTACHED: u8 = 65;
     pub const SESSIONS: u8 = 66;
@@ -153,6 +171,7 @@ impl ClientMessage {
         let mut out = Encoder::new();
         match self {
             Self::Hello { version } => out.tag(tag::HELLO).u16(*version),
+            Self::Identify(client) => out.tag(tag::IDENTIFY).str(&client.id).str(&client.machine),
             Self::Spawn {
                 request,
                 spec,
@@ -191,6 +210,10 @@ impl ClientMessage {
             tag::HELLO => Self::Hello {
                 version: input.u16()?,
             },
+            tag::IDENTIFY => Self::Identify(ClientIdentity {
+                id: input.str()?,
+                machine: input.str()?,
+            }),
             tag::SPAWN => {
                 let request = input.u32()?;
                 let kind = input.str()?;
@@ -430,7 +453,12 @@ impl Encoder {
             }
             None => self.0.push(0),
         }
-        self.opt_str(info.folder.as_deref()).u32(info.clients)
+        self.opt_str(info.folder.as_deref());
+        self.u32(info.clients.len() as u32);
+        for machine in &info.clients {
+            self.str(machine);
+        }
+        self
     }
 }
 
@@ -534,7 +562,7 @@ impl Decoder<'_> {
                 None
             },
             folder: self.opt_str()?,
-            clients: self.u32()?,
+            clients: self.list(Decoder::str)?,
         })
     }
 }

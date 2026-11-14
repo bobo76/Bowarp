@@ -21,7 +21,8 @@ use term_core::{
 use workspace_model::AgentId;
 
 use crate::protocol::{
-    ClientMessage, PROTOCOL_VERSION, ServerMessage, SessionInfo, SpawnSpec, read_frame, write_frame,
+    ClientIdentity, ClientMessage, PROTOCOL_VERSION, ServerMessage, SessionInfo, SpawnSpec,
+    read_frame, write_frame,
 };
 
 /// How long a request waits for the server's answer.
@@ -111,9 +112,10 @@ impl SpawnSpec {
 
 impl Client {
     /// Start `command` (e.g. [`crate::ssh_command`]) and speak to the server on its stdin and
-    /// stdout. The command is killed when the client is dropped.
+    /// stdout, as [`Client::connect`]. The command is killed when the client is dropped.
     pub fn over_command(
         mut command: Command,
+        identity: Option<ClientIdentity>,
         on_disconnect: DisconnectCallback,
     ) -> io::Result<Self> {
         command
@@ -128,7 +130,7 @@ impl Client {
         let errors = Arc::new(Mutex::new(Vec::new()));
         let collected = errors.clone();
         let stderr_reader = thread::spawn(move || collect_stderr(stderr, &collected));
-        match Self::connect(stdout, stdin, on_disconnect) {
+        match Self::connect(stdout, stdin, identity, on_disconnect) {
             Ok(client) => {
                 *client.inner.child.lock().unwrap() = Some(child);
                 Ok(client)
@@ -152,10 +154,13 @@ impl Client {
     }
 
     /// Speak to a server over `reader` and `writer`: sends the hello and waits for the
-    /// server's. `on_disconnect` is called on the reader thread when the connection ends.
+    /// server's, then `identity`, which a client that attaches to sessions should give (see
+    /// [`ClientMessage::Identify`]). `on_disconnect` is called on the reader thread when the
+    /// connection ends.
     pub fn connect(
         reader: impl Read + Send + 'static,
         mut writer: impl Write + Send + 'static,
+        identity: Option<ClientIdentity>,
         on_disconnect: DisconnectCallback,
     ) -> io::Result<Self> {
         let hello = ClientMessage::Hello {
@@ -178,6 +183,10 @@ impl Client {
                     format!("not an agentws server (it answered {other:?})"),
                 ));
             }
+        }
+        if let Some(identity) = identity {
+            write_frame(&mut writer, &ClientMessage::Identify(identity).encode())?;
+            writer.flush()?;
         }
         let (outgoing, queue) = mpsc::channel();
         thread::Builder::new()

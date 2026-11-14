@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.4.1
+
+- `agentws-server list` names the machine of each attached app, in a column after the client
+  count. An app that reconnects after losing its connection replaces it at once instead of
+  counting twice. The app and `agentws-server` must be updated together (protocol version 4).
+
 ## 0.4.0
 
 - `agentws-server list` shows how many apps are attached to each session, in a column

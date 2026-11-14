@@ -66,7 +66,15 @@ and the app can attach to them again, like tmux.
 - **Slow clients.** A client with more than 32 MiB of output queued is disconnected (it can
   attach again and gets a fresh snapshot), so it never holds up the program or other clients.
 - **Protocol** (`agentws_remote::protocol`): length-prefixed binary frames, a version in the
-  hello; both sides must run the same protocol version.
+  hello; both sides must run the same protocol version. The hello holds only the version, in
+  every protocol, so a server of another version can always decode it and say so.
+- **Client identity.** Right after the hello the app sends `Identify`: a random id made once
+  per install (the file `client-id` in the config folder) and its machine name (Windows
+  `COMPUTERNAME`, else the host name). A connection attaching to a session that still holds
+  another connection with the same id replaces it there at once: the app lost that
+  connection and reconnected, so it is counted and named once. The old connection itself is
+  left to end when the server notices it is dead (another instance of the same install may
+  still use it). `list`, `status` and `close` send no identity and never attach.
 
 ## Trying it
 
@@ -84,7 +92,8 @@ and the app can attach to them again, like tmux.
    run `agent-workspace --remote <host> [shell|claude|copilot] [folder on the host]` (a
    destination or a host's name) to open the remote tab after the usual local one.
    `agentws-server list` / `close <id>` on the server show and end its sessions (`list`
-   prints one line per session: id, kind, state, attached clients, title, tab-separated);
+   prints one line per session: id, kind, state, attached clients, their machine names
+   comma-separated (`-` for none, `?` for a client that gave none), title, tab-separated);
    `agentws-server status` shows whether the daemon runs (never starting it), with the
    installed program's version and protocol and the daemon's session count, as `key=value`
    lines (exit 0 either way). Check on the settings page runs it over ssh. With the
@@ -136,6 +145,8 @@ Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 
 ## Limitations
 
+- A Windows app is named by `COMPUTERNAME`: upper case and at most 15 characters, which can
+  differ from the machine's full host name.
 - Several clients on one session share the pty size: the latest resize wins, and the other
   clients' mirrors follow it.
 - While a program uses the alternate screen, a snapshot replays only that screen: the shell's
@@ -160,4 +171,8 @@ Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 - An exited session stays listed until a client closes it, and keeps counting the clients
   attached to it.
 - A client whose network dropped still counts in `list`'s clients until sshd on the server
-  notices the dead connection: set its `ClientAliveInterval` (off by default) to bound that.
+  notices the dead connection or the same app attaches again (Reconnect): set sshd's
+  `ClientAliveInterval` (off by default) to bound that.
+- App instances on one machine share the install id. Harmless while an instance only attaches
+  its own sessions; once one can attach another's (Restore), two instances showing the same
+  session would replace each other in it: the id should then be made per instance.

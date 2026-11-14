@@ -24,8 +24,8 @@ use term_core::{
 use workspace_model::AgentId;
 
 use crate::protocol::{
-    ClientMessage, MAX_FRAME, PROTOCOL_VERSION, ServerMessage, SessionInfo, SpawnSpec, read_frame,
-    write_frame,
+    ClientIdentity, ClientMessage, MAX_FRAME, PROTOCOL_VERSION, ServerMessage, SessionInfo,
+    SpawnSpec, read_frame, write_frame,
 };
 
 /// A client whose queued output passes this is too slow to follow: it is disconnected, and can
@@ -58,7 +58,8 @@ struct Hosted {
 /// What a session's output goes to.
 struct Fanout {
     mirror: Mirror,
-    clients: HashMap<u64, Outbox>,
+    /// By connection.
+    clients: HashMap<u64, Viewer>,
     title: Option<String>,
     exit: Option<Option<i32>>,
     /// The program's folder as last read, and how to read it (set once it started).
@@ -89,13 +90,53 @@ impl Fanout {
     }
 
     fn broadcast(&mut self, message: impl Fn() -> ServerMessage) {
-        self.clients.retain(|_, outbox| outbox.send(message()));
+        self.clients
+            .retain(|_, viewer| viewer.outbox.send(message()));
     }
 
     fn broadcast_except(&mut self, client: u64, message: impl Fn() -> ServerMessage) {
         self.clients
-            .retain(|&id, outbox| id == client || outbox.send(message()));
+            .retain(|&id, viewer| id == client || viewer.outbox.send(message()));
     }
+
+    /// Drop the viewers that other connections of `identity`'s install left: the client lost
+    /// them and connected again. Their connections are left to end on their own: another app
+    /// instance of the same install may still use them for its own sessions.
+    fn drop_replaced(&mut self, client: u64, identity: Option<&ClientIdentity>) {
+        let Some(identity) = identity.filter(|identity| !identity.id.is_empty()) else {
+            return;
+        };
+        self.clients.retain(|&id, viewer| {
+            id == client
+                || viewer
+                    .identity
+                    .as_ref()
+                    .is_none_or(|other| other.id != identity.id)
+        });
+    }
+
+    /// The machine name of each viewer, sorted.
+    fn machines(&self) -> Vec<String> {
+        let mut machines: Vec<String> = self
+            .clients
+            .values()
+            .map(|viewer| {
+                viewer
+                    .identity
+                    .as_ref()
+                    .map_or_else(String::new, |identity| identity.machine.clone())
+            })
+            .collect();
+        machines.sort();
+        machines
+    }
+}
+
+/// A connection the session's output goes to.
+struct Viewer {
+    outbox: Outbox,
+    /// What the connection said it is, when it did.
+    identity: Option<ClientIdentity>,
 }
 
 /// The queue of messages to one connection.
@@ -219,24 +260,31 @@ impl Server {
                 ));
             }
         }
+        let mut connection = Connection {
+            client,
+            outbox,
+            identity: None,
+        };
         while let Some(frame) = read_frame(&mut reader)? {
             if outbox.overflowed.load(Ordering::Acquire) {
                 return Ok(());
             }
-            self.handle(client, outbox, ClientMessage::decode(&frame)?);
+            self.handle(&mut connection, ClientMessage::decode(&frame)?);
         }
         Ok(())
     }
 
-    fn handle(&self, client: u64, outbox: &Outbox, message: ClientMessage) {
+    fn handle(&self, connection: &mut Connection, message: ClientMessage) {
+        let (client, outbox) = (connection.client, connection.outbox);
         match message {
             ClientMessage::Hello { .. } => {}
+            ClientMessage::Identify(identity) => connection.identity = Some(identity),
             ClientMessage::Spawn {
                 request,
                 spec,
                 size,
             } => match self.spawn(&spec, size) {
-                Ok(hosted) => self.attach(client, outbox, request, &hosted, size),
+                Ok(hosted) => self.attach(connection, request, &hosted, size),
                 Err(err) => {
                     outbox.send(ServerMessage::Failed {
                         request,
@@ -249,7 +297,7 @@ impl Server {
                 session,
                 size,
             } => match self.session(session) {
-                Some(hosted) => self.attach(client, outbox, request, &hosted, size),
+                Some(hosted) => self.attach(connection, request, &hosted, size),
                 None => {
                     outbox.send(ServerMessage::Failed {
                         request,
@@ -340,17 +388,13 @@ impl Server {
         Ok(hosted)
     }
 
-    fn attach(
-        &self,
-        client: u64,
-        outbox: &Outbox,
-        request: u32,
-        hosted: &Hosted,
-        size: TermDimensions,
-    ) {
+    fn attach(&self, connection: &Connection, request: u32, hosted: &Hosted, size: TermDimensions) {
+        let (client, outbox) = (connection.client, connection.outbox);
         // Before the fan-out lock: resizing locks the session's terminal.
         hosted.session.resize(size);
         let mut fanout = hosted.fanout.lock().unwrap();
+        // First: the lost connection is neither counted in `info` nor sent a resize.
+        fanout.drop_replaced(client, connection.identity.as_ref());
         let resized = fanout.mirror.size() != size;
         fanout.mirror.resize(size);
         fanout.refresh_folder(hosted.id);
@@ -381,7 +425,13 @@ impl Server {
             return;
         }
         // Counted even after the exit: it still shows the session, until it closes it.
-        fanout.clients.insert(client, outbox.clone());
+        fanout.clients.insert(
+            client,
+            Viewer {
+                outbox: outbox.clone(),
+                identity: connection.identity.clone(),
+            },
+        );
         if let Some(code) = exit {
             outbox.send(ServerMessage::Exited {
                 session: hosted.id,
@@ -426,7 +476,7 @@ impl Hosted {
             title: fanout.title.clone(),
             exit: fanout.exit,
             folder: fanout.folder.clone(),
-            clients: u32::try_from(fanout.clients.len()).unwrap_or(u32::MAX),
+            clients: fanout.machines(),
         }
     }
 
@@ -441,6 +491,14 @@ impl Hosted {
             });
         }
     }
+}
+
+/// One client connection, as its messages are handled.
+struct Connection<'a> {
+    client: u64,
+    outbox: &'a Outbox,
+    /// Set by [`ClientMessage::Identify`].
+    identity: Option<ClientIdentity>,
 }
 
 fn launch_spec(spec: &SpawnSpec) -> io::Result<LaunchSpec> {

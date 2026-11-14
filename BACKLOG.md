@@ -47,6 +47,10 @@ Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in
   attaches to it; pulling one app's network keeps it counted until sshd drops the connection
   (sooner with `ClientAliveInterval` set), then 1.
 
+- Named clients (rebuild app and server: protocol 4): over real ssh, `agentws-server list`
+  names the Windows machine in the machines column; kill the app's ssh (or pull the network),
+  Reconnect: still 1 client, named once, at once.
+
 - Remote tab marker: a remote tab's row shows only the server icon on its second line until
   its folder is known (over a slow real ssh); a host renamed in Settings → Remote hosts shows
   its new name in the next hover card; Location off in the tab card settings hides the host
@@ -408,10 +412,7 @@ Tabs whose programs run on another machine through `agentws-server` over ssh; de
 limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the command line
 (`--remote <host>`); next steps, in order:
 
-- Reconnecting clients known by the server: the app sends a stable id (per install) and its
-  machine name in `Hello`; a client attaching again with the same id replaces its lost
-  connection (dropped from the session at once, counted once), and `agentws-server list` names
-  the attached clients. A ping in the protocol drops a dead connection without relying on sshd.
+- Ping: a ping in the protocol drops a dead connection without relying on sshd.
 - `agentws-server show <id>`: print the session's screen (the server's mirror, as plain text,
   `--scrollback` for the history too) without attaching, so the pty size is unchanged.
 - Restore: `tabs.json` saves a remote tab's host and session id; on start, attach to it again

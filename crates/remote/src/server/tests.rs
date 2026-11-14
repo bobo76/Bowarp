@@ -23,6 +23,14 @@ fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
 /// A client connected to `server`, its end of the connection (to cut it), and a receiver of
 /// its disconnect reason.
 fn connect(server: &Server) -> (Client, UnixStream, Receiver<String>) {
+    connect_as(server, None)
+}
+
+/// As [`connect`], identified as `identity`.
+fn connect_as(
+    server: &Server,
+    identity: Option<ClientIdentity>,
+) -> (Client, UnixStream, Receiver<String>) {
     let (client_end, server_end) = UnixStream::pair().unwrap();
     let server = server.clone();
     thread::spawn(move || {
@@ -34,6 +42,7 @@ fn connect(server: &Server) -> (Client, UnixStream, Receiver<String>) {
     let client = Client::connect(
         client_end.try_clone().unwrap(),
         client_end,
+        identity,
         Box::new(move |why| drop(disconnected.send(why))),
     )
     .unwrap();
@@ -260,14 +269,75 @@ fn a_session_lists_its_attached_clients_but_not_the_one_listing() {
     let (second, cut, reason) = connect(&server);
     let (lister, _, _) = connect(&server);
     let one = first.spawn(shell(None), size(40, 6), quiet()).unwrap();
-    assert_eq!(lister.list().unwrap()[0].clients, 1);
+    assert_eq!(lister.list().unwrap()[0].clients.len(), 1);
     let _two = second.attach(one.info.id, size(40, 6), quiet()).unwrap();
-    assert_eq!(lister.list().unwrap()[0].clients, 2);
+    assert_eq!(lister.list().unwrap()[0].clients.len(), 2);
     cut.shutdown(Shutdown::Both).unwrap();
     reason.recv_timeout(TIMEOUT).unwrap();
     wait_until("the server to drop the cut client", || {
-        lister.list().unwrap()[0].clients == 1
+        lister.list().unwrap()[0].clients.len() == 1
     });
+}
+
+fn identity(id: &str, machine: &str) -> Option<ClientIdentity> {
+    Some(ClientIdentity {
+        id: id.into(),
+        machine: machine.into(),
+    })
+}
+
+#[test]
+fn a_session_names_the_machines_of_its_attached_clients() {
+    let server = Server::new();
+    let (first, _, _) = connect_as(&server, identity("id-one", "laptop"));
+    let (second, _, _) = connect_as(&server, identity("id-two", "desktop"));
+    let (anonymous, _, _) = connect(&server);
+    let (lister, _, _) = connect(&server);
+    let one = first.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    assert_eq!(lister.list().unwrap()[0].clients, ["laptop"]);
+    let _two = second.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    let _three = anonymous.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    assert_eq!(lister.list().unwrap()[0].clients, ["", "desktop", "laptop"]);
+}
+
+#[test]
+fn a_client_attaching_again_replaces_its_lost_connection_at_once() {
+    let server = Server::new();
+    let (lost, cut, reason) = connect_as(&server, identity("install", "laptop"));
+    let (lister, _, _) = connect(&server);
+    let one = lost.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    // The same install connects again while the server still holds the lost connection.
+    let (again, _, _) = connect_as(&server, identity("install", "laptop"));
+    let attached = again.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    assert_eq!(attached.info.clients, Vec::<String>::new());
+    assert_eq!(lister.list().unwrap()[0].clients, ["laptop"]);
+    // The old connection is left open (another instance may use it), out of the session.
+    assert!(lost.is_connected());
+    cut.shutdown(Shutdown::Both).unwrap();
+    reason.recv_timeout(TIMEOUT).unwrap();
+    wait_until("the server to end the lost connection", || {
+        server.inner.connections.load(Ordering::Acquire) == 2
+    });
+    attached.session.write(b"echo still here\n".to_vec());
+    wait_until("output on the new connection", || {
+        screen_contains(&attached, "still here")
+    });
+    assert_eq!(lister.list().unwrap()[0].clients, ["laptop"]);
+}
+
+#[test]
+fn clients_without_an_id_or_with_an_empty_one_are_never_replaced() {
+    let server = Server::new();
+    let (first, _, _) = connect(&server);
+    let (second, _, _) = connect(&server);
+    let (empty, _, _) = connect_as(&server, identity("", "a"));
+    let (empty_too, _, _) = connect_as(&server, identity("", "b"));
+    let (lister, _, _) = connect(&server);
+    let one = first.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    let _two = second.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    let _three = empty.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    let _four = empty_too.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    assert_eq!(lister.list().unwrap()[0].clients, ["", "", "a", "b"]);
 }
 
 #[test]
@@ -279,7 +349,7 @@ fn a_client_attaching_after_the_exit_is_counted_and_told_of_it() {
         .spawn(shell(Some("exit 5")), size(30, 4), quiet())
         .unwrap();
     wait_until("the exit", || one.session.has_exited());
-    assert_eq!(lister.list().unwrap()[0].clients, 1);
+    assert_eq!(lister.list().unwrap()[0].clients.len(), 1);
     let (second, _, _) = connect(&server);
     let (callback, seen) = events();
     let late = second
@@ -287,7 +357,7 @@ fn a_client_attaching_after_the_exit_is_counted_and_told_of_it() {
         .unwrap();
     assert!(late.session.has_exited());
     assert_eq!(late.session.exit_code(), Some(5));
-    assert_eq!(lister.list().unwrap()[0].clients, 2);
+    assert_eq!(lister.list().unwrap()[0].clients.len(), 2);
     wait_until("the exit event", || {
         seen.lock()
             .unwrap()
@@ -372,6 +442,7 @@ fn the_client_hears_when_the_server_goes_away() {
     let client = Client::connect(
         client_end.try_clone().unwrap(),
         client_end,
+        None,
         Box::new(move |why| drop(disconnected.send(why))),
     )
     .unwrap();
