@@ -21,6 +21,9 @@ follow them yet is listed in `reviews/performance-review.md` (Problems 6 and 7).
 - Every `cx.notify()` redraws the whole window, terminal included. Only the file viewer is a
   cached view: it is redrawn when it (or an entity it shows) notifies or its size changes,
   so everything it draws must come from its own state.
+- A new panel that changes on its own (like the explorer or the git page) should be its own
+  entity shown as a cached view, drawing only from its own state, so its updates don't
+  rebuild the terminal and terminal frames don't rebuild it.
 - When applying a result, compare with the current state and notify or emit only if
   something visible changed (`FileExplorer::set_changes`).
 - Don't notify per item in a loop. Coalesce bursts with a debounce or one run at a time.
