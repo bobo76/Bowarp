@@ -366,6 +366,92 @@ fn a_client_attaching_after_the_exit_is_counted_and_told_of_it() {
 }
 
 #[test]
+fn a_client_attaching_again_to_an_exited_session_replaces_its_lost_connection() {
+    let server = Server::new();
+    let (lost, _, _) = connect_as(&server, identity("install", "laptop"));
+    let (lister, _, _) = connect(&server);
+    let one = lost
+        .spawn(shell(Some("exit 5")), size(30, 4), quiet())
+        .unwrap();
+    wait_until("the exit", || one.session.has_exited());
+    let (again, _, _) = connect_as(&server, identity("install", "laptop"));
+    let attached = again.attach(one.info.id, size(30, 4), quiet()).unwrap();
+    assert_eq!(attached.session.exit_code(), Some(5));
+    assert_eq!(lister.list().unwrap()[0].clients, ["laptop"]);
+}
+
+/// A connection speaking the protocol by hand: past the hello, with no identity yet.
+fn raw_connect(server: &Server) -> UnixStream {
+    let (mut client_end, server_end) = UnixStream::pair().unwrap();
+    let serving = server.clone();
+    thread::spawn(move || {
+        let reader = server_end.try_clone().unwrap();
+        serving.serve_connection(reader, server_end);
+    });
+    let hello = ClientMessage::Hello {
+        version: PROTOCOL_VERSION,
+    };
+    write_frame(&mut client_end, &hello.encode()).unwrap();
+    let frame = read_frame(&mut client_end).unwrap().unwrap();
+    assert!(matches!(
+        ServerMessage::decode(&frame).unwrap(),
+        ServerMessage::Hello { .. }
+    ));
+    client_end
+}
+
+/// Send `message` on a raw connection and wait for the server's answer to `request`.
+fn raw_request(stream: &mut UnixStream, request: u32, message: &ClientMessage) -> ServerMessage {
+    write_frame(stream, &message.encode()).unwrap();
+    loop {
+        let frame = read_frame(stream).unwrap().unwrap();
+        match ServerMessage::decode(&frame).unwrap() {
+            answer @ (ServerMessage::Attached { request: id, .. }
+            | ServerMessage::Failed { request: id, .. })
+                if id == request =>
+            {
+                return answer;
+            }
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn an_identity_applies_only_to_the_attaches_that_follow_it() {
+    let server = Server::new();
+    let (first, _, _) = connect(&server);
+    let (lister, _, _) = connect(&server);
+    let one = first.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    let two = first.spawn(shell(None), size(40, 6), quiet()).unwrap();
+    let mut raw = raw_connect(&server);
+    let attach = |request, session| ClientMessage::Attach {
+        request,
+        session,
+        size: size(40, 6),
+    };
+    let answer = raw_request(&mut raw, 1, &attach(1, one.info.id));
+    assert!(
+        matches!(answer, ServerMessage::Attached { .. }),
+        "{answer:?}"
+    );
+    let late = ClientMessage::Identify(identity("install", "raw-box").unwrap());
+    write_frame(&mut raw, &late.encode()).unwrap();
+    let answer = raw_request(&mut raw, 2, &attach(2, two.info.id));
+    assert!(
+        matches!(answer, ServerMessage::Attached { .. }),
+        "{answer:?}"
+    );
+    let sessions = lister.list().unwrap();
+    assert_eq!(sessions[0].clients, ["", ""]);
+    assert_eq!(sessions[1].clients, ["", "raw-box"]);
+    // The same install attaching session one keeps the viewer that attached unnamed.
+    let (again, _, _) = connect_as(&server, identity("install", "laptop"));
+    let _three = again.attach(one.info.id, size(40, 6), quiet()).unwrap();
+    assert_eq!(lister.list().unwrap()[0].clients, ["", "", "laptop"]);
+}
+
+#[test]
 fn bad_requests_fail_without_ending_the_connection() {
     let server = Server::new();
     let (client, _, _) = connect(&server);
