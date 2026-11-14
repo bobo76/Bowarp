@@ -191,6 +191,45 @@ fn actions_are_listed_once_in_the_defaults_order() {
 }
 
 #[test]
+fn a_keyless_action_binds_nothing_until_the_overlay_gives_it_a_key() {
+    let defaults = || {
+        let mut defaults = defaults();
+        defaults.push(Shortcut::unbound("terminal::SelectAll", Some("Terminal")));
+        defaults
+    };
+    let keymap = Keymap::new(defaults(), &KeybindingOverlay::default(), normalize);
+    assert!(
+        keymap
+            .actions()
+            .any(|(action, _)| action == "terminal::SelectAll")
+    );
+    assert!(keys_of(&keymap, "terminal::SelectAll").is_empty());
+    assert!(
+        keymap
+            .bindings()
+            .iter()
+            .all(|shortcut| !shortcut.keys.is_empty())
+    );
+    assert!(!keymap.is_changed("terminal::SelectAll"));
+    let mut overlay = KeybindingOverlay::default();
+    overlay.set_key(
+        &defaults(),
+        "alt-ctrl-a",
+        Some("terminal::SelectAll"),
+        &normalize,
+    );
+    assert_eq!(
+        Value::Object(overlay.entries().clone()),
+        json!({ "alt-ctrl-a": "SelectAll" })
+    );
+    let keymap = Keymap::new(defaults(), &overlay, normalize);
+    assert_eq!(keys_of(&keymap, "terminal::SelectAll"), ["alt-ctrl-a"]);
+    assert!(keymap.is_changed("terminal::SelectAll"));
+    overlay.reset_action(&defaults(), "terminal::SelectAll", &normalize);
+    assert_eq!(Value::Object(overlay.entries().clone()), json!({}));
+}
+
+#[test]
 fn problems_read_as_sentences() {
     let unknown = KeymapProblem {
         keys: "ctrl-q".into(),

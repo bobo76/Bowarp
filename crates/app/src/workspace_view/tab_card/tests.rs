@@ -78,6 +78,7 @@ fn card_settings_stop_existing_clocks_and_skip_disabled_work(cx: &mut gpui_kit::
             assert!(card.kind.is_some());
             assert!(card.folder.is_some());
             assert!(card.host.is_none());
+            assert_changed_files_follow_their_setting(workspace, cx);
             workspace.cards.shown = Some(1);
             workspace.cards.clock = Some((
                 1,
@@ -149,6 +150,34 @@ fn card_settings_stop_existing_clocks_and_skip_disabled_work(cx: &mut gpui_kit::
             assert!(workspace.tab_card(1, cx).is_none());
         })
     });
+}
+
+/// With git's answer cached for the tab's folder, the card lists the changed files only while
+/// "Changed files" is on; `+N` shows either way. Leaves the setting off.
+fn assert_changed_files_follow_their_setting(
+    workspace: &mut WorkspaceView,
+    cx: &mut Context<WorkspaceView>,
+) {
+    let folder = workspace.tabs[0]
+        .view
+        .read(cx)
+        .location()
+        .unwrap()
+        .folder
+        .clone();
+    let now = Instant::now();
+    let generation = workspace.cards.start_diff_stat(1, &folder, now).unwrap();
+    workspace
+        .cards
+        .finish_diff_stat(1, generation, changed(3), now);
+    let card = workspace.tab_card(1, cx).unwrap();
+    assert_eq!(card.lines_added, Some(3));
+    assert!(card.changes.is_empty());
+    settings_file::preview(cx, |settings| settings.tab_card.changed_files = true);
+    let card = workspace.tab_card(1, cx).unwrap();
+    assert_eq!(card.changes.len(), 1);
+    settings_file::preview(cx, |settings| settings.tab_card.changed_files = false);
+    workspace.cards.forget(1);
 }
 
 /// An answer from git: one file with `lines` added.

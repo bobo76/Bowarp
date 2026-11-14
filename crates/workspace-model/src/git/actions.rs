@@ -60,8 +60,22 @@ pub fn repos_of(folders: &[PathBuf]) -> Vec<RepoEntry> {
     repos
 }
 
-/// The repository whose work tree contains `dir`.
-fn locate(dir: &Path) -> Option<RepoEntry> {
+/// The repository to show from those `found`: the `selected` tab's, else the one `shown`
+/// when still listed, else the first. Pure: the caller finds `selected` with [`locate`].
+pub fn choose_repo(
+    found: &[RepoEntry],
+    selected: Option<RepoEntry>,
+    shown: Option<RepoEntry>,
+) -> Option<RepoEntry> {
+    let listed = |repo: &RepoEntry| found.iter().any(|entry| entry.root == repo.root);
+    selected
+        .filter(listed)
+        .or_else(|| shown.filter(listed))
+        .or_else(|| found.first().cloned())
+}
+
+/// The repository whose work tree contains `dir`. Runs `git`: call it off the UI thread.
+pub fn locate(dir: &Path) -> Option<RepoEntry> {
     let output = execute(
         dir,
         &["rev-parse", "--show-toplevel", "--absolute-git-dir"],

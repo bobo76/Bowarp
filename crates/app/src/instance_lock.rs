@@ -41,14 +41,6 @@ impl InstanceLock {
     }
 }
 
-/// Remove this process's lock, if it holds one, before exiting without closing the window
-/// (`process::exit` skips the window-close release).
-pub fn release_own() {
-    if let Some(path) = config_file("tabs.lock") {
-        release_at(&path);
-    }
-}
-
 fn release_at(path: &Path) {
     let ours = fs::read_to_string(path)
         .ok()

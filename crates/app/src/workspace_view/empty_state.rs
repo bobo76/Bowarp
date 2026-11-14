@@ -1,12 +1,15 @@
 //! What the terminal area shows once the last tab is closed: the `+` menu's launchers as
-//! buttons, in the same order (the default shell first, as the primary button).
+//! buttons, in the same order (the default shell first, as the primary button). After a
+//! failed start, an error block above them says why (`StartFailure`).
 
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{ActiveTheme, Disableable, FocusTrapElement};
+use gpui_kit::component::{ActiveTheme, Disableable, FocusTrapElement, Icon, IconName};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    Action, AnyElement, Context, InteractiveElement, IntoElement, ParentElement,
+    Action, AnyElement, Context, FontWeight, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
+use workspace_model::StartError;
 
 use super::{NewTab, WorkspaceView};
 use crate::launcher::{self, Launcher};
@@ -16,6 +19,8 @@ use crate::sidebar;
 
 /// The buttons' column never gets wider than this, so the labels stay readable.
 const COLUMN_WIDTH: f32 = 280.;
+/// The start error's column is wider, so the command line's usage fits on one line.
+const ERROR_WIDTH: f32 = 600.;
 
 impl WorkspaceView {
     /// Give the keyboard to the empty state; its default button takes it once drawn.
@@ -39,6 +44,10 @@ impl WorkspaceView {
             shortcuts::shortcut_text(NewTab.name(), cx)
                 .map(|keys| format!("{keys} opens {}", shell.label))
         });
+        let error = self
+            .start_failure
+            .as_ref()
+            .map(|failure| start_error_block(&failure.error, cx));
         let buttons = self.launcher_buttons(default, shells, agents, cx);
         let theme = cx.theme();
         div()
@@ -59,6 +68,7 @@ impl WorkspaceView {
                             .px_4()
                             .py_8()
                             .gap_3()
+                            .children(error)
                             .child(
                                 div()
                                     .text_lg()
@@ -117,7 +127,18 @@ impl WorkspaceView {
         agents: Vec<&Launcher>,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let primary = default.map(|shell| self.launcher_button(0, shell, cx).primary());
+        // Retry is the primary button while it shows.
+        let retry_shown = self
+            .start_failure
+            .as_ref()
+            .is_some_and(|failure| failure.error.can_retry());
+        let primary = default.map(|shell| {
+            self.launcher_button(0, shell, cx).when_else(
+                retry_shown,
+                |button| button.outline(),
+                |button| button.primary(),
+            )
+        });
         let first_other = usize::from(primary.is_some());
         let others = shells
             .into_iter()
@@ -149,4 +170,63 @@ impl WorkspaceView {
                 workspace.open_launcher(&opened, window, cx);
             }))
     }
+}
+
+/// The start error: an icon and heading, the text, then Retry (primary, the first button, so
+/// it takes the keyboard) and Open settings when retrying can help.
+fn start_error_block(error: &StartError, cx: &mut Context<WorkspaceView>) -> AnyElement {
+    let theme = cx.theme();
+    // The text wraps beside the icon: a program's path can be long.
+    let heading = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .text_lg()
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(theme.foreground)
+        .child(Icon::new(IconName::CircleX).text_color(theme.danger))
+        .child(div().flex_1().min_w_0().child(error.heading()));
+    let details = error.details().into_iter().map(|line| {
+        div()
+            .w_full()
+            .text_sm()
+            .text_color(theme.foreground)
+            .child(line)
+    });
+    div()
+        .id("start-error")
+        .flex()
+        .flex_col()
+        .gap_2()
+        .w_full()
+        .max_w(px(ERROR_WIDTH))
+        .pb_4()
+        .child(heading)
+        .children(details)
+        .when(error.can_retry(), |block| block.child(retry_buttons(cx)))
+        .into_any_element()
+}
+
+fn retry_buttons(cx: &mut Context<WorkspaceView>) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_wrap()
+        .gap_2()
+        .pt_1()
+        .child(
+            Button::new("start-retry")
+                .primary()
+                .label("Retry")
+                .on_click(cx.listener(|workspace, _, window, cx| {
+                    workspace.retry_start(window, cx);
+                })),
+        )
+        .child(
+            Button::new("start-open-settings")
+                .outline()
+                .label("Open settings")
+                .on_click(cx.listener(|workspace, _, window, cx| {
+                    workspace.open_settings(window, cx);
+                })),
+        )
 }

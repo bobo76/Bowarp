@@ -16,7 +16,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{self, ClipboardType, Term, TermMode};
 use alacritty_terminal::tty;
-use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+use alacritty_terminal::vte::ansi::{ClearMode, Handler, Processor, StdSyncHandler};
 use parking_lot::MutexGuard;
 use workspace_model::ProgressState;
 
@@ -592,8 +592,34 @@ impl Session {
         self.term.lock().selection_to_string()
     }
 
+    /// Whether a selection covers at least one cell, without building its text.
+    pub fn has_selection(&self) -> bool {
+        let term = self.term.lock();
+        term.selection
+            .as_ref()
+            .is_some_and(|selection| !selection.is_empty())
+    }
+
     pub fn clear_selection(&self) {
         self.term.lock().selection = None;
+    }
+
+    /// Select the scrollback and the screen down to its last line with text (or the cursor's,
+    /// if lower): the empty lines below are left out. Returns the selected text.
+    pub fn select_all(&self) -> Option<String> {
+        let mut term = self.term.lock();
+        let start = Point::new(term.topmost_line(), Column(0));
+        let end = Point::new(last_used_line(&term), term.last_column());
+        let mut selection = Selection::new(SelectionType::Simple, start, Side::Left);
+        selection.update(end, Side::Right);
+        term.selection = Some(selection);
+        term.selection_to_string()
+    }
+
+    /// Drop the lines scrolled off the screen, as `ESC [ 3 J` does: the view goes back to the
+    /// bottom and a selection in them goes.
+    pub fn clear_scrollback(&self) {
+        self.term.lock().clear_screen(ClearMode::Saved);
     }
 
     /// Re-arm wakeup notifications. Call before reading the terminal so output arriving
@@ -760,6 +786,17 @@ fn session_env(kind: SessionKind, extra: &HashMap<String, String>) -> HashMap<St
     env
 }
 
+/// The lowest line with something on it, or the cursor's line if that is lower.
+fn last_used_line<L: EventListener>(term: &Term<L>) -> Line {
+    let grid = term.grid();
+    let cursor = grid.cursor.point.line;
+    let mut line = term.bottommost_line();
+    while line > cursor && grid[line].is_clear() {
+        line -= 1;
+    }
+    line
+}
+
 #[cfg(test)]
 mod remote_tests {
     use super::*;
@@ -828,6 +865,52 @@ mod remote_tests {
         assert_eq!(exits, 1);
         drop(session);
         assert_eq!(sent.lock().unwrap().last().unwrap(), "close");
+    }
+
+    fn fed_session(output: &[u8]) -> Session {
+        let (session, feed) = Session::remote(
+            1,
+            SessionKind::Shell,
+            TermDimensions::new(10, 3),
+            Palette::default(),
+            Arc::new(|_| {}),
+            Box::new(FakeLink::default()),
+        );
+        feed.output(output);
+        session
+    }
+
+    #[test]
+    fn select_all_takes_the_scrollback_and_the_screen() {
+        let session = fed_session(b"1\r\n2\r\n3\r\n4\r\n5");
+        assert_eq!(session.select_all().as_deref(), Some("1\n2\n3\n4\n5"));
+        assert_eq!(session.selection_text().as_deref(), Some("1\n2\n3\n4\n5"));
+        assert!(session.has_selection());
+        session.clear_selection();
+        assert!(!session.has_selection());
+    }
+
+    #[test]
+    fn select_all_stops_at_the_last_line_with_text_or_the_cursor() {
+        let session = fed_session(b"1\r\n2\x1b[1;1H");
+        assert_eq!(session.select_all().as_deref(), Some("1\n2"));
+        let session = fed_session(b"1\r\n\r\n");
+        assert_eq!(session.select_all().as_deref(), Some("1\n\n"));
+    }
+
+    #[test]
+    fn clearing_the_scrollback_keeps_the_screen_and_scrolls_to_the_bottom() {
+        let session = fed_session(b"1\r\n2\r\n3\r\n4\r\n5");
+        session.scroll_display(Scroll::Top);
+        assert_eq!(session.display_offset(), 2);
+        session.select_all();
+        session.clear_scrollback();
+        assert_eq!(session.display_offset(), 0);
+        assert_eq!(session.lock_term().history_size(), 0);
+        assert_eq!(session.visible_text(), ["3", "4", "5"]);
+        // The selection began in the lines that went.
+        assert_eq!(session.selection_text(), None);
+        assert_eq!(session.select_all().as_deref(), Some("3\n4\n5"));
     }
 
     #[test]

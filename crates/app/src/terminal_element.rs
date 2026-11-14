@@ -575,10 +575,17 @@ fn take_snapshot(
         display_offset: grid.display_offset(),
         screen_lines: grid.screen_lines(),
     };
+    let cursor_display = if view.has_exited() {
+        CursorDisplay::Hidden
+    } else if focused {
+        CursorDisplay::Focused
+    } else {
+        CursorDisplay::Unfocused
+    };
     let snapshot = snapshot(
         term.renderable_content(),
         &view.session.palette(),
-        focused,
+        cursor_display,
         &view.search,
     );
     drop(term);
@@ -685,11 +692,21 @@ fn inset(bounds: Bounds<Pixels>, x: Pixels, y: Pixels) -> Bounds<Pixels> {
     )
 }
 
+/// How the grid's cursor shows.
+#[derive(Clone, Copy, PartialEq)]
+enum CursorDisplay {
+    Focused,
+    Unfocused,
+    /// The program exited: the grid takes no input.
+    Hidden,
+}
+
 /// Copy the visible cells into paint batches. Runs under the terminal lock: no shaping here.
+/// A grid whose program exited shows no cursor.
 fn snapshot(
     content: RenderableContent<'_>,
     palette: &Palette,
-    focused: bool,
+    cursor_display: CursorDisplay,
     search: &TerminalSearch,
 ) -> GridSnapshot {
     let colors = content.colors;
@@ -697,10 +714,13 @@ fn snapshot(
     let default_background = palette.resolve_index(NamedColor::Background as usize, colors);
     let cursor_color = palette.resolve_index(NamedColor::Cursor as usize, colors);
     let cursor_point = content.cursor.point;
-    let show_cursor =
-        content.mode.contains(TermMode::SHOW_CURSOR) && content.cursor.shape != CursorShape::Hidden;
+    let show_cursor = cursor_display != CursorDisplay::Hidden
+        && content.mode.contains(TermMode::SHOW_CURSOR)
+        && content.cursor.shape != CursorShape::Hidden;
     let cursor_shape = match content.cursor.shape {
-        CursorShape::Block if !focused => CursorShape::HollowBlock,
+        CursorShape::Block if cursor_display == CursorDisplay::Unfocused => {
+            CursorShape::HollowBlock
+        }
         shape => shape,
     };
 

@@ -62,7 +62,7 @@ impl Harness {
         });
         let page = captured.borrow().clone().unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
-        cx.update(|window, cx| page.update(cx, |page, cx| page.show(folders, window, cx)));
+        cx.update(|window, cx| page.update(cx, |page, cx| page.show(folders, None, window, cx)));
         cx.run_until_parked();
         // Drawn once, so the message input is laid out and can take the keyboard.
         cx.update(|window, cx| window.draw(cx).clear(cx));

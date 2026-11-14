@@ -5,6 +5,73 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.3.9
+
+- Open the Git page with Ctrl+Shift+G (Cmd+Shift+G on macOS); pressed again, it goes back to
+  the tab. The key is never sent to the terminal, shows in the title bar button's tooltip and
+  can be rebound on the Keyboard settings page.
+- The Git page now opens on the selected tab's repository, from the key or the title bar
+  button.
+- Add a "Git page" switch (Settings → Workspace, on): off hides the title bar button, closes
+  the page and its sidebar row and makes the key do nothing; commit messages being written
+  are kept.
+
+## 0.3.8
+
+- Add a "Changed files" piece to Settings → Tab hover card for the list of changed files
+  under +N. It is off initially, so the hover card now shows only +N until it is turned on;
+  it needs Changes on.
+
+## 0.3.7
+
+- Right-click in the terminal for a menu: Copy, Paste, Select all, Search and Clear
+  scrollback, plus Open link and Copy link on a link; each entry shows its shortcut. When a
+  program tracks the mouse, Shift+right-click opens it. Clear scrollback is unavailable while
+  a full-screen program shows.
+- Add "Select all" and "Clear scrollback" terminal actions, with no default key, which can be
+  bound on the Keyboard settings page.
+
+## 0.3.6
+
+- Ask before pasting text with line breaks when the program hasn't turned on bracketed paste
+  (cmd, a nested shell, plain ssh), where each line would run as a command at once: "Paste 4
+  lines?" with a preview, Paste (Enter) or Cancel (Esc). Applies to Ctrl+Shift+V,
+  Shift+Insert, Ctrl+V and the middle click.
+
+## 0.3.5
+
+- Size the file viewer from the space the sidebar and explorer leave, and keep the terminal
+  at least 480 px (about 60 columns) wide beside it. A saved viewer width now gives a
+  narrower viewer than before. Dragging the divider in a window too narrow for both panes
+  no longer changes the saved width.
+
+## 0.3.4
+
+- Restart an exited tab in place: a Restart button on the exit bar, Enter on the exited tab,
+  or Restart in the tab menu starts the same program again in its last folder (remote tabs on
+  their host), keeping the tab's name, color and place. The scrollback is cleared; Claude Code
+  and Copilot CLI start a new conversation.
+- Mark a tab whose program failed (nonzero or unknown exit code) with a red badge and `×`,
+  and show "Exited (3)" in its hover card; a clean exit keeps a grey ring, now easier to see.
+- Hide the cursor once a tab's program has exited.
+
+## 0.3.3
+
+- Open the window when the start fails instead of quitting silently (on Windows the app
+  seemed not to start): bad command-line arguments show the error and the usage in place of
+  the terminal (or in a toast when saved tabs were restored), and a shell or agent that can't
+  start shows the error with Retry and Open settings, next to the usual new-tab buttons.
+- Open a tab in the home folder, with a warning naming the path, when the folder given on the
+  command line doesn't exist or isn't a folder.
+
+## 0.3.2
+
+- Ask the OS for attention when a tab needs attention or is ready for review while the window
+  is in the background (taskbar flash on Windows, urgency hint on X11; nothing on Wayland).
+  Follows the "In-app notifications" setting.
+- Show the selected tab's name in the window title, prefixed "(N)" while N tabs need
+  attention; "Settings" or "Git" while those pages show.
+
 ## 0.3.1
 
 - Git Bash: accepting the restored last command (Right arrow) after a restart no longer

@@ -16,8 +16,8 @@ use gpui_kit::{
     px, rgb,
 };
 use workspace_model::{
-    AgentId, Attention, FileChange, GroupId, LauncherIcon, SessionKind, TabColor, format_clock,
-    format_lap,
+    AgentId, Attention, FileChange, GroupId, LauncherIcon, SessionKind, TabColor, exit_failed,
+    exit_label, format_clock, format_lap,
 };
 
 use crate::assets::{
@@ -97,7 +97,8 @@ pub enum TabStatus {
     Quiet,
     /// A quiet Claude Code session while status hooks are off: its silence says nothing.
     Unavailable,
-    Exited,
+    /// The program ended, with its exit code when one is available.
+    Exited(Option<i32>),
     /// A remote tab lost its connection: its program may still run on its host.
     Disconnected,
 }
@@ -106,6 +107,11 @@ impl TabStatus {
     /// The status color for the current theme: the light-mode themes use darker tones, which
     /// stay readable on their tinted sidebars.
     fn color(self, cx: &App) -> Hsla {
+        if self.failed_exit() {
+            return light_theme::active_palette(cx).map_or(cx.theme().danger, |palette| {
+                light_theme::hsla(palette.failed_exit)
+            });
+        }
         let Some(palette) = light_theme::active_palette(cx) else {
             return self.dark_color();
         };
@@ -119,7 +125,9 @@ impl TabStatus {
             Self::ReadyForReview | Self::Idle => rgb(0x3fb950),
             Self::Running => rgb(0x2dd4bf),
             Self::Active => rgb(0xc9d1d9),
-            Self::Quiet | Self::Unavailable | Self::Exited | Self::Disconnected => rgb(0x545d68),
+            Self::Quiet | Self::Unavailable | Self::Disconnected => rgb(0x545d68),
+            // Raised from the Quiet grey to >= 3:1 against the sidebar, selected or not.
+            Self::Exited(_) => rgb(0x6e7681),
         }
         .into()
     }
@@ -132,8 +140,14 @@ impl TabStatus {
             Self::ReadyForReview | Self::Idle => 2,
             Self::Running => 3,
             Self::Active => 4,
-            Self::Quiet | Self::Unavailable | Self::Exited | Self::Disconnected => 5,
+            Self::Quiet | Self::Unavailable | Self::Disconnected => 5,
+            Self::Exited(_) => 6,
         }
+    }
+
+    /// The program ended with a nonzero exit code, or without one.
+    fn failed_exit(self) -> bool {
+        matches!(self, Self::Exited(code) if exit_failed(code))
     }
 
     pub fn label(self) -> &'static str {
@@ -146,9 +160,18 @@ impl TabStatus {
             Self::Active => "Recent output",
             Self::Quiet => "No recent output",
             Self::Unavailable => "Status unavailable",
-            Self::Exited => "Exited",
+            Self::Exited(_) => "Exited",
             Self::Disconnected => "Disconnected",
         }
+    }
+
+    /// Whether a tab going from `before` to this status asks for the user's eye: it turned
+    /// Needs attention or Ready for review, or, as the selected tab (which never shows Ready
+    /// for review), its agent finished a turn.
+    pub fn wants_user_after(self, before: Self) -> bool {
+        before != self
+            && (matches!(self, Self::NeedsAttention | Self::ReadyForReview)
+                || (before == Self::Working && self == Self::Idle))
     }
 
     /// What "jump to the next tab needing attention" makes of this status.
@@ -162,7 +185,7 @@ impl TabStatus {
             | Self::Active
             | Self::Quiet
             | Self::Unavailable
-            | Self::Exited
+            | Self::Exited(_)
             | Self::Disconnected => None,
         }
     }
@@ -686,7 +709,19 @@ fn status_badge(
             .bg(ring)
             .group_hover(background.row_group.clone(), |style| style.bg(hovered))
             .child(running_dot(color, pulse, index)),
-        TabStatus::Exited => badge
+        // A cross, so a failure isn't told by color alone.
+        TabStatus::Exited(_) if status.failed_exit() => badge
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(DONE_BADGE_SIZE))
+            .bg(color)
+            .child(
+                Icon::new(IconName::Close)
+                    .size(px(CHECK_MARK_SIZE))
+                    .text_color(ring),
+            ),
+        TabStatus::Exited(_) => badge
             .size(px(BADGE_SIZE))
             .bg(ring)
             .group_hover(background.row_group.clone(), |style| style.bg(hovered))
@@ -1028,7 +1063,7 @@ fn status_chip(
         .text_xs()
         .text_color(color)
         .child(div().flex_none().child(mark))
-        .child(div().flex_none().child(status.label()))
+        .child(div().flex_none().child(chip_label(status)))
         .children(working_for.map(|lap| format!("· {}", format_lap(lap))))
         .children(running_label.map(|command| single_line(format!("· {command}").into())))
 }
@@ -1338,6 +1373,14 @@ pub struct GroupRow {
     pub name_editor: Option<AnyElement>,
 }
 
+/// The hover card's status text: an exited tab's also gives a failed exit code.
+fn chip_label(status: TabStatus) -> SharedString {
+    match status {
+        TabStatus::Exited(code) => exit_label(code).into(),
+        _ => status.label().into(),
+    }
+}
+
 fn status_mark(status: TabStatus, cx: &App) -> AnyElement {
     let color = status.color(cx);
     match status {
@@ -1345,6 +1388,9 @@ fn status_mark(status: TabStatus, cx: &App) -> AnyElement {
             .size(px(DETAIL_ICON_SIZE))
             .into_any_element(),
         TabStatus::ReadyForReview => Icon::new(IconName::Check)
+            .size(px(DETAIL_ICON_SIZE))
+            .into_any_element(),
+        TabStatus::Exited(_) if status.failed_exit() => Icon::new(IconName::Close)
             .size(px(DETAIL_ICON_SIZE))
             .into_any_element(),
         // The same dot as the Working and Running badges on a tab icon (not pulsing here).
@@ -1526,6 +1572,68 @@ mod tests {
         });
     }
 
+    fn hex_of(color: Hsla) -> u32 {
+        let rgba = gpui_kit::Rgba::from(color);
+        let channel = |value: f32| (value * 255.).round() as u32;
+        channel(rgba.r) << 16 | channel(rgba.g) << 8 | channel(rgba.b)
+    }
+
+    #[gpui::test]
+    fn exit_badges_read_at_three_to_one_in_every_theme(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            let check = |cx: &App| {
+                let theme = cx.theme();
+                for code in [Some(0), Some(3), None] {
+                    let badge = hex_of(TabStatus::Exited(code).color(cx));
+                    for background in [theme.sidebar, theme.sidebar_accent] {
+                        let ratio = workspace_model::contrast_ratio(badge, hex_of(background));
+                        assert!(ratio >= 3., "{} {code:?} {ratio}", theme.theme_name());
+                    }
+                }
+                if theme.is_dark() {
+                    assert_eq!(TabStatus::Exited(Some(3)).color(cx), theme.danger);
+                }
+            };
+            Theme::change(ThemeMode::Dark, None, cx);
+            check(cx);
+            for palette in [&light_theme::SOFT_LIGHT, &light_theme::SEPIA] {
+                let config =
+                    light_theme::config(ThemeRegistry::global(cx).default_light_theme(), palette);
+                Theme::global_mut(cx).light_theme = config.into();
+                Theme::change(ThemeMode::Light, None, cx);
+                check(cx);
+            }
+        });
+    }
+
+    #[test]
+    fn the_hover_card_gives_a_failed_exit_code() {
+        assert_eq!(chip_label(TabStatus::Exited(Some(0))), "Exited");
+        assert_eq!(chip_label(TabStatus::Exited(Some(3))), "Exited (3)");
+        assert_eq!(chip_label(TabStatus::Exited(None)), "Exited (no exit code)");
+        assert_eq!(chip_label(TabStatus::Idle), "Idle");
+    }
+
+    #[test]
+    fn a_tab_wants_the_user_when_it_turns_waiting_or_finishes_a_turn() {
+        use TabStatus::*;
+        assert!(NeedsAttention.wants_user_after(Working));
+        assert!(NeedsAttention.wants_user_after(Idle));
+        assert!(ReadyForReview.wants_user_after(Working));
+        assert!(ReadyForReview.wants_user_after(Running));
+        assert!(Idle.wants_user_after(Working));
+        // No change, or a change the user caused or doesn't need to see.
+        assert!(!NeedsAttention.wants_user_after(NeedsAttention));
+        assert!(!Working.wants_user_after(NeedsAttention));
+        assert!(!Idle.wants_user_after(ReadyForReview));
+        assert!(!Idle.wants_user_after(NeedsAttention));
+        assert!(!Exited(Some(0)).wants_user_after(Working));
+        assert!(!Exited(Some(1)).wants_user_after(Exited(Some(0))));
+        assert!(!Quiet.wants_user_after(Active));
+    }
+
     #[test]
     fn running_badge_pulses_only_with_every_condition_including_the_switch() {
         assert_eq!(running_pulse(true, true), RunningPulse::Animated);
@@ -1561,7 +1669,8 @@ mod tests {
                 TabStatus::Active,
                 TabStatus::Quiet,
                 TabStatus::Unavailable,
-                TabStatus::Exited,
+                TabStatus::Exited(Some(0)),
+                TabStatus::Exited(None),
                 TabStatus::Disconnected,
             ] {
                 assert_eq!(

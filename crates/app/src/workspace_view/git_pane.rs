@@ -10,13 +10,16 @@ use gpui_kit::{
     Subscription, Window,
 };
 
-use super::WorkspaceView;
+use super::{ToggleGitPage, WorkspaceView};
 use crate::assets::GIT_BRANCH_ICON;
 use crate::git_page::GitPage;
-use crate::sidebar;
+use crate::settings_file::{self, AppSettings};
+use crate::{shortcuts, sidebar};
 
 #[derive(Default)]
 pub(super) struct GitPane {
+    /// The "Git page" switch as last applied: off, nothing opens the page.
+    enabled: bool,
     /// Whether the sidebar shows the Git row (at most one, not saved in `tabs.json`).
     open: bool,
     /// Whether the page shows in place of the selected tab.
@@ -26,9 +29,26 @@ pub(super) struct GitPane {
     page: Option<Entity<GitPage>>,
     /// Redraws the Git row when the page changes repository.
     _page_changes: Option<Subscription>,
+    /// Follows the "Git page" switch (`apply_git_page_setting`).
+    _switch: Option<Subscription>,
 }
 
 impl GitPane {
+    pub fn new(window: &mut Window, cx: &mut Context<WorkspaceView>) -> Self {
+        let switch =
+            cx.observe_global_in::<AppSettings>(window, WorkspaceView::apply_git_page_setting);
+        Self {
+            enabled: settings_file::git_page(cx),
+            _switch: Some(switch),
+            ..Self::default()
+        }
+    }
+
+    /// Whether the "Git page" switch is on (the title-bar button shows).
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
     pub fn shows_page(&self) -> bool {
         self.shown
     }
@@ -69,18 +89,35 @@ impl WorkspaceView {
         }
     }
 
-    /// Show the Git page in place of the selected tab (or the settings page), adding the
-    /// sidebar's Git row if it isn't there, and read the repositories of the open tabs again.
+    /// The key: back to the tab while the page shows, else open it.
+    pub(super) fn toggle_git_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git.shown {
+            self.close_git(window, cx);
+        } else {
+            self.open_git(window, cx);
+        }
+    }
+
+    /// Show the Git page on the selected tab's repository (when it is in one), from the key
+    /// or the title-bar button.
     pub(super) fn open_git(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let page = match &self.git.page {
-            Some(page) => page.clone(),
-            None => {
-                let page = cx.new(|cx| GitPage::new(window, cx));
-                self.git._page_changes = Some(cx.observe(&page, |_, _, cx| cx.notify()));
-                self.git.page = Some(page.clone());
-                page
-            }
-        };
+        // No tab: no selected folder (`tab_folder` would give the app's working directory),
+        // so the repository shown stays.
+        let selected = self
+            .active_tab()
+            .and_then(|_| self.tab_folder(self.active, cx));
+        self.show_git(selected, window, cx);
+    }
+
+    /// Show the Git page in place of the selected tab (or the settings page), adding the
+    /// sidebar's Git row if it isn't there, and read the repositories of the open tabs again,
+    /// choosing `selected`'s repository when given, else keeping the one shown. Nothing while
+    /// the switch is off.
+    fn show_git(&mut self, selected: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.git.enabled {
+            return;
+        }
+        let page = self.git_page_entity(window, cx);
         self.git.open = true;
         if !self.git.shown {
             if self.settings.shows_page() {
@@ -91,9 +128,34 @@ impl WorkspaceView {
             self.git.shown = true;
         }
         let folders = self.tab_folders(cx);
-        page.update(cx, |page, cx| page.show(folders, window, cx));
+        page.update(cx, |page, cx| page.show(folders, selected, window, cx));
         let focus = page.read(cx).focus_handle().clone();
         window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// The page, made the first time it opens and kept (with its commit drafts) after.
+    fn git_page_entity(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<GitPage> {
+        if let Some(page) = &self.git.page {
+            return page.clone();
+        }
+        let page = cx.new(|cx| GitPage::new(window, cx));
+        self.git._page_changes = Some(cx.observe(&page, |_, _, cx| cx.notify()));
+        self.git.page = Some(page.clone());
+        page
+    }
+
+    /// Settings changed: follow the "Git page" switch. Off closes the page and its row like
+    /// Ctrl+Shift+W on the row; the page entity stays, hidden (not watching).
+    pub(super) fn apply_git_page_setting(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let wanted = settings_file::git_page(cx);
+        if wanted == self.git.enabled {
+            return;
+        }
+        self.git.enabled = wanted;
+        if !wanted {
+            self.close_git(window, cx);
+        }
         cx.notify();
     }
 
@@ -130,7 +192,7 @@ impl WorkspaceView {
             .ghost()
             .small()
             .selected(self.git.shown)
-            .tooltip("Git")
+            .tooltip(shortcuts::with_shortcut("Git", &ToggleGitPage, cx))
             .on_click(cx.listener(|workspace, _, window, cx| workspace.toggle_git(window, cx)))
     }
 
@@ -161,7 +223,8 @@ impl WorkspaceView {
                 selected: self.git.shown,
                 focused: list_focused && self.git.shown,
             },
-            cx.listener(|workspace, _, window, cx| workspace.open_git(window, cx)),
+            // Back to the page: the repository it shows stays.
+            cx.listener(|workspace, _, window, cx| workspace.show_git(None, window, cx)),
             cx.listener(|workspace, _, window, cx| {
                 cx.stop_propagation();
                 workspace.close_git(window, cx);

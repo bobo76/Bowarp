@@ -29,6 +29,12 @@ pub const DENY_CLIPBOARD_KEY: &str = "n";
 /// Ctrl+Shift+|: show or hide the file explorer. Bound as the key that produces `|`, whatever
 /// the layout; GPUI reports it without Shift (Ctrl+|).
 pub const EXPLORER_KEY: &str = "|";
+/// Ctrl+Shift+G (Cmd+Shift+G on macOS): show the Git page, or go back to the tab.
+pub const GIT_PAGE_KEYS: &str = if cfg!(target_os = "macos") {
+    "cmd-shift-g"
+} else {
+    "ctrl-shift-g"
+};
 
 /// `strokes` as text: `Ctrl+Shift+T`, a sequence as `Ctrl+K Ctrl+C`.
 pub fn keys_text(strokes: &[Keystroke]) -> String {

@@ -15,7 +15,10 @@ directly to model APIs.
   first) and agents, each with its own icon.
 - Support normal interactive CLI behavior, including permission prompts,
   cancellation, multiline input, colors, and terminal resizing.
-- Provide copy/paste, text selection, scrollback, and terminal search.
+- Provide copy/paste, text selection, scrollback, and terminal search, also from a
+  right-click menu (with Open and Copy link on a link).
+- Ask before pasting text whose line breaks would run as commands (the program hasn't
+  turned on bracketed paste), with a preview of the lines.
 - Search terminal output and retained scrollback with Ctrl+Shift+F: case-insensitive literal
   matching, visible match highlights, a current/total count, Enter/Shift+Enter navigation
   with wrapping, and Escape to close.
@@ -101,8 +104,9 @@ directly to model APIs.
 
 ## Git Page
 
-- Open a Git page from the title bar, in place of the selected tab, with its own sidebar row;
-  it and the Settings page take turns.
+- Open a Git page from the title bar or with a key (pressed again, back to the tab), on the
+  selected tab's repository, in place of the selected tab, with its own sidebar row; it and the
+  Settings page take turns. A switch turns the page off.
 - Pick any repository the open tabs are in, the selected tab's first; see its branch.
 - List the changed files in "Staged Changes" and "Changes" groups with their status letters;
   stage or unstage a file, or all of them.
@@ -117,6 +121,8 @@ directly to model APIs.
 
 - Indicate when an agent is working, idle, waiting for user input or permission,
   or has exited, when reliable status information is available.
+  - A tab whose program exited with a failure (nonzero or unknown code) is marked apart
+    from a clean exit, and an exited tab can be restarted in place, in its last folder.
   - A working Copilot tab shows a slowly turning ring left of its title in the sidebar
     (Claude Code animates its own title, so a Claude Code tab shows the ring only once renamed);
     still when activity animations are off.
@@ -136,6 +142,9 @@ directly to model APIs.
 - Show aggregate status on collapsed groups, such as the number of working
   sessions, running shell commands and sessions needing attention.
 - Make sessions needing attention easy to locate and select.
+- Ask the OS for attention (taskbar flash, urgency hint) when a tab needs attention or is
+  ready for review while the window is in the background, and name the selected tab and the
+  number of tabs needing attention in the window title.
 - Support completion and attention notifications with user-configurable sound.
 - When reliable agent status is unavailable, label terminal output activity as
   "recent activity" rather than claiming the agent is thinking or working.
@@ -144,6 +153,9 @@ directly to model APIs.
 - When agent status can't start (its helper missing next to the app, or its listener
   failing), say so once per start in a warning that stays until dismissed, with the cause
   and the fix, and show quiet agent tabs as "Status unavailable".
+- Always open the window, even when the start fails: bad command-line arguments or a
+  program that can't start show the error (with Retry where it can help) in place of the
+  terminal, and a folder that doesn't exist opens the tab in the home folder with a warning.
 
 ## Workspace Persistence
 

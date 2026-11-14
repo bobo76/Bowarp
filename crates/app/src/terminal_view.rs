@@ -1,8 +1,11 @@
 mod agent_tracker;
 mod clipboard_notice;
+mod context_menu;
 mod link_hover;
+mod paste;
 mod pointer;
 mod remote;
+mod restart;
 mod resume;
 mod search;
 
@@ -46,10 +49,12 @@ use workspace_model::{
 };
 
 use self::agent_tracker::AgentTracker;
+use self::context_menu::TerminalMenu;
 use self::link_hover::LinkHover;
 use self::pointer::PointerState;
 use self::remote::Disconnect;
 pub use self::remote::RemoteAction;
+pub use self::restart::RestartTab;
 pub use self::resume::{ResumeConversation, ResumeFailed};
 use crate::file_viewer::FilePlace;
 use crate::history;
@@ -85,6 +90,8 @@ actions!(
         PasteOrSend,
         Find,
         CloseFind,
+        SelectAll,
+        ClearScrollback,
         AllowClipboard,
         DenyClipboard
     ]
@@ -119,6 +126,9 @@ fn default_bindings() -> Vec<Shortcut> {
             &AllowClipboard,
         ),
         bind(&format!("ctrl-shift-{DENY_CLIPBOARD_KEY}"), &DenyClipboard),
+        // No key by default: every free key is one a program may want.
+        Shortcut::unbound(SelectAll.name(), Some(KEY_CONTEXT)),
+        Shortcut::unbound(ClearScrollback.name(), Some(KEY_CONTEXT)),
     ]
 }
 
@@ -270,12 +280,21 @@ pub struct TerminalView {
     /// A remote tab's host, as its launch named it.
     host: Option<String>,
     process: ProcessState,
+    /// A remote exited tab's restart is under way (off this thread): set by
+    /// [`Self::begin_restart`], cleared by [`Self::end_restart`] when it fails; on success the
+    /// view is replaced.
+    restarting: bool,
+    /// The multi-line paste question is open (`paste.rs`): set when it opens, cleared when it
+    /// closes by any way out.
+    paste_question_open: bool,
     /// Set by the shell integration marks; agent sessions keep their hook status instead.
     running_command: Option<RunningCommand>,
     /// Where [`Self::change_dir`] leaves the folder for the shell's hidden cd key binding;
     /// `None` when the shell has none.
     cd_file: Option<PathBuf>,
     pointer: PointerState,
+    /// The right-click menu (`context_menu.rs`).
+    context_menu: TerminalMenu,
     pub(crate) scrollbar: ScrollbarState,
     pub(crate) link_hover: LinkHover,
     /// For links to `~/` paths.
@@ -487,12 +506,15 @@ impl TerminalView {
             title: None,
             host: spec.host.clone(),
             process: ProcessState::Running,
+            restarting: false,
+            paste_question_open: false,
             running_command: None,
             cd_file: spec
                 .env
                 .get(shell_integration::CD_FILE_ENV)
                 .map(PathBuf::from),
             pointer: PointerState::default(),
+            context_menu: TerminalMenu::default(),
             scrollbar: ScrollbarState::default(),
             link_hover: LinkHover::default(),
             home: std::env::home_dir(),
@@ -622,6 +644,14 @@ impl TerminalView {
         self.title.as_deref().unwrap_or(&self.name)
     }
 
+    /// The program's exit code once it exited with one.
+    fn exit_code(&self) -> Option<i32> {
+        match self.process {
+            ProcessState::Exited(code) => code,
+            ProcessState::Running | ProcessState::Disconnected(_) => None,
+        }
+    }
+
     pub fn tab_status(&self) -> TabStatus {
         // A bell asks for the user like a waiting prompt, for programs without status hooks; so
         // does a clipboard write waiting for an answer.
@@ -635,11 +665,11 @@ impl TerminalView {
                 AgentStatus::Idle => TabStatus::Idle,
                 AgentStatus::Working => TabStatus::Working,
                 AgentStatus::NeedsAttention => TabStatus::NeedsAttention,
-                AgentStatus::Exited => TabStatus::Exited,
+                AgentStatus::Exited => TabStatus::Exited(self.exit_code()),
             };
         }
         match self.process {
-            ProcessState::Exited(_) => TabStatus::Exited,
+            ProcessState::Exited(code) => TabStatus::Exited(code),
             ProcessState::Disconnected(_) => TabStatus::Disconnected,
             // Left by an in-place agent's run until the tab is selected.
             ProcessState::Running if self.finished_unseen => TabStatus::ReadyForReview,
@@ -699,6 +729,7 @@ impl TerminalView {
         self.visible = false;
         self.history_popup = None;
         self.link_hover = LinkHover::default();
+        self.close_context_menu();
         // A wakeup sent before the next paint would never be acknowledged by `prepaint`.
         self.session.ack_wakeup();
     }
@@ -1204,18 +1235,37 @@ impl TerminalView {
         true
     }
 
-    /// Send text as a paste; false when there is no text to send.
-    fn paste(&mut self, text: Option<String>, cx: &mut Context<Self>) -> bool {
-        let Some(text) = text.filter(|text| !text.is_empty()) else {
-            return false;
-        };
-        let bytes = keys::paste_bytes(&text, self.mode());
-        self.send_input(bytes.into(), cx);
-        true
+    fn on_select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_all(cx);
+    }
+
+    /// Select the scrollback and the screen; on Linux the selection is also the primary one,
+    /// as after a mouse selection.
+    fn select_all(&mut self, cx: &mut Context<Self>) {
+        write_primary(self.session.select_all(), cx);
+        cx.notify();
+    }
+
+    fn on_clear_scrollback(&mut self, _: &ClearScrollback, _: &mut Window, cx: &mut Context<Self>) {
+        self.clear_scrollback(cx);
+    }
+
+    /// Drop the scrollback: the view goes to the bottom, search matches in it go now (not
+    /// after the output throttle), and the link under a held Ctrl is looked at again.
+    fn clear_scrollback(&mut self, cx: &mut Context<Self>) {
+        self.session.clear_scrollback();
+        self.search.refresh_now(&mut self.session.lock_term());
+        self.refresh_link_hover(cx);
+        cx.notify();
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let consumed = self.handle_history_key(&event.keystroke, cx)
+        // The open menu has the keyboard, and its keys bubble up here: not for the program.
+        if self.context_menu.is_open() {
+            return;
+        }
+        let consumed = self.restart_on_enter(event, cx)
+            || self.handle_history_key(&event.keystroke, cx)
             || self.handle_scrollback_shortcut(&event.keystroke, cx)
             || self.forward_key(event, cx);
         if consumed {
@@ -1343,21 +1393,32 @@ impl TerminalView {
         true
     }
 
-    fn on_paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        self.paste_clipboard(cx);
+    fn on_paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        self.paste_clipboard(window, cx);
     }
 
     /// Without text on the clipboard, the key goes on to the program as `^V`: Claude Code then
     /// reads a copied image from the clipboard itself.
-    fn on_paste_or_send(&mut self, _: &PasteOrSend, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.paste_clipboard(cx) {
+    fn on_paste_or_send(&mut self, _: &PasteOrSend, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.paste_clipboard(window, cx) {
             cx.propagate();
         }
     }
 
-    fn paste_clipboard(&mut self, cx: &mut Context<Self>) -> bool {
-        self.paste(cx.read_from_clipboard().and_then(|item| item.text()), cx)
+    fn paste_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let text = cx.read_from_clipboard().and_then(|item| item.text());
+        self.paste(text, window, cx)
     }
+}
+
+/// Make `text` the primary selection, as a mouse selection does (Linux only).
+fn write_primary(text: Option<String>, cx: &mut App) {
+    #[cfg(target_os = "linux")]
+    if let Some(text) = text.filter(|text| !text.is_empty()) {
+        cx.write_to_primary(ClipboardItem::new_string(text));
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (text, cx);
 }
 
 fn is_shift_only(modifiers: &Modifiers) -> bool {
@@ -1372,6 +1433,7 @@ impl EventEmitter<LastCommandChanged> for TerminalView {}
 impl EventEmitter<RemoteAction> for TerminalView {}
 impl EventEmitter<ResumeConversation> for TerminalView {}
 impl EventEmitter<ResumeFailed> for TerminalView {}
+impl EventEmitter<RestartTab> for TerminalView {}
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -1410,6 +1472,8 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::on_paste_or_send))
             .on_action(cx.listener(Self::on_allow_clipboard))
             .on_action(cx.listener(Self::on_deny_clipboard))
+            .on_action(cx.listener(Self::on_select_all))
+            .on_action(cx.listener(Self::on_clear_scrollback))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
@@ -1423,6 +1487,7 @@ impl Render for TerminalView {
             .on_mouse_up_out(MouseButton::Right, cx.listener(Self::on_mouse_up));
 
         let history_popup = self.render_history_popup(cx);
+        let context_menu = self.render_context_menu();
         let exit_banner = self.exit_banner(cx);
         let search_bar = self.render_terminal_search(cx);
         let clipboard_banner = self.clipboard_banner(cx);
@@ -1444,12 +1509,24 @@ impl Render for TerminalView {
                     .flex_col()
                     .child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
                     .children(exit_banner)
-                    .children(history_popup),
+                    .children(history_popup)
+                    .children(context_menu),
             )
     }
 }
 
 impl TerminalView {
+    /// The exit bar's text: the exit code, or that a restart is under way.
+    fn exit_message(&self, code: Option<i32>) -> String {
+        if self.restarting {
+            return format!("Starting {} again…", self.name);
+        }
+        match code {
+            Some(code) => format!("Process exited with code {code}"),
+            None => "Process exited".to_string(),
+        }
+    }
+
     /// A bar below the terminal once the program exited, so a finished tab is told apart from
     /// a quiet one without looking at the sidebar.
     fn exit_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1460,10 +1537,8 @@ impl TerminalView {
                 return Some(self.disconnect_banner(disconnect, cx));
             }
         };
-        let message = match code {
-            Some(code) => format!("Process exited with code {code}"),
-            None => "Process exited".to_string(),
-        };
+        let message = self.exit_message(code);
+        let restart = self.restart_button(cx);
         let theme = cx.theme();
         let banner = div()
             .flex_none()
@@ -1478,13 +1553,14 @@ impl TerminalView {
             .border_t_1()
             .border_color(theme.border)
             .text_color(theme.secondary_foreground)
-            .child(message)
+            .child(div().flex_1().min_w_0().child(message))
             .child(
                 div()
                     .text_xs()
                     .text_color(theme.muted_foreground)
                     .child(shortcuts::with_shortcut("Close the tab", &CloseTab, cx)),
-            );
+            )
+            .children(restart);
         Some(banner.into_any_element())
     }
 }

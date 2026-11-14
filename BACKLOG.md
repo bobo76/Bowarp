@@ -10,6 +10,73 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+Git page switch and key:
+
+- In the app: Ctrl+Shift+G from a terminal running a program (e.g. `cat`) opens the page and
+  sends nothing to it; again goes back to the tab. With two tabs in different repositories,
+  the key and the button show the selected tab's repository; the sidebar row returns to the
+  one shown. The button's tooltip reads "Git (Ctrl+Shift+G)"; Settings → Keyboard lists
+  "Show the Git page, or go back to the tab" and a rebind applies.
+- Settings → Workspace → Git page off with a commit message typed: page, row and button go,
+  the key does nothing; on again and reopened, the message is still there.
+- macOS: Cmd+Shift+G opens the page and the tooltip shows it. Windows: Ctrl+Shift+G in cmd,
+  PowerShell and WSL tabs.
+
+Tab hover card "Changed files" piece:
+
+- In a repo with changes: Settings → Tab hover card shows "Changed files" (off) below
+  "Changes"; the hovered tab's card shows `+N` without the file list. On: the list appears
+  live, files open on click; Changes off hides both; Tab hover card off disables the row.
+
+Terminal right-click menu:
+
+- Windows: right-click in a cmd and a PowerShell tab opens the menu with the shortcut hints;
+  Copy, Paste (two lines into cmd asks first), Select all, Search, Clear scrollback and, on a
+  URL, Open link / Copy link work; in Claude Code (mouse tracking) a plain right-click goes to
+  the program and Shift+right-click opens the menu.
+- macOS: the hints show the Cmd keys, and Ctrl+click is not taken for the menu.
+
+Multi-line paste warning:
+
+- Windows: pasting two lines into a cmd tab and into a PowerShell tab asks "Paste 2 lines?";
+  Cancel sends nothing, Paste runs both. In a WSL bash tab (bracketed paste on) it doesn't ask.
+- Plain `ssh` to a host whose shell has bracketed paste on doesn't ask; in a nested `sh` it
+  asks.
+
+Viewer width from the free space:
+
+- Windows, at 100% and at a 150% display scale: with the sidebar and explorer open, the
+  viewer divider dragged to the far left leaves the terminal about 60 columns; in a window
+  too narrow for both the viewer keeps 240 px.
+
+Exited tabs (Restart, failed exit ring):
+
+- Windows: a PowerShell, cmd and WSL tab that ran `exit 3` shows the red ring with the cross
+  and "Exited (3)"; Restart, Enter and the tab menu start it again in its last folder.
+- Light and Sepia themes: the grey Exited ring (code 0) and the red one read clearly on a
+  selected and an unselected row.
+- A Copilot tab whose CLI fails (nonzero exit) restarts with its saved arguments; a real
+  Claude Code tab started with arguments (e.g. `--model`) restarts with them, no `--resume`.
+
+Start failures open the window:
+
+- Windows release build (no console): `agent-workspace bogus` opens the window with
+  "Invalid command line" and the usage; a missing folder opens the tab in the home folder
+  with the warning; a first tab that cannot start (e.g. Claude Code not installed,
+  `agent-workspace claude`) shows "Could not start", Retry and Open settings.
+- Windows: a default shell whose program cannot start, with the automatic shell (Git Bash /
+  PowerShell) working, still opens the fallback with its warning.
+
+Window attention and title:
+
+- Windows: with another window active, a Claude tab asking for permission (selected or not)
+  flashes the taskbar button once; activating the window stops it. Nothing flashes while the
+  app is the active window.
+- A real X11 desktop (GNOME/KDE on Xorg): the urgency mark (highlighted taskbar entry) appears
+  and clears when the window is focused.
+- The taskbar / Alt+Tab label follows the selected tab, its "(N)" count and the Settings / Git
+  pages (Windows and a Linux desktop).
+
 Git page, page and file staging:
 
 - Two tabs in different repositories and one outside any: the picker lists the two, the
@@ -330,54 +397,38 @@ Packaged apps on Windows and Linux: a smoke test and the About dialog's version 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-UX review, top 10 by value per cost ([reviews/ux-review.md](reviews/ux-review.md), IDs are
-its items), in order:
+- Git status outside the Git page, one switch "Git status in tabs and explorer" (on). Off: no
+  branch under tab names (the folder shows instead), no changed-file coloring and no
+  git-ignored dimming in the explorer, no `+N` in the hover card (its Changes option shown
+  disabled with the caption), and no `git` runs or watches for them. The Git page is
+  unaffected.
+- Agent status switch for agent tabs, "Agent status" (on), the parent of "Agent status for
+  agents typed at the prompt" (shown disabled under it). Off: new Claude Code and Copilot
+  tabs start without the generated `--settings` hooks and the plugin, and show "Recent
+  activity" like a shell, with no Working / Waiting / Ready for review, toasts or attention
+  requests. Applies to agents started afterwards; running ones keep theirs. The hook listener
+  may still start (other features need it) but tells no tab anything.
+- Background tab marks, switch "Bell and finished-command marks" (on): off means a bell, or a
+  long command ending, in a tab that isn't selected leaves no mark. Merge with the planned
+  "Long-command completion status" switch below, or keep that one under it; decide when
+  building.
 
-1. Ask the OS for attention (#11, needs the user's yes): when a tab turns Needs attention or
-   Ready for review while the window isn't active (Settings shown counts as background), call
-   `Window::request_attention` (Windows taskbar flash, X11 urgency; nothing on Wayland).
-   Follows the "In-app notifications" switch; cleared when the window activates. A system
-   notification (`show_system_notification`) and sound come later.
-2. Start failures open the window (#15): bad arguments (`main.rs:62`), a folder that isn't a
-   directory (`main.rs:130`) and the shell plus its fallback failing (`main.rs:351`) print to
-   stderr and exit, so on Windows the app seems not to start. A missing folder opens the tab
-   in the home folder with an error toast naming it; a total start failure or bad arguments
-   open the window with an error panel in the terminal area (message or usage, "Open
-   settings", Retry). Keep the stderr lines.
-3. Restart an exited tab (#17): a "Restart" button on the exit bar, and Enter while the tab
-   has the keyboard, start the same launch spec in the tab's last folder through
-   `replace_tab_session` (as `fall_back_to_shell` does); the tab keeps name, color, group and
-   place, scrollback is cleared (say so in the tooltip), agents restart with their saved
-   arguments (no `--continue`). Hide the cursor on a dead grid.
-4. Viewer width from the free space (#2): `viewer_width` takes `fraction * row` of the whole
-   window, capped so the terminal keeps only 240 px (`pane_width.rs:14-21`), ~28 columns with
-   the sidebar and explorer open. Take the fraction of `row - fixed` and raise
-   `MIN_TERMINAL_WIDTH` to ~60 columns (480 px); the viewer minimum (240) still wins in a
-   window too narrow for both. Pure function, unit-tested; saved `file_viewer_fraction` values
-   keep loading.
-5. Multi-line paste warning (F6): outside bracketed-paste mode every newline becomes Enter
-   (`keys.rs:66`), so in cmd, a nested shell or plain ssh a pasted snippet runs at once. When
-   the terminal isn't in bracketed-paste mode and the text has a newline, ask once ("Paste 4
-   lines? They will run as commands") with a preview. A safeguard, so no switch.
-6. Failed exit on the row (#6): Exited is the Quiet grey ring whatever the code
-   (`sidebar.rs:122`). A nonzero or unknown code gets a red ring with a small `×` and
-   "Exited (3)" in the hover card; code 0 keeps the grey ring, raised to >= 3:1 contrast.
-7. Right-click menu in the terminal (E1): today the right button only reaches programs that
-   track the mouse (`terminal_view.rs:1422`). Copy (disabled without a selection), Paste,
-   Select all, Search, Clear scrollback; on a link: Open, Copy link. With mouse reporting on,
-   Shift+right-click opens it. Each entry shows its shortcut.
-8. Shell tab names (#4, needs the user): a shell row shows the program's title
-   (`user@host: ~/path`), so shells in different folders look the same. With shell
-   integration, name the tab by the running command, else the folder's last component; the
-   program title moves to the hover card. A custom name always wins; agent tabs keep their
-   titles.
-9. Explorer Delete to the trash (F5): Delete is permanent today (`file_explorer.rs:1071`).
+UX review, top 10 by value per cost ([reviews/ux-review.md](reviews/ux-review.md), IDs are
+its items), regrouped into steps, in order:
+
+1. Shell tab names (#4, the user chose option A on 2026-11-13): a shell row shows the
+   program's title (`user@host: ~/path`), so shells in different folders look the same. With
+   shell integration, name the tab by the running command, else the folder's last component;
+   the program title moves to the hover card. A custom name always wins; agent tabs keep
+   their titles.
+2. Explorer Delete to the trash (F5): Delete is permanent today (`file_explorer.rs:1071`).
    Move to the system trash (Recycle Bin, freedesktop trash); keep the permanent delete with
    today's wording where no trash exists (network mounts, WSL paths). Check the new
    dependency with `cargo deny`.
-10. Window title follows the selected tab (#12): "<tab name> — Agent Workspace", prefixed
-    "(N) " while N tabs need attention, "Settings — Agent Workspace" while Settings shows. Set
-    only on selection, rename and status change (today fixed at `workspace_view.rs:430`).
+
+- System notification and sound for agent attention (follow-up of #11): beside the window's
+  attention request, `show_system_notification` and a sound, so the Settings / Git page in
+  the active window (where the request does nothing) also gets a signal.
 
 - Remote host status and control, in order (each ships alone):
   1. Start and Stop on Settings → Remote hosts: Start runs the daemon on the host over ssh;
@@ -611,7 +662,7 @@ limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the comma
 - Open the Git page on a tab's repository from its hover card's `+N`.
 - Git page diff: syntax highlighting (the file viewer's tree-sitter highlighting could provide
   it), word-level highlights inside changed lines, and a side-by-side view.
-- Git page, smaller items: stash, amend, a key to open the page, line staging of untracked
+- Git page, smaller items: stash, amend, line staging of untracked
   files (intent-to-add), cancelling a long commit hook.
 
 ## Parked ideas

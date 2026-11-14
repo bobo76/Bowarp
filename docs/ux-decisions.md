@@ -137,6 +137,16 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
 - **Hover card under the cursor when a hold ends** (rename, menu, dialog, drag) stays hidden
   until the pointer leaves the row, like Windows/VS Code tooltips. [UX agent]
 
+- **Restart an exited tab**: a primary "Restart" button on the exit bar's right, as the
+  remote bar's Reconnect (the "Close the tab" hint stays), plus "Restart" first in the tab
+  menu while exited, like Reconnect. Enter on the dead tab restarts; other keys still do
+  nothing. The tooltip names the program and says the scrollback is cleared. A remote exited
+  tab restarts on its host; a tab that fell back to a shell restarts the shell. A crashed
+  agent restarts in a new conversation (the step's "no --continue"); its tooltip says so. [pipeline]
+- **Failed exit badge**: a filled danger-red badge with a `×` (a hollow ring at 12 px has no
+  room for it), so it isn't told by color alone; light palettes use a darker red to reach 3:1; hover card "Exited (3)" or "Exited (no exit code)"; code 0 stays grey ("Exited"),
+  at >= 3:1 against the sidebar in every theme. [pipeline]
+
 ## Toasts
 
 - **Attention toast**: the jump key is in a tooltip only, worded "Go to the next tab needing
@@ -146,6 +156,36 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   hook program, listener, settings write, other). Shown once per window start, even with
   notifications off or only shell tabs, fixed id. Stacked above the fallback-shell warning,
   not merged. [UX agent]
+
+## Paste
+
+- **Multi-line paste warning**: a modal question like the busy-close one ("Paste 4 lines?
+  They will run as commands."), with a monospace preview of the first lines (rest summed up),
+  Paste (default, Enter) and Cancel (Esc); the keyboard goes back to the terminal. Asked for
+  each such paste, from every path (Ctrl+Shift+V, Shift+Insert, Ctrl+V, middle click), when
+  the program hasn't turned on bracketed paste and the text has a line break (a single
+  trailing newline counts: it runs at once). No switch and no "don't ask again": it is a
+  safeguard. [pipeline]
+
+- **Terminal right-click menu**: Copy, Paste, Select all, Search, Clear scrollback, and on a
+  link (found under the pointer, no Ctrl needed) Open link and Copy link first, then a
+  separator. Right-click keeps the selection. Shortcuts shown are the bound keys; Select all
+  and Clear scrollback get new actions with no default key (bindable in the settings file),
+  so no key is taken from programs. With mouse reporting on, plain right-click still goes to
+  the program and Shift+right-click opens the menu. Paste goes through the paste question.
+  [pipeline]
+
+## Window attention and title
+
+- **OS attention covers every tab, the selected one included**: a tab turning Needs attention
+  or Ready for review while the window isn't active (or Settings/Git shows) asks the OS once
+  per change; in-place agents in shell tabs count. Follows "In-app notifications". [pipeline]
+- **Window title**: the tab's name as the sidebar shows it (custom name, else program title),
+  kept current when that name changes; "Settings — " / "Git — " while those pages show; plain
+  "Agent Workspace" with no tab. "(N) " counts every tab needing attention, the selected one
+  included (seen from other apps), not Ready for review; it is status, so the notifications
+  switch doesn't hide it; it prefixes page titles too. Set only when the string changes.
+  A page shown in the active window asks nothing: the OS ignores it (known limitation). [pipeline]
 
 ## New tabs and the empty state
 
@@ -161,7 +201,27 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
 - **With no tab**: the explorer is hidden (state remembered), "Open settings file" is disabled
   ("Open a tab to view the file"), search and groups work as usual. [UX agent]
 - **Next start with zero saved tabs** restores the groups and opens the default shell as
-  usual, so there is always a tab after launch. [UX agent]
+  usual, so there is always a tab after launch, unless the start failed (below). [UX agent]
+- **A start that leaves no tab never exits**: the empty state shows an error block above its
+  launchers, the panel. Bad arguments get "Invalid command line", the message and the usage,
+  and no Retry (it would fail the same way), focus on the default shell button. A failed
+  requested shell (after its fallback) or agent gets "Could not start <program>", the error,
+  Retry (primary, focused: re-runs the same launch, fallback included) and "Open settings";
+  launchers open in that launch's folder. Text wraps and is never colour alone. Kept apart
+  from a new panel so the user always has another way to get a tab. The stderr lines stay.
+  [UX agent]
+- **Panel or toast**: the panel only when start ends with no tab. With restored tabs, bad
+  arguments are a persistent error toast (message and usage) and a failed requested tab
+  keeps today's error toast; a guest never restores, so it gets the panel. No shell is opened
+  in place of a failed agent: the panel's default button is one key away. [UX agent]
+- **Panel lifetime**: any tab opening (Retry, a launcher, `+`, new-tab key) clears the error
+  for good; closing that tab later shows the plain empty state. A failed Retry keeps the
+  panel, replaces the error and adds a "tried N times" line so the press visibly did
+  something; a failed launcher button toasts as in the plain empty state. [UX agent]
+- **Requested folder that is missing or not a folder** (a file too): the tab still opens, in
+  the home folder, with a persistent warning naming the path, like the fallback-shell
+  warning; same for agents, restored or guest windows. Remote folders aren't checked
+  locally. Rejected: a file's parent folder (a guess the user didn't ask for). [UX agent]
 
 ## Settings page and file panes
 
@@ -189,6 +249,16 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
 - **Plain `S` / `U` keys in the diff** (Shift for the hunk), since the diff never passes keys
   to a terminal. Tab and Shift+Tab walk message, list and diff; Tab in the message moves on
   rather than indenting. [plan]
+- **Opening picks the selected tab's repository**: the key and the title-bar button show the
+  repository the selected tab is in; when it is in none, the one shown stays (else the
+  first). Returning through the sidebar's Git row keeps the repository shown. Ctrl+Shift+G
+  toggles on the page being shown, not on its focus (the button keeps its focus rule).
+  [pipeline]
+- **"Git page" switch off** closes a shown page like Ctrl+Shift+W on its row (the selected
+  tab, or the empty state, gets the keyboard) and keeps the page with its commit drafts,
+  hidden and not watching. While off the button and row are gone and the key and every other
+  entry do nothing; turned back on, the button returns and the row only when the page opens.
+  [pipeline]
 
 ## Remote hosts (Settings page)
 

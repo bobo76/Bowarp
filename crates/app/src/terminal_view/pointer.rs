@@ -1,8 +1,6 @@
 //! The mouse over the grid: wheel scrolling, text selection, and reports to programs that
 //! track the mouse.
 
-#[cfg(target_os = "linux")]
-use gpui_kit::ClipboardItem;
 use gpui_kit::{
     Context, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
     ScrollDelta, ScrollWheelEvent, Window,
@@ -113,6 +111,7 @@ impl TerminalView {
     ) {
         window.focus(&self.focus_handle, cx);
         self.close_history_popup(cx);
+        self.context_menu.cancel_opening();
         // A link takes the click before the program's mouse reports and the selection.
         if self.open_clicked_link(event, cx) {
             return;
@@ -129,8 +128,16 @@ impl TerminalView {
             MouseButton::Left => self.start_selection(event, cx),
             #[cfg(target_os = "linux")]
             MouseButton::Middle => {
-                self.paste(cx.read_from_primary().and_then(|item| item.text()), cx);
+                let text = cx.read_from_primary().and_then(|item| item.text());
+                // After this click: GPUI gives a clicked element the focus once its handlers
+                // ran, which would take it back from the paste question's dialog.
+                let view = cx.entity();
+                window.defer(cx, move |window, cx| {
+                    view.update(cx, |view, cx| view.paste(text, window, cx));
+                });
             }
+            // Keeps the selection, for the menu's Copy.
+            MouseButton::Right => self.request_context_menu(event.position, window, cx),
             _ => {}
         }
     }
@@ -198,13 +205,7 @@ impl TerminalView {
             return;
         }
         self.pointer.selecting = false;
-        let text = self.session.finish_selection();
-        #[cfg(target_os = "linux")]
-        if let Some(text) = text.filter(|text| !text.is_empty()) {
-            cx.write_to_primary(ClipboardItem::new_string(text));
-        }
-        #[cfg(not(target_os = "linux"))]
-        let _ = text;
+        super::write_primary(self.session.finish_selection(), cx);
         cx.notify();
     }
 }

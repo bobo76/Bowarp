@@ -21,6 +21,8 @@ use crate::workspace_view::DuplicateTab;
 pub enum TabCommand {
     /// Attach a remote tab whose connection was lost to its session again.
     Reconnect,
+    /// Start an exited tab's program again.
+    Restart,
     Duplicate,
     TogglePin,
     NewGroup,
@@ -43,6 +45,8 @@ pub enum TabCommand {
 pub struct TabMenuState {
     /// A remote tab lost its connection: "Reconnect" comes first.
     pub can_reconnect: bool,
+    /// The tab's program exited: "Restart" comes first.
+    pub can_restart: bool,
     pub pinned: bool,
     /// The tab has a custom name, so "Reset name" is offered.
     pub has_custom_name: bool,
@@ -80,6 +84,10 @@ pub fn build(
     menu.min_w(px(crate::ui_dimensions::MENU_WIDTH))
         .when(state.can_reconnect, |menu| {
             menu.item(item("Reconnect", TabCommand::Reconnect, true))
+                .separator()
+        })
+        .when(state.can_restart, |menu| {
+            menu.item(item("Restart", TabCommand::Restart, true))
                 .separator()
         })
         .item(

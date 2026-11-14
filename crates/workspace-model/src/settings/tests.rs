@@ -31,7 +31,7 @@ fn tab_card_defaults_each_missing_or_wrong_typed_field_independently() {
     }
     let settings = Settings::from_json(
         r#"{"tab_card":{"enabled":false,"status":"false","location":false,
-        "changes":null,"program_title":42,"session_kind":[]},
+        "changes":null,"changed_files":"true","program_title":42,"session_kind":[]},
         "claude_args":"--model 'opus'","copilot_args":false}"#,
     )
     .unwrap();
@@ -60,6 +60,8 @@ fn tab_card_set_keeps_only_checked_pieces_without_computing_the_rest() {
         TabCardField::ProgramTitle,
         TabCardField::SessionKind,
     ];
+    // ChangedFiles is a sub-piece of Changes, tested in
+    // `changed_files_needs_changes_and_does_not_show_the_card_alone`.
     let none = TabCardFields {
         status: false,
         location: false,
@@ -77,6 +79,7 @@ fn tab_card_set_keeps_only_checked_pieces_without_computing_the_rest() {
             TabCardField::Changes => one.changes = true,
             TabCardField::ProgramTitle => one.program_title = true,
             TabCardField::SessionKind => one.session_kind = true,
+            TabCardField::ChangedFiles => unreachable!("not in `fields`"),
         }
         assert!(one.active());
         for (other, field) in fields.iter().enumerate() {
@@ -89,6 +92,51 @@ fn tab_card_set_keeps_only_checked_pieces_without_computing_the_rest() {
             None::<()>
         );
     }
+}
+
+#[test]
+fn changed_files_is_off_when_missing_or_not_a_boolean() {
+    assert!(!TabCardFields::default().changed_files);
+    for value in ["null", "\"true\"", "1", "[]", "{}"] {
+        let text = format!(r#"{{"tab_card":{{"changed_files":{value}}}}}"#);
+        let settings = Settings::from_json(&text).unwrap();
+        assert_eq!(settings.tab_card, TabCardFields::default(), "{value}");
+    }
+    let text = r#"{"tab_card":{"changed_files":true}}"#;
+    assert!(Settings::from_json(text).unwrap().tab_card.changed_files);
+}
+
+#[test]
+fn changed_files_needs_changes_and_does_not_show_the_card_alone() {
+    let on = TabCardFields {
+        changed_files: true,
+        ..TabCardFields::default()
+    };
+    assert!(on.keeps(TabCardField::ChangedFiles));
+    assert!(!TabCardFields::default().keeps(TabCardField::ChangedFiles));
+    let without_changes = TabCardFields {
+        changes: false,
+        ..on
+    };
+    assert!(without_changes.keeps(TabCardField::Status));
+    assert_eq!(
+        without_changes.keep(TabCardField::ChangedFiles, || panic!("computed")),
+        None::<()>
+    );
+    let only_files = TabCardFields {
+        status: false,
+        location: false,
+        changes: false,
+        program_title: false,
+        session_kind: false,
+        ..on
+    };
+    assert!(!only_files.active());
+    let disabled = TabCardFields {
+        enabled: false,
+        ..on
+    };
+    assert!(!disabled.keeps(TabCardField::ChangedFiles));
 }
 
 #[test]
@@ -960,6 +1008,23 @@ fn file_panes_switch_defaults_on_round_trips_and_falls_back_when_mistyped() {
         assert!(settings.file_panes.is_on(), "{wrong}");
     }
     assert!(Settings::from_json("{}").unwrap().file_panes.is_on());
+}
+
+#[test]
+fn git_page_switch_defaults_on_round_trips_and_falls_back_when_mistyped() {
+    assert!(Settings::default().git_page.is_on());
+    let off = Settings {
+        git_page: FeatureSwitch::new(false),
+        ..Settings::default()
+    };
+    let json = off.to_json().unwrap();
+    let value: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["git_page"], Value::Bool(false));
+    assert_eq!(Settings::from_json(&json).unwrap(), off);
+    for wrong in ["\"no\"", "0", "null", "[]"] {
+        let settings = Settings::from_json(&format!(r#"{{"git_page": {wrong}}}"#)).unwrap();
+        assert!(settings.git_page.is_on(), "{wrong}");
+    }
 }
 
 #[test]

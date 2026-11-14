@@ -10,12 +10,35 @@ entry when the limitation is lifted.
   integration's marks (a shell started inside a tab, ssh), jobs left running in the
   background (`&`), Copilot before its first progress report and agents without status
   hooks.
+- The multi-line paste question goes by the bracketed-paste mode only: a program that hasn't
+  turned it on asks before every paste with a line break, also when it would not run the
+  lines (an editor, PowerShell's PSReadLine without bracketed paste), and one that has turned
+  it on never asks, whatever it does with the lines. Exited tabs don't ask. A preview line is
+  cut by characters, so wide characters or a narrow window can clip it without the `…`. A
+  single-line paste outside bracketed paste can still hold control bytes (ESC sequences such as
+  keypad Enter, or a control key the shell binds to accept-line) that run it, without a
+  question.
+- The terminal's right-click menu offers Open link / Copy link for a path only when the file
+  lookup answers within 300 ms (a slow network mount opens the menu without them). Copy link
+  copies a file link's resolved path, not the text as printed (`:42` is dropped). Clear
+  scrollback on a remote tab clears this window's copy only: the server keeps its scrollback,
+  and a reconnect shows it again. Clear scrollback is unavailable while a full-screen program
+  (vim, less) shows; leave it first.
 - In-app notifications off drops only the agent status toasts (Needs attention / Waiting for
   permission / Waiting for your reply, Ready for review, Agent finished on a clean exit); a
   toast already shown stays until it hides. A background agent that exits with a nonzero or
   unknown code still toasts, as do user-action feedback (save, delete, clear history, start
   failures) and the persistent fallback-shell and agent-status-off warnings. Agent toasts are
   keyed per tab, so a new one replaces the tab's earlier one.
+- The window's attention request (taskbar flash, X11 urgency) does nothing on Wayland, and
+  nothing while the app is the active window, also when the Settings or Git page hides the
+  tabs: X11 and Windows ignore a request from the active window. Windows flashes the taskbar
+  button once. Programs that ring the bell in the selected tab, or a tab whose status is
+  already Needs attention, ask nothing new.
+- Start failures: Retry in the empty state re-runs the launch as resolved at start, so a
+  default shell changed meanwhile in Settings is not picked up by Retry (the launcher buttons
+  and Ctrl+Shift+T use it). A folder named with `--remote` is not checked before connecting.
+  Only start-up shows the error in the empty state; a tab that fails to open later toasts.
 - Agent status off (`agentws-hook` missing or the status listener could not start): Claude
   Code tabs fall back to output activity ("Status unavailable" when quiet) and a bell asks for
   attention as in a shell; a Copilot CLI permission prompt reads Working, not Needs attention,
@@ -157,14 +180,16 @@ entry when the limitation is lifted.
   tabs only: open and restored tabs keep the shell they started with. On Unix, when `$SHELL`
   isn't listed, the first tab runs it but Ctrl+Shift+T opens the first listed shell (the
   page then says just "Automatic").
-- File viewer width: saved as a share of the window (`file_viewer_fraction`, 0-1 in the
-  file; the 240 px minimums for the viewer and the terminal still apply) when a divider drag
-  ends or the divider is double-clicked, not on the settings page. Another running instance
-  shows it only after it reloads the settings file (see above). While the file is broken the
-  width isn't saved (the file is left for the user to fix) and lasts until the file is read
-  again. A drag whose release the app misses (a right or middle button released outside the
-  window, or on Windows a focus change such as Alt+Tab mid-drag) keeps the dragged width and
-  saves it at the next mouse release anywhere; it is lost only if the app quits first.
+- File viewer width: saved as a share of the width the sidebar and explorer leave
+  (`file_viewer_fraction`, 0-1 in the file; the viewer's 240 px and the terminal's 480 px
+  minimums still apply) when a divider drag ends or the divider is double-clicked, not on the
+  settings page. Another running instance shows it only after it reloads the settings file
+  (see above). While the file is broken the width isn't saved (the file is left for the user
+  to fix) and lasts until the file is read again. A drag whose release the app misses (a
+  right or middle button released outside the window, or on Windows a focus change such as
+  Alt+Tab mid-drag) keeps the dragged width and saves it at the next mouse release anywhere;
+  it is lost only if the app quits first. A fraction saved by an earlier version (a share of
+  the whole window) now gives a narrower viewer, as the same share of the free width.
 - File explorer width: dragged by the 6 px strip on the explorer's right edge (double-click
   for 300 px), kept between 150 and 600 px whatever the window size (a narrow window can
   leave the terminal and viewer below their usual minimums), and saved in pixels

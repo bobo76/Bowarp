@@ -3,9 +3,11 @@ mod divider_drag;
 mod empty_state;
 mod git_pane;
 mod reconnect;
+mod restart;
 mod settings_pane;
 mod sidebar_rows;
 mod spinner_clock;
+mod start_failure;
 mod tab_card;
 mod tab_list;
 mod tab_search;
@@ -35,14 +37,15 @@ use workspace_model::layout::Direction;
 use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION, ExplorerWidth, ViewerFraction};
 use workspace_model::{
     Attention, DropTarget, FeatureSwitch, FileLinkAction, GroupId, Layout, PaneChange, PaneEntry,
-    Shortcut, TabColor, TabHistory, TabId, TabMeta, TabsState, ToastKind, exit_toast_kind,
-    next_attention, pane_change, waiting_count,
+    Shortcut, TabColor, TabHistory, TabId, TabMeta, TabsState, TitleSubject, ToastKind,
+    exit_toast_kind, next_attention, pane_change, waiting_count, window_title,
 };
 
 use self::divider_drag::DividerDrag;
 use self::git_pane::GitPane;
 use self::settings_pane::SettingsPane;
 use self::spinner_clock::SpinnerClock;
+use self::start_failure::StartFailure;
 use self::tab_card::TabCards;
 use self::tab_list::TabList;
 use self::tab_search::TabSearch;
@@ -59,14 +62,14 @@ use crate::settings_file;
 use crate::settings_page::{self, SettingsFileButton};
 use crate::shell_integration;
 use crate::shortcuts::{
-    self, ATTENTION_KEY, CLOSE_TAB_KEY, DUPLICATE_TAB_KEY, EXPLORER_KEY, NEW_TAB_KEY, SEARCH_KEY,
-    SIDEBAR_KEY,
+    self, ATTENTION_KEY, CLOSE_TAB_KEY, DUPLICATE_TAB_KEY, EXPLORER_KEY, GIT_PAGE_KEYS,
+    NEW_TAB_KEY, SEARCH_KEY, SIDEBAR_KEY,
 };
-use crate::sidebar::{self, SIDEBAR_WIDTH};
+use crate::sidebar::{self, SIDEBAR_WIDTH, TabStatus};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
 use crate::terminal_view::{
-    AgentExited, AgentNotice, LastCommandChanged, OpenFileRequest, RemoteAction,
+    AgentExited, AgentNotice, LastCommandChanged, OpenFileRequest, RemoteAction, RestartTab,
     ResumeConversation, ResumeFailed, StatusReporting, TabChanged, TerminalView,
 };
 use crate::window_bounds;
@@ -88,6 +91,7 @@ actions!(
         CloseTab,
         ToggleSidebar,
         ToggleExplorer,
+        ToggleGitPage,
         SearchTabs,
         NextAttention,
         GoBack,
@@ -146,6 +150,7 @@ fn default_bindings() -> Vec<Shortcut> {
         bind("ctrl-alt-right", &GoForward),
         bind("ctrl-`", &LastTab),
         bind(&format!("ctrl-{EXPLORER_KEY}"), &ToggleExplorer),
+        bind(GIT_PAGE_KEYS, &ToggleGitPage),
         bind("ctrl-1", &SelectTab1),
         bind("ctrl-2", &SelectTab2),
         bind("ctrl-3", &SelectTab3),
@@ -201,7 +206,7 @@ pub enum TabOwnership {
 }
 
 /// What the workspace follows of a tab's session view (`listen_to_tab`).
-type TabSubscriptions = [Subscription; 8];
+type TabSubscriptions = [Subscription; 9];
 
 struct Tab {
     /// The first session's id, which stays with the tab when tabs move (and when an agent's
@@ -318,6 +323,9 @@ pub struct WorkspaceView {
     /// The folder of the tab whose closing left no tab: where the next new tab starts (memory
     /// only). Cleared when a tab opens.
     last_closed_folder: Option<PathBuf>,
+    /// Why start-up left the window without a tab, shown in the empty state (set by
+    /// `show_start_failure`, cleared for good when a tab opens).
+    start_failure: Option<StartFailure>,
     /// The sidebar menu (tab, group, `+`) that is open, if any.
     menu: OpenMenu,
     search: TabSearch,
@@ -341,6 +349,14 @@ pub struct WorkspaceView {
     history_seen: (u32, u32),
     _history_observer: Subscription,
     _visibility_observer: Subscription,
+    /// The title last given to the window, so it is set only when it changes.
+    window_title: String,
+    /// Each tab's status at the last `sync_window`, to see which tab turned to want the user.
+    window_statuses: Vec<(u64, TabStatus)>,
+    _window_sync: Subscription,
+    /// How many times the window asked the OS for attention (test windows don't record it).
+    #[cfg(test)]
+    attention_requests: usize,
 }
 
 fn history_counts(cx: &App) -> (u32, u32) {
@@ -358,10 +374,7 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) {
         let message = format!("{failure}. Started a fallback shell instead.");
-        // Startup runs before the notification layer's root exists.
-        cx.defer_in(window, move |_, window, cx| {
-            window.push_notification(Notification::warning(message).autohide(false), cx);
-        });
+        self.warn_until_dismissed(message, window, cx);
     }
 
     /// The status hooks could not start: say so until dismissed. A fixed id, so it never
@@ -428,6 +441,9 @@ impl WorkspaceView {
         let explorer = cx.new(|cx| FileExplorer::new(agents, window, cx));
         let explorer_events = cx.subscribe_in(&explorer, window, Self::on_explorer_event);
         window.set_window_title(about::APP_NAME);
+        let window_sync = cx.observe_in(&cx.entity(), window, |workspace, _, window, cx| {
+            workspace.sync_window(window, cx);
+        });
         let file_panes_observer = cx.observe_global_in::<settings_file::AppSettings>(
             window,
             Self::apply_file_panes_setting,
@@ -460,6 +476,7 @@ impl WorkspaceView {
             empty_focus: cx.focus_handle(),
             focus_empty_default: false,
             last_closed_folder: None,
+            start_failure: None,
             menu: OpenMenu::default(),
             search: TabSearch::new(window, cx),
             tab_list: TabList::new(cx),
@@ -471,13 +488,18 @@ impl WorkspaceView {
             launchers,
             hooks,
             settings: SettingsPane::new(cx),
-            git: GitPane::default(),
+            git: GitPane::new(window, cx),
             _hook_messages: hook_task,
             _explorer_events: explorer_events,
             _file_panes_observer: file_panes_observer,
             history_seen,
             _history_observer: history_observer,
             _visibility_observer: visibility_observer,
+            window_title: about::APP_NAME.to_owned(),
+            window_statuses: Vec::new(),
+            _window_sync: window_sync,
+            #[cfg(test)]
+            attention_requests: 0,
         }
     }
 
@@ -545,6 +567,7 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) {
         self.last_closed_folder = None;
+        self.start_failure = None;
         match place {
             NewTabPlace::End => self.layout.add(id),
             NewTabPlace::After(tab) => self.layout.add_after(id, tab),
@@ -697,7 +720,7 @@ impl WorkspaceView {
     }
 
     /// Follow tab `tab_id`'s session view: what it shows, its agent exiting, files it opens,
-    /// agent notices, its last command and a remote tab's Reconnect or Start new.
+    /// agent notices, its last command, a remote tab's Reconnect or Start new and Restart.
     fn listen_to_tab(
         &mut self,
         tab_id: u64,
@@ -754,6 +777,13 @@ impl WorkspaceView {
                 workspace.start_new_conversation(tab_id, window, cx);
             },
         );
+        let restart = cx.subscribe_in(
+            view,
+            window,
+            move |workspace, _, _: &RestartTab, window, cx| {
+                workspace.restart_tab(tab_id, window, cx);
+            },
+        );
         [
             changed,
             exited,
@@ -763,6 +793,7 @@ impl WorkspaceView {
             remote,
             resume,
             resume_failed,
+            restart,
         ]
     }
 
@@ -1459,6 +1490,7 @@ impl WorkspaceView {
         let own_group = self.layout.group_of(id).map(|group| group.id);
         Some(TabMenuState {
             can_reconnect: self.can_reconnect(id, cx),
+            can_restart: self.can_restart(id, cx),
             pinned: self.layout.is_pinned(id),
             has_custom_name: tab.meta.custom_name.is_some(),
             other_groups: self
@@ -1491,6 +1523,11 @@ impl WorkspaceView {
         let location = self.tabs[index].view.read(cx).location().cloned();
         match command {
             TabCommand::Reconnect => self.reconnect(id, window, cx),
+            // After the menu closed and gave the keyboard back to the old terminal, which
+            // hands it to the new one.
+            TabCommand::Restart => cx.defer_in(window, move |workspace, window, cx| {
+                workspace.restart_tab(id, window, cx);
+            }),
             TabCommand::Duplicate => self.duplicate_tab(index, window, cx),
             TabCommand::TogglePin => {
                 self.layout.toggle_pin(id);
@@ -1744,6 +1781,76 @@ impl WorkspaceView {
         if let Some(index) = next_attention(&self.attention(cx), self.current_index()) {
             self.activate(index, window, cx);
         }
+    }
+
+    /// Keep the window's title and the OS attention request in step with the tabs. Runs on
+    /// every notify of the workspace: selecting a tab, renaming one, showing a page and a tab's
+    /// status or title changing (`TabChanged`) all notify it, also while the window is hidden.
+    fn sync_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.any_tab_turned_to_want_user(cx) {
+            self.request_attention(window, cx);
+        }
+        self.sync_window_title(window, cx);
+    }
+
+    /// Record each tab's status; whether one turned to want the user since the last call.
+    fn any_tab_turned_to_want_user(&mut self, cx: &App) -> bool {
+        let statuses: Vec<(u64, TabStatus)> = self
+            .tabs
+            .iter()
+            .map(|tab| (tab.id, tab.view.read(cx).tab_status()))
+            .collect();
+        let previous = std::mem::replace(&mut self.window_statuses, statuses);
+        self.window_statuses.iter().any(|&(id, after)| {
+            previous
+                .iter()
+                .find(|&&(seen, _)| seen == id)
+                .is_some_and(|&(_, before)| after.wants_user_after(before))
+        })
+    }
+
+    /// Ask the OS to flag the window, unless the user already looks at the tabs or turned the
+    /// agent status notifications off. The platform ignores the request while the window is
+    /// active (X11, Windows) and withdraws it when the window activates.
+    fn request_attention(&mut self, window: &mut Window, cx: &App) {
+        let tabs_in_view = window.is_window_active() && !self.shows_page();
+        if tabs_in_view || !settings_file::notifications(cx).shows(ToastKind::AgentStatus) {
+            return;
+        }
+        window.request_attention();
+        #[cfg(test)]
+        {
+            self.attention_requests += 1;
+        }
+    }
+
+    fn sync_window_title(&mut self, window: &mut Window, cx: &App) {
+        let attention: Vec<Option<Attention>> = self
+            .window_statuses
+            .iter()
+            .map(|(_, status)| status.attention())
+            .collect();
+        let tab_name = self
+            .active_tab()
+            .map(|tab| tab.meta.display_name(tab.view.read(cx).name()));
+        let subject = self.title_subject(tab_name);
+        let title = window_title(about::APP_NAME, subject, waiting_count(&attention, None));
+        if title == self.window_title {
+            return;
+        }
+        window.set_window_title(&title);
+        self.window_title = title;
+    }
+
+    /// What the title names: the page shown, else the selected tab.
+    fn title_subject<'a>(&self, tab_name: Option<&'a str>) -> TitleSubject<'a> {
+        if self.settings.shows_page() {
+            return TitleSubject::Page("Settings");
+        }
+        if self.git.shows_page() {
+            return TitleSubject::Page("Git");
+        }
+        tab_name.map_or(TitleSubject::Nothing, TitleSubject::Tab)
     }
 
     /// How many other tabs than the selected one wait for a permission decision or an answer.
@@ -2138,19 +2245,23 @@ impl WorkspaceView {
         }
     }
 
-    /// The file viewer's share of the window width: the one being dragged, else the saved one
+    /// The file viewer's share of the free width: the one being dragged, else the saved one
     /// (which follows the settings file when it is reloaded).
     fn viewer_fraction(&self, cx: &App) -> f32 {
         self.viewer_drag
             .current(|| settings_file::settings(cx).file_viewer_fraction.get())
     }
 
-    /// Follow a divider drag in memory only: [`Self::end_divider_drag`] saves it.
+    /// Follow a divider drag in memory only: [`Self::end_divider_drag`] saves it. A window too
+    /// narrow for both panes keeps the saved width (the divider can't move).
     fn drag_divider(&mut self, event: &DragMoveEvent<ViewerDivider>, cx: &mut Context<Self>) {
         let row = event.bounds;
         let x = f32::from(event.event.position.x - row.origin.x);
-        let fraction =
-            pane_width::fraction_at(x, f32::from(row.size.width), self.fixed_panes_width(cx));
+        let Some(fraction) =
+            pane_width::fraction_at(x, f32::from(row.size.width), self.fixed_panes_width(cx))
+        else {
+            return;
+        };
         if self.viewer_drag.follow(fraction, self.viewer_fraction(cx)) {
             cx.notify();
         }
@@ -2388,6 +2499,10 @@ impl Render for WorkspaceView {
                 workspace.press_explorer_toggle(window, cx);
                 cx.stop_propagation();
             }))
+            .capture_action(cx.listener(|workspace, _: &ToggleGitPage, window, cx| {
+                workspace.toggle_git_page(window, cx);
+                cx.stop_propagation();
+            }))
             .capture_action(cx.listener(|workspace, _: &SearchTabs, window, cx| {
                 workspace.focus_search(window, cx);
                 cx.stop_propagation();
@@ -2471,7 +2586,9 @@ impl Render for WorkspaceView {
                                 buttons.child(self.explorer_toggle(cx))
                             })
                             .child(about::about_button())
-                            .child(self.git_button(cx))
+                            .when(self.git.enabled(), |buttons| {
+                                buttons.child(self.git_button(cx))
+                            })
                             .child(self.settings_button(cx)),
                     ),
             )

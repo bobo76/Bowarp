@@ -1,10 +1,10 @@
 //! What the workspace knows about its tabs beyond the terminal itself: where each session
 //! works, which git branch that folder is on, what the user set on each tab (name, color), and
 //! how tabs are laid out (pinned, groups, order), which tabs a sidebar search matches and which
-//! tab wants attention next, how long a session has been in its status, and where the window
-//! and its tabs were when it closed, which running instance owns that save, which icon each
-//! new-tab launcher shows, the file explorer's tree, how the file viewer shows a file and how
-//! wide it is, the links in terminal output and documents, the
+//! tab wants attention next, the window's title, how long a session has been in its status, and
+//! where the window and its tabs were when it closed, which running instance owns that save,
+//! which icon each new-tab launcher shows, the file explorer's tree, how the file viewer shows
+//! a file and how wide it is, the links in terminal output and documents, the
 //! shell commands run in the app (history), the shell integration marks (OSC 133) in a shell's
 //! output, the progress reports (OSC 9;4) in a program's output, how a running command is
 //! labeled and badged, which tabs closing would interrupt, which clipboard writes wait for the
@@ -23,6 +23,7 @@ mod clipboard_guard;
 mod close_warning;
 mod conversation;
 mod diff_colors;
+mod exit_status;
 mod file_pane_features;
 pub mod file_tree;
 pub mod file_view;
@@ -42,17 +43,20 @@ mod location;
 mod notification_features;
 mod osc133;
 pub mod pane_width;
+mod paste_warning;
 mod platform;
 mod progress;
 mod remote_hosts;
 mod running;
 mod search;
 mod settings;
+mod start_error;
 mod subagents;
 mod tab;
 mod tab_history;
 mod tab_list;
 mod tabs_state;
+mod terminal_menu;
 mod time;
 mod wheel;
 mod window_background;
@@ -67,7 +71,7 @@ pub use agents::{
     Presentation, SessionKind, StatusPolicy, SubagentHooks, agents, apply_environment,
     is_spawn_tool, reads_unnamed_subagent_start,
 };
-pub use attention::{Attention, next_attention, waiting_count};
+pub use attention::{Attention, TitleSubject, next_attention, waiting_count, window_title};
 pub use clipboard_guard::{
     CLIPBOARD_PREVIEW_CHARS, ClipboardAnswer, ClipboardGuard, ClipboardNotice, ClipboardOffer,
     ClipboardPolicy, ClipboardTarget, ClipboardWrites,
@@ -78,6 +82,7 @@ pub use close_warning::{
 };
 pub use conversation::Conversation;
 pub use diff_colors::{DiffColors, RgbaColor};
+pub use exit_status::{contrast_ratio, exit_failed, exit_label};
 pub use file_pane_features::{
     FileLinkAction, FilePaneFeatures, PaneChange, PaneEntry, pane_change,
 };
@@ -110,6 +115,7 @@ pub use layout::{
 pub use location::{Location, display_path};
 pub use notification_features::{NotificationFeatures, ToastKind, exit_toast_kind};
 pub use osc133::{CommandLine, Osc133Scanner, PromptMark, new_mark_token};
+pub use paste_warning::{PasteWarning, paste_warning};
 pub use platform::Platform;
 pub use progress::{ProgressScanner, ProgressState};
 pub use remote_hosts::{
@@ -124,11 +130,13 @@ pub use settings::{
     DependentState, FeatureSwitch, FontSize, Settings, SettingsFile, SettingsLoad, TabCardField,
     TabCardFields, TerminalColors, UiTheme, installed_font_family, settings_backup_path,
 };
+pub use start_error::{StartError, folder_fallback};
 pub use subagents::{Subagent, SubagentEvent, Subagents};
 pub use tab::{TabColor, TabMeta};
 pub use tab_history::TabHistory;
 pub use tab_list::{ListMove, list_entry, list_step, listed_tabs};
 pub use tabs_state::{SavedKind, SavedTab, TabsState};
+pub use terminal_menu::{TerminalMenuEntry, TerminalMenuState, terminal_menu};
 pub use wheel::{WheelScroll, notch_lines};
 pub use window_background::{
     BLUR_NEEDS_OPACITY, BLUR_UNAVAILABLE, Backdrop, BlurControl, BlurSupport, MICA_FALLBACK,

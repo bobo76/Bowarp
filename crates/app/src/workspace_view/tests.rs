@@ -15,7 +15,7 @@ fn wait_for_exit(session: &term_core::Session) {
 #[test]
 fn default_bindings_name_workspace_actions() {
     let bindings = default_bindings();
-    assert_eq!(bindings.len(), 23);
+    assert_eq!(bindings.len(), 24);
     assert!(
         bindings
             .iter()
@@ -2451,4 +2451,316 @@ fn the_tab_list_cannot_take_the_keyboard_without_a_tab(cx: &mut gpui_kit::TestAp
             );
         });
     }
+}
+
+#[gpui::test]
+fn window_title_and_attention_follow_the_tabs(cx: &mut gpui_kit::TestAppContext) {
+    use term_core::SessionEvent;
+
+    let mut h = PanesHarness::new("window-title", cx);
+    let workspace = h.workspace.clone();
+    let title = |h: &mut PanesHarness| h.cx.window_title().unwrap_or_default();
+    let requests = |h: &mut PanesHarness| {
+        h.workspace
+            .read_with(&h.cx, |workspace, _| workspace.attention_requests)
+    };
+    let name =
+        h.cx.update(|_, cx| WorkspaceView::tab_name(&workspace.read(cx).tabs[0], cx));
+    assert_eq!(
+        title(&mut h),
+        format!("{name} \u{2014} {}", about::APP_NAME)
+    );
+
+    // A rename shows at once; the Settings page names itself.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let id = workspace.tabs[0].id;
+            workspace.start_rename(RenameTarget::Tab(id), RenameOrigin::Menu, window, cx);
+            let input = workspace.renaming.as_ref().unwrap().input.clone();
+            input.update(cx, |input, cx| input.set_value("build", window, cx));
+            workspace.commit_rename(window, cx);
+        })
+    });
+    h.cx.run_until_parked();
+    assert_eq!(title(&mut h), "build \u{2014} Agent Workspace");
+    h.cx.update(|window, cx| workspace.update(cx, |w, cx| w.open_settings(window, cx)));
+    h.cx.run_until_parked();
+    assert_eq!(title(&mut h), "Settings \u{2014} Agent Workspace");
+    h.cx.update(|window, cx| workspace.update(cx, |w, cx| w.activate(0, window, cx)));
+    h.cx.run_until_parked();
+    assert_eq!(title(&mut h), "build \u{2014} Agent Workspace");
+
+    // A second tab, selected: a bell in the first one (hidden) makes it need attention.
+    let ring_first = |h: &mut PanesHarness| {
+        let workspace = h.workspace.clone();
+        h.cx.update(|_, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.tabs[0].view.update(cx, |view, cx| {
+                    view.revive_for_test();
+                    view.dispatch_test_event(SessionEvent::Bell, cx);
+                });
+            })
+        });
+        h.cx.run_until_parked();
+    };
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let spec = workspace.tabs[0].spec.clone();
+            workspace.open_tab(spec, window, cx).unwrap();
+            wait_for_exit(&workspace.tabs[1].view.read(cx).session);
+            workspace.tabs[1].meta.rename("other");
+        })
+    });
+    h.cx.run_until_parked();
+    assert_eq!(title(&mut h), "other \u{2014} Agent Workspace");
+    assert_eq!(
+        requests(&mut h),
+        0,
+        "opening and selecting a tab asks nothing"
+    );
+    ring_first(&mut h);
+    assert_eq!(title(&mut h), "(1) other \u{2014} Agent Workspace");
+    assert_eq!(requests(&mut h), 1, "a test window is never active");
+    // Seeing the tab clears it; the count includes the selected tab.
+    h.cx.update(|window, cx| workspace.update(cx, |w, cx| w.activate(0, window, cx)));
+    h.cx.run_until_parked();
+    assert_eq!(title(&mut h), "build \u{2014} Agent Workspace");
+
+    // The "In-app notifications" switch gates the request, not the count.
+    h.cx.update(|window, cx| {
+        settings_file::update(cx, |settings| {
+            settings.in_app_notifications = FeatureSwitch::new(false);
+        });
+        workspace.update(cx, |w, cx| w.activate(1, window, cx));
+    });
+    h.cx.run_until_parked();
+    ring_first(&mut h);
+    assert_eq!(title(&mut h), "(1) other \u{2014} Agent Workspace");
+    assert_eq!(requests(&mut h), 1);
+}
+
+/// A first tab that would not start leaves the window open with the error in the empty state:
+/// the launchers start in its folder, a failed Retry counts, and a new tab clears the error.
+#[cfg(unix)]
+#[gpui::test]
+fn a_failed_start_shows_the_error_until_a_tab_opens(cx: &mut gpui_kit::TestAppContext) {
+    use workspace_model::StartError;
+    use workspace_model::agents::CLAUDE;
+
+    let mut h = PanesHarness::new("start-failure", cx);
+    let workspace = h.workspace.clone();
+    let missing = LaunchSpec::new(
+        SessionKind::Agent(CLAUDE),
+        Some("/nonexistent/agentws-missing".into()),
+        Vec::new(),
+        Some(h.folder.clone()),
+    );
+    let details = |h: &mut PanesHarness| {
+        h.workspace.read_with(&h.cx, |workspace, _| {
+            workspace
+                .start_failure
+                .as_ref()
+                .map(|failure| (failure.error.heading(), failure.error.details()))
+        })
+    };
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.close_tab(0, window, cx);
+            workspace.open_first_tab(missing.clone(), window, cx);
+        })
+    });
+    h.cx.run_until_parked();
+    let (heading, lines) = details(&mut h).expect("the error shows");
+    assert_eq!(heading, "Could not start /nonexistent/agentws-missing");
+    assert_eq!(lines.len(), 1, "no attempt count yet: {lines:?}");
+    h.cx.update(|window, cx| {
+        let workspace = workspace.read(cx);
+        assert!(workspace.tabs.is_empty());
+        assert_eq!(workspace.last_closed_folder.as_ref(), Some(&h.folder));
+        assert!(workspace.empty_focus.is_focused(window));
+    });
+
+    h.cx.update(|window, cx| workspace.update(cx, |w, cx| w.retry_start(window, cx)));
+    let (_, lines) = details(&mut h).expect("still shown after a failed Retry");
+    assert_eq!(lines.last().map(String::as_str), Some("Tried 2 times."));
+
+    let shell = LaunchSpec::new(
+        SessionKind::Shell,
+        Some("/bin/sh".into()),
+        vec!["-c".into(), "exit 0".into()],
+        None,
+    );
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_tab(shell, window, cx).unwrap();
+            wait_for_exit(&workspace.tabs[0].view.read(cx).session);
+        })
+    });
+    assert_eq!(details(&mut h), None, "a new tab clears it for good");
+
+    // Bad arguments: no Retry; the error replaces nothing else.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let error = StartError::InvalidArguments {
+                message: "unknown session kind \"bogus\"".into(),
+                usage: "usage: agent-workspace".into(),
+            };
+            workspace.show_start_failure(error, None, window, cx);
+            workspace.retry_start(window, cx);
+            assert_eq!(workspace.tabs.len(), 1, "Retry starts nothing");
+        })
+    });
+    let (heading, _) = details(&mut h).unwrap();
+    assert_eq!(heading, "Invalid command line");
+    h.cx.run_until_parked();
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn enter_on_an_exited_tab_restarts_its_launch_in_place(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::VisualTestContext;
+    use gpui_kit::component::Root;
+    use std::cell::RefCell;
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        settings_file::init(cx);
+        crate::terminal_element::init(cx);
+        crate::terminal_view::init(cx);
+        init(cx);
+    });
+    let folder = std::env::temp_dir();
+    let spec = LaunchSpec::new(
+        SessionKind::Shell,
+        Some("/bin/sh".into()),
+        vec!["-c".into(), "exit 3".into()],
+        Some(folder.clone()),
+    );
+    let captured = Rc::new(RefCell::new(None));
+    let capture = captured.clone();
+    let window = cx.add_window(move |window, cx| {
+        let (_, messages) = futures::channel::mpsc::unbounded();
+        let writer = Rc::new(tabs_file::TabsWriter::new(false));
+        let workspace =
+            cx.new(|cx| WorkspaceView::new(Rc::from([]), None, messages, writer, window, cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_tab(spec, window, cx).unwrap();
+            workspace.tabs[0].meta.custom_name = Some("mine".into());
+            workspace.tabs[0].meta.color = Some(TabColor::Pink);
+            wait_for_exit(&workspace.tabs[0].view.read(cx).session);
+        });
+        *capture.borrow_mut() = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let workspace = captured.borrow().clone().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    let (tab_id, original) = workspace.read_with(&cx, |workspace, cx| {
+        let view = workspace.tabs[0].view.clone();
+        assert_eq!(
+            view.read(cx).tab_status(),
+            sidebar::TabStatus::Exited(Some(3))
+        );
+        assert!(workspace.can_restart(workspace.tabs[0].id, cx));
+        (workspace.tabs[0].id, view)
+    });
+    cx.update(|window, cx| {
+        window.focus(&original.focus_handle(cx), cx);
+        window.draw(cx).clear(cx);
+        for modified in ["ctrl-enter", "shift-enter"] {
+            window.dispatch_keystroke(gpui_kit::Keystroke::parse(modified).unwrap(), cx);
+        }
+    });
+    workspace.read_with(&cx, |workspace, _| {
+        assert_eq!(
+            workspace.tabs[0].view, original,
+            "a modified Enter does not restart"
+        );
+    });
+    cx.update(|window, cx| {
+        // Synchronously, so the new child's output drains before the executor polls it.
+        window.dispatch_keystroke(gpui_kit::Keystroke::parse("enter").unwrap(), cx);
+    });
+    workspace.read_with(&cx, |workspace, cx| {
+        let tab = &workspace.tabs[0];
+        assert_eq!(workspace.tabs.len(), 1);
+        assert_eq!(tab.id, tab_id, "the same tab, in its place");
+        assert_ne!(tab.view, original, "a new session");
+        assert_eq!(tab.meta.custom_name.as_deref(), Some("mine"));
+        assert_eq!(tab.meta.color, Some(TabColor::Pink));
+        assert_eq!(tab.spec.args, ["-c", "exit 3"], "the saved arguments only");
+        assert_eq!(tab.spec.cwd.as_deref(), Some(folder.as_path()));
+        wait_for_exit(&tab.view.read(cx).session);
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        let view = workspace.read(cx).tabs[0].view.clone();
+        assert!(
+            view.focus_handle(cx).is_focused(window),
+            "the keyboard follows"
+        );
+    });
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn a_failed_local_restart_keeps_the_exited_view_and_toasts_once(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::VisualTestContext;
+    use gpui_kit::component::Root;
+    use std::cell::RefCell;
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        settings_file::init(cx);
+        crate::terminal_element::init(cx);
+        crate::terminal_view::init(cx);
+        init(cx);
+    });
+    let script =
+        std::env::temp_dir().join(format!("agentws-restart-gone-{}.sh", std::process::id()));
+    std::fs::write(&script, "#!/bin/sh\nexit 3\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let spec = LaunchSpec::new(
+        SessionKind::Shell,
+        Some(script.to_string_lossy().into_owned()),
+        Vec::new(),
+        Some(std::env::temp_dir()),
+    );
+    let captured = Rc::new(RefCell::new(None));
+    let capture = captured.clone();
+    let window = cx.add_window(move |window, cx| {
+        let (_, messages) = futures::channel::mpsc::unbounded();
+        let writer = Rc::new(tabs_file::TabsWriter::new(false));
+        let workspace =
+            cx.new(|cx| WorkspaceView::new(Rc::from([]), None, messages, writer, window, cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_tab(spec, window, cx).unwrap();
+            wait_for_exit(&workspace.tabs[0].view.read(cx).session);
+        });
+        *capture.borrow_mut() = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let workspace = captured.borrow().clone().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    std::fs::remove_file(&script).unwrap();
+    let original = workspace.read_with(&cx, |workspace, _| workspace.tabs[0].view.clone());
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let id = workspace.tabs[0].id;
+            workspace.restart_tab(id, window, cx);
+        });
+    });
+    cx.run_until_parked();
+    workspace.read_with(&cx, |workspace, cx| {
+        assert_eq!(workspace.tabs[0].view, original, "the exited view stays");
+        assert!(
+            workspace.can_restart(workspace.tabs[0].id, cx),
+            "and can try again"
+        );
+    });
+    assert_eq!(cx.update(|window, cx| window.notifications(cx).len()), 1);
 }

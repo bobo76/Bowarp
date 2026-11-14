@@ -50,6 +50,14 @@ The first tab runs a shell by default. To start with an agent or in another fold
 cargo run -p agent-workspace -- [shell|claude|copilot] [project-dir]
 ```
 
+A folder that doesn't exist (or is a file) opens the tab in the home folder, with a warning
+naming it until dismissed. Unknown arguments, or a first tab that cannot start (its program
+and, for a shell, the fallback shell too), never close the app: the window opens on the empty
+state with the error above its buttons (the usage for bad arguments; Retry and Open settings
+for a failed start, Retry focused), and the launcher buttons open in the requested folder.
+With restored tabs, bad arguments show as an error toast instead. Any tab opening clears the
+error. The same messages are printed to stderr.
+
 Clippy, rustfmt and cargo-deny checks, locally and in CI: [docs/code-quality.md](docs/code-quality.md). Building and
 testing on a Windows machine, natively (Visual Studio Build Tools) or as a Linux build (Docker or
 WSL): [docs/linux-build-on-windows.md](docs/linux-build-on-windows.md).
@@ -97,6 +105,7 @@ refuses), an error toast says why and stays until dismissed.
 | Tab or Down (in the search field) | Move the keyboard into the tab list: Up / Down / Home / End select tabs, Enter, Esc or Tab go to the terminal (clearing the search; see Search and attention) |
 | F2 (in the tab list) | Rename the selected tab; the list gets the keyboard back afterwards. In the terminal, F2 goes to the program |
 | Ctrl+Shift+\| | Hide or show the file explorer (also the title bar button; the key that types `\|`) |
+| Ctrl+Shift+G | Show the Git page on the selected tab's repository; again, back to the tab (Cmd+Shift+G on macOS; also the title bar button) |
 | Ctrl+Shift+A | Go to the next tab needing attention; with none, the next one that is Ready for review |
 | F11 | Full screen on or off, also from a dialog (F11 is not sent to the program; on Linux the window manager applies it). Quitting in full screen starts maximized next time |
 
@@ -113,6 +122,12 @@ refuses), an error toast says why and stays until dismissed.
 | Esc (while terminal search is open) | Close search and return to the terminal |
 | Shift+PageUp / Shift+PageDown | Scroll the history by a page |
 | Click a link | Open it (use Ctrl/Cmd+click when the program tracks the mouse) |
+| Right-click | Terminal menu (Shift+right-click when the program tracks the mouse) |
+
+Pasting text with a line break asks first ("Paste 3 lines? They will run as commands.", with a
+preview) when the program hasn't turned on bracketed paste: each line break then reaches it as
+Enter, so the lines would run at once (cmd, a nested shell, `cat`). Shells that bracket pastes
+(bash, zsh, fish) take the paste without a question. Enter pastes, Esc cancels.
 
 Ctrl+C, Tab and Shift+Tab always go to the program. When a program tracks the mouse (Claude
 Code does), clicks and the wheel go to it; hold Shift to select text locally. On Linux a
@@ -141,6 +156,13 @@ and the terminal resizes. Search cannot retrieve output already evicted from scr
 transcript text held internally by a program; alternate-screen programs search their current
 screen.
 
+Right-clicking the terminal opens its menu: Copy (only with a selection), Paste (asking first
+like the keys), Select all, Search and Clear scrollback, each with its shortcut when one is
+bound. On a link it starts with Open link and Copy link (a file link copies its path). The
+selection stays. Select all and Clear scrollback have no default key; bind one with
+`SelectAll` / `ClearScrollback` (see Keyboard shortcuts). When a program tracks the mouse, the
+right button goes to it; Shift+right-click opens the menu.
+
 Links in the output are underlined in blue with a hand cursor on hover. Click to open a URL
 (`http`, `https`, `ftp`) or an OSC 8 hyperlink in the browser, or a file path or `file://` URL
 naming a file in the file viewer. When a program tracks the mouse, ordinary clicks go to it;
@@ -152,7 +174,10 @@ program wrapped onto the next line counts as one.
 
 When the program exits, a bar below the terminal says so, with its exit code (the terminal
 gives up the bar's height, so no output is hidden); the history stays readable until the tab
-is closed. When Claude Code or Copilot CLI quits, the tab instead starts the default shell in
+is closed or restarted, and the cursor is hidden. **Restart** on the bar, Enter in the
+terminal or "Restart" in the tab menu starts the same program again in the tab, with the
+arguments it was opened with, in its last folder (a remote tab on its host); the tab keeps its
+name, color, group and place, and the scrollback is cleared (Claude Code and Copilot CLI start a new conversation). When Claude Code or Copilot CLI quits, the tab instead starts the default shell in
 the agent's last folder and becomes a shell tab (icon, status, saved as a shell); the agent's
 output is not kept.
 
@@ -255,11 +280,13 @@ an answer. Click the chevron and ring to fold the list in or out (per tab, not s
 subagent shows from its `SubagentStart` hook to its `SubagentStop`; the tab keeps its own status
 (Idle once the main turn ends, even while background subagents work).
 
-Appearance → Tab hover card controls the card and its Status, Location, Changes, Program
-title and Session kind pieces (all on initially). The tab name and Ctrl+number shortcut
-always remain. Program title appears when a custom name hides it. Turning the card off
-disables, but remembers, the piece switches; turning every piece off also hides the card.
-Changes off skips `git diff`; Status off stops the card's clock. Group cards are unaffected.
+Appearance → Tab hover card controls the card and its Status, Location, Changes, Changed
+files, Program title and Session kind pieces (all on initially except Changed files). The tab
+name and Ctrl+number shortcut always remain. Program title appears when a custom name hides
+it. Changed files lists the changed files under the `+N` line, each clickable to open; it
+needs Changes and doesn't keep the card shown alone. Turning the card off disables, but
+remembers, the piece switches; turning every piece off also hides the card. Changes off
+skips `git diff`; Status off stops the card's clock. Group cards are unaffected.
 Appearance → Group hover cards (on) turns the cards beside group headers off (a collapsed
 group still shows its status); Activity animations (on) off makes the Running badge and a
 working spinner static and starts no animation timers. Both apply live and are
@@ -347,7 +374,8 @@ Run the extension's tests with `node --test .\crates\app\copilot-extension\bridg
 | light grey | Recent output (shell or Copilot) |
 | none | No recent output |
 | none | Status unavailable (agent status off): a quiet Claude Code tab while the status hooks could not start |
-| hollow ring | Exited |
+| grey hollow ring | Exited with code 0 |
+| red with a cross | Exited with a nonzero code, or without one; the card says `Exited (3)` or `Exited (no exit code)` |
 
 Ready for review marks an unread Working-to-Idle transition, not confirmation that the
 agent's work is correct. Selecting the tab acknowledges it and restores Idle; a turn that
@@ -404,6 +432,17 @@ Repeated status reports, titles and output do not repeat the toast. Click a toas
 its tab, expanding its group; click its close button to dismiss it without switching tabs, or
 let it disappear automatically. A newer notice for the same tab replaces the previous one.
 There is no sound or OS notification.
+
+When any tab, the selected one included, turns Needs attention or Ready for review (or its
+agent finishes a turn) while the window is not the active one, or while the Settings or Git
+page shows, the window asks the system for attention once: the taskbar button flashes on
+Windows, the window is marked urgent on X11 (nothing on Wayland). Activating the window clears
+it. It follows the In-app notifications switch.
+
+The window title names what it shows: "<tab name> — Agent Workspace" (the name the sidebar
+shows), "Settings — Agent Workspace" or "Git — Agent Workspace" while those pages show, plain
+"Agent Workspace" with no tab open. While N tabs need attention (the selected one included,
+Ready for review not counted) it starts with "(N) ", whatever the notifications switch says.
 
 Right-click a row or use its `⋮` button for the tab menu: duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
 and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working
@@ -508,9 +547,10 @@ itself, or a file's parent folder.
 
 A file clicked in the explorer (or a path Ctrl+clicked in the terminal) opens in a panel right
 of the terminal (closed with its `×`). Each tab has its own: selecting a tab shows the file it
-had open, or no panel. Drag the divider on the panel's left edge to resize it (both the panel
-and the terminal keep at least 240 px); double-click it for the default 45% of the window. The
-width is the same in every tab, follows window resizes and is not saved yet.
+had open, or no panel. Drag the divider on the panel's left edge to resize it (the panel keeps
+at least 240 px, the terminal 480 px, about 60 columns, unless the window is too narrow for
+both); double-click it for the default 45% of the space the sidebar and explorer leave. The
+width is the same in every tab, follows window resizes and is saved in the settings file.
 
 Markdown, JSON and SVG have two views, picked in the panel's header:
 
@@ -542,10 +582,13 @@ unless it has unsaved edits, which are kept.
 
 ## Git page
 
-The branch button in the title bar (before the gear) opens the Git page in place of the
-selected tab and adds a Git row under the tabs, like the Settings page; the two take turns.
-Select a tab to go back, select the row to return, and close the row with its × or
-Ctrl+Shift+W. Clicking the button again while the page has the keyboard closes it.
+The branch button in the title bar (before the gear) or Ctrl+Shift+G (Cmd+Shift+G on macOS;
+rebindable on Settings → Keyboard) opens the Git page in place of the selected tab, on the
+selected tab's repository when it is in one, and adds a Git row under the tabs, like the
+Settings page; the two take turns. Select a tab to go back, select the row to return (to the
+repository it showed), and close the row with its × or Ctrl+Shift+W. Ctrl+Shift+G again while
+the page shows goes back to the tab; clicking the button again while the page has the
+keyboard does too. The **Git page** switch (Settings → Workspace) turns the page off.
 
 The header's repository picker lists every repository the open tabs are in, the selected
 tab's first, with the current branch and a Refresh button. The page refreshes by itself when
@@ -694,8 +737,8 @@ Missing or wrong-typed booleans each default to true. Changes apply live.
 
 ### Workspace switches
 
-Settings → Workspace has three switches, all on by default (`restore_tabs`,
-`remember_last_command`, `file_panes`; missing or non-boolean means on).
+Settings → Workspace has four switches, all on by default (`restore_tabs`,
+`remember_last_command`, `file_panes`, `git_page`; missing or non-boolean means on).
 
 - **Restore previous tabs** off: the next start opens one fresh default tab, and `tabs.json`
   is neither read nor written (it is kept as it is, so turning the switch on again restores
@@ -714,14 +757,18 @@ Settings → Workspace has three switches, all on by default (`restore_tabs`,
   asks "Open externally?" and opens the file with the system's application; "Open settings
   file" does the same. The pane widths (`file_viewer_fraction`, `file_explorer_width`) are kept.
   Turned on again, the panes work as before; files closed meanwhile stay closed.
+- **Git page** off (applies live): the title bar button goes and Ctrl+Shift+G does nothing; a
+  shown Git page closes with its sidebar row (the selected tab shows again) and no new `git`
+  command runs for it. Commit messages being written are kept while the app runs. Turned on
+  again, the button returns; the row comes back when the page is opened.
 
 ### Notifications
 
 Settings → Notifications has one switch, **In-app notifications** (`in_app_notifications`, on
 by default; missing or non-boolean means on). Off (applies live): no toast appears when a
 background tab's agent needs attention, is ready for review or exits cleanly; the sidebar
-status, status dots and attention badges are unchanged, and a toast already on screen stays
-until it hides. An agent that exits with a nonzero or unknown exit code still shows its toast.
+status, status dots, attention badges and the "(N)" in the window title are unchanged, no
+attention request goes to the system, and a toast already on screen stays until it hides. An agent that exits with a nonzero or unknown exit code still shows its toast.
 Toasts that answer something you did (save or delete errors, history cleared, failed starts)
 and the persistent fallback-shell warning always show.
 
@@ -777,9 +824,11 @@ paste with Ctrl+Shift+V only:
 
 Keys are written as GPUI keystrokes: modifiers `ctrl`, `alt`, `shift`, `super` (Windows key)
 joined by `-` to a key (`a`, `f5`, `tab`, `escape`, `insert`, `pageup`; a capital letter
-adds Shift: `ctrl-V` is `ctrl-shift-v`); a space separates the keystrokes of a sequence (`ctrl-k ctrl-c`). Actions: `Copy`, `CopyOrSend`,
-`Paste`, `PasteOrSend`, `Find`, `CloseFind`, `AllowClipboard`, `DenyClipboard` (in the
-terminal); `NewTab`, `DuplicateTab`, `CloseTab`, `NextTab`, `PreviousTab`, `SelectTab1` to
+adds Shift: `ctrl-V` is `ctrl-shift-v`); a space separates the keystrokes of a sequence
+(`ctrl-k ctrl-c`). Actions: `Copy`, `CopyOrSend`, `Paste`, `PasteOrSend`, `Find`, `CloseFind`,
+`AllowClipboard`, `DenyClipboard`, `SelectAll`, `ClearScrollback` (in the terminal; the last
+two have no default key); `NewTab`, `DuplicateTab`, `CloseTab`, `NextTab`, `PreviousTab`,
+`SelectTab1` to
 `SelectTab9`, `ToggleSidebar`, `ToggleExplorer`, `SearchTabs`, `NextAttention`,
 `ToggleFullScreen` (anywhere in the window); `RenameTab` (only while the tab list has the
 keyboard). `terminal::Paste` and `workspace::NewTab` also
@@ -816,7 +865,8 @@ higher and tagged `v<version>`; finishing a milestone bumps `minor`.
 - **Quitting an agent:** when Claude Code or
   Copilot CLI exits in its tab with code 0, the tab starts a new default shell in the agent's
   last folder and becomes a shell tab; the agent's output is not kept. When it exits with an
-  error, the tab stays as it was ("Exited"), so the error can be read. The agent keeps
+  error, the tab stays as it was ("Exited (N)"), so the error can be read, and Restart
+  starts it again. The agent keeps
   running directly (no shell around it), which:
   - starts faster: no shell startup files (`.bashrc`, `nvm`, `conda`) run before it;
   - uses less memory: no idle shell waiting behind every agent tab;

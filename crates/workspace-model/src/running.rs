@@ -71,7 +71,7 @@ pub fn command_label(command: &str, max_chars: usize) -> Option<String> {
 
 /// Bidi controls and invisible characters, which would reorder or hide part of the label.
 /// ZWNJ and ZWJ (U+200C, U+200D) stay: Persian text and emoji sequences need them.
-fn is_invisible_format(c: char) -> bool {
+pub(crate) fn is_invisible_format(c: char) -> bool {
     matches!(
         c,
         '\u{200B}'

@@ -38,6 +38,35 @@ pub fn waiting_count(tabs: &[Option<Attention>], current: Option<usize>) -> usiz
         .count()
 }
 
+/// What the window shows, named in its title.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TitleSubject<'a> {
+    /// No tab is open.
+    Nothing,
+    /// A page (Settings, Git) replaces the selected tab.
+    Page(&'a str),
+    /// The selected tab, by the name the sidebar shows.
+    Tab(&'a str),
+}
+
+/// The window's title: "<tab or page> — <app>", plain "<app>" with nothing to name, prefixed
+/// "(N) " while `waiting` tabs wait for the user (every tab counts, the selected one too).
+pub fn window_title(app_name: &str, subject: TitleSubject, waiting: usize) -> String {
+    let prefix = if waiting > 0 {
+        format!("({waiting}) ")
+    } else {
+        String::new()
+    };
+    let name = match subject {
+        TitleSubject::Nothing => None,
+        TitleSubject::Page(name) | TitleSubject::Tab(name) => Some(name.trim()),
+    };
+    match name.filter(|name| !name.is_empty()) {
+        Some(name) => format!("{prefix}{name} \u{2014} {app_name}"),
+        None => format!("{prefix}{app_name}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,5 +120,38 @@ mod tests {
         let tabs = [NEEDED, DONE, NEEDED];
         assert_eq!(waiting_count(&tabs, Some(0)), 1);
         assert_eq!(next_attention(&tabs, Some(0)), Some(2));
+    }
+
+    #[test]
+    fn window_title_names_the_tab_or_page() {
+        let app = "Agent Workspace";
+        assert_eq!(window_title(app, TitleSubject::Nothing, 0), app);
+        assert_eq!(
+            window_title(app, TitleSubject::Tab("~/src"), 0),
+            "~/src \u{2014} Agent Workspace"
+        );
+        assert_eq!(
+            window_title(app, TitleSubject::Page("Settings"), 0),
+            "Settings \u{2014} Agent Workspace"
+        );
+        // A blank program title names nothing.
+        assert_eq!(window_title(app, TitleSubject::Tab("  "), 0), app);
+    }
+
+    #[test]
+    fn window_title_counts_the_waiting_tabs() {
+        let app = "Agent Workspace";
+        assert_eq!(
+            window_title(app, TitleSubject::Tab("build"), 2),
+            "(2) build \u{2014} Agent Workspace"
+        );
+        assert_eq!(
+            window_title(app, TitleSubject::Page("Git"), 1),
+            "(1) Git \u{2014} Agent Workspace"
+        );
+        assert_eq!(
+            window_title(app, TitleSubject::Nothing, 3),
+            "(3) Agent Workspace"
+        );
     }
 }

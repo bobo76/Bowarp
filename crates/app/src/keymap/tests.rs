@@ -63,7 +63,14 @@ fn counts(cx: &mut TestAppContext) -> (usize, usize) {
 #[gpui::test]
 fn every_default_binds(cx: &mut TestAppContext) {
     init(cx);
-    let defaults = cx.update(|cx| cx.global::<AppKeymap>().defaults.len());
+    // Keyless defaults (`Shortcut::unbound`) only make an action bindable.
+    let defaults = cx.update(|cx| {
+        let defaults = &cx.global::<AppKeymap>().defaults;
+        defaults
+            .iter()
+            .filter(|shortcut| !shortcut.keys.is_empty())
+            .count()
+    });
     assert_eq!(counts(cx).0, defaults);
     assert!(cx.update(|cx| problems(cx).is_empty()));
     assert_eq!(actions_in_terminal(cx, "ctrl-v"), ["terminal::PasteOrSend"]);
