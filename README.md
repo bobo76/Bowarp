@@ -115,7 +115,7 @@ refuses), an error toast says why and stays until dismissed.
 |---|---|
 | Ctrl+Shift+C, Ctrl+Insert | Copy the selection |
 | Ctrl+Shift+V, Shift+Insert | Paste |
-| Ctrl+V | Paste; sends `^V` to the program when the clipboard holds no text |
+| Ctrl+V | Paste; when the clipboard holds no text (a copied image), sends Claude Code its paste-image key (Alt+V on Windows) and any other program `^V` |
 | Ctrl+Shift+F | Search terminal output and scrollback |
 | Ctrl+Shift+Y / Ctrl+Shift+N | Allow / deny a program's clipboard write (while its notice shows) |
 | Enter / Shift+Enter (in terminal search) | Next / previous match, wrapping around |
