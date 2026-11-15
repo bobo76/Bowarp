@@ -5,6 +5,7 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- The "Git page" switch moved from Settings → Workspace to the top of Settings → Git.
 - Closing the window asks again after "Save changes?" was cancelled with its Cancel button.
   Before, the window's close button and Alt+F4 then did nothing, not even ask about busy
   tabs, until the app was restarted.
