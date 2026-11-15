@@ -83,9 +83,6 @@ Git page switch and key:
   the key and the button show the selected tab's repository; the sidebar row returns to the
   one shown. The button's tooltip reads "Git (Ctrl+Shift+G)"; Settings → Keyboard lists
   "Show the Git page, or go back to the tab" and a rebind applies.
-- Settings → Workspace → Git page off with a commit message typed: page, row and button go,
-  the key does nothing; on again and reopened, the message is still there.
-- macOS: Cmd+Shift+G opens the page and the tooltip shows it.
 
 Tab hover card "Changed files" piece:
 
@@ -93,27 +90,10 @@ Tab hover card "Changed files" piece:
   "Changes"; the hovered tab's card shows `+N` without the file list. On: the list appears
   live, files open on click; Changes off hides both; Tab hover card off disables the row.
 
-Terminal right-click menu:
-
-- macOS: the hints show the Cmd keys, and Ctrl+click is not taken for the menu.
-
 Multi-line paste warning:
 
 - Plain `ssh` to a host whose shell has bracketed paste on doesn't ask; in a nested `sh` it
   asks.
-
-Viewer width from the free space:
-
-- Windows at a 150% display scale: with the sidebar and explorer open, the viewer divider
-  dragged to the far left leaves the terminal about 60 columns; in a window too narrow for
-  both the viewer keeps 240 px. The window stops at 720 x 400 px (also the height at 100%).
-
-Exited tabs (Restart, failed exit ring):
-
-- Light and Sepia themes: the grey Exited ring (code 0) and the red one read clearly on a
-  selected and an unselected row.
-- A Copilot tab whose CLI fails (nonzero exit) restarts with its saved arguments; a real
-  Claude Code tab started with arguments (e.g. `--model`) restarts with them, no `--resume`.
 
 Start failures open the window:
 
@@ -126,15 +106,6 @@ Window attention and title:
   and clears when the window is focused.
 - The taskbar / Alt+Tab label follows the selected tab, its "(N)" count and the Settings / Git
   pages (a Linux desktop).
-
-Git page, page and file staging:
-
-- Two tabs in different repositories and one outside any: the picker lists the two, the
-  selected tab's first. Stage and unstage a modified, a deleted and an untracked file, and
-  Stage all / Unstage all; `git status` in a shell tab agrees.
-- Edit a file in a shell tab while the page shows: the list updates (on a `git add` at once,
-  on a plain edit at the latest on Refresh). Hide the page: the CPU is idle. On Windows, no
-  console window flashes.
 
 Git page, diff view:
 
@@ -263,28 +234,15 @@ Sidebar and explorer opacity:
 
 Windows Mica client area:
 
-- Windows 11 build 26100: check Mica below 100 % at startup and when selected live: the
-  client area must show the material. Switch Mica -> None / Acrylic / 100 % and back,
-  including a restart; the previous material must disappear. Check the persistent warning if
-  a DWM operation fails.
 - Check Windows 10's Acrylic fallback. Add a restart-only Mica caption/known limitation only
   if the live Windows check actually shows it cannot be removed.
 
 Softer light theme:
 
-- Windows (where the glare was reported): the light UI is comfortable for a long session;
-  sidebar, Settings, menus, hover cards, file viewer and toasts look warm grey, not white,
-  with readable muted and dimmed text and visible borders. If it is still too bright, decide
-  whether to offer light variants (docs/ux-decisions.md, "Light theme too white").
-- Status colors on the light sidebar (Working, Needs attention, Ready for review, Idle,
-  Running, Recent output), on a normal, hovered and selected row and in hover cards and
-  collapsed-group chips; dark theme unchanged.
-- Sepia: the same checks as Light (surfaces, muted and dimmed text, status colors on normal,
-  hovered and selected rows), plus buttons, switches and sliders in brown.
-- Terminal colors (Linux and Windows): Match theme follows each Theme; a fixed scheme
-  repaints open tabs, alternate-screen programs (vim, htop) included; `ls --color`, git, dim
-  text, selection and search highlights read well on Light and Sepia. Claude Code and Copilot
-  CLI started in a light terminal pick readable colors (OSC 11); Windows conpty programs.
+- Terminal colors (Linux): Match theme follows each Theme; a fixed scheme repaints open
+  tabs, alternate-screen programs (vim, htop) included; `ls --color`, git, dim text,
+  selection and search highlights read well on Light and Sepia. Claude Code and Copilot CLI
+  started in a light terminal pick readable colors (OSC 11).
 
 Command history per shell:
 
@@ -323,16 +281,15 @@ Feature switches (0.2.20-0.2.24):
 - File explorer and viewer switch: the "Open externally?" dialog and system launch, "Open
   settings file" while off, a hand edit of `settings.json` to off with an unsaved file, the
   prompt chain with two or more unsaved files, and Windows.
-- Busy-close warnings: the Linux title bar's close button (not drivable under Xvfb) and
-  macOS window close.
+- Busy-close warnings: the Linux title bar's close button (not drivable under Xvfb).
 - Clipboard notice: Copilot CLI's copy on Windows (Allow should then copy as before).
 - `"keybindings"` overlay: vim's visual block with Ctrl+V unbound, a keystroke sequence
   (`ctrl-k ctrl-c`), the reload on saving `settings.json` in the file viewer, and Windows
   (PowerShell, cmd, Git Bash).
 - Keyboard settings page: recording while a dialog or toast has the keyboard, closing the
   Settings row with its × while recording, AltGr and non-US layouts (`setxkbmap de`), the
-  Ctrl+number hint in the tab hover card, the clipboard notice tooltips, and Windows/macOS
-  (Super/Win and Cmd keys).
+  Ctrl+number hint in the tab hover card, the clipboard notice tooltips, and Windows
+  (Super/Win key).
 - Window opacity and blur: the desktop actually showing through and the blur, on GNOME
   Wayland (see-through, dropdown "Not available on this system", the title bar shadow over
   the background), KDE Plasma Wayland

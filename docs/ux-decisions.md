@@ -259,6 +259,8 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   hidden and not watching. While off the button and row are gone and the key and every other
   entry do nothing; turned back on, the button returns and the row only when the page opens.
   [pipeline]
+- **The "Git page" switch heads Settings → Git**, above the diff colors, rather than sitting
+  with the File explorer switch on Workspace: users look for it on the Git page. [user]
 
 ## Remote hosts (Settings page)
 

@@ -737,8 +737,9 @@ Missing or wrong-typed booleans each default to true. Changes apply live.
 
 ### Workspace switches
 
-Settings → Workspace has four switches, all on by default (`restore_tabs`,
-`remember_last_command`, `file_panes`, `git_page`; missing or non-boolean means on).
+Settings → Workspace has three switches, all on by default (`restore_tabs`,
+`remember_last_command`, `file_panes`; missing or non-boolean means on). The Git page's
+switch (`git_page`, also on) heads Settings → Git.
 
 - **Restore previous tabs** off: the next start opens one fresh default tab, and `tabs.json`
   is neither read nor written (it is kept as it is, so turning the switch on again restores
@@ -757,9 +758,9 @@ Settings → Workspace has four switches, all on by default (`restore_tabs`,
   asks "Open externally?" and opens the file with the system's application; "Open settings
   file" does the same. The pane widths (`file_viewer_fraction`, `file_explorer_width`) are kept.
   Turned on again, the panes work as before; files closed meanwhile stay closed.
-- **Git page** off (applies live): the title bar button goes and Ctrl+Shift+G does nothing; a
-  shown Git page closes with its sidebar row (the selected tab shows again) and no new `git`
-  command runs for it. Commit messages being written are kept while the app runs. Turned on
+- **Git page** (Settings → Git) off (applies live): the title bar button goes and
+  Ctrl+Shift+G does nothing; a shown Git page closes with its sidebar row (the selected tab
+  shows again) and no new `git` command runs for it. Commit messages being written are kept while the app runs. Turned on
   again, the button returns; the row comes back when the page is opened.
 
 ### Notifications
