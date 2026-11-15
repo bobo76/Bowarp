@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Closing the window asks again after "Save changes?" was cancelled with its Cancel button.
+  Before, the window's close button and Alt+F4 then did nothing, not even ask about busy
+  tabs, until the app was restarted.
+- The window can't be made narrower than 720 px or lower than 400 px. Before, it could be
+  shrunk until the file viewer was pushed past its right edge.
+
 ## 0.4.3
 
 - `agentws-server show <id> [--scrollback]` prints a session's screen (and its history) as

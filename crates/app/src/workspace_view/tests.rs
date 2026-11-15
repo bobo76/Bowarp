@@ -1398,6 +1398,26 @@ fn closing_the_window_asks_about_unsaved_viewer_edits(cx: &mut gpui_kit::TestApp
     assert!(dialog(&mut h));
     h.cx.simulate_keystrokes("escape");
     h.cx.run_until_parked();
+
+    // Cancelled with its own Cancel button, which bypasses the alert's close: asks again too.
+    if cfg!(debug_assertions) {
+        // The dialog slides in over real time: without this, the button the click aims at
+        // may have moved on by the next frame, under a loaded test run.
+        h.cx.update(|_, cx| cx.set_reduce_motion(true));
+        assert!(!allow_close_or_ask(&mut h));
+        h.cx.run_until_parked();
+        h.cx.update(|window, cx| window.draw(cx).clear(cx));
+        let cancel = h.cx.debug_bounds("close-unsaved-cancel").unwrap().center();
+        h.cx.simulate_mouse_down(cancel, MouseButton::Left, Default::default());
+        h.cx.simulate_mouse_up(cancel, MouseButton::Left, Default::default());
+        h.cx.run_until_parked();
+        assert!(!dialog(&mut h), "Cancel closes the question");
+        assert!(!allow_close_or_ask(&mut h));
+        h.cx.run_until_parked();
+        assert!(dialog(&mut h), "the next close asks again");
+        h.cx.simulate_keystrokes("escape");
+        h.cx.run_until_parked();
+    }
     h.mark_dirty(&viewer, false);
     assert!(allow_close_or_ask(&mut h));
 }

@@ -6,7 +6,10 @@ use std::rc::Rc;
 
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
-use gpui_kit::{App, Context, Div, IntoElement, ParentElement, Styled, WeakEntity, Window, div};
+use gpui_kit::{
+    App, Context, Div, InteractiveElement, IntoElement, ParentElement, Styled, WeakEntity, Window,
+    div,
+};
 use workspace_model::{
     BusyTab, COMMAND_LABEL_CHARS, CloseTarget, CloseWarning, close_warning, command_label,
     unsaved_edits_warning,
@@ -252,12 +255,25 @@ fn save_viewers_then_close(
     });
 }
 
+/// Close the unsaved-edits question from one of its own footer buttons. `close_dialog` skips
+/// the alert's `on_close`, so the question's flag is cleared here: left set, every later close
+/// of the window would be taken as already asking and ignored.
+fn dismiss_unsaved_question(
+    workspace: &WeakEntity<WorkspaceView>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window.close_dialog(cx);
+    let _ = workspace.update(cx, |workspace, _| workspace.close_question_open = false);
+}
+
 /// Cancel, Discard and Save all (the default), right-aligned like the alert's own buttons.
 fn unsaved_footer(
     workspace: WeakEntity<WorkspaceView>,
     ids: Vec<u64>,
     save_label: &'static str,
 ) -> impl IntoElement {
+    let cancel = workspace.clone();
     let discard = workspace.clone();
     div()
         .flex()
@@ -265,15 +281,16 @@ fn unsaved_footer(
         .gap_2()
         .child(
             Button::new("close-unsaved-cancel")
+                .debug_selector(|| "close-unsaved-cancel".into())
                 .label("Cancel")
-                .on_click(|_, window, cx| window.close_dialog(cx)),
+                .on_click(move |_, window, cx| dismiss_unsaved_question(&cancel, window, cx)),
         )
         .child(
             Button::new("close-unsaved-discard")
                 .label("Discard")
                 .danger()
                 .on_click(move |_, window, cx| {
-                    window.close_dialog(cx);
+                    dismiss_unsaved_question(&discard, window, cx);
                     let discard = discard.clone();
                     window.defer(cx, move |window, cx| {
                         let _ =
@@ -286,7 +303,7 @@ fn unsaved_footer(
                 .label(save_label)
                 .primary()
                 .on_click(move |_, window, cx| {
-                    window.close_dialog(cx);
+                    dismiss_unsaved_question(&workspace, window, cx);
                     save_viewers_then_close(workspace.clone(), ids.clone(), window, cx);
                 }),
         )

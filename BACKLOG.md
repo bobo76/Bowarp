@@ -82,8 +82,7 @@ Git page switch and key:
   "Show the Git page, or go back to the tab" and a rebind applies.
 - Settings → Workspace → Git page off with a commit message typed: page, row and button go,
   the key does nothing; on again and reopened, the message is still there.
-- macOS: Cmd+Shift+G opens the page and the tooltip shows it. Windows: Ctrl+Shift+G in cmd,
-  PowerShell and WSL tabs.
+- macOS: Cmd+Shift+G opens the page and the tooltip shows it.
 
 Tab hover card "Changed files" piece:
 
@@ -93,29 +92,21 @@ Tab hover card "Changed files" piece:
 
 Terminal right-click menu:
 
-- Windows: right-click in a cmd and a PowerShell tab opens the menu with the shortcut hints;
-  Copy, Paste (two lines into cmd asks first), Select all, Search, Clear scrollback and, on a
-  URL, Open link / Copy link work; in Claude Code (mouse tracking) a plain right-click goes to
-  the program and Shift+right-click opens the menu.
 - macOS: the hints show the Cmd keys, and Ctrl+click is not taken for the menu.
 
 Multi-line paste warning:
 
-- Windows: pasting two lines into a cmd tab and into a PowerShell tab asks "Paste 2 lines?";
-  Cancel sends nothing, Paste runs both. In a WSL bash tab (bracketed paste on) it doesn't ask.
 - Plain `ssh` to a host whose shell has bracketed paste on doesn't ask; in a nested `sh` it
   asks.
 
 Viewer width from the free space:
 
-- Windows, at 100% and at a 150% display scale: with the sidebar and explorer open, the
-  viewer divider dragged to the far left leaves the terminal about 60 columns; in a window
-  too narrow for both the viewer keeps 240 px.
+- Windows at a 150% display scale: with the sidebar and explorer open, the viewer divider
+  dragged to the far left leaves the terminal about 60 columns; in a window too narrow for
+  both the viewer keeps 240 px. The window stops at 720 x 400 px (also the height at 100%).
 
 Exited tabs (Restart, failed exit ring):
 
-- Windows: a PowerShell, cmd and WSL tab that ran `exit 3` shows the red ring with the cross
-  and "Exited (3)"; Restart, Enter and the tab menu start it again in its last folder.
 - Light and Sepia themes: the grey Exited ring (code 0) and the red one read clearly on a
   selected and an unselected row.
 - A Copilot tab whose CLI fails (nonzero exit) restarts with its saved arguments; a real
@@ -123,22 +114,15 @@ Exited tabs (Restart, failed exit ring):
 
 Start failures open the window:
 
-- Windows release build (no console): `agent-workspace bogus` opens the window with
-  "Invalid command line" and the usage; a missing folder opens the tab in the home folder
-  with the warning; a first tab that cannot start (e.g. Claude Code not installed,
-  `agent-workspace claude`) shows "Could not start", Retry and Open settings.
 - Windows: a default shell whose program cannot start, with the automatic shell (Git Bash /
   PowerShell) working, still opens the fallback with its warning.
 
 Window attention and title:
 
-- Windows: with another window active, a Claude tab asking for permission (selected or not)
-  flashes the taskbar button once; activating the window stops it. Nothing flashes while the
-  app is the active window.
 - A real X11 desktop (GNOME/KDE on Xorg): the urgency mark (highlighted taskbar entry) appears
   and clears when the window is focused.
 - The taskbar / Alt+Tab label follows the selected tab, its "(N)" count and the Settings / Git
-  pages (Windows and a Linux desktop).
+  pages (a Linux desktop).
 
 Git page, page and file staging:
 
@@ -179,11 +163,6 @@ Git page, line and hunk staging:
 - Keys in the diff: Up/Down over changed lines only, Shift+Up/Down, `S`/`U`, Shift+`S`/`U`,
   Escape twice; the right-click menu and the selection bar.
 
-- Tabs start at the terminal's size: on Windows, with several Git Bash tabs, close and
-  restart the app, click each tab and press Right arrow on the restored command: it comes
-  back whole (it lost its first letter about one time in four). `window.json` has a
-  `terminal` entry; opening a new tab doesn't redraw its prompt (no resize).
-
 - Tabs saved as they change: rename, pin, color, group and move tabs, then kill the app
   (`kill -9`) and start it again: the arrangement is back. A second window shows "Tabs in
   this window aren't saved..." until closed; none with Restore previous tabs off.
@@ -200,15 +179,15 @@ Git page, line and hunk staging:
   second, and its parent folders; colors in light and dark themes are readable. Windows paths
   (`git rev-parse` gives `C:/...`) match the tree.
 
-- Tab Back / Forward / Last tab: the ← → buttons dim when there is nowhere to go and their
-  tooltips name the keys; Ctrl+Alt+Left/Right and Ctrl+` work from the terminal (not sent to
-  the program), also on Windows (AltGr layouts) and under GNOME, whose default workspace
-  switch also uses Ctrl+Alt+Left/Right; Settings → Keyboard lists and rebinds them.
+- Tab Back / Forward / Last tab: Ctrl+Alt+Left/Right and Ctrl+` work under GNOME, whose
+  default workspace switch also uses Ctrl+Alt+Left/Right; Settings → Keyboard lists and
+  rebinds them.
 
 - Unsaved viewer edits: opening another file asks "Save changes?"; Save writes and goes on,
   Discard drops, Cancel keeps; Save on a file changed on disk asks first, and its Cancel
   cancels. Closing the window (title bar button, Alt+F4) with edits in two tabs asks once
-  (Save all saves both and closes; Discard closes; Cancel keeps all). Linux and Windows.
+  (Save all saves both and closes; Discard closes; Cancel keeps all), and after the
+  question's Cancel button the next close asks again, also about busy tabs. Linux.
 
 Subagent list (Claude Code 2.1.316, Copilot CLI 1.0.105):
 
@@ -252,7 +231,7 @@ Agent running in place in a shell tab (from its `N` mark until the command's `D`
 
 Down enters the tab list during a search:
 
-- Linux and Windows: type a search, press Down: the ring shows on the match and F2 renames
+- Linux: type a search, press Down: the ring shows on the match and F2 renames
   it; Up in the field still steps through the matches.
 
 Wine test runner:
@@ -299,8 +278,6 @@ Softer light theme:
   collapsed-group chips; dark theme unchanged.
 - Sepia: the same checks as Light (surfaces, muted and dimmed text, status colors on normal,
   hovered and selected rows), plus buttons, switches and sliders in brown.
-- Theme dropdown: Dark / Light / Sepia apply live (also Light ↔ Sepia), survive a restart,
-  and a hand-edited `ui_theme` still applies.
 - Terminal colors (Linux and Windows): Match theme follows each Theme; a fixed scheme
   repaints open tabs, alternate-screen programs (vim, htop) included; `ls --color`, git, dim
   text, selection and search highlights read well on Light and Sepia. Claude Code and Copilot
@@ -308,14 +285,10 @@ Softer light theme:
 
 Command history per shell:
 
-- Windows: PowerShell, Windows PowerShell, Git Bash and two WSL distros (bash) each record
-  under their own chip with the menu's name and icon; a PowerShell tab doesn't suggest a Git
-  Bash command and the other way round; a restored tab and the Ctrl+Shift+T default shell
-  record under the same chip as the menu's entry; Alt+P / Alt+G / Alt+U switch, AltGr
-  (Ctrl+Alt) letters still type in the shell; a removed WSL distro with commands keeps
-  its chip, with a generic icon.
-- A German or French layout (Linux and Windows): Alt+letter switches; on a Cyrillic layout,
-  clicking a chip does.
+- Windows: a second WSL distro records under its own chip, and a removed WSL distro with
+  commands keeps its chip, with a generic icon.
+- A German or French layout (Linux): Alt+letter switches; on a Cyrillic layout (Linux and
+  Windows), clicking a chip does.
 - Upgrade: with a `history.jsonl` written by the previous version, its commands show under
   "All" only and the previous version still reads the new file.
 
@@ -378,8 +351,7 @@ Earlier features (0.2.17-0.2.19), Windows and Linux unless noted:
   plugins and unrelated files. Launch agents with a quoted Windows path.
 - Initial shell fallback (Windows): the persistent warning keeps the requested shell's
   failure reason.
-- Light theme switch: editing `ui_theme` through the file viewer, restart persistence, an
-  unchanged terminal palette, and Linux.
+- Light theme switch: an unchanged terminal palette, and Linux.
 - Restore a shell tab's last command: run a useful command then `cd`/`ls`, restart: the
   useful command is suggested; Right/End accept, Tab/Enter pass through, dismissal, the
   narrow-window hint, crash recovery and forgetting across tabs. Windows: Git Bash and bash
@@ -404,10 +376,8 @@ File viewer off the UI thread, cached (reviews/performance-review.md):
 - Expand folders in the explorer (a symlinked one too), then add and remove files in them
   from a shell tab: the tree follows. Delete and recreate an expanded folder: it follows
   again.
-- Release build with `lto = "thin"` and `codegen-units = 1`: build time on CI, and the
-  packaged app starts.
 
-Packaged apps on Windows and Linux: a smoke test and the About dialog's version and commit.
+Packaged app on Linux: a smoke test and the About dialog's version and commit.
 
 ## Backlog
 
