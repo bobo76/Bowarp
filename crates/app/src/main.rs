@@ -45,7 +45,7 @@ use std::rc::Rc;
 use agent_status::{AGENT_ENV, PIPE_ENV, SESSION_ENV};
 use futures::channel::mpsc;
 use gpui_kit::component::TitleBar;
-use gpui_kit::{App, AppContext, Context, Window, WindowDecorations, WindowOptions};
+use gpui_kit::{App, AppContext, Context, Window, WindowDecorations, WindowOptions, px, size};
 use term_core::{LaunchSpec, SessionKind};
 use workspace_model::{AgentId, HOOK_PROGRAM_ENV, StartError, agents, folder_fallback};
 
@@ -232,6 +232,10 @@ fn open_workspace_window(startup: WorkspaceStartup, cx: &mut App) {
         window_decorations: Some(WindowDecorations::Client),
         app_id: Some("agent-workspace".into()),
         window_background: window_background::initial(cx),
+        window_min_size: Some(size(
+            px(ui_dimensions::MIN_WINDOW_WIDTH),
+            px(ui_dimensions::MIN_WINDOW_HEIGHT),
+        )),
         ..TitleBar::window_options()
     };
     let shell_setting = settings_file::settings(cx)
