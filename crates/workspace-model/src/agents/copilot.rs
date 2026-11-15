@@ -79,6 +79,7 @@ pub const DEFINITION: AgentDefinition = AgentDefinition {
         without_status: NoStatusPolicy::Quiet,
         bell: BellPrecedence::Bell,
     },
+    image_paste: None,
 };
 pub const COPILOT: AgentId = AgentId(DEFINITION.identity.cli_selector);
 

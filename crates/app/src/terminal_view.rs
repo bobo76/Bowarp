@@ -1397,12 +1397,25 @@ impl TerminalView {
         self.paste_clipboard(window, cx);
     }
 
-    /// Without text on the clipboard, the key goes on to the program as `^V`: Claude Code then
-    /// reads a copied image from the clipboard itself.
+    /// Without text on the clipboard, the agent running here gets its paste-image key (Claude
+    /// Code then reads a copied image from the clipboard itself), any other program `^V`.
     fn on_paste_or_send(&mut self, _: &PasteOrSend, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.paste_clipboard(window, cx) {
-            cx.propagate();
+        if self.paste_clipboard(window, cx) {
+            return;
         }
+        match self.image_paste_key() {
+            Some(key) => self.send_input(Cow::Borrowed(key), cx),
+            None => cx.propagate(),
+        }
+    }
+
+    /// The running agent's paste-image key; `None` in a remote tab, where the agent reads the
+    /// host's clipboard, not the one holding the image.
+    fn image_paste_key(&self) -> Option<&'static [u8]> {
+        if self.host.is_some() {
+            return None;
+        }
+        self.status_kind().agent()?.image_paste_key(cfg!(windows))
     }
 
     fn paste_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {

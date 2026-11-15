@@ -139,6 +139,13 @@ impl AgentId {
         self.0
     }
 
+    /// The bytes that make the agent read a copied image from the clipboard; `windows` when it
+    /// runs on a Windows machine (WSL included).
+    pub fn image_paste_key(self, windows: bool) -> Option<&'static [u8]> {
+        let keys = self.definition().image_paste.as_ref()?;
+        Some(if windows { keys.windows } else { keys.unix })
+    }
+
     pub fn saved_kind(self) -> &'static str {
         self.definition().identity.saved_kind
     }
@@ -234,6 +241,16 @@ pub struct AgentDefinition {
     /// How the agent reports its interaction mode; `None` when it has no modes we track.
     pub mode: Option<ModeReporting>,
     pub status: StatusPolicy,
+    /// The key the agent reads a copied image from the clipboard with; `None` when it has none.
+    pub image_paste: Option<ImagePasteKeys>,
+}
+
+/// The bytes of the agent's paste-image key, which differs by platform.
+#[derive(Debug)]
+pub struct ImagePasteKeys {
+    pub unix: &'static [u8],
+    /// For an agent on a Windows machine, WSL included.
+    pub windows: &'static [u8],
 }
 
 /// Names that identify the agent in the CLI, saved files and the UI.

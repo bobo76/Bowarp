@@ -10,6 +10,9 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Windows: Alt+PrtSc, then Ctrl+V in a Claude Code tab attaches the image (`[Image #1]`), in a
+  Claude tab and in a shell tab running `claude`; Ctrl+V with copied text still pastes it.
+
 Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in for ssh:
 
 - Settings → Remote hosts: Add host, type the three fields (the row title and "Connects with"

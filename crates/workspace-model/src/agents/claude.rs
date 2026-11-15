@@ -5,9 +5,9 @@ use serde_json::json;
 
 use super::{
     ActivityPolicy, AgentDefinition, AgentId, AgentIdentity, ArgumentSetting, ArtifactFile,
-    BellPrecedence, HookArtifactKind, HookArtifactPlan, HookNamePolicy, HookProtocol, LaunchPlan,
-    NoStatusPolicy, Presentation, StatusPolicy, SubagentHooks, WorkingSpinner,
-    claude_settings_json,
+    BellPrecedence, HookArtifactKind, HookArtifactPlan, HookNamePolicy, HookProtocol,
+    ImagePasteKeys, LaunchPlan, NoStatusPolicy, Presentation, StatusPolicy, SubagentHooks,
+    WorkingSpinner, claude_settings_json,
 };
 
 const HOOK_EVENTS: &[&str] = &[
@@ -84,6 +84,11 @@ pub const DEFINITION: AgentDefinition = AgentDefinition {
         without_status: NoStatusPolicy::Unavailable,
         bell: BellPrecedence::Hooks,
     },
+    // Ctrl+V, but Alt+V on Windows and in WSL, where Ctrl+V is the terminal's text paste.
+    image_paste: Some(ImagePasteKeys {
+        unix: b"\x16",
+        windows: b"\x1bv",
+    }),
 };
 pub const CLAUDE: AgentId = AgentId(DEFINITION.identity.cli_selector);
 

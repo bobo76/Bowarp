@@ -24,6 +24,21 @@ fn test_provider_has_an_independent_capability_combination() {
 }
 
 #[test]
+fn claude_reads_a_copied_image_with_ctrl_v_on_unix_and_alt_v_on_windows() {
+    assert_eq!(CLAUDE.image_paste_key(false), Some(&b"\x16"[..]));
+    assert_eq!(CLAUDE.image_paste_key(true), Some(&b"\x1bv"[..]));
+}
+
+#[test]
+fn agents_without_an_image_paste_key_have_none_on_any_platform() {
+    let test_agent = AgentId::from_cli_selector("test-agent").unwrap();
+    for agent in [COPILOT, test_agent] {
+        assert_eq!(agent.image_paste_key(false), None);
+        assert_eq!(agent.image_paste_key(true), None);
+    }
+}
+
+#[test]
 fn claude_spins_only_when_a_custom_name_hides_its_animated_title() {
     let claude = SessionKind::Agent(CLAUDE);
     assert!(!claude.shows_working_spinner(false));

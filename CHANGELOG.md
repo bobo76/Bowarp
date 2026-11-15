@@ -10,6 +10,9 @@ omitted unless they affect how the app is used.
   tabs, until the app was restarted.
 - The window can't be made narrower than 720 px or lower than 400 px. Before, it could be
   shrunk until the file viewer was pushed past its right edge.
+- On Windows, Ctrl+V in a Claude Code tab attaches a copied image (a screenshot from
+  PrtSc, Alt+PrtSc or Win+Shift+S). Before, it did nothing: Claude Code reads an image with
+  Alt+V there, not Ctrl+V.
 
 ## 0.4.3
 
