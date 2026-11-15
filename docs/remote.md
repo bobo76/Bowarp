@@ -66,7 +66,26 @@ and the app can attach to them again, like tmux.
 - **Slow clients.** A client with more than 32 MiB of output queued is disconnected (it can
   attach again and gets a fresh snapshot), so it never holds up the program or other clients.
 - **Protocol** (`agentws_remote::protocol`): length-prefixed binary frames, a version in the
-  hello; both sides must run the same protocol version.
+  hello; both sides must run the same protocol version. The hello holds only the version, in
+  every protocol, so a server of another version can always decode it and say so.
+  `Show` asks for a session's text without attaching; the server answers `Text` (its mirror's
+  rows) or `Failed` for an unknown id.
+- **Ping.** Past the hellos, the server sends `Ping` to each connection every 15 s and the
+  client answers `Pong` at once. A connection the server hears nothing from (any message
+  counts) for 45 s is dropped: it leaves every session (and `list`'s clients) and the server
+  shuts its socket down, so the proxy reads the end and exits. Pinging goes from the server
+  because its socket leads to the local proxy, which stays up when the network drops: only a
+  round trip through ssh shows the client is gone. One watchdog thread per connection, which
+  sleeps until the next ping or deadline and ends with the connection. The ping is written
+  ahead of the output queued for the connection (between whole frames), so a slow link draining
+  a backlog still answers in time; the 32 MiB limit above is what ends a client too far behind.
+- **Client identity.** Right after the hello the app sends `Identify`: a random id made once
+  per install (the file `client-id` in the config folder) and its machine name (Windows
+  `COMPUTERNAME`, else the host name). A connection attaching to a session that still holds
+  another connection with the same id replaces it there at once: the app lost that
+  connection and reconnected, so it is counted and named once. The old connection itself is
+  left to end when it misses the pings (another instance of the same install may still use
+  it). `list`, `status` and `close` send no identity and never attach.
 
 ## Trying it
 
@@ -83,7 +102,14 @@ and the app can attach to them again, like tmux.
 3. Add the host on the settings page (Remote hosts) and open a tab from its `+` submenu, or
    run `agent-workspace --remote <host> [shell|claude|copilot] [folder on the host]` (a
    destination or a host's name) to open the remote tab after the usual local one.
-   `agentws-server list` / `close <id>` on the server show and end its sessions;
+   `agentws-server list` / `close <id>` on the server show and end its sessions (`list`
+   prints one line per session: id, kind, state, attached clients, their machine names
+   comma-separated (`-` for none, `?` for a client that gave none), title, tab-separated);
+   `agentws-server show <id> [--scrollback]` prints a session's screen as plain text (one line
+   per row, trailing blanks and trailing empty rows dropped; with `--scrollback`, its history
+   first, the oldest lines dropped beyond 16 MiB), read from the server's copy of the
+   terminal: it does not attach, so the pty keeps its size and `list` does not count it, and
+   an exited session shows its last screen;
    `agentws-server status` shows whether the daemon runs (never starting it), with the
    installed program's version and protocol and the daemon's session count, as `key=value`
    lines (exit 0 either way). Check on the settings page runs it over ssh. With the
@@ -124,7 +150,7 @@ Build the app and `agentws-server` from the same commit: a protocol version mism
 
 ## Status
 
-Done: protocol, server, daemon and proxy (`agentws-server`, with `list`, `close` and
+Done: protocol, server, daemon and proxy (`agentws-server`, with `list`, `show`, `close` and
 `status`), client, snapshot, remote sessions in the app's tabs, from the `+` menu's host
 submenus (hosts set on the settings page) or the command line (`--remote <host>`), and the
 remote folder: shown on the tab, and where agents and new tabs opened from it start;
@@ -135,6 +161,8 @@ Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 
 ## Limitations
 
+- A Windows app is named by `COMPUTERNAME`: upper case and at most 15 characters, which can
+  differ from the machine's full host name.
 - Several clients on one session share the pty size: the latest resize wins, and the other
   clients' mirrors follow it.
 - While a program uses the alternate screen, a snapshot replays only that screen: the shell's
@@ -156,4 +184,14 @@ Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 - A remote agent that exits cleanly keeps its last screen: its tab doesn't go on as a shell.
 - Reconnect is manual: the app does not retry a lost connection by itself.
 - Closing the app ends its remote sessions, like local ones.
-- An exited session stays listed until a client closes it.
+- An exited session stays listed until a client closes it, and keeps counting the clients
+  attached to it.
+- A client whose network dropped still counts in `list`'s clients for up to about 45 s (the
+  ping), or until the same app attaches again (Reconnect).
+- On a Windows server the named pipe cannot be shut down from another thread: a silent
+  client leaves the sessions after 45 s, but its connection and proxy stay until ssh ends.
+- A proxy blocked writing output to an ssh whose network dropped never reads the end of its
+  socket: it stays until ssh ends, though the server dropped its connection after 45 s.
+- App instances on one machine share the install id. Harmless while an instance only attaches
+  its own sessions; once one can attach another's (Restore), two instances showing the same
+  session would replace each other in it: the id should then be made per instance.

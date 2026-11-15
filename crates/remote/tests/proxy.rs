@@ -23,7 +23,7 @@ fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
 fn proxy(socket: &str) -> Client {
     let mut command = Command::new(SERVER);
     command.arg("proxy").env(SOCKET_ENV, socket);
-    Client::over_command(command, Box::new(|_| {})).unwrap()
+    Client::over_command(command, None, Box::new(|_| {})).unwrap()
 }
 
 fn quiet(id: u64) -> LocalView {
@@ -80,7 +80,7 @@ fn sessions_survive_the_proxy_and_reattach() {
 #[test]
 fn a_missing_server_program_is_reported() {
     let command = Command::new("/nonexistent/agentws-server");
-    assert!(Client::over_command(command, Box::new(|_| {})).is_err());
+    assert!(Client::over_command(command, None, Box::new(|_| {})).is_err());
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn the_ssh_error_output_is_in_the_error() {
         "-c",
         "echo 'ssh: Could not resolve hostname nowhere' >&2; exit 255",
     ]);
-    let err = Client::over_command(command, Box::new(|_| {}))
+    let err = Client::over_command(command, None, Box::new(|_| {}))
         .err()
         .unwrap();
     assert!(err.to_string().contains("Could not resolve"), "{err}");

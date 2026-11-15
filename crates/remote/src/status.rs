@@ -211,7 +211,7 @@ fn ask_daemon(
     reader: impl Read + Send + 'static,
     writer: impl Write + Send + 'static,
 ) -> io::Result<(DaemonState, Option<usize>)> {
-    match Client::connect(reader, writer, Box::new(|_| {})) {
+    match Client::connect(reader, writer, None, Box::new(|_| {})) {
         Ok(client) => Ok((DaemonState::Running, Some(client.list()?.len()))),
         // The server refuses a hello in another protocol (`protocol.rs`).
         Err(err) if err.kind() == io::ErrorKind::ConnectionRefused => {

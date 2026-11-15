@@ -25,10 +25,13 @@ fn hosts(server: &Server) -> (RemoteHosts, Arc<AtomicU32>, Sockets) {
         let server = server.clone();
         thread::spawn(move || {
             let reader = server_end.try_clone().unwrap();
-            server.serve_connection(reader, server_end);
+            let socket = server_end.try_clone().unwrap();
+            server.serve_connection(reader, server_end, move || {
+                drop(socket.shutdown(Shutdown::Both));
+            });
         });
         kept.lock().unwrap().push(client_end.try_clone()?);
-        Client::connect(client_end.try_clone()?, client_end, Box::new(|_| {}))
+        Client::connect(client_end.try_clone()?, client_end, None, Box::new(|_| {}))
     }));
     (hosts, connects, sockets)
 }

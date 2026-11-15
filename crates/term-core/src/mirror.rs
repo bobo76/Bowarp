@@ -14,7 +14,7 @@ use alacritty_terminal::term::{self, Term};
 use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
 use parking_lot::MutexGuard;
 
-use crate::session::{EventCallback, SessionEvent, TermDimensions, screen_text};
+use crate::session::{EventCallback, SessionEvent, TermDimensions, screen_text, term_text};
 
 struct Shared {
     callback: EventCallback,
@@ -126,6 +126,15 @@ impl Mirror {
     pub fn visible_text(&self) -> Vec<String> {
         screen_text(&self.term.lock())
     }
+
+    /// The screen as text, after the scrollback when `scrollback` is set: one string per row,
+    /// oldest first, trailing blanks and trailing empty rows dropped. A wide character comes
+    /// once, with its combining characters.
+    pub fn text(&self, scrollback: bool) -> Vec<String> {
+        // Locks the parser too, so no output is half parsed.
+        let _parser = self.parser.lock().unwrap();
+        term_text(&self.term.lock(), scrollback)
+    }
 }
 
 #[cfg(test)]
@@ -168,5 +177,20 @@ mod tests {
         copy.feed(&mirror.snapshot());
         assert_eq!(copy.visible_text(), ["two", "three"]);
         assert_eq!(copy.lock_term().grid().history_size(), 1);
+    }
+
+    #[test]
+    fn its_text_has_the_scrollback_on_demand_and_no_trailing_empty_rows() {
+        let mirror = Mirror::new(TermDimensions::new(10, 3), Arc::new(|_| {}));
+        assert!(mirror.text(true).is_empty());
+        mirror.feed("one  \r\ntwo\r\n\x1b[1mあい\x1b[0m\r\ne\u{301}\r\n".as_bytes());
+        assert_eq!(mirror.text(false), ["あい", "e\u{301}"]);
+        assert_eq!(mirror.text(true), ["one", "two", "あい", "e\u{301}"]);
+        // An empty row inside the text stays.
+        mirror.feed(b"\r\nend");
+        assert_eq!(mirror.text(false), ["e\u{301}", "", "end"]);
+        // The alternate screen has no scrollback.
+        mirror.feed(b"\x1b[?1049h\x1b[Hfull");
+        assert_eq!(mirror.text(true), ["full"]);
     }
 }

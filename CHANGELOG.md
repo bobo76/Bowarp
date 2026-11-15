@@ -5,6 +5,30 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.4.3
+
+- `agentws-server show <id> [--scrollback]` prints a session's screen (and its history) as
+  plain text on the server, without attaching, so the tab showing it keeps its size. The app
+  and `agentws-server` must be updated together (protocol version 6).
+
+## 0.4.2
+
+- An app whose network dropped leaves `agentws-server list` within about 45 s, without
+  configuring sshd: the server pings each app and drops one that stops answering. The app
+  and `agentws-server` must be updated together (protocol version 5).
+
+## 0.4.1
+
+- `agentws-server list` names the machine of each attached app, in a column after the client
+  count. An app that reconnects after losing its connection replaces it at once instead of
+  counting twice. The app and `agentws-server` must be updated together (protocol version 4).
+
+## 0.4.0
+
+- `agentws-server list` shows how many apps are attached to each session, in a column
+  before the title, also for a session whose program exited. The app and `agentws-server`
+  must be updated together (protocol version 3).
+
 ## 0.3.9
 
 - Open the Git page with Ctrl+Shift+G (Cmd+Shift+G on macOS); pressed again, it goes back to
