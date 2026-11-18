@@ -1,5 +1,6 @@
 //! The Git page: a repository the tabs are in (picked from a menu), its changed files in a
-//! "Staged Changes" and a "Changes" group, and staging or unstaging them whole. Every `git`
+//! "Staged Changes" and a "Changes" group, and staging, unstaging or discarding them whole
+//! (discarding after a confirmation). Every `git`
 //! runs off the UI thread, one at a time, so two clicks never race for the index lock. While
 //! the page shows, the repository's git folder, its top folder and the folders of its changed
 //! files are watched, and a change reads the status again; nothing is watched while hidden.
@@ -8,10 +9,12 @@
 //! ([`line_staging`]). What is staged is committed from the box above the lists
 //! ([`commit_box`]).
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
 use gpui_kit::component::input::TextareaState;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
@@ -34,7 +37,7 @@ use workspace_model::layout::Direction;
 use self::commit_box::{COMMIT_CONTEXT, CommitDone};
 use self::diff_view::ShownDiff;
 
-use crate::assets::GIT_BRANCH_ICON;
+use crate::assets::{GIT_BRANCH_ICON, UNDO_ICON};
 use crate::folder_watcher::{FolderWatcher, WatchesFolders};
 use crate::sidebar;
 
@@ -95,9 +98,9 @@ enum Op {
     /// Show this repository.
     Choose(RepoEntry),
     Refresh,
-    /// Change the index of the repository shown when it was asked (another may show by the
-    /// time it runs), then read the status of the one shown.
-    Change(Target, IndexChange),
+    /// Change the index or working tree of the repository shown when it was asked (another may
+    /// show by the time it runs), then read the status of the one shown.
+    Change(Target, RepoChange),
     /// Read the selected file's diff only (not the status).
     ReadDiff,
     /// Commit what is staged in the repository shown when it was asked, with this message.
@@ -111,12 +114,16 @@ struct Target {
     head: Head,
 }
 
-/// How an [`Op::Change`] changes the index.
-enum IndexChange {
+/// How an [`Op::Change`] changes the repository: the index, or for a discard the working tree.
+enum RepoChange {
     Stage(Vec<FileStatus>),
     Unstage(Vec<FileStatus>),
     StageAll,
     UnstageAll,
+    /// Throw away these files' unstaged changes (an untracked file is deleted).
+    Discard(Vec<FileStatus>),
+    /// Throw away every unstaged change.
+    DiscardAll,
     /// A [`git::partial_patch`] of the diff on `side`: stages its lines (Unstaged) or unstages
     /// them (Staged).
     Apply {
@@ -576,22 +583,76 @@ impl GitPage {
             return;
         };
         let change = match side {
-            DiffSide::Unstaged => IndexChange::Stage(vec![file]),
-            DiffSide::Staged => IndexChange::Unstage(vec![file]),
+            DiffSide::Unstaged => RepoChange::Stage(vec![file]),
+            DiffSide::Staged => RepoChange::Unstage(vec![file]),
         };
-        self.change_index(change, window, cx);
+        self.change_repo(change, window, cx);
     }
 
     fn toggle_group_files(&mut self, side: DiffSide, window: &mut Window, cx: &mut Context<Self>) {
         let change = match side {
-            DiffSide::Unstaged => IndexChange::StageAll,
-            DiffSide::Staged => IndexChange::UnstageAll,
+            DiffSide::Unstaged => RepoChange::StageAll,
+            DiffSide::Staged => RepoChange::UnstageAll,
         };
-        self.change_index(change, window, cx);
+        self.change_repo(change, window, cx);
+    }
+
+    /// Ask before discarding the unstaged changes of the file at `index` (a conflict has none
+    /// to discard).
+    fn confirm_discard_file(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(file) = self
+            .status()
+            .and_then(|status| status.files.get(index))
+            .cloned()
+        else {
+            return;
+        };
+        let prompt = git::discard_prompt(&[&file]);
+        self.confirm_discard(prompt, RepoChange::Discard(vec![file]), window, cx);
+    }
+
+    /// Ask before discarding every unstaged change.
+    fn confirm_discard_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let prompt = self.status().and_then(|status| {
+            let files: Vec<&FileStatus> = status.files_on(DiffSide::Unstaged).collect();
+            git::discard_prompt(&files)
+        });
+        self.confirm_discard(prompt, RepoChange::DiscardAll, window, cx);
+    }
+
+    /// Show `prompt`, and queue `change` on its confirming button (or Enter, like the file
+    /// explorer's Delete; Esc and Cancel keep everything).
+    fn confirm_discard(
+        &mut self,
+        prompt: Option<git::DiscardPrompt>,
+        change: RepoChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(prompt), Some(target)) = (prompt, self.target()) else {
+            return;
+        };
+        let page = cx.entity().downgrade();
+        let pending = Rc::new(Cell::new(Some(Op::Change(target, change))));
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let (page, pending) = (page.clone(), pending.clone());
+            alert
+                .title(prompt.title.clone())
+                .description(prompt.description.clone())
+                .ok_text(prompt.action)
+                .ok_variant(ButtonVariant::Danger)
+                .show_cancel(true)
+                .on_ok(move |_, window, cx| {
+                    if let Some(op) = pending.take() {
+                        let _ = page.update(cx, |page, cx| page.enqueue(op, window, cx));
+                    }
+                    true
+                })
+        });
     }
 
     /// Queue `change` for the repository shown now.
-    fn change_index(&mut self, change: IndexChange, window: &mut Window, cx: &mut Context<Self>) {
+    fn change_repo(&mut self, change: RepoChange, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(target) = self.target() {
             self.enqueue(Op::Change(target, change), window, cx);
         }
@@ -606,8 +667,9 @@ impl GitPage {
         })
     }
 
-    /// In the list: Up / Down move the selection between files, Space stages or unstages the
-    /// selected one. (Tab is [`FocusNext`].)
+    /// In the list: Up / Down move the selection between files; on the selected one, Space
+    /// stages or unstages it, S stages it, U unstages it and R discards its unstaged changes
+    /// (after a confirmation). (Tab is [`FocusNext`].)
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus.is_focused(window) {
             return;
@@ -616,20 +678,40 @@ impl GitPage {
         if keystroke.modifiers.modified() {
             return;
         }
-        match keystroke.key.as_str() {
+        let key = keystroke.key.to_ascii_lowercase();
+        match key.as_str() {
             "up" => self.step_selection(Direction::Up, window, cx),
             "down" => self.step_selection(Direction::Down, window, cx),
-            "space" => {
+            "space" | "s" | "u" | "r" => {
                 let Some(StatusRow::File { side, index }) =
                     self.selected_row().map(|row| self.rows[row])
                 else {
                     return;
                 };
-                self.toggle_file(side, index, window, cx);
+                self.file_key(&key, side, index, window, cx);
             }
             _ => return,
         }
         cx.stop_propagation();
+    }
+
+    /// A key on the selected file, the one at `index` in the group of `side`. A key that
+    /// doesn't apply to its group (S on a staged file) does nothing.
+    fn file_key(
+        &mut self,
+        key: &str,
+        side: DiffSide,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match (key, side) {
+            ("space", _) | ("s", DiffSide::Unstaged) | ("u", DiffSide::Staged) => {
+                self.toggle_file(side, index, window, cx);
+            }
+            ("r", DiffSide::Unstaged) => self.confirm_discard_file(index, window, cx),
+            _ => {}
+        }
     }
 
     fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
@@ -828,6 +910,10 @@ impl GitPage {
             IconName::ChevronDown
         };
         let group = SharedString::from(format!("git-group-{}", side_key(side)));
+        let discardable = side == DiffSide::Unstaged
+            && self
+                .status()
+                .is_some_and(|status| status.files_on(side).any(FileStatus::discardable));
         div()
             .id(group.clone())
             .group(group.clone())
@@ -850,8 +936,23 @@ impl GitPage {
             .child(div().flex_1().child(title))
             .child(
                 div()
+                    .flex()
                     .invisible()
                     .group_hover(group, |style| style.visible())
+                    .when(discardable, |buttons| {
+                        buttons.child(
+                            Button::new("git-discard-all")
+                                .icon(Icon::empty().path(UNDO_ICON))
+                                .ghost()
+                                .xsmall()
+                                .disabled(self.running)
+                                .tooltip("Discard all changes")
+                                .on_click(cx.listener(|page, _, window, cx| {
+                                    cx.stop_propagation();
+                                    page.confirm_discard_all(window, cx);
+                                })),
+                        )
+                    })
                     .child(
                         Button::new(SharedString::from(format!("git-all-{}", side_key(side))))
                             .icon(icon)
@@ -899,6 +1000,7 @@ impl GitPage {
             DiffSide::Unstaged => (IconName::Plus, "Stage"),
         };
         let group = SharedString::from(format!("git-file-{row}"));
+        let discardable = side == DiffSide::Unstaged && file.discardable();
         let clicked = (side, file.path.clone());
         let selected_background =
             crate::window_background::panel_background(theme.sidebar_accent, cx);
@@ -942,8 +1044,23 @@ impl GitPage {
             )
             .child(
                 div()
+                    .flex()
                     .invisible()
                     .group_hover(group, |style| style.visible())
+                    .when(discardable, |buttons| {
+                        buttons.child(
+                            Button::new(("git-discard-file", row))
+                                .icon(Icon::empty().path(UNDO_ICON))
+                                .ghost()
+                                .xsmall()
+                                .disabled(self.running)
+                                .tooltip("Discard changes")
+                                .on_click(cx.listener(move |page, _, window, cx| {
+                                    cx.stop_propagation();
+                                    page.confirm_discard_file(index, window, cx);
+                                })),
+                        )
+                    })
                     .child(
                         Button::new(("git-toggle-file", row))
                             .icon(icon)
@@ -1052,7 +1169,7 @@ fn run_op(op: Op, repo: Option<RepoEntry>) -> OpDone {
         Op::Choose(chosen) => done.repo = Some(chosen),
         Op::Refresh | Op::ReadDiff => {}
         Op::Change(target, change) => {
-            done.error = change_index(&target, change)
+            done.error = change_repo(&target, change)
                 .err()
                 .map(|err| err.to_string());
         }
@@ -1150,14 +1267,16 @@ fn read_file_diff(root: &Path, file: &FileStatus, side: DiffSide) -> DiffRead {
     }
 }
 
-fn change_index(target: &Target, change: IndexChange) -> Result<(), git::GitError> {
+fn change_repo(target: &Target, change: RepoChange) -> Result<(), git::GitError> {
     let root = &target.root;
     match change {
-        IndexChange::Stage(files) => git::stage(root, &refs(&files)),
-        IndexChange::Unstage(files) => git::unstage(root, &refs(&files), target.head),
-        IndexChange::StageAll => git::stage_all(root),
-        IndexChange::UnstageAll => git::unstage_all(root, target.head),
-        IndexChange::Apply { side, patch } => git::apply_patch(root, patch, side),
+        RepoChange::Stage(files) => git::stage(root, &refs(&files)),
+        RepoChange::Unstage(files) => git::unstage(root, &refs(&files), target.head),
+        RepoChange::StageAll => git::stage_all(root),
+        RepoChange::UnstageAll => git::unstage_all(root, target.head),
+        RepoChange::Discard(files) => git::discard(root, &refs(&files)),
+        RepoChange::DiscardAll => git::discard_all(root),
+        RepoChange::Apply { side, patch } => git::apply_patch(root, patch, side),
     }
 }
 

@@ -1,6 +1,6 @@
 //! What git says about the folder a tab works in: its branch, how many lines changed, which
 //! entries are ignored; and, for the Git page, the repository's status, a file's diff, and
-//! staging (whole files, hunks or single lines) and committing.
+//! staging (whole files, hunks or single lines), committing and discarding.
 
 mod actions;
 mod diff;
@@ -15,8 +15,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub use self::actions::{
-    RepoEntry, apply_patch, choose_repo, commit, commit_failure, commit_message_ready, locate,
-    missing_identity, repos_of, stage, stage_all, unstage, unstage_all,
+    DiscardPrompt, RepoEntry, apply_patch, choose_repo, commit, commit_failure,
+    commit_message_ready, discard, discard_all, discard_prompt, locate, missing_identity, repos_of,
+    stage, stage_all, unstage, unstage_all,
 };
 pub use self::diff::{
     DiffLine, DiffRow, FileDiff, Hunk, LineKind, MAX_DIFF_BYTES, TextDiff, read_diff,

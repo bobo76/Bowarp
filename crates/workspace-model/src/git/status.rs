@@ -102,6 +102,12 @@ impl FileStatus {
         }
     }
 
+    /// Whether its unstaged change can be discarded: any but a merge conflict, which needs
+    /// resolving rather than throwing away.
+    pub fn discardable(&self) -> bool {
+        !matches!(self.unstaged, None | Some(Change::Conflicted))
+    }
+
     /// Whether lines of it can be staged or unstaged one by one on `side` (a text diff git can
     /// apply in parts: not untracked, not a merge conflict, not a type change, whose diff
     /// removes one file and adds another).

@@ -115,7 +115,10 @@ directly to model APIs.
 - Stage or unstage a hunk or the selected lines from the diff, with the mouse or the keyboard.
 - Commit what is staged with a message (Ctrl+Enter); the repository's hooks run, and a failure
   shows git's message and keeps the message typed.
-- Never change the working tree: the page changes only the index and makes commits.
+- Discard a file's unstaged changes, or all of them, after a confirmation naming what is lost
+  (an untracked file is deleted).
+- Change the working tree only to discard: otherwise the page changes only the index and makes
+  commits.
 
 ## Agent Activity and Attention
 

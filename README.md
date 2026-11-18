@@ -602,13 +602,18 @@ the index, HEAD or a changed file's folder changes.
 - **Staged Changes / Changes**: each changed file with its status letter (M modified, A added,
   D deleted, R renamed, C copied, T type changed, U untracked, ! conflicted); a file changed
   on both sides is in both. Hover a file for + (stage) or − (unstage),
-  or a group header for Stage all / Unstage all. Click a header to fold its group.
+  or a group header for Stage all / Unstage all. Click a header to fold its group. In
+  Changes, the ↶ button (on a file, or Discard all on the header) throws away unstaged
+  changes after a confirmation naming what is lost: a tracked file goes back to its staged
+  content (what is staged is kept) and an untracked file is deleted, permanently. Ignored
+  files and merge conflicts are left alone.
 - **Diff** (right): the selected file's diff for its group, staged or unstaged; an untracked
   file shows as all added. Each hunk header has Stage hunk / Unstage hunk on hover. Click a
   changed line to select it, Shift+click or drag for a range, Ctrl+click to add or remove one;
   a "Stage N lines" bar then shows at the top right, and right-clicking offers the same.
 
-The page only changes the index and makes commits: it never changes your files.
+The page only changes the index and makes commits; discarding is the one action that changes
+your files.
 
 | Where | Keys | Action |
 |---|---|---|
@@ -617,6 +622,8 @@ The page only changes the index and makes commits: it never changes your files.
 | Commit message | Esc | Back to the file list |
 | File list | Up / Down | Move between files |
 | File list | Space | Stage or unstage the selected file |
+| File list | `S` / `U` | Stage / unstage the selected file |
+| File list | `R` | Discard the selected file's unstaged changes (asks first) |
 | Diff | Up / Down | Move between changed lines |
 | Diff | Shift+Up / Shift+Down | Extend the selection |
 | Diff | `S` / `U` | Stage / unstage the selected lines (else the cursor's line) |

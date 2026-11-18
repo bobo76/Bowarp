@@ -105,7 +105,8 @@ pub(super) struct TabCards {
     /// The tab whose hover card shows, and the task repainting its lap time each second.
     clock: Option<(u64, Task<()>)>,
     /// No card shows, and the clock stops, while a tab is dragged or something the user works
-    /// in (a name editor, a menu, a dialog) is open. Set at each render.
+    /// in (a name editor, a menu, a dialog) is open, or the pointer left the window. Set at
+    /// each render.
     pub(super) held: bool,
     /// The tab whose card was open when a hold ended: it stays hidden until the pointer
     /// leaves its row, so a card answers a hover, not the end of a menu, dialog or drag.
@@ -191,6 +192,7 @@ impl WorkspaceView {
             || self.menu.is_open()
             || self.explorer.read(cx).holds_popups()
             || window.has_active_dialog(cx)
+            || pointer_left_window(window)
     }
 
     /// Tab `id`'s hover card opened (its row was hovered for a moment).
@@ -487,6 +489,14 @@ fn card_changes(
         })
         .collect();
     (listed, changes.files.len().saturating_sub(MAX_CARD_CHANGES))
+}
+
+/// Whether the pointer left the window. Checked on Windows only: its GPUI backend sends no
+/// `MouseExited`, so the row under the pointer stays hovered and its card stays open, while
+/// the other backends clear hover themselves (and on macOS `is_window_hovered` means "active").
+/// Not in tests: the test window never reports a hover.
+fn pointer_left_window(window: &Window) -> bool {
+    cfg!(all(windows, not(test))) && !window.is_window_hovered()
 }
 
 #[cfg(test)]

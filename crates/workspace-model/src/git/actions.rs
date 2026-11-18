@@ -1,15 +1,17 @@
 //! The repositories the tabs are in, and what the Git page changes in one: staging and
-//! unstaging (whole files, or a patch of some lines) and committing. Nothing here touches the
-//! working tree.
+//! unstaging (whole files, or a patch of some lines), committing, and discarding a file's
+//! unstaged changes, the only action here that touches the working tree.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::runner::{Access, GitError, execute};
-use super::status::{DiffSide, FileStatus, Head};
+use super::status::{Change, DiffSide, FileStatus, Head};
 
 /// How long staging and unstaging wait for `git`.
 const STAGE_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long discarding waits for `git`.
+const DISCARD_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a commit waits for `git`, its hooks included (a pre-commit hook may run tests).
 const COMMIT_TIMEOUT: Duration = Duration::from_secs(300);
 /// How long finding a folder's repository waits for `git rev-parse`.
@@ -144,6 +146,114 @@ pub fn apply_patch(root: &Path, patch: Vec<u8>, side: DiffSide) -> Result<(), Gi
     }
     args.push("-");
     run_write(root, &args, Some(patch), STAGE_TIMEOUT)
+}
+
+/// Throw away the unstaged changes of `files`: a tracked file goes back to its staged content
+/// (what is staged is kept), an untracked one is deleted. Merge conflicts are left alone
+/// ([`FileStatus::discardable`]).
+pub fn discard(root: &Path, files: &[&FileStatus]) -> Result<(), GitError> {
+    let (untracked, tracked): (Vec<&FileStatus>, Vec<&FileStatus>) = files
+        .iter()
+        .copied()
+        .filter(|file| file.discardable())
+        .partition(|file| file.unstaged == Some(Change::Untracked));
+    if !tracked.is_empty() {
+        let mut args = vec!["--literal-pathspecs", "restore", "--worktree", "--"];
+        args.extend(tracked.iter().map(|file| file.path.as_str()));
+        run_write(root, &args, None, DISCARD_TIMEOUT)?;
+    }
+    if !untracked.is_empty() {
+        let mut args = vec!["--literal-pathspecs", "clean", "-f", "-q", "--"];
+        args.extend(untracked.iter().map(|file| file.path.as_str()));
+        run_write(root, &args, None, DISCARD_TIMEOUT)?;
+    }
+    Ok(())
+}
+
+/// Throw away every unstaged change: tracked files go back to their staged content and
+/// untracked files are deleted (ignored ones are kept). Merge conflicts are left alone.
+pub fn discard_all(root: &Path) -> Result<(), GitError> {
+    let restore = ["restore", "--worktree", "--ignore-unmerged", "--", ":/"];
+    run_write(root, &restore, None, DISCARD_TIMEOUT)?;
+    run_write(
+        root,
+        &["clean", "-f", "-q", "--", ":/"],
+        None,
+        DISCARD_TIMEOUT,
+    )
+}
+
+/// What the confirmation before discarding `files` says, naming what is lost.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiscardPrompt {
+    pub title: String,
+    pub description: String,
+    /// The confirming button's label.
+    pub action: &'static str,
+}
+
+/// The confirmation before discarding the [`FileStatus::discardable`] ones of `files`; `None`
+/// when there is none.
+pub fn discard_prompt(files: &[&FileStatus]) -> Option<DiscardPrompt> {
+    let files: Vec<&FileStatus> = files
+        .iter()
+        .copied()
+        .filter(|file| file.discardable())
+        .collect();
+    let untracked = files
+        .iter()
+        .filter(|file| file.unstaged == Some(Change::Untracked))
+        .count();
+    let tracked = files.len() - untracked;
+    let prompt = match (files.as_slice(), tracked) {
+        ([], _) => return None,
+        ([file], 0) => DiscardPrompt {
+            title: format!("Delete \"{}\"?", file.path),
+            description: format!("It isn't tracked by git: the file is deleted. {UNDONE}"),
+            action: "Delete",
+        },
+        ([file], _) => DiscardPrompt {
+            title: format!("Discard the changes in \"{}\"?", file.path),
+            description: format!("Its unstaged changes are lost; what is staged is kept. {UNDONE}"),
+            action: "Discard",
+        },
+        _ => {
+            let mut lost = Vec::new();
+            if tracked > 0 {
+                lost.push(format!(
+                    "the unstaged changes in {} are lost",
+                    files_count(tracked)
+                ));
+            }
+            if untracked > 0 {
+                lost.push(format!(
+                    "{} not tracked by git {} deleted",
+                    files_count(untracked),
+                    if untracked == 1 { "is" } else { "are" }
+                ));
+            }
+            let mut description = lost.join(", and ");
+            description[..1].make_ascii_uppercase();
+            DiscardPrompt {
+                title: format!("Discard all changes in {}?", files_count(files.len())),
+                description: format!("{description}; what is staged is kept. {UNDONE}"),
+                action: "Discard All",
+            }
+        }
+    };
+    Some(prompt)
+}
+
+/// Ends every discard confirmation.
+const UNDONE: &str = "This can't be undone.";
+
+/// "1 file", "3 files".
+fn files_count(count: usize) -> String {
+    if count == 1 {
+        "1 file".to_string()
+    } else {
+        format!("{count} files")
+    }
 }
 
 /// Commit what is staged with `message`, running the repository's hooks. Returns git's

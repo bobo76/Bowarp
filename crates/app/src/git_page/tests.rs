@@ -517,3 +517,105 @@ fn shows_the_selected_tabs_repository_when_given_else_keeps_the_shown_one(
     // A selected folder outside any repository keeps it too.
     assert_eq!(show(Some(std::env::temp_dir())), Some(name(&second)));
 }
+
+#[gpui::test]
+fn the_list_keys_stage_unstage_and_discard_after_a_confirmation(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::{Root, WindowExt};
+    use gpui_kit::{AppContext, VisualTestContext};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let Some(folder) = temp_repo("discard") else {
+        eprintln!("git not available, skipping");
+        return;
+    };
+    run_git(&folder, &["add", "note.txt"]);
+    run_git(&folder, &["commit", "-q", "-m", "first"]);
+    std::fs::write(folder.join("note.txt"), "edited\n").unwrap();
+    std::fs::write(folder.join("new.txt"), "new\n").unwrap();
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::settings_file::init_in_memory(cx);
+        init(cx);
+    });
+    let captured = Rc::new(RefCell::new(None));
+    let capture = captured.clone();
+    let window = cx.add_window(move |window, cx| {
+        let page = cx.new(|cx| GitPage::new(window, cx));
+        *capture.borrow_mut() = Some(page.clone());
+        Root::new(page, window, cx)
+    });
+    let page = captured.borrow().clone().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let folders = vec![folder.clone()];
+    cx.update(|window, cx| page.update(cx, |page, cx| page.show(folders, None, window, cx)));
+    cx.run_until_parked();
+    let select = |cx: &mut VisualTestContext, side: DiffSide, path: &str| {
+        let file = (side, path.to_string());
+        cx.update(|window, cx| {
+            page.update(cx, |page, cx| {
+                window.focus(&page.focus, cx);
+                page.select(file, window, cx);
+            })
+        });
+        cx.run_until_parked();
+    };
+    let staged = |cx: &mut VisualTestContext, path: &str| {
+        cx.update(|_, cx| {
+            let status = page.read(cx).status().unwrap().clone();
+            status
+                .files_on(DiffSide::Staged)
+                .any(|file| file.path == path)
+        })
+    };
+    let dialog = |cx: &mut VisualTestContext| cx.update(|window, cx| window.has_active_dialog(cx));
+
+    // S stages, U unstages; S on a staged file does nothing.
+    select(&mut cx, DiffSide::Unstaged, "new.txt");
+    cx.simulate_keystrokes("s");
+    cx.run_until_parked();
+    assert!(staged(&mut cx, "new.txt"));
+    select(&mut cx, DiffSide::Staged, "new.txt");
+    cx.simulate_keystrokes("s");
+    cx.run_until_parked();
+    assert!(staged(&mut cx, "new.txt"));
+    cx.simulate_keystrokes("u");
+    cx.run_until_parked();
+    assert!(!staged(&mut cx, "new.txt"));
+
+    // R asks first; Esc keeps the change.
+    select(&mut cx, DiffSide::Unstaged, "note.txt");
+    cx.simulate_keystrokes("r");
+    cx.run_until_parked();
+    assert!(dialog(&mut cx), "discarding asks first");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(!dialog(&mut cx));
+    // Trimmed: git may check the file out with CRLF (`core.autocrlf` on Windows).
+    let note = || {
+        let text = std::fs::read_to_string(folder.join("note.txt")).unwrap();
+        text.trim_end().to_string()
+    };
+    assert_eq!(note(), "edited");
+
+    // Confirmed, the file is back to its committed content.
+    cx.simulate_keystrokes("r");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(note(), "hello");
+    assert!(folder.join("new.txt").exists());
+
+    // Discard all deletes the untracked file.
+    cx.update(|window, cx| page.update(cx, |page, cx| page.confirm_discard_all(window, cx)));
+    cx.run_until_parked();
+    assert!(dialog(&mut cx));
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(!folder.join("new.txt").exists());
+    assert!(cx.update(|_, cx| page.read(cx).rows.is_empty()));
+
+    page.update(&mut cx, |page, _| page.hide());
+    let _ = std::fs::remove_dir_all(&folder);
+}

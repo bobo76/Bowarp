@@ -5,6 +5,13 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Git page: discard a file's unstaged changes with the ↶ button on its row in Changes or the
+  `R` key, or every unstaged change with Discard all on the Changes header, after a
+  confirmation. A tracked file goes back to its staged content; an untracked file is deleted.
+  `S` and `U` stage and unstage the selected file, as they do lines in the diff.
+- On Windows, a tab or group hover card closes when the pointer leaves the window. Before,
+  it stayed open until the pointer came back and left its row.
+
 ## 0.4.4
 
 - The "Git page" switch moved from Settings → Workspace to the top of Settings → Git.
