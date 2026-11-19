@@ -89,7 +89,8 @@ submenu each, with the host's default shell, Claude Code and Copilot CLI, starte
 folder, and named after it ("Shell (box)") until the program sets a title. Connecting takes a
 moment: a "Connecting to <host>" toast shows meanwhile, and the tab opens once the session
 runs there. When it can't start (ssh's own message, e.g. a host it can't resolve or a key it
-refuses), an error toast says why and stays until dismissed.
+refuses), an error toast says why and stays until dismissed. Each submenu ends with the
+host's server state as last known this run (as on the settings page) and **Check server**.
 
 | Keys | Action |
 |---|---|
@@ -539,7 +540,9 @@ the session's own folder.
 Right-click an entry for its menu: New file (in the entry's folder; Enter or clicking elsewhere
 creates it, Escape cancels), cd to directory (shell tabs, at the prompt), Open in new tab (the
 default shell), Open in new tab with (a submenu: Claude Code or Copilot CLI), Reveal in file
-manager, Rename, Delete (asks first; deletes for good, not to the trash), Copy path, Copy
+manager, Rename, Delete (asks first, then moves the entry to the system trash: the Recycle Bin or the
+desktop's trash; where there is none, as on a network mount or a WSL path, it asks again
+before deleting for good), Copy path, Copy
 relative path (from the explorer's root). cd and the Open in new tab entries use the folder
 itself, or a file's parent folder.
 
@@ -801,6 +804,13 @@ protocol the app doesn't speak. "Connected" in front means a remote tab's connec
 host is open. Hosts are checked only when you click Check; results last until the app quits,
 a host whose destination or server program changed shows "Not checked" again, and so does a
 host a remote tab has connected to since its last check.
+
+**Start** runs `agentws-server start` there: it starts the server in the background, running
+until stopped (a server started by a tab's connection exits a minute after its last session
+and connection). **Stop** runs `agentws-server stop`: with no session running it stops the
+server; otherwise a dialog lists the sessions and **Stop server** ends them (their tabs here
+show the exit) and stops it. Start is off while the server is known to run, Stop while it is
+known not to; after each the line shows the server's new state.
 
 ```json
 "remote_hosts": [

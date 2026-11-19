@@ -12,6 +12,12 @@
 //!   line per row without the trailing empty rows, after its scrollback with `--scrollback`.
 //!   Does not attach: the pty keeps its size. An exited session shows its last screen.
 //! - `agentws-server close <id>`: end one of them.
+//! - `agentws-server start`: start this user's server in the background, running until
+//!   stopped (no idle exit); then print what `status` prints. A running server is left as it
+//!   is.
+//! - `agentws-server stop [--force]`: end every session and stop this user's server; then
+//!   print what `status` prints. Without `--force`, while sessions run, it stops nothing,
+//!   prints them as `list` does and exits with [`status::SESSIONS_RUNNING`].
 
 use std::io::Write as _;
 use std::process::ExitCode;
@@ -23,7 +29,8 @@ use agentws_remote::{Client, transport};
 const DEFAULT_IDLE_EXIT: Duration = Duration::from_secs(60);
 
 const USAGE: &str = "usage: agentws-server proxy | serve [--idle-exit <seconds>] | list | \
-                     status | show <id> [--scrollback] | close <id> | --version";
+                     status | show <id> [--scrollback] | start | stop [--force] | close <id> | \
+                     --version";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -43,6 +50,12 @@ fn main() -> ExitCode {
             Ok(id) => show(&name, id, args.len() == 3),
             Err(_) => return usage(),
         },
+        ["start"] => start(&name),
+        ["stop"] => match stop(&name, false) {
+            Ok(Stopped::Busy) => return ExitCode::from(status::SESSIONS_RUNNING as u8),
+            other => other.map(|_| ()),
+        },
+        ["stop", "--force"] => stop(&name, true).map(|_| ()),
         ["close", id] => match id.parse::<u64>() {
             Ok(id) => close(&name, id),
             Err(_) => return usage(),
@@ -75,7 +88,12 @@ fn client(name: &str) -> std::io::Result<Client> {
 }
 
 fn list(name: &str) -> std::io::Result<()> {
-    for info in client(name)?.list()? {
+    print_sessions(&client(name)?.list()?);
+    Ok(())
+}
+
+fn print_sessions(sessions: &[agentws_remote::SessionInfo]) {
+    for info in sessions {
         let kind = if info.kind.is_empty() {
             "shell"
         } else {
@@ -94,7 +112,6 @@ fn list(name: &str) -> std::io::Result<()> {
             info.id
         );
     }
-    Ok(())
 }
 
 /// The attached clients' machine names, comma-separated: `?` for one that gave no name, `-`
@@ -163,6 +180,62 @@ fn closed_pipe_is_done(result: std::io::Result<()>) -> std::io::Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         other => other,
     }
+}
+
+/// Start the daemon unless one listens, then report as `status` does.
+fn start(name: &str) -> std::io::Result<()> {
+    if transport::connect(name).is_err() {
+        let exe = std::env::current_exe()?;
+        transport::start_daemon(name, &exe, &["--idle-exit", "0"])
+            .map_err(|err| std::io::Error::new(err.kind(), format!("could not start: {err}")))?;
+    }
+    status(name)
+}
+
+enum Stopped {
+    Done,
+    /// Sessions run and `--force` was not given: nothing stopped.
+    Busy,
+}
+
+/// Stop the daemon (when one runs), then report as `status` does.
+fn stop(name: &str, force: bool) -> std::io::Result<Stopped> {
+    let stream = match transport::connect(name) {
+        Err(err) if status::daemon_absent(&err) => {
+            status(name)?;
+            return Ok(Stopped::Done);
+        }
+        Err(err) => {
+            return Err(std::io::Error::new(
+                err.kind(),
+                format!("could not reach the server: {err}"),
+            ));
+        }
+        Ok(stream) => stream,
+    };
+    let (reader, writer) = transport::halves(stream);
+    let client = Client::connect(reader, writer, None, Box::new(|_| {})).map_err(|err| {
+        std::io::Error::new(
+            err.kind(),
+            format!("could not stop the server (another version?): {err}"),
+        )
+    })?;
+    if !force {
+        let running: Vec<_> = client
+            .list()?
+            .into_iter()
+            .filter(|info| info.exit.is_none())
+            .collect();
+        if !running.is_empty() {
+            print_sessions(&running);
+            return Ok(Stopped::Busy);
+        }
+    }
+    client.shutdown()?;
+    drop(client);
+    transport::wait_until_stopped(name)?;
+    status(name)?;
+    Ok(Stopped::Done)
 }
 
 fn close(name: &str, id: u64) -> std::io::Result<()> {

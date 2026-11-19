@@ -128,36 +128,57 @@ fn host_fields(index: usize, window: &mut Window, cx: &mut App) -> AnyElement {
     column.child(div().child(remove)).into_any_element()
 }
 
-/// The host's server state (live connection, last check) and its Check button.
+/// The host's server state (live connection, last check) and its Check, Start and Stop
+/// buttons. Start is off while the server is known to run, Stop while it is known not to.
 fn server_state(index: usize, target: remote_hosts::Target, cx: &App) -> Div {
     let check = remote_hosts::host_check(&target, cx);
     let line = status::status_line(
         remote_hosts::is_connected(&target.destination, cx),
         check.as_ref(),
     );
-    let checking = check == Some(HostCheck::Checking);
-    let button = Button::new(SharedString::from(format!("remote-host-{index}-check")))
-        .icon(IconName::RefreshCw)
-        .label("Check")
-        .ghost()
-        .xsmall()
-        .disabled(checking)
-        .on_click(move |_, _, cx| remote_hosts::check(target.clone(), cx));
+    let busy = check.as_ref().is_some_and(HostCheck::is_busy);
+    let running = check.as_ref().and_then(HostCheck::server_running);
+    let button = |name: &str, icon: IconName, label: &'static str, disabled: bool| {
+        Button::new(SharedString::from(format!("remote-host-{index}-{name}")))
+            .icon(icon)
+            .label(label)
+            .ghost()
+            .xsmall()
+            .disabled(busy || disabled)
+    };
+    let checked = target.clone();
+    let started = target.clone();
+    let check = button("check", IconName::RefreshCw, "Check", false)
+        .on_click(move |_, _, cx| remote_hosts::check(checked.clone(), cx));
+    let start = button("start", IconName::Play, "Start", running == Some(true))
+        .tooltip("Start the server there, running until stopped")
+        .on_click(move |_, _, cx| remote_hosts::start_server(started.clone(), cx));
+    let stop = button("stop", IconName::Square, "Stop", running == Some(false))
+        .tooltip("Stop the server there; asks first while sessions run")
+        .on_click(move |_, window, cx| remote_hosts::stop_server(target.clone(), window, cx));
     div()
         .flex()
         .items_center()
         .gap_2()
         .child(status_text(index, line, cx))
-        .child(div().flex_none().child(button))
+        .child(
+            div()
+                .flex_none()
+                .flex()
+                .gap_1()
+                .child(check)
+                .child(start)
+                .child(stop),
+        )
 }
 
 fn status_text(index: usize, line: StatusLine, cx: &App) -> AnyElement {
     let theme = cx.theme();
-    let (icon, color) = match line.tone {
-        StatusTone::Fine => (IconName::CircleCheck, theme.success),
-        StatusTone::Neutral => (IconName::Info, theme.muted_foreground),
-        StatusTone::Checking => (IconName::LoaderCircle, theme.muted_foreground),
-        StatusTone::Problem => (IconName::TriangleAlert, theme.warning),
+    let icon = remote_hosts::tone_icon(line.tone);
+    let color = match line.tone {
+        StatusTone::Fine => theme.success,
+        StatusTone::Neutral | StatusTone::Checking => theme.muted_foreground,
+        StatusTone::Problem => theme.warning,
     };
     let text = div()
         .id(SharedString::from(format!("remote-host-{index}-state")))

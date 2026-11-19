@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::rc::Rc;
 
+use agentws_remote::status::{self, HostCheck};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
@@ -17,6 +18,7 @@ use workspace_model::{DropTarget, Group, GroupId, Item, Location, display_path};
 use super::{RenameTarget, WorkspaceView};
 use crate::launcher::{self, Launcher};
 use crate::open_menu::OpenMenu;
+use crate::remote_hosts;
 use crate::settings_file;
 use crate::shortcuts;
 use crate::sidebar::{
@@ -712,14 +714,17 @@ impl WorkspaceView {
                 let hosts: Vec<_> = settings_file::settings(cx)
                     .remote_hosts
                     .usable()
-                    .map(|(host, destination)| (host.label().to_owned(), destination.to_owned()))
+                    .filter_map(|(host, destination)| {
+                        let target = remote_hosts::host_target(host)?;
+                        Some((host.label().to_owned(), destination.to_owned(), target))
+                    })
                     .collect();
                 if !hosts.is_empty() {
                     menu = menu.separator();
                 }
-                for (label, destination) in hosts {
+                for (label, destination, target) in hosts {
                     let workspace = workspace.clone();
-                    menu = menu.submenu(label, window, cx, move |mut submenu, _, _| {
+                    menu = menu.submenu(label, window, cx, move |mut submenu, _, cx| {
                         for launch in launcher::remote_launches(&destination) {
                             let workspace = workspace.clone();
                             let spec = launch.spec;
@@ -734,7 +739,7 @@ impl WorkspaceView {
                                     }),
                             );
                         }
-                        submenu
+                        host_state_items(submenu.separator(), target.clone(), cx)
                     });
                 }
                 menu
@@ -847,6 +852,25 @@ fn tab_detail(location: &Location, home: Option<&Path>) -> TabDetail {
         Some(head) => TabDetail::Branch(SharedString::from(head.name().to_string())),
         None => TabDetail::Folder(display_path(&location.folder, home).into()),
     }
+}
+
+/// A host's `+` submenu ends with its server's last known state (as on Settings → Remote
+/// hosts) and a Check entry, off while something runs for it.
+fn host_state_items(menu: PopupMenu, target: remote_hosts::Target, cx: &App) -> PopupMenu {
+    let check = remote_hosts::host_check(&target, cx);
+    let line = status::status_line(
+        remote_hosts::is_connected(&target.destination, cx),
+        check.as_ref(),
+    );
+    let icon = remote_hosts::tone_icon(line.tone);
+    let busy = check.as_ref().is_some_and(HostCheck::is_busy);
+    menu.item(PopupMenuItem::new(line.text).icon(icon).disabled(true))
+        .item(
+            PopupMenuItem::new("Check server")
+                .icon(IconName::RefreshCw)
+                .disabled(busy)
+                .on_click(move |_, _, cx| remote_hosts::check(target.clone(), cx)),
+        )
 }
 
 #[cfg(test)]

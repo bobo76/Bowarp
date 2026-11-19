@@ -15,7 +15,7 @@ use std::io::{self, ErrorKind, Read, Write};
 use term_core::TermDimensions;
 
 /// Bumped on any change to the messages: both sides must speak the same version.
-pub const PROTOCOL_VERSION: u16 = 6;
+pub const PROTOCOL_VERSION: u16 = 7;
 
 /// No frame is longer: a peer that sends one is broken (or not speaking this protocol).
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -114,6 +114,11 @@ pub enum ClientMessage {
         session: u64,
         scrollback: bool,
     },
+    /// End every session and stop the server: answered by [`ServerMessage::Sessions`] with
+    /// the sessions it ended, then the server exits.
+    Shutdown {
+        request: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -178,6 +183,7 @@ mod tag {
     pub const IDENTIFY: u8 = 9;
     pub const PONG: u8 = 10;
     pub const SHOW: u8 = 11;
+    pub const SHUTDOWN: u8 = 12;
 
     pub const ATTACHED: u8 = 65;
     pub const SESSIONS: u8 = 66;
@@ -234,6 +240,7 @@ impl ClientMessage {
                 .u32(*request)
                 .u64(*session)
                 .flag(*scrollback),
+            Self::Shutdown { request } => out.tag(tag::SHUTDOWN).u32(*request),
         };
         out.finish()
     }
@@ -294,6 +301,9 @@ impl ClientMessage {
                 request: input.u32()?,
                 session: input.u64()?,
                 scrollback: input.flag()?,
+            },
+            tag::SHUTDOWN => Self::Shutdown {
+                request: input.u32()?,
             },
             other => return Err(invalid(format!("unknown client message {other}"))),
         };

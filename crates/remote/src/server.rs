@@ -52,6 +52,8 @@ struct Inner {
     /// When the last connection ended or the last session was closed.
     idle_since: Mutex<Option<Instant>>,
     ping: PingTimes,
+    /// A client asked the server to stop: it starts no session any more.
+    stopping: AtomicBool,
 }
 
 /// When connections are pinged and dropped: constants, shorter in tests.
@@ -252,6 +254,12 @@ impl Server {
         }
         let mut idle_since = self.inner.idle_since.lock().unwrap();
         Some(idle_since.get_or_insert_with(Instant::now).elapsed())
+    }
+
+    /// Whether a client asked the server to stop ([`ClientMessage::Shutdown`]); its sessions
+    /// are closed by then, and the daemon exits.
+    pub fn is_stopping(&self) -> bool {
+        self.inner.stopping.load(Ordering::Acquire)
     }
 
     fn sessions(&self) -> MutexGuard<'_, HashMap<u64, Arc<Hosted>>> {
@@ -483,10 +491,33 @@ impl Server {
                     });
                 }
             },
+            ClientMessage::Shutdown { request } => {
+                let sessions = self.shut_down();
+                outbox.send(ServerMessage::Sessions { request, sessions });
+            }
         }
     }
 
+    /// Stop starting sessions and close every one; returns them as they were.
+    fn shut_down(&self) -> Vec<SessionInfo> {
+        self.inner.stopping.store(true, Ordering::Release);
+        let mut sessions: Vec<SessionInfo> = self
+            .sessions()
+            .values()
+            .map(|hosted| hosted.info())
+            .collect();
+        sessions.sort_by_key(|info| info.id);
+        for info in &sessions {
+            self.close(info.id);
+        }
+        log::info!("stopping: {} sessions closed", sessions.len());
+        sessions
+    }
+
     fn spawn(&self, spec: &SpawnSpec, size: TermDimensions) -> io::Result<Arc<Hosted>> {
+        if self.is_stopping() {
+            return Err(io::Error::other("the server is stopping"));
+        }
         let launch = launch_spec(spec)?;
         let id = self.inner.next_session.fetch_add(1, Ordering::AcqRel) + 1;
         let fanout = Arc::new(Mutex::new(Fanout {

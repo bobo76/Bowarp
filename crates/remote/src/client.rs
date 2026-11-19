@@ -245,6 +245,17 @@ impl Client {
         wait(&answer)
     }
 
+    /// End every session on the server and stop it; returns the sessions it ended. The
+    /// connection ends as the server exits.
+    pub fn shutdown(&self) -> io::Result<Vec<SessionInfo>> {
+        let (reply, answer) = mpsc::channel();
+        self.inner
+            .request(Pending::List { reply }, |request| ClientMessage::Shutdown {
+                request,
+            })?;
+        wait(&answer)
+    }
+
     /// End a session on the server, attached here or not.
     pub fn close(&self, session: u64) -> io::Result<()> {
         self.inner.send(ClientMessage::Close { session })

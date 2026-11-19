@@ -622,18 +622,86 @@ impl FileExplorer {
         let path = row.path;
         let description = match row.kind {
             EntryKind::Folder => {
-                "The folder and everything in it are deleted permanently, not moved to the trash."
+                "The folder and everything in it go to the trash, where they can be restored."
             }
-            EntryKind::File => "The file is deleted permanently, not moved to the trash.",
+            EntryKind::File => "The file goes to the trash, where it can be restored.",
         };
+        let kind = row.kind;
         let explorer = cx.entity().downgrade();
         window.open_alert_dialog(cx, move |alert, _, _| {
             let explorer = explorer.clone();
             let path = path.clone();
             alert
-                .title(format!("Delete \"{name}\"?"))
+                .title(format!("Move \"{name}\" to the trash?"))
                 .description(description)
-                .ok_text("Delete")
+                .ok_text("Move to Trash")
+                .ok_variant(ButtonVariant::Danger)
+                .show_cancel(true)
+                .on_ok(move |_, window, cx| {
+                    let path = path.clone();
+                    let _ =
+                        explorer.update(cx, |explorer, cx| explorer.trash(path, kind, window, cx));
+                    true
+                })
+        });
+    }
+
+    /// Move `path` to the system trash off the UI thread. Where that fails (no trash on a
+    /// network mount or a WSL path) and the entry is still there, ask to delete it for good.
+    fn trash(
+        &mut self,
+        path: PathBuf,
+        kind: EntryKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            let trashed = path.clone();
+            let result = cx
+                .background_spawn(async move { move_to_trash(&trashed) })
+                .await;
+            let _ = this.update_in(cx, |explorer, window, cx| match result {
+                Ok(()) => explorer.removed(&path, cx),
+                Err(TrashFailure { reason, gone: true }) => {
+                    window.push_notification(
+                        Notification::error(format!("Couldn't move to the trash: {reason}")),
+                        cx,
+                    );
+                    explorer.removed(&path, cx);
+                }
+                Err(TrashFailure { reason, .. }) => {
+                    explorer.confirm_permanent_delete(path, kind, reason, window, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Ask to delete `path` for good after moving it to the trash failed for `reason`.
+    fn confirm_permanent_delete(
+        &mut self,
+        path: PathBuf,
+        kind: EntryKind,
+        reason: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = entry_name(&path);
+        let lost = match kind {
+            EntryKind::Folder => {
+                "The folder and everything in it are deleted permanently, not moved to the trash."
+            }
+            EntryKind::File => "The file is deleted permanently, not moved to the trash.",
+        };
+        let description = format!("{reason}. Delete it instead? {lost}");
+        let explorer = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let explorer = explorer.clone();
+            let path = path.clone();
+            alert
+                .title(format!("Couldn't move \"{name}\" to the trash"))
+                .description(description.clone())
+                .ok_text("Delete permanently")
                 .ok_variant(ButtonVariant::Danger)
                 .show_cancel(true)
                 .on_ok(move |_, window, cx| {
@@ -659,18 +727,23 @@ impl FileExplorer {
                         cx,
                     );
                 }
-                if let Some(folder) = path.parent()
-                    && explorer.listings.contains_key(folder)
-                {
-                    explorer.read_listing(folder.to_path_buf(), cx);
-                }
-                if explorer.selected.as_deref() == Some(path.as_path()) {
-                    explorer.selected = None;
-                }
-                explorer.refresh(cx);
+                explorer.removed(&path, cx);
             });
         })
         .detach();
+    }
+
+    /// Show the folder that held `path` as it is now that `path` was removed (or failed to be).
+    fn removed(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if let Some(folder) = path.parent()
+            && self.listings.contains_key(folder)
+        {
+            self.read_listing(folder.to_path_buf(), cx);
+        }
+        if self.selected.as_deref() == Some(path) {
+            self.selected = None;
+        }
+        self.refresh(cx);
     }
 
     fn entry_menu(
@@ -1080,6 +1153,37 @@ fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 /// Remove `path`: a folder with its contents, a symlink itself (not its target).
+/// Why moving an entry to the trash failed, and whether the entry is gone anyway.
+struct TrashFailure {
+    reason: String,
+    gone: bool,
+}
+
+/// Move `path` to the system trash (Recycle Bin, freedesktop trash); a link goes, not its
+/// target.
+fn move_to_trash(path: &Path) -> Result<(), TrashFailure> {
+    trash::delete(path).map_err(|err| TrashFailure {
+        reason: trash_reason(&err),
+        gone: matches!(
+            fs::symlink_metadata(path),
+            Err(err) if err.kind() == io::ErrorKind::NotFound
+        ),
+    })
+}
+
+/// `err` in words (the crate's own text is its debug output).
+fn trash_reason(err: &trash::Error) -> String {
+    match err {
+        trash::Error::Unknown { description } | trash::Error::Os { description, .. } => {
+            description.clone()
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        trash::Error::FileSystem { source, .. } => describe(source),
+        trash::Error::TargetedRoot => "a root folder can't be moved to the trash".to_owned(),
+        other => format!("{other:?}"),
+    }
+}
+
 fn remove_entry(path: &Path) -> io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() => fs::remove_dir_all(path),
@@ -1158,6 +1262,18 @@ fn changed_marks(root: &Path) -> HashMap<PathBuf, FileChange> {
 mod tests {
     use super::*;
     use notify::event::DataChange;
+
+    #[test]
+    fn trashing_an_entry_that_is_gone_fails_without_offering_a_permanent_delete() {
+        let missing = std::env::temp_dir().join(format!(
+            "agentws-trash-missing-{}-{}",
+            std::process::id(),
+            agent_status::now_micros()
+        ));
+        let failure = move_to_trash(&missing).expect_err("nothing to trash");
+        assert!(failure.gone);
+        assert!(!failure.reason.is_empty());
+    }
 
     #[test]
     fn writes_matter_and_reads_do_not() {
