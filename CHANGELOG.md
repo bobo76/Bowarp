@@ -5,6 +5,8 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.4.5
+
 - Git page: discard a file's unstaged changes with the ↶ button on its row in Changes or the
   `R` key, or every unstaged change with Discard all on the Changes header, after a
   confirmation. A tracked file goes back to its staged content; an untracked file is deleted.
