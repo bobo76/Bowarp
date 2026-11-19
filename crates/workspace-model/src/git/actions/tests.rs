@@ -371,3 +371,154 @@ fn the_selected_tabs_repository_wins_then_the_shown_one_then_the_first() {
     assert_eq!(pick(Some("gone"), Some("old")).as_deref(), Some("a"));
     assert_eq!(choose_repo(&[], Some(entry("a")), Some(entry("b"))), None);
 }
+
+#[test]
+fn discards_a_files_unstaged_changes_and_keeps_what_is_staged() {
+    let Some(repo) = committed_repo() else {
+        return;
+    };
+    fs::write(repo.0.join("kept.txt"), "kept\nstaged\n").unwrap();
+    stage_all(&repo.0).unwrap();
+    fs::write(repo.0.join("kept.txt"), "kept\nstaged\nnot staged\n").unwrap();
+    fs::remove_file(repo.0.join("old.txt")).unwrap();
+    let status = read_status(&repo.0).unwrap();
+    let changed: Vec<&FileStatus> = status.files_on(DiffSide::Unstaged).collect();
+    assert_eq!(changed.len(), 2);
+
+    discard(&repo.0, &changed).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(repo.0.join("kept.txt")).unwrap(),
+        "kept\nstaged\n"
+    );
+    assert_eq!(fs::read_to_string(repo.0.join("old.txt")).unwrap(), "old\n");
+    let status = read_status(&repo.0).unwrap();
+    assert_eq!(status.files_on(DiffSide::Unstaged).count(), 0);
+    assert_eq!(status.files[0].staged, Some(Change::Modified));
+}
+
+#[test]
+fn discarding_an_untracked_file_deletes_it_and_nothing_else() {
+    let Some(repo) = committed_repo() else {
+        return;
+    };
+    fs::write(repo.0.join(".gitignore"), "ignored.txt\n").unwrap();
+    assert!(git(&repo.0, &["add", ".gitignore"]));
+    assert!(git(&repo.0, &["commit", "-q", "-m", "ignore"]));
+    fs::write(repo.0.join("ignored.txt"), "ignored\n").unwrap();
+    fs::write(repo.0.join("new [1].txt"), "new\n").unwrap();
+    // What `new [1].txt` would match as a glob: kept, the path is literal.
+    fs::write(repo.0.join("new 1.txt"), "other\n").unwrap();
+    let status = read_status(&repo.0).unwrap();
+    let new = status
+        .files
+        .iter()
+        .find(|file| file.path == "new [1].txt")
+        .unwrap();
+
+    discard(&repo.0, &[new]).unwrap();
+
+    assert!(!repo.0.join("new [1].txt").exists());
+    assert!(repo.0.join("new 1.txt").exists());
+    assert!(repo.0.join("ignored.txt").exists());
+}
+
+#[test]
+fn discards_in_a_new_repository() {
+    let Some(repo) = init_repo() else {
+        return;
+    };
+    fs::write(repo.0.join("a.txt"), "a\n").unwrap();
+    stage_all(&repo.0).unwrap();
+    fs::write(repo.0.join("a.txt"), "a\nedited\n").unwrap();
+    let status = read_status(&repo.0).unwrap();
+    assert_eq!(status.head, Head::Unborn);
+
+    discard(&repo.0, &[&status.files[0]]).unwrap();
+
+    assert_eq!(fs::read_to_string(repo.0.join("a.txt")).unwrap(), "a\n");
+}
+
+#[test]
+fn discards_every_unstaged_change_but_ignored_files() {
+    let Some(repo) = committed_repo() else {
+        return;
+    };
+    fs::write(repo.0.join(".gitignore"), "ignored.txt\n").unwrap();
+    assert!(git(&repo.0, &["add", ".gitignore"]));
+    assert!(git(&repo.0, &["commit", "-q", "-m", "ignore"]));
+    fs::write(repo.0.join("ignored.txt"), "ignored\n").unwrap();
+    fs::write(repo.0.join("kept.txt"), "changed\n").unwrap();
+    fs::remove_file(repo.0.join("old.txt")).unwrap();
+    fs::create_dir_all(repo.0.join("new/deep")).unwrap();
+    fs::write(repo.0.join("new/deep/file.txt"), "new\n").unwrap();
+    let sub = repo.0.join("new");
+
+    // From a subfolder too: `:/` is the whole work tree.
+    discard_all(&sub).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(repo.0.join("kept.txt")).unwrap(),
+        "kept\n"
+    );
+    assert!(repo.0.join("old.txt").exists());
+    assert!(!repo.0.join("new/deep/file.txt").exists());
+    assert!(repo.0.join("ignored.txt").exists());
+    assert!(read_status(&repo.0).unwrap().files.is_empty());
+}
+
+fn unstaged(path: &str, change: Change) -> FileStatus {
+    FileStatus {
+        path: path.to_string(),
+        orig_path: None,
+        staged: None,
+        unstaged: Some(change),
+    }
+}
+
+#[test]
+fn the_discard_prompt_names_what_is_lost() {
+    let modified = unstaged("src/a.rs", Change::Modified);
+    let deleted = unstaged("b.rs", Change::Deleted);
+    let new = unstaged("notes.txt", Change::Untracked);
+    let conflict = unstaged("c.rs", Change::Conflicted);
+    let staged_only = FileStatus {
+        staged: Some(Change::Added),
+        unstaged: None,
+        ..unstaged("d.rs", Change::Modified)
+    };
+
+    let prompt = discard_prompt(&[&modified]).unwrap();
+    assert_eq!(prompt.title, "Discard the changes in \"src/a.rs\"?");
+    assert_eq!(
+        prompt.description,
+        "Its unstaged changes are lost; what is staged is kept. This can't be undone."
+    );
+    assert_eq!(prompt.action, "Discard");
+
+    let prompt = discard_prompt(&[&new]).unwrap();
+    assert_eq!(prompt.title, "Delete \"notes.txt\"?");
+    assert_eq!(
+        prompt.description,
+        "It isn't tracked by git: the file is deleted. This can't be undone."
+    );
+    assert_eq!(prompt.action, "Delete");
+
+    // Conflicts and staged-only files don't count.
+    let prompt = discard_prompt(&[&modified, &deleted, &new, &conflict, &staged_only]).unwrap();
+    assert_eq!(prompt.title, "Discard all changes in 3 files?");
+    assert_eq!(
+        prompt.description,
+        "The unstaged changes in 2 files are lost, and 1 file not tracked by git is deleted; \
+         what is staged is kept. This can't be undone."
+    );
+    assert_eq!(prompt.action, "Discard All");
+
+    let prompt = discard_prompt(&[&new, &new]).unwrap();
+    assert_eq!(
+        prompt.description,
+        "2 files not tracked by git are deleted; what is staged is kept. This can't be undone."
+    );
+    assert_eq!(discard_prompt(&[&conflict, &staged_only]), None);
+    assert_eq!(discard_prompt(&[]), None);
+}

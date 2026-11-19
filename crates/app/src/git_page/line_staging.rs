@@ -20,7 +20,7 @@ use workspace_model::git::{self, DiffSide, LineKind, LineRef};
 use workspace_model::layout::Direction;
 
 use super::diff_view::ShownDiff;
-use super::{GitPage, IndexChange};
+use super::{GitPage, RepoChange};
 
 /// The words for an action on `side`'s diff: stage from Changes, unstage from Staged.
 struct Words {
@@ -103,7 +103,7 @@ impl GitPage {
             return;
         };
         self.applied_at = Some(at);
-        self.change_index(IndexChange::Apply { side, patch }, window, cx);
+        self.change_repo(RepoChange::Apply { side, patch }, window, cx);
     }
 
     /// The diff's line keys; returns whether `keystroke` was one. Only in a diff whose lines

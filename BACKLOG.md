@@ -10,8 +10,14 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Git page discard (Windows, Linux): hover a Changes row, ↶ asks, Cancel and Esc keep the
+  file, Discard restores it (its staged part kept) and the open file viewer reloads it; ↶ on
+  an untracked file deletes it; Discard all on the header; `R`, `S` and `U` on the selected
+  file; no ↶ on a conflicted file or in Staged Changes.
 - Windows: Alt+PrtSc, then Ctrl+V in a Claude Code tab attaches the image (`[Image #1]`), in a
   Claude tab and in a shell tab running `claude`; Ctrl+V with copied text still pastes it.
+- Windows: a tab hover card (and a group card) closes as soon as the pointer leaves the window
+  over its row; back over the same row it stays hidden until the pointer leaves the row.
 
 Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in for ssh:
 
@@ -590,8 +596,8 @@ UX review, Tier 2 (small polish, one batch):
 - The Git page is the entry point for the items below. Its v1 defaults hold for them: the page
   never changes the working tree unless the action says so, actions run one at a time (no two
   `git` race for the index lock), and the repository's hooks run.
-- Discard a file, hunk or line from the working tree, with a confirmation naming what is lost.
-  The first action that changes the working tree.
+- Discard a hunk or the selected lines from the working tree (the diff's unstaged side), with
+  a confirmation naming what is lost, like discarding a file.
 - Switch branch from the Git page: select a local branch or check out a remote-tracking
   branch. Requires a clean working tree (safety rule above); define safeguards for active
   agents and refresh branch/status information for all affected tabs after a switch.

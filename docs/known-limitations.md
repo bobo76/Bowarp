@@ -43,6 +43,20 @@ entry when the limitation is lifted.
   Code tabs fall back to output activity ("Status unavailable" when quiet) and a bell asks for
   attention as in a shell; a Copilot CLI permission prompt reads Working, not Needs attention,
   unless it rings the bell. The warning shows once per start, not again when an agent tab opens.
+- Windows, installed from the release zip: Claude Code can report "UserPromptSubmit hook
+  [...agentws-hook.exe] timed out after 5s — output discarded", and agent status lags or is
+  wrong. The cause is the antivirus, not the app: the binaries are unsigned and extracting the
+  zip copies its Internet mark (`Zone.Identifier`, ZoneId=3) to every file, so each launch of
+  `agentws-hook.exe` is scanned again and the result is not cached. Measured on a corporate
+  machine (2026-11-15): installed hook 19–58 s per launch; the same file unblocked 1.5–15 s; a
+  local `cargo build` 12 s on its first run, then 25–45 ms. The hook timeout is 5 s
+  (`HOOK_TIMEOUT_SECS`), so events past it are dropped, most of them silently (Claude Code shows
+  the message for UserPromptSubmit). Workaround:
+  `Get-ChildItem "$env:LOCALAPPDATA\Programs\AgentWorkspace" -Recurse | Unblock-File`
+  (partial gain), or an antivirus exclusion for that folder. Lifting it needs signed binaries
+  or an installer (MSI, winget) whose files carry no Internet mark. Separately, the hook's pipe
+  connect (`forward_hook`) waits without limit when the pipe is busy (`WaitNamedPipe` forever),
+  so a stuck app also ends in this timeout instead of a quick, clean exit.
 - Subagents show from their start hook to their stop hook. A subagent whose stop hook never
   arrives (e.g. if killing one from the agent's task panel sends none) stays listed until the
   agent exits. Copilot CLI gives the description only on the spawning tool call, not on the
@@ -274,5 +288,10 @@ entry when the limitation is lifted.
   or waits for the timeout while a GUI pinentry is pending. The "missing identity" hint reads
   git's English message only. Unsent messages are kept per repository while the app runs, not
   across restarts. No amend, sign-off or "stage all and commit".
-- Git page merge conflicts are listed (`!`) but can't be resolved or staged by line on the
-  page. No key opens the page (the title bar button does).
+- Git page discard: an untracked file is deleted for good, not moved to the trash, and its
+  folder stays even when that leaves it empty (Discard all removes such folders). Discard all
+  also discards changes past the 10,000 listed files, though its confirmation counts only the
+  listed ones; it keeps nested repositories in untracked folders. Hunks and single lines can't
+  be discarded yet.
+- Git page merge conflicts are listed (`!`) but can't be resolved, discarded or staged by line
+  on the page. No key opens the page (the title bar button does).
