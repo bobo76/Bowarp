@@ -112,7 +112,12 @@ and the app can attach to them again, like tmux.
    an exited session shows its last screen;
    `agentws-server status` shows whether the daemon runs (never starting it), with the
    installed program's version and protocol and the daemon's session count, as `key=value`
-   lines (exit 0 either way). Check on the settings page runs it over ssh. With the
+   lines (exit 0 either way). Check on the settings page runs it over ssh.
+   `agentws-server start` starts the daemon in the background with no idle exit (a running
+   one is left as it is); `agentws-server stop` ends its sessions and stops it, but while
+   sessions run it stops nothing, prints them as `list` does and exits with 3 (`stop --force`
+   stops anyway). Both then print what `status` prints; Start and Stop on the settings page
+   run them over ssh. With the
    remote tab selected, Claude Code or Copilot CLI in the `+` menu, "New tab" and Duplicate
    open on that host, in the folder the tab is in there.
 4. Optional: to keep the daemon running instead of starting it on the first connection, install
@@ -155,7 +160,7 @@ Done: protocol, server, daemon and proxy (`agentws-server`, with `list`, `show`,
 submenus (hosts set on the settings page) or the command line (`--remote <host>`), and the
 remote folder: shown on the tab, and where agents and new tabs opened from it start;
 Reconnect for tabs whose connection was lost; each host's server state on the settings page
-(Check).
+(Check) and in its `+` submenu; Start and Stop (protocol 3).
 
 Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
 

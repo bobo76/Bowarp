@@ -266,7 +266,11 @@ entry when the limitation is lifted.
   `agentws-server`'s, not the running daemon's (a daemon of another protocol shows as "A
   server of another version is running"). Results are kept in memory only, so every app start
   shows "Not checked". "Connected" is read when the page draws: a connection lost while the
-  page shows reads Connected until the page redraws.
+  page shows reads Connected until the page redraws. The state in a host's `+` submenu is
+  read when the submenu opens. Start leaves a server already running as it is: one started
+  by a tab's connection still exits a minute after its last session and connection. Stop
+  can't stop a server of another protocol (it refuses the stop's hello): end it on the host
+  (`pkill -f "agentws-server serve"`).
 - Themes: an app version older than the Sepia theme reads `"ui_theme": "sepia"` as Dark (unknown
   values fall back to the default), and `"terminal_colors"` values it doesn't know as Match theme.
 - Terminal colors changed while a tab runs: `COLORFGBG` keeps the value the tab started with,

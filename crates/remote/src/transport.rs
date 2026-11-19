@@ -20,6 +20,7 @@ pub const SOCKET_ENV: &str = "AGENTWS_SERVER_SOCKET";
 /// How long `proxy` waits for a daemon it started to listen.
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 const IDLE_CHECK: Duration = Duration::from_millis(500);
+const STOP_GRACE: Duration = Duration::from_millis(200);
 
 /// The daemon's socket name for this user.
 pub fn socket_name() -> String {
@@ -78,6 +79,11 @@ pub fn serve(name: &str, idle_exit: Option<Duration>) -> io::Result<()> {
         })?;
     loop {
         thread::sleep(IDLE_CHECK);
+        if server.is_stopping() {
+            // Time for the stop's answer to reach its client.
+            thread::sleep(STOP_GRACE);
+            return Ok(());
+        }
         if let (Some(limit), Some(idle)) = (idle_exit, server.idle_for())
             && idle >= limit
         {
@@ -112,9 +118,20 @@ pub fn connect_or_start(name: &str, server_program: &std::path::Path) -> io::Res
     if let Ok(stream) = connect(name) {
         return Ok(stream);
     }
+    start_daemon(name, server_program, &[])
+}
+
+/// Start `server_program serve <serve_args>` in the background on `name` and connect to it
+/// once it listens (within [`START_TIMEOUT`]).
+pub fn start_daemon(
+    name: &str,
+    server_program: &std::path::Path,
+    serve_args: &[&str],
+) -> io::Result<Stream> {
     let mut command = Command::new(server_program);
     command
         .arg("serve")
+        .args(serve_args)
         .env(SOCKET_ENV, name)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -129,6 +146,21 @@ pub fn connect_or_start(name: &str, server_program: &std::path::Path) -> io::Res
             Err(_) => thread::sleep(Duration::from_millis(25)),
         }
     }
+}
+
+/// Wait up to [`START_TIMEOUT`] until no daemon listens on `name` any more.
+pub fn wait_until_stopped(name: &str) -> io::Result<()> {
+    let deadline = Instant::now() + START_TIMEOUT;
+    while connect(name).is_ok() {
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the server still runs",
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    Ok(())
 }
 
 /// The daemon must outlive the ssh session that started it.

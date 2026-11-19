@@ -11,6 +11,15 @@ omitted unless they affect how the app is used.
   `S` and `U` stage and unstage the selected file, as they do lines in the diff.
 - On Windows, a tab or group hover card closes when the pointer leaves the window. Before,
   it stayed open until the pointer came back and left its row.
+- The file explorer's Delete moves files and folders to the system trash (Recycle Bin or the
+  desktop's trash) instead of deleting them for good. Where there is no trash (a network
+  mount, a WSL path), it asks again before deleting permanently.
+- Settings → Remote hosts: **Start** and **Stop** for each host's server. Start keeps it
+  running until stopped; Stop asks first, listing the sessions that would end. New
+  `agentws-server start` and `stop [--force]` commands. The protocol is now 7: update
+  `agentws-server` on the hosts together with the app.
+- Each remote host's `+` submenu shows its server's last known state and a **Check server**
+  entry.
 
 ## 0.4.4
 

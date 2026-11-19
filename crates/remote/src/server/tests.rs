@@ -738,3 +738,28 @@ fn shown_text_drops_the_oldest_lines_beyond_a_frame_but_never_the_screen() {
     drop_oldest_to_fit(&mut text, 2, 0);
     assert_eq!(text, lines(&["c", "dd"]));
 }
+
+#[test]
+fn a_shutdown_ends_every_session_and_refuses_new_ones() {
+    let server = Server::new();
+    let (client, _, _) = connect(&server);
+    let (callback, seen) = events();
+    let remote = client
+        .spawn(shell(None), size(20, 4), view(callback))
+        .unwrap();
+    assert!(!server.is_stopping());
+    let ended = client.shutdown().unwrap();
+    assert_eq!(
+        ended.iter().map(|info| info.id).collect::<Vec<_>>(),
+        [remote.info.id]
+    );
+    assert!(server.is_stopping());
+    wait_until("the exit", || {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, SessionEvent::Exited(_)))
+    });
+    assert!(client.list().unwrap().is_empty());
+    assert!(client.spawn(shell(None), size(20, 4), quiet()).is_err());
+}

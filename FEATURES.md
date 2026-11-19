@@ -43,7 +43,8 @@ directly to model APIs.
     Acrylic or Mica, KDE Plasma on Wayland); elsewhere the blur choice is shown unavailable.
 - Warn before closing a session or workspace with running processes.
 - Check on request whether each remote host's server is reachable and running, with its
-  session count and version.
+  session count and version; start and stop it from the app, asking first when sessions
+  still run there. Show the last known state in the host's `+` submenu.
 
 ## Remote Sessions
 

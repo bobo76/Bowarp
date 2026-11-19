@@ -45,6 +45,11 @@ log.workspace = true
 notify.workspace = true
 shell-words = "1.1"
 term-core.workspace = true
+# Explorer Delete moves to the Recycle Bin / freedesktop trash.
+trash = { version = "5.3", default-features = false, features = [
+    "coinit_apartmentthreaded",
+    "freedesktop",
+] }
 unicode-width = "0.2"
 workspace-model.workspace = true
 

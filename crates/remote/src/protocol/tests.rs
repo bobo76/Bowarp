@@ -77,6 +77,7 @@ fn client_messages() -> Vec<ClientMessage> {
             session: 3,
             scrollback: false,
         },
+        ClientMessage::Shutdown { request: 12 },
     ]
 }
 

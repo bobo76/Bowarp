@@ -134,3 +134,61 @@ fn status_reports_the_server_without_starting_it() {
     drop(remote);
     wait_until("the close", || client.list().unwrap().is_empty());
 }
+
+fn run(socket: &str, args: &[&str]) -> std::process::Output {
+    Command::new(SERVER)
+        .args(args)
+        .env(SOCKET_ENV, socket)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn start_keeps_a_server_until_stop_which_asks_first_while_sessions_run() {
+    let socket = format!(
+        "agentws-test-control-{}-{:?}.sock",
+        std::process::id(),
+        Instant::now()
+    );
+    let started = run(&socket, &["start"]);
+    assert!(started.status.success(), "{started:?}");
+    let started = String::from_utf8(started.stdout).unwrap();
+    assert!(
+        started.contains("daemon=running\nsessions=0\n"),
+        "{started}"
+    );
+    // Started again: the same server, left as it is.
+    assert!(run(&socket, &["start"]).status.success());
+
+    let client = proxy(&socket);
+    let spec = SpawnSpec {
+        program: Some("sh".into()),
+        ..SpawnSpec::default()
+    };
+    let remote = client
+        .spawn(spec, TermDimensions::new(40, 5), quiet(1))
+        .unwrap();
+    let refused = run(&socket, &["stop"]);
+    assert_eq!(
+        refused.status.code(),
+        Some(agentws_remote::status::SESSIONS_RUNNING),
+        "{refused:?}"
+    );
+    let listed = String::from_utf8(refused.stdout).unwrap();
+    assert!(
+        listed.starts_with(&format!("{}\tshell\trunning", remote.info.id)),
+        "{listed}"
+    );
+    assert!(status(&socket).contains("daemon=running\nsessions=1\n"));
+
+    let stopped = run(&socket, &["stop", "--force"]);
+    assert!(stopped.status.success(), "{stopped:?}");
+    assert!(
+        String::from_utf8(stopped.stdout)
+            .unwrap()
+            .contains("daemon=not-running\n")
+    );
+    wait_until("the exit", || remote.session.has_exited());
+    // Nothing runs: stopping again just reports it.
+    assert!(run(&socket, &["stop"]).status.success());
+}

@@ -1,5 +1,7 @@
 //! A host's server state: what `agentws-server status` prints there, and the app's check of
 //! it over ssh ([`check`]), classified ([`CheckOutcome`]) and put in words ([`status_line`]).
+//! `start` and `stop` print the same lines once done, so starting and stopping the server
+//! ([`Action`]) end in the same outcomes.
 //!
 //! `status` prints one `key=value` per line (`version`, `protocol`, `daemon`, `sessions`);
 //! readers ignore keys they don't know, so later servers can add some.
@@ -23,6 +25,8 @@ const OUTPUT_LIMIT: usize = 64 * 1024;
 /// master) can hold its pipes open long after.
 const OUTPUT_GRACE: Duration = Duration::from_millis(500);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// `stop`'s exit code when sessions run and it stopped nothing (it prints them as `list` does).
+pub const SESSIONS_RUNNING: i32 = 3;
 /// How long `status` waits for the daemon's answer before reporting it as not answering.
 pub const ASK_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -103,6 +107,29 @@ impl ServerStatus {
     }
 }
 
+/// What the app asks of a host's server over ssh.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Action {
+    Check,
+    Start,
+    /// `force`: stop even while sessions run.
+    Stop {
+        force: bool,
+    },
+}
+
+impl Action {
+    /// The `agentws-server` subcommand (with its arguments) that does it.
+    pub fn subcommand(self) -> &'static str {
+        match self {
+            Self::Check => "status",
+            Self::Start => "start",
+            Self::Stop { force: false } => "stop",
+            Self::Stop { force: true } => "stop --force",
+        }
+    }
+}
+
 /// How a check of a host ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CheckOutcome {
@@ -117,6 +144,10 @@ pub enum CheckOutcome {
     TooOld,
     /// Nothing within [`CHECK_TIMEOUT`].
     NoAnswer,
+    /// `stop` stopped nothing because these sessions run (as `list` prints them).
+    SessionsRunning {
+        sessions: Vec<String>,
+    },
     /// Anything else: `status` failed, ssh could not run, or the answer made no sense.
     Failed {
         stderr: String,
@@ -148,6 +179,15 @@ pub fn classify(output: Option<CommandOutput>) -> CheckOutcome {
             CheckOutcome::Status,
         ),
         Some(127) => CheckOutcome::NotFound,
+        Some(SESSIONS_RUNNING) => CheckOutcome::SessionsRunning {
+            sessions: output
+                .stdout
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        },
         Some(255) => CheckOutcome::Unreachable {
             stderr: stderr_or(output.stderr, "ssh exited with 255"),
         },
@@ -165,6 +205,20 @@ fn stderr_or(stderr: String, fallback: &str) -> String {
     match stderr.trim() {
         "" => fallback.to_owned(),
         text => text.to_owned(),
+    }
+}
+
+/// A session as `list` prints it (`id`, kind, state, title, tab-separated) in words:
+/// "shell 4: ~/src", or the line as it is when it isn't one.
+pub fn session_summary(line: &str) -> String {
+    let mut fields = line.split('\t');
+    let (Some(id), Some(kind)) = (fields.next(), fields.next()) else {
+        return line.to_owned();
+    };
+    let title = fields.nth(1).map(str::trim).unwrap_or("");
+    match title {
+        "" => format!("{kind} {id}"),
+        title => format!("{kind} {id}: {title}"),
     }
 }
 
@@ -224,10 +278,21 @@ fn ask_daemon(
 /// Run `server_program status` on `host` through ssh and classify the answer. Blocks for up
 /// to `timeout`, then kills ssh.
 pub fn check(host: &str, server_program: &str, timeout: Duration) -> CheckOutcome {
+    run_action(host, server_program, Action::Check, timeout)
+}
+
+/// Do `action` to the server on `host` through ssh and classify the answer. Blocks for up to
+/// `timeout`, then kills ssh.
+pub fn run_action(
+    host: &str,
+    server_program: &str,
+    action: Action,
+    timeout: Duration,
+) -> CheckOutcome {
     let failed = |err: io::Error| CheckOutcome::Failed {
         stderr: err.to_string(),
     };
-    let command = match transport::ssh_server_command(host, server_program, "status") {
+    let command = match transport::ssh_server_command(host, server_program, action.subcommand()) {
         Ok(command) => command,
         Err(err) => return failed(err),
     };
@@ -326,7 +391,29 @@ fn collect_output(chunks: &Receiver<Vec<u8>>, deadline: Instant) -> String {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostCheck {
     Checking,
+    Starting,
+    Stopping,
     Done(CheckOutcome),
+}
+
+impl HostCheck {
+    /// Running: the host's actions wait until it ends.
+    pub fn is_busy(&self) -> bool {
+        !matches!(self, Self::Done(_))
+    }
+
+    /// Whether the server is known to run (`Some(true)`) or not (`Some(false)`).
+    pub fn server_running(&self) -> Option<bool> {
+        match self {
+            Self::Done(CheckOutcome::Status(status)) => match status.daemon {
+                DaemonState::Running => Some(true),
+                DaemonState::NotRunning => Some(false),
+                DaemonState::Incompatible => None,
+            },
+            Self::Done(CheckOutcome::SessionsRunning { .. }) => Some(true),
+            _ => None,
+        }
+    }
 }
 
 /// How a status line reads at a glance (its icon); never the only sign, the text says it too.
@@ -362,6 +449,8 @@ fn status_line_for(connected: bool, check: Option<&HostCheck>, app_protocol: u16
     let mut line = match check {
         None => plain(StatusTone::Neutral, "Not checked".to_owned()),
         Some(HostCheck::Checking) => plain(StatusTone::Checking, "Checking…".to_owned()),
+        Some(HostCheck::Starting) => plain(StatusTone::Checking, "Starting…".to_owned()),
+        Some(HostCheck::Stopping) => plain(StatusTone::Checking, "Stopping…".to_owned()),
         Some(HostCheck::Done(outcome)) => outcome_line(outcome, app_protocol),
     };
     if connected {
@@ -398,6 +487,11 @@ fn outcome_line(outcome: &CheckOutcome, app_protocol: u16) -> StatusLine {
             plain(StatusTone::Problem, "No answer from the server".to_owned())
         }
         CheckOutcome::Failed { stderr } => with_details("Check failed", stderr),
+        CheckOutcome::SessionsRunning { sessions } => {
+            let count = sessions.len();
+            let noun = if count == 1 { "session" } else { "sessions" };
+            plain(StatusTone::Fine, format!("Server running, {count} {noun}"))
+        }
     }
 }
 

@@ -300,3 +300,65 @@ fn only_a_missing_or_refusing_socket_means_no_daemon() {
         assert_eq!(daemon_absent(&io::Error::from(kind)), absent, "{kind:?}");
     }
 }
+
+#[test]
+fn a_stop_refused_for_running_sessions_lists_them() {
+    let outcome = classify(exited(
+        SESSIONS_RUNNING,
+        "4\tshell\trunning\t~\n\n7\tclaude\trunning\t\n",
+        "",
+    ));
+    assert_eq!(
+        outcome,
+        CheckOutcome::SessionsRunning {
+            sessions: vec!["4\tshell\trunning\t~".into(), "7\tclaude\trunning".into()],
+        }
+    );
+    let check = done(outcome);
+    assert_eq!(check.server_running(), Some(true));
+    assert_eq!(
+        status_line_for(false, Some(&check), PROTOCOL_VERSION).text,
+        "Server running, 2 sessions"
+    );
+}
+
+#[test]
+fn actions_run_their_subcommand_and_are_busy_until_done() {
+    assert_eq!(Action::Check.subcommand(), "status");
+    assert_eq!(Action::Start.subcommand(), "start");
+    assert_eq!(Action::Stop { force: false }.subcommand(), "stop");
+    assert_eq!(Action::Stop { force: true }.subcommand(), "stop --force");
+    for busy in [
+        HostCheck::Checking,
+        HostCheck::Starting,
+        HostCheck::Stopping,
+    ] {
+        assert!(busy.is_busy());
+        assert_eq!(busy.server_running(), None);
+    }
+    let line = |check: HostCheck| status_line_for(false, Some(&check), PROTOCOL_VERSION).text;
+    assert_eq!(line(HostCheck::Starting), "Starting…");
+    assert_eq!(line(HostCheck::Stopping), "Stopping…");
+    let stopped = done(CheckOutcome::Status(ServerStatus {
+        daemon: DaemonState::NotRunning,
+        sessions: None,
+        ..running(0)
+    }));
+    assert!(!stopped.is_busy());
+    assert_eq!(stopped.server_running(), Some(false));
+    assert_eq!(
+        done(CheckOutcome::Status(running(1))).server_running(),
+        Some(true)
+    );
+}
+
+#[test]
+fn a_listed_session_reads_as_its_kind_number_and_title() {
+    assert_eq!(
+        session_summary("4\tshell\trunning\t~/src"),
+        "shell 4: ~/src"
+    );
+    assert_eq!(session_summary("7\tclaude\texited (1)\t"), "claude 7");
+    assert_eq!(session_summary("7\tclaude\trunning"), "claude 7");
+    assert_eq!(session_summary("odd line"), "odd line");
+}

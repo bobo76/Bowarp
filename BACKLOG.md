@@ -19,6 +19,24 @@ Built with automated coverage on Linux; the manual checks below are still to do.
 - Windows: a tab hover card (and a group card) closes as soon as the pointer leaves the window
   over its row; back over the same row it stays hidden until the pointer leaves the row.
 
+Explorer Delete to the trash:
+
+- Linux and Windows: Delete on a file, a folder and a link to a folder asks "Move ... to the
+  trash?"; the entry shows in the Recycle Bin / desktop trash and restores from there (a
+  link's target stays). On a network mount or a WSL path (`\\wsl$\...`): "Couldn't move ...
+  to the trash" with the reason, and Delete permanently removes it; Cancel keeps it.
+- Windows: no console window or shell dialog shows during the move.
+
+Remote host Start and Stop (rebuild app and server: protocol 7):
+
+- Over real ssh, Settings → Remote hosts: Start on a host whose server isn't running shows
+  "Starting…" then "Server running, 0 sessions"; the server is still up after several
+  minutes with no tab. Stop with no session: "Server not running". Stop with a remote tab
+  open: the dialog lists it; Cancel keeps it; Stop server shows the tab exited and "Server not
+  running". Start / Stop dim as the state says. Windows: no console window flashes.
+- The `+` menu's host submenu: "Not checked" and Check server; after a check, Start or Stop
+  on the settings page, the next opening shows the new state.
+
 Remote tabs (`--remote <host>`, docs/remote.md), checked in Xvfb with a stand-in for ssh:
 
 - Settings → Remote hosts: Add host, type the three fields (the row title and "Connects with"
@@ -402,20 +420,10 @@ its items), regrouped into steps, in order:
    shell integration, name the tab by the running command, else the folder's last component;
    the program title moves to the hover card. A custom name always wins; agent tabs keep
    their titles.
-2. Explorer Delete to the trash (F5): Delete is permanent today (`file_explorer.rs:1071`).
-   Move to the system trash (Recycle Bin, freedesktop trash); keep the permanent delete with
-   today's wording where no trash exists (network mounts, WSL paths). Check the new
-   dependency with `cargo deny`.
 
 - System notification and sound for agent attention (follow-up of #11): beside the window's
   attention request, `show_system_notification` and a sound, so the Settings / Git page in
   the active window (where the request does nothing) also gets a signal.
-
-- Remote host status and control, in order (each ships alone):
-  1. Start and Stop on Settings → Remote hosts: Start runs the daemon on the host over ssh;
-     Stop (a new `agentws-server stop`) asks first when sessions still run there, listing them
-     via `list`. The host's state refreshes after each.
-  2. The host's last known state in its `+` submenu, with a Check entry there.
 
 - Search a Markdown file in its rendered view: Ctrl+F while the viewer shows a rendered `.md`
   file opens a search bar over the rendered text (all matches highlighted, Enter / Shift+Enter

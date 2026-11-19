@@ -60,7 +60,7 @@ fn a_check_runs_once_at_a_time_and_its_outcome_is_kept_by_target(
     let released = Mutex::new(released);
     let calls = Arc::new(AtomicU32::new(0));
     let counted = calls.clone();
-    let checker: Checker = Arc::new(move |_| {
+    let checker: Checker = Arc::new(move |_, _| {
         counted.fetch_add(1, Ordering::SeqCst);
         let _ = released.lock().unwrap().recv();
         CheckOutcome::NoAnswer
@@ -152,4 +152,49 @@ fn a_successful_connection_keeps_a_check_still_running(cx: &mut gpui_kit::TestAp
         cx.update(|cx| host_check(&target, cx)),
         Some(HostCheck::Checking)
     );
+}
+
+#[gpui::test]
+fn start_runs_its_action_and_ends_in_the_servers_state(cx: &mut gpui_kit::TestAppContext) {
+    use agentws_remote::status::{DaemonState, ServerStatus};
+    use std::sync::mpsc;
+
+    let (release, released) = mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let recorded = asked.clone();
+    let checker: Checker = Arc::new(move |_, action| {
+        recorded.lock().unwrap().push(action);
+        let _ = released.lock().unwrap().recv();
+        CheckOutcome::Status(ServerStatus {
+            version: "1".into(),
+            protocol: None,
+            daemon: DaemonState::Running,
+            sessions: Some(0),
+        })
+    });
+    let target = Target {
+        destination: "me@box".into(),
+        program: "agentws-server".into(),
+    };
+    cx.update(|cx| {
+        cx.set_global(HostChecks::with_checker(checker));
+        start_server(target.clone(), cx);
+        // Busy: a check waits until the start ends.
+        check(target.clone(), cx);
+        assert_eq!(host_check(&target, cx), Some(HostCheck::Starting));
+    });
+    release.send(()).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while cx.update(|cx| host_check(&target, cx)) == Some(HostCheck::Starting) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the start never ended"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        cx.run_until_parked();
+    }
+    let state = cx.update(|cx| host_check(&target, cx)).unwrap();
+    assert_eq!(state.server_running(), Some(true));
+    assert_eq!(*asked.lock().unwrap(), [Action::Start]);
 }
