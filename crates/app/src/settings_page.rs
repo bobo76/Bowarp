@@ -905,6 +905,12 @@ fn page(title: &'static str, groups: Vec<SettingGroup>) -> SettingPage {
 
 /// Formatted once: the page is built again at each render of the workspace.
 static VERSION: LazyLock<SharedString> = LazyLock::new(|| about::version().into());
+/// Read once for the same reason: `current_exe` reads `/proc/self/exe` (a syscall).
+static EXECUTABLE: LazyLock<SharedString> = LazyLock::new(|| {
+    std::env::current_exe()
+        .map(|path| path.display().to_string().into())
+        .unwrap_or_else(|_| "Unknown".into())
+});
 
 fn about_groups(cx: &App) -> Vec<SettingGroup> {
     let version = VERSION.clone();
@@ -913,9 +919,7 @@ fn about_groups(cx: &App) -> Vec<SettingGroup> {
         .and_then(|path| path.parent())
         .map(|folder| SharedString::from(folder.display().to_string()))
         .unwrap_or_else(|| "None (no home folder): settings are not saved".into());
-    let executable: SharedString = std::env::current_exe()
-        .map(|path| path.display().to_string().into())
-        .unwrap_or_else(|_| "Unknown".into());
+    let executable = EXECUTABLE.clone();
     vec![
         SettingGroup::new().title(about::APP_NAME).items([
             SettingItem::new(
