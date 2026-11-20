@@ -5,6 +5,9 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Settings → Remote hosts: editing or removing a host acts on that host even when another
+  app window or a hand edit reordered the list meanwhile.
+
 - Saved tabs: after running an older version, a tab or color it doesn't know drops only that
   tab (or its color) at start-up; before, every saved tab was lost.
 
