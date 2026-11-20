@@ -5,6 +5,8 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Terminal links: paths holding CJK characters or emoji are now detected (Ctrl+click).
+
 - Remote tabs: a paste over 16 MB arrives whole; before, it silently stopped all typing in
   the tab until the connection dropped about 45 s later.
 

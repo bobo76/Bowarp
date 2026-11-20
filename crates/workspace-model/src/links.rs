@@ -13,6 +13,10 @@ const SCHEMES: &[&str] = &["https", "http", "ftp", "file"];
 /// so a link to any other registered handler (`smb:`, `vscode:`) is not a link.
 const HYPERLINK_SCHEMES: &[&str] = &["https", "http", "ftp", "mailto", "file"];
 
+/// Stands for the second cell of a wide character (CJK, emoji) in a line read one char per
+/// terminal cell: part of a link, and left out of the link's text.
+pub const WIDE_SPACER: char = '\u{2060}';
+
 /// A link found in a line of text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoundLink {
@@ -62,7 +66,7 @@ pub fn find_link(line: &[char], index: usize) -> Option<FoundLink> {
         let range = start + url_start..start + url_start + url.len();
         return range.contains(&index).then(|| FoundLink {
             range,
-            target: LinkText::Url(url.iter().collect()),
+            target: LinkText::Url(without_spacers(url)),
         });
     }
 
@@ -76,7 +80,7 @@ pub fn find_link(line: &[char], index: usize) -> Option<FoundLink> {
     if !range.contains(&index) {
         return None;
     }
-    let text: String = path.iter().collect();
+    let text = without_spacers(path);
     let path_ref = parse_path_ref(&text);
     let looks_like_path = path_ref.path.starts_with('~')
         || path_ref.path.chars().any(|c| matches!(c, '/' | '\\' | '.'));
@@ -86,13 +90,19 @@ pub fn find_link(line: &[char], index: usize) -> Option<FoundLink> {
     })
 }
 
+fn without_spacers(chars: &[char]) -> String {
+    chars.iter().filter(|&&c| c != WIDE_SPACER).collect()
+}
+
 /// Chars a URL or a path may hold. Quotes, backticks, angle brackets, pipes and box drawing
 /// end one.
 fn is_link_char(c: char) -> bool {
     c.is_alphanumeric()
         || matches!(
             c,
-            '-' | '.'
+            WIDE_SPACER
+                | '-'
+                | '.'
                 | '_'
                 | '~'
                 | ':'

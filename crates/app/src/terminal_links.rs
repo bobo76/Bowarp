@@ -208,11 +208,20 @@ fn logical_line(grid: &Grid<TerminalCell>, line: i32) -> Read {
     while last < bottom && wraps(last) {
         last += 1;
     }
-    // One char per column, so a char's index gives its cell.
+    // One char per column, so a char's index gives its cell. A wide character's second cell
+    // (or the one it left at a row's end when it wrapped) joins the word instead of ending it.
     let text: Vec<char> = (first..=last)
         .flat_map(|line| {
             let row = &grid[Line(line)];
-            (0..columns).map(move |column| row[Column(column)].c)
+            (0..columns).map(move |column| {
+                let cell = &row[Column(column)];
+                let spacer = Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER;
+                if cell.flags.intersects(spacer) {
+                    links::WIDE_SPACER
+                } else {
+                    cell.c
+                }
+            })
         })
         .collect();
     Read::Text(text, (first + offset) as usize, columns)
