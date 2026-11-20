@@ -129,8 +129,9 @@ enum RepoChange {
     UnstageAll,
     /// Throw away these files' unstaged changes (an untracked file is deleted).
     Discard(Vec<FileStatus>),
-    /// Throw away every unstaged change.
-    DiscardAll,
+    /// Throw away every unstaged change; of the untracked files, only these listed ones are
+    /// deleted (the ones the confirmation counted).
+    DiscardAll(Vec<FileStatus>),
     /// A [`git::partial_patch`] of the diff on `side`: stages its lines (Unstaged) or unstages
     /// them (Staged).
     Apply {
@@ -654,11 +655,22 @@ impl GitPage {
 
     /// Ask before discarding every unstaged change.
     fn confirm_discard_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let prompt = self.status().and_then(|status| {
-            let files: Vec<&FileStatus> = status.files_on(DiffSide::Unstaged).collect();
-            git::discard_prompt(&files)
-        });
-        self.confirm_discard(prompt, RepoChange::DiscardAll, window, cx);
+        let Some(status) = self.status() else {
+            return;
+        };
+        if status.truncated {
+            // The confirmation could not name every file that would be lost.
+            let message = format!(
+                "Too many changes to discard at once (more than {MAX_STATUS_FILES}): \
+                 discard them from a terminal."
+            );
+            window.push_notification(Notification::error(message), cx);
+            return;
+        }
+        let files: Vec<&FileStatus> = status.files_on(DiffSide::Unstaged).collect();
+        let prompt = git::discard_prompt(&files);
+        let change = RepoChange::DiscardAll(files.into_iter().cloned().collect());
+        self.confirm_discard(prompt, change, window, cx);
     }
 
     /// Show `prompt`, and queue `change` on its confirming button (or Enter, like the file
@@ -1384,7 +1396,7 @@ fn change_repo(target: &Target, change: RepoChange) -> Result<(), git::GitError>
         RepoChange::StageAll => git::stage_all(root),
         RepoChange::UnstageAll => git::unstage_all(root, target.head),
         RepoChange::Discard(files) => git::discard(root, &refs(&files)),
-        RepoChange::DiscardAll => git::discard_all(root),
+        RepoChange::DiscardAll(files) => git::discard_all(root, &refs(&files)),
         RepoChange::Apply { side, patch } => git::apply_patch(root, patch, side),
     }
 }

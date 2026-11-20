@@ -5,6 +5,10 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Git page: Discard all deletes only the untracked files its confirmation counted; a file
+  created meanwhile (by an agent, say) is kept. With more than 10,000 changed files it
+  refuses and says why, since the confirmation can't list them all.
+
 - Remote tabs: connecting to a host that is reachable but never answers (a stuck server, a
   shell startup file waiting for input) now fails after 30 s with "the server did not answer",
   instead of waiting forever and holding up every other tab on that host.

@@ -452,10 +452,14 @@ fn discards_every_unstaged_change_but_ignored_files() {
     fs::remove_file(repo.0.join("old.txt")).unwrap();
     fs::create_dir_all(repo.0.join("new/deep")).unwrap();
     fs::write(repo.0.join("new/deep/file.txt"), "new\n").unwrap();
+    let status = read_status(&repo.0).unwrap();
+    let files: Vec<&FileStatus> = status.files.iter().collect();
+    // Created after the status the user saw: kept.
+    fs::write(repo.0.join("new/late.txt"), "late\n").unwrap();
     let sub = repo.0.join("new");
 
-    // From a subfolder too: `:/` is the whole work tree.
-    discard_all(&sub).unwrap();
+    // From a subfolder too: paths are from the work tree's top.
+    discard_all(&sub, &files).unwrap();
 
     assert_eq!(
         fs::read_to_string(repo.0.join("kept.txt")).unwrap(),
@@ -464,7 +468,21 @@ fn discards_every_unstaged_change_but_ignored_files() {
     assert!(repo.0.join("old.txt").exists());
     assert!(!repo.0.join("new/deep/file.txt").exists());
     assert!(repo.0.join("ignored.txt").exists());
-    assert!(read_status(&repo.0).unwrap().files.is_empty());
+    assert!(repo.0.join("new/late.txt").exists());
+    let left = read_status(&repo.0).unwrap();
+    assert_eq!(left.files.len(), 1);
+    assert_eq!(left.files[0].path, "new/late.txt");
+}
+
+#[test]
+fn long_path_lists_are_split_under_the_limit() {
+    let args: Vec<String> = ["aaaa", "bb", "cccccc", "d"].map(String::from).to_vec();
+    let lens = |chunks: Vec<&[String]>| chunks.iter().map(|c| c.len()).collect::<Vec<_>>();
+    assert_eq!(lens(arg_chunks(&args, 100)), [4]);
+    assert_eq!(lens(arg_chunks(&args, 8)), [2, 1, 1]);
+    // One longer than the limit still goes, alone.
+    assert_eq!(lens(arg_chunks(&args, 3)), [1, 1, 1, 1]);
+    assert!(arg_chunks(&[], 8).is_empty());
 }
 
 fn unstaged(path: &str, change: Change) -> FileStatus {

@@ -170,17 +170,47 @@ pub fn discard(root: &Path, files: &[&FileStatus]) -> Result<(), GitError> {
     Ok(())
 }
 
-/// Throw away every unstaged change: tracked files go back to their staged content and
-/// untracked files are deleted (ignored ones are kept). Merge conflicts are left alone.
-pub fn discard_all(root: &Path) -> Result<(), GitError> {
+/// Throw away every unstaged change: tracked files go back to their staged content, and the
+/// untracked ones among `files` (those the user was told about) are deleted; an untracked
+/// file that appeared since is kept, as are ignored ones. Merge conflicts are left alone.
+/// `files` paths are relative to the work tree's top.
+pub fn discard_all(root: &Path, files: &[&FileStatus]) -> Result<(), GitError> {
     let restore = ["restore", "--worktree", "--ignore-unmerged", "--", ":/"];
     run_write(root, &restore, None, DISCARD_TIMEOUT)?;
-    run_write(
-        root,
-        &["clean", "-f", "-q", "--", ":/"],
-        None,
-        DISCARD_TIMEOUT,
-    )
+    let untracked: Vec<String> = files
+        .iter()
+        .filter(|file| file.discardable() && file.unstaged == Some(Change::Untracked))
+        .map(|file| format!(":(top,literal){}", file.path))
+        .collect();
+    for chunk in arg_chunks(&untracked, MAX_PATHS_LEN) {
+        let mut args = vec!["clean", "-f", "-q", "--"];
+        args.extend(chunk.iter().map(String::as_str));
+        run_write(root, &args, None, DISCARD_TIMEOUT)?;
+    }
+    Ok(())
+}
+
+/// How many bytes of paths one git command line takes: Windows refuses a command line over
+/// 32K UTF-16 units, and a path's UTF-8 length is never less than its UTF-16 one.
+const MAX_PATHS_LEN: usize = 16 * 1024;
+
+/// `args` split into runs whose lengths add up to at most `max_len` (a longer single one gets
+/// a run of its own).
+fn arg_chunks(args: &[String], max_len: usize) -> Vec<&[String]> {
+    let mut chunks = Vec::new();
+    let (mut start, mut len) = (0, 0);
+    for (index, arg) in args.iter().enumerate() {
+        let arg_len = arg.len() + 1;
+        if index > start && len + arg_len > max_len {
+            chunks.push(&args[start..index]);
+            (start, len) = (index, 0);
+        }
+        len += arg_len;
+    }
+    if start < args.len() {
+        chunks.push(&args[start..]);
+    }
+    chunks
 }
 
 /// What the confirmation before discarding `files` says, naming what is lost.
