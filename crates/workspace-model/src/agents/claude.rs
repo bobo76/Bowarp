@@ -140,7 +140,27 @@ fn hook_command(hook_program: &Path) -> io::Result<String> {
 
 #[cfg(not(unix))]
 fn hook_command(hook_program: &Path) -> io::Result<String> {
-    Ok(format!("\"{}\"", utf8(hook_program)?))
+    windows_hook_command(utf8(hook_program)?)
+}
+
+/// The hook command for the program at `path` on Windows, in double quotes. Whether Claude
+/// Code runs it with cmd or with Git Bash, nothing in it may expand: a path holding `$` or a
+/// backtick (bash) or `%` or `!` (cmd) is refused rather than run as something else.
+#[cfg_attr(
+    all(unix, not(test)),
+    expect(dead_code, reason = "Windows only; unit-tested on every platform")
+)]
+fn windows_hook_command(path: &str) -> io::Result<String> {
+    if let Some(c) = path
+        .chars()
+        .find(|c| matches!(c, '$' | '`' | '%' | '!' | '"'))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("the path of agentws-hook holds `{c}`, which a shell would expand: {path}"),
+        ));
+    }
+    Ok(format!("\"{path}\""))
 }
 
 #[cfg(not(unix))]
@@ -151,4 +171,23 @@ fn utf8(path: &Path) -> io::Result<&str> {
             format!("{} isn't valid UTF-8", path.display()),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_windows_hook_command_refuses_what_a_shell_would_expand() {
+        let path = r"C:\Program Files\Bowarp\agentws-hook.exe";
+        assert_eq!(windows_hook_command(path).unwrap(), format!("\"{path}\""));
+        for path in [
+            r"C:\Users\$me\agentws-hook.exe",
+            r"C:\Users\%USERNAME%\agentws-hook.exe",
+            r"C:\a`b\agentws-hook.exe",
+            r"C:\wow!\agentws-hook.exe",
+        ] {
+            assert!(windows_hook_command(path).is_err(), "{path}");
+        }
+    }
 }
