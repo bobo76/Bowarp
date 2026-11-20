@@ -8,6 +8,8 @@ omitted unless they affect how the app is used.
 - Git page: drag the divider between the file list and the diff to resize the list
   (double-click resets it); its width is kept. On a narrow window the list shrinks first so the
   diff stays readable.
+- Git page: a long file name is cut short with "…" so the stage and discard buttons stay in
+  reach; hover the name for the full path.
 
 ## 0.4.5
 

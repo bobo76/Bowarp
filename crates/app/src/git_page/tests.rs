@@ -725,3 +725,99 @@ fn hiding_the_page_mid_drag_saves_the_dragged_width(cx: &mut gpui_kit::TestAppCo
     page.update(&mut cx, |page, cx| page.hide(cx));
     assert_eq!(saved(&mut cx), edge + 60.);
 }
+
+#[gpui::test]
+fn long_file_names_leave_the_row_buttons_in_reach(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::Root;
+    use gpui_kit::{AppContext, VisualTestContext, size};
+    use std::cell::RefCell;
+
+    let Some(folder) = temp_repo("long-names") else {
+        eprintln!("git not available, skipping");
+        return;
+    };
+    let long = "a-very-long-file-name-that-never-fits-in-the-list-of-changes-at-all.txt";
+    let deep = "some/deeply/nested/folder/with/many/levels/and-a-long-file-name-too.rs";
+    std::fs::create_dir_all(folder.join("some/deeply/nested/folder/with/many/levels")).unwrap();
+    for path in [long, deep] {
+        std::fs::write(folder.join(path), "one\n").unwrap();
+    }
+    run_git(&folder, &["add", "."]);
+    run_git(&folder, &["commit", "-q", "-m", "first"]);
+    for path in [long, deep] {
+        std::fs::write(folder.join(path), "two\n").unwrap();
+    }
+    run_git(
+        &folder,
+        &[
+            "mv",
+            "note.txt",
+            "a-renamed-note-with-a-very-long-name-as-well.txt",
+        ],
+    );
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::settings_file::init_in_memory(cx);
+    });
+    let captured = Rc::new(RefCell::new(None));
+    let capture = captured.clone();
+    let window = cx.add_window(move |window, cx| {
+        let page = cx.new(|cx| GitPage::new(window, cx));
+        *capture.borrow_mut() = Some(page.clone());
+        Root::new(page, window, cx)
+    });
+    let page = captured.borrow().clone().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.update(|window, cx| {
+        page.update(cx, |page, cx| {
+            page.show(vec![folder.clone()], None, window, cx)
+        });
+    });
+    cx.run_until_parked();
+    let rows = cx.update(|_, cx| page.read(cx).rows.clone());
+    let file_rows: Vec<usize> = (0..rows.len())
+        .filter(|&row| matches!(rows[row], StatusRow::File { .. }))
+        .collect();
+    assert_eq!(file_rows.len(), 3, "{rows:?}");
+
+    // (window width, saved list width): the list's whole range, and the smallest page (720 px
+    // window less the 240 px sidebar), where a wide saved list is squeezed to its minimum.
+    for (window_width, list_width) in [(1400., 170.), (1400., 340.), (1400., 680.), (480., 680.)] {
+        cx.simulate_resize(size(px(window_width), px(800.)));
+        cx.update(|_, cx| {
+            crate::settings_file::save_layout(cx, |settings| {
+                settings.git_list_width = GitListWidth::new(list_width)
+            })
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        // `debug_bounds` needs debug assertions: release test runs skip the drawn checks.
+        if !cfg!(debug_assertions) {
+            continue;
+        }
+        let list = cx.debug_bounds("git-list").unwrap();
+        for row in &file_rows {
+            // `debug_bounds` takes a `&'static str`.
+            let mut bounds = |name: &str| {
+                let selector = format!("git-file-{name}-{row}").leak();
+                cx.debug_bounds(selector).unwrap()
+            };
+            let (path, buttons, letter) = (bounds("path"), bounds("buttons"), bounds("letter"));
+            let case = format!("row {row}, window {window_width}, list {list_width}");
+            assert!(buttons.size.width > px(0.), "{case}");
+            assert!(
+                path.size.width > px(20.),
+                "{case}: the name has no room: {path:?}"
+            );
+            assert!(
+                path.right() <= buttons.left(),
+                "{case}: {path:?} {buttons:?}"
+            );
+            assert!(buttons.right() <= letter.left(), "{case}");
+            // Clear of the list's resize strip, which takes the presses on its last 6 px.
+            let reach = list.right() - px(crate::divider_drag::DIVIDER_WIDTH);
+            assert!(letter.right() <= reach, "{case}: {letter:?} {list:?}");
+            assert_eq!(letter.size.width, px(CHANGE_LETTER_WIDTH), "{case}");
+        }
+    }
+}

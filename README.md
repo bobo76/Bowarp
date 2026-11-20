@@ -608,7 +608,8 @@ width is saved (`"git_list_width"` in settings.json).
   and staged files are kept. Each repository keeps its own unsent message while the app runs.
 - **Staged Changes / Changes**: each changed file with its status letter (M modified, A added,
   D deleted, R renamed, C copied, T type changed, U untracked, ! conflicted); a file changed
-  on both sides is in both. Hover a file for + (stage) or − (unstage),
+  on both sides is in both. A name too long for the list ends in "…": hover it for the full
+  path. Hover a file for + (stage) or − (unstage),
   or a group header for Stage all / Unstage all. Click a header to fold its group. In
   Changes, the ↶ button (on a file, or Discard all on the header) throws away unstaged
   changes after a confirmation naming what is lost: a tracked file goes back to its staged

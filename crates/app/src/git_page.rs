@@ -18,12 +18,13 @@ use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
 use gpui_kit::component::input::TextareaState;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, App, AppContext, Context, Entity, FocusHandle, FontWeight, Hsla,
+    AnyElement, App, AppContext, Context, Div, Entity, FocusHandle, FontWeight, Hsla,
     InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, MouseButton, ParentElement, Render,
-    ScrollStrategy, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
+    ScrollStrategy, SharedString, Stateful, StatefulInteractiveElement, Styled, Subscription, Task,
     UniformListScrollHandle, Window, actions, div, px, uniform_list,
 };
 use notify::event::ModifyKind;
@@ -993,11 +994,6 @@ impl GitPage {
         };
         let theme = cx.theme();
         let change = file.change(side).unwrap_or(Change::Modified);
-        let (name, folder) = split_path(&file.path);
-        let detail = match &file.orig_path {
-            Some(orig) if side == DiffSide::Staged => format!("from {orig}"),
-            _ => folder.to_string(),
-        };
         let selected = self.selected_row() == Some(row);
         let (icon, tooltip) = match side {
             DiffSide::Staged => (IconName::Minus, "Unstage"),
@@ -1015,6 +1011,8 @@ impl GitPage {
             .flex()
             .items_center()
             .gap_2()
+            // Laid out alone by the list, a row with no width takes its content's.
+            .w_full()
             .h(px(ROW_HEIGHT))
             .pl_6()
             .pr_2()
@@ -1025,30 +1023,12 @@ impl GitPage {
                 window.focus(&page.focus, cx);
                 page.select(clicked.clone(), window, cx);
             }))
+            .child(self.render_file_path(row, file, side, change, cx))
             .child(
                 div()
-                    .flex_none()
-                    .max_w(px(self.file_name_max_width(cx)))
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .when(change == Change::Deleted, |name| name.line_through())
-                    .child(name.to_string()),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(detail),
-            )
-            .child(
-                div()
+                    .debug_selector(move || format!("git-file-buttons-{row}"))
                     .flex()
+                    .flex_none()
                     .invisible()
                     .group_hover(group, |style| style.visible())
                     .when(discardable, |buttons| {
@@ -1080,6 +1060,7 @@ impl GitPage {
             )
             .child(
                 div()
+                    .debug_selector(move || format!("git-file-letter-{row}"))
                     .flex_none()
                     .w(px(CHANGE_LETTER_WIDTH))
                     .text_xs()
@@ -1088,6 +1069,55 @@ impl GitPage {
                     .child(change.letter().to_string()),
             )
             .into_any_element()
+    }
+
+    /// A file row's name and folder (or a staged rename's origin), hovered for the full path.
+    /// They take what the buttons and the letter leave: the folder (no basis) gives way first,
+    /// then the name (its width as basis) shrinks to an ellipsis.
+    fn render_file_path(
+        &self,
+        row: usize,
+        file: &FileStatus,
+        side: DiffSide,
+        change: Change,
+        cx: &App,
+    ) -> Stateful<Div> {
+        let (name, folder) = split_path(&file.path);
+        let detail = match file.shown_origin(side) {
+            Some(orig) => format!("from {orig}"),
+            None => folder.to_string(),
+        };
+        let full_path = SharedString::from(file.full_path_label(side));
+        div()
+            .id(("git-file-path", row))
+            .debug_selector(move || format!("git-file-path-{row}"))
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .items_center()
+            .gap_2()
+            .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
+            .child(
+                div()
+                    .min_w_0()
+                    .max_w(px(self.file_name_max_width(cx)))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .when(change == Change::Deleted, |name| name.line_through())
+                    .child(name.to_string()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(detail),
+            )
     }
 }
 
@@ -1124,6 +1154,7 @@ impl Render for GitPage {
                     .on_drag_move(cx.listener(Self::drag_list_edge))
                     .child(
                         div()
+                            .debug_selector(|| "git-list".into())
                             .relative()
                             .flex()
                             .flex_col()

@@ -110,7 +110,8 @@ directly to model APIs.
   Settings page take turns. A switch turns the page off.
 - Pick any repository the open tabs are in, the selected tab's first; see its branch.
 - List the changed files in "Staged Changes" and "Changes" groups with their status letters;
-  stage or unstage a file, or all of them.
+  stage or unstage a file, or all of them. A long name is cut short with "…" (full path in a
+  tooltip) so a row's buttons stay in reach.
 - Show the selected file's unified diff (staged or unstaged side; an untracked file as all
   added lines). A divider between the file list and the diff resizes the list; its width is
   kept.

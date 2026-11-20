@@ -154,6 +154,10 @@ Git page, list divider:
 
 - Windows and Linux: the pointer turns to the resize cursor over the edge between the list
   and the diff; dragging it past the window's edge and releasing there keeps the width.
+- Windows (and Linux with display scaling): a Changes row with a long file name, one in a deep
+  folder and a staged rename keep + / ↶ and the status letter in view and clickable at every
+  list width and in a 720 px window; hovering the name shows the full path ("... from <old>"
+  for the rename).
 
 Git page, line and hunk staging:
 
@@ -373,10 +377,6 @@ Packaged app on Linux: a smoke test and the About dialog's version and commit.
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Git page: on a Changes / Staged Changes row whose file name is too long, the `+` (stage) and
-  ↶ (discard) buttons are pushed out of reach. Truncate the name with an ellipsis ("very-long-
-  na… + ↶") so the buttons always stay visible and clickable; the full path shows in a
-  tooltip.
 - PowerShell: after an app restart, a restored PowerShell tab doesn't show its last command
   (the restored-tab suggestion that bash, zsh and Git Bash tabs get). Find whether the
   command is never saved for PowerShell tabs or saved but not offered on restore.
