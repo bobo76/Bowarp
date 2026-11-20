@@ -122,6 +122,8 @@ pub struct ChangedFile {
 /// The files of a repository's working tree that differ from HEAD, in git's order (by path).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WorkingChanges {
+    /// The repository's top folder.
+    pub top: PathBuf,
     pub files: Vec<ChangedFile>,
 }
 
@@ -141,7 +143,8 @@ impl WorkingChanges {
                 continue;
             }
             marks.insert(file.path.clone(), file.change);
-            for folder in file.path.ancestors().skip(1) {
+            let folders = file.path.ancestors().skip(1);
+            for folder in folders.take_while(|folder| *folder != self.top) {
                 if marks.contains_key(folder) {
                     break;
                 }
@@ -203,7 +206,7 @@ pub fn working_changes(dir: &Path) -> Option<WorkingChanges> {
             }
         })
         .collect();
-    Some(WorkingChanges { files })
+    Some(WorkingChanges { top, files })
 }
 
 /// The changed files of the repository containing `dir`, like [`working_changes`] but
@@ -224,7 +227,7 @@ pub fn changed_files(dir: &Path) -> Option<WorkingChanges> {
             removed: None,
         })
         .collect();
-    Some(WorkingChanges { files })
+    Some(WorkingChanges { top, files })
 }
 
 /// The top folder of the repository containing `dir`, with the platform's separators.

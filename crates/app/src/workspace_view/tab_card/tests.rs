@@ -192,6 +192,7 @@ fn assert_changed_files_follow_their_setting(
 /// An answer from git: one file with `lines` added.
 fn changed(lines: u64) -> Option<Arc<WorkingChanges>> {
     Some(Arc::new(WorkingChanges {
+        top: PathBuf::from("/repo"),
         files: vec![ChangedFile {
             path: PathBuf::from("/repo/a.rs"),
             change: FileChange::Modified,
@@ -216,7 +217,14 @@ fn card_lists_the_first_changes_relative_to_the_folder() {
     let nested = Path::new("/repo").join("src").join("new.rs");
     let mut files = vec![file(&nested.to_string_lossy()), file("/elsewhere/x.rs")];
     files.extend((0..MAX_CARD_CHANGES).map(|i| file(&format!("/repo/f{i}"))));
-    let (listed, more) = card_changes(&WorkingChanges { files }, Path::new("/repo"), None);
+    let (listed, more) = card_changes(
+        &WorkingChanges {
+            top: PathBuf::from("/repo"),
+            files,
+        },
+        Path::new("/repo"),
+        None,
+    );
     assert_eq!(listed.len(), MAX_CARD_CHANGES);
     assert_eq!(more, 2);
     let label = |index: usize| listed[index].label.to_string();
