@@ -75,6 +75,8 @@ Prompt contents:
 - Rules:
   - Follow the existing code style.
   - Put pure logic in a non-UI crate with unit tests.
+  - No O(file) work on the UI thread, including a `to_owned()` of text handed to a background
+    task: move the shared value (an `Arc`, a cheap handle) into the task instead.
   - Keep each new function to one concern and ~15 lines (agent 2's FM IPL pass flags longer
     ones, and splitting them later costs agent 3 a refactor and a re-check).
 - Verify with `cargo fmt`, `cargo clippy --all-targets`, `cargo build` and `cargo test`, clippy before the full test run (a lint-forced refactor after it costs a rerun); when the step has UI, run only the touched crate's tests first, drive the app, then run the full suite once (a fix found in the app then costs no second full run). If the step has UI, drive the app with the scripts in `pipeline/tools/` (see "UI test tools"); don't set up the display by hand. Say up front which parts the harness can't drive.
