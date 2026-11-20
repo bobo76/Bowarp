@@ -1534,3 +1534,75 @@ fn a_wakeup_before_any_output_does_not_leave_the_tab_active(cx: &mut gpui_kit::T
         assert_eq!(view.tab_status(), TabStatus::Active)
     });
 }
+
+/// A terminal with something else over the bottom half of its right edge. The scroll bar's
+/// press listener is window-wide; an occluding element in front still stops it (GPUI's
+/// `HitboxBehavior::BlockMouse` stops propagation in the capture phase).
+struct CoveredEdge(Entity<TerminalView>);
+
+impl Render for CoveredEdge {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::{Styled, div, px, relative};
+        div().size_full().relative().child(self.0.clone()).child(
+            div()
+                .id("cover")
+                .absolute()
+                .right_0()
+                .bottom_0()
+                .w(px(40.))
+                .h(relative(0.5))
+                .occlude(),
+        )
+    }
+}
+
+#[gpui::test]
+fn a_press_on_something_over_the_scroll_bar_does_not_scroll(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{Modifiers, MouseButton, point, px};
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        settings_file::init_in_memory(cx);
+        crate::terminal_element::init(cx);
+    });
+    let spec = LaunchSpec::new(SessionKind::Shell, Some("sh".into()), Vec::new(), None);
+    let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (session, feed) = Session::remote(
+        1,
+        SessionKind::Shell,
+        TermDimensions::new(40, 5),
+        Palette::default(),
+        Arc::new(|_| {}),
+        Box::new(RecordingLink(typed)),
+    );
+    let view = cx.new(|cx| TerminalView::from_test_session(session, &spec, cx));
+    let terminal = view.clone();
+    let window = cx.add_window(move |_, _| CoveredEdge(terminal));
+    let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+    for line in 0..200 {
+        feed.output(format!("line {line}\r\n").as_bytes());
+    }
+    view.update(&mut cx, |view, cx| {
+        view.on_session_event(SessionEvent::Wakeup, cx)
+    });
+    cx.run_until_parked();
+    let offset = |cx: &mut gpui_kit::VisualTestContext| {
+        view.read_with(cx, |view, _| view.session.display_offset())
+    };
+    let size = cx.update(|window, _| window.viewport_size());
+    // In the terminal's right padding, where the scroll bar is.
+    let press = |cx: &mut gpui_kit::VisualTestContext, y| {
+        let at = point(size.width - px(2.), y);
+        cx.simulate_mouse_move(at, None, Modifiers::none());
+        cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+    };
+
+    // Covered: the press is not the scroll bar's.
+    press(&mut cx, size.height * 0.75);
+    assert_eq!(offset(&mut cx), 0);
+    // Uncovered, a press on the bar scrolls.
+    press(&mut cx, size.height * 0.25);
+    assert_ne!(offset(&mut cx), 0, "the press reached the scroll bar");
+}
