@@ -771,7 +771,8 @@ Missing or wrong-typed booleans each default to true. Changes apply live.
 
 Settings → Workspace has three switches, all on by default (`restore_tabs`,
 `remember_last_command`, `file_panes`; missing or non-boolean means on). The Git page's
-switch (`git_page`, also on) heads Settings → Git.
+switch (`git_page`, also on) heads Settings → Git, followed by **Git status in tabs and
+explorer** (`git_status`, also on).
 
 - **Restore previous tabs** off: the next start opens one fresh default tab, and `tabs.json`
   is neither read nor written (it is kept as it is, so turning the switch on again restores
@@ -794,6 +795,12 @@ switch (`git_page`, also on) heads Settings → Git.
   Ctrl+Shift+G does nothing; a shown Git page closes with its sidebar row (the selected tab
   shows again) and no new `git` command runs for it. Commit messages being written are kept while the app runs. Turned on
   again, the button returns; the row comes back when the page is opened.
+- **Git status in tabs and explorer** (Settings → Git) off (applies live): tab rows show the
+  folder instead of the branch (also on the hover card, and the tab menu offers no Copy
+  branch), the explorer drops its changed-file colors and git-ignored dimming, and the hover
+  card shows no `+N` or changed files (their switches show disabled, values kept). No `git`
+  runs and no branch is read for them; the Git page is unaffected. Turned on again, the
+  branch, colors and `+N` are read again.
 
 ### Notifications
 

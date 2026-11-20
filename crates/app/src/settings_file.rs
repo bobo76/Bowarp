@@ -11,7 +11,7 @@ use gpui_kit::component::{ActiveTheme, Theme, ThemeMode, ThemeRegistry};
 use gpui_kit::{App, Global};
 use workspace_model::{
     FilePaneFeatures, HistoryFeatures, KeybindingOverlay, NotificationFeatures, Settings,
-    SettingsFile, UiTheme, WindowOpacity, WorkspaceFeatures,
+    SettingsFile, TabCardFields, UiTheme, WindowOpacity, WorkspaceFeatures,
 };
 
 use term_core::Palette;
@@ -113,6 +113,21 @@ pub fn file_panes(cx: &App) -> FilePaneFeatures {
 pub fn git_page(cx: &App) -> bool {
     cx.try_global::<AppSettings>()
         .is_none_or(|settings| settings.0.settings().git_page.is_on())
+}
+
+/// Whether the "Git status in tabs and explorer" switch is on. On while settings aren't loaded
+/// (unit tests).
+pub fn git_status(cx: &App) -> bool {
+    cx.try_global::<AppSettings>()
+        .is_none_or(|settings| settings.0.settings().git_status.is_on())
+}
+
+/// The hover card's fields as shown: no `+N` or changed files while git status is off.
+pub fn tab_card_fields(cx: &App) -> TabCardFields {
+    let settings = settings(cx);
+    settings
+        .tab_card
+        .with_git_status(settings.git_status.is_on())
 }
 
 /// What the "In-app notifications" switch allows. On while settings aren't loaded (unit tests).

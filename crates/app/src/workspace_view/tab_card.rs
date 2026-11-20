@@ -78,6 +78,14 @@ impl DiffStat {
         self.generation
     }
 
+    /// Forget the answer and make the run going stale (its answer is then ignored).
+    fn discard(&mut self) {
+        *self = Self {
+            generation: self.generation + 1,
+            ..Self::new(std::mem::take(&mut self.folder))
+        };
+    }
+
     /// Take the answer of run `generation`. Returns false, ignoring it, when a newer run
     /// started since (the folder changed while it ran).
     fn finish(
@@ -148,6 +156,14 @@ impl TabCards {
         self.diff_stats
             .get_mut(&id)
             .is_some_and(|stat| stat.finish(generation, changes, now))
+    }
+
+    /// Drop every `+N` and ignore the runs going (`+N` was turned off, or git status): the
+    /// next card opening asks git again.
+    fn discard_diff_stats(&mut self) {
+        for stat in self.diff_stats.values_mut() {
+            stat.discard();
+        }
     }
 
     /// The working tree's changes seen from `folder` for tab `id`, once git answered there.
@@ -243,7 +259,7 @@ impl WorkspaceView {
         id: u64,
         cx: &Context<Self>,
     ) -> AnyElement {
-        if !settings_file::settings(cx).tab_card.active() {
+        if !settings_file::tab_card_fields(cx).active() {
             return row;
         }
         let held = self.cards.held || self.cards.suppressed == Some(id);
@@ -283,7 +299,7 @@ impl WorkspaceView {
     }
 
     fn tab_card(&self, id: u64, cx: &App) -> Option<TabCard> {
-        let fields = settings_file::settings(cx).tab_card;
+        let fields = settings_file::tab_card_fields(cx);
         if !fields.active() {
             return None;
         }
@@ -371,9 +387,12 @@ impl WorkspaceView {
     }
 
     pub(super) fn update_card_settings(&mut self, cx: &mut Context<Self>) {
-        let fields = settings_file::settings(cx).tab_card;
+        let fields = settings_file::tab_card_fields(cx);
         if !fields.keeps(TabCardField::Status) {
             self.cards.clock = None;
+        }
+        if !fields.keeps(TabCardField::Changes) {
+            self.cards.discard_diff_stats();
         }
         if !fields.active() {
             self.cards.shown = None;
@@ -403,10 +422,7 @@ impl WorkspaceView {
     /// the agent is working or a command runs; otherwise the task checks once a second whether
     /// one started.
     fn start_card_clock(&mut self, id: u64, cx: &mut Context<Self>) {
-        if !settings_file::settings(cx)
-            .tab_card
-            .keeps(TabCardField::Status)
-        {
+        if !settings_file::tab_card_fields(cx).keeps(TabCardField::Status) {
             self.stop_card_clock(id);
             return;
         }
@@ -432,10 +448,7 @@ impl WorkspaceView {
 
     /// Run `git diff` for the tab's hover card unless a recent answer for its folder is cached.
     fn refresh_diff_stat(&mut self, id: u64, cx: &mut Context<Self>) {
-        if !settings_file::settings(cx)
-            .tab_card
-            .keeps(TabCardField::Changes)
-        {
+        if !settings_file::tab_card_fields(cx).keeps(TabCardField::Changes) {
             return;
         }
         let Some(location) = self

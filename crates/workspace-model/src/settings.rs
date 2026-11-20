@@ -108,6 +108,11 @@ pub struct Settings {
     /// stay in memory) and runs no `git` for it.
     #[serde(deserialize_with = "lenient")]
     pub git_page: FeatureSwitch<true>,
+    /// Git status outside the Git page: each tab's branch, the explorer's changed-file colors
+    /// and git-ignored dimming, and the hover card's `+N`. Off reads no branch and runs no
+    /// `git` for them (the folder shows instead); the Git page is unaffected.
+    #[serde(deserialize_with = "lenient")]
+    pub git_status: FeatureSwitch<true>,
     /// Toasts about agents (needs attention, ready for review, exited); status dots and
     /// badges stay either way. See [`crate::NotificationFeatures`].
     #[serde(deserialize_with = "lenient")]
@@ -273,6 +278,17 @@ impl TabCardFields {
                 TabCardField::ProgramTitle => self.program_title,
                 TabCardField::SessionKind => self.session_kind,
             }
+    }
+
+    /// The fields as shown: without the "Git status in tabs and explorer" switch
+    /// (`git_status` false) there is no `+N` nor changed files; their values are kept in
+    /// the settings.
+    pub fn with_git_status(self, git_status: bool) -> Self {
+        Self {
+            changes: self.changes && git_status,
+            changed_files: self.changed_files && git_status,
+            ..self
+        }
     }
 
     /// Do not even compute a piece that is unchecked or whose card is disabled.

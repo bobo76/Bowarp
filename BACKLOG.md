@@ -10,6 +10,9 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Windows: with a tab in a git repository and the explorer open, turn Settings → Git → "Git
+  status in tabs and explorer" off: the tab shows its folder, the explorer's colors and
+  dimming go, the hover card has no `+N`; on again brings them back.
 - Windows, pwsh 7 and Windows PowerShell 5.1: run `git status`, then `dir`, restart the app;
   the restored tab offers `git status` dimmed at its first empty prompt (with the "last
   session" hint), Right or End types it, Enter doesn't run it; with PSReadLine's inline
@@ -386,11 +389,6 @@ behavior"); items below name their switch where they need one.
 
 ### General
 
-- Git status outside the Git page, one switch "Git status in tabs and explorer" (on). Off: no
-  branch under tab names (the folder shows instead), no changed-file coloring and no
-  git-ignored dimming in the explorer, no `+N` in the hover card (its Changes option shown
-  disabled with the caption), and no `git` runs or watches for them. The Git page is
-  unaffected.
 - Agent status switch for agent tabs, "Agent status" (on), the parent of "Agent status for
   agents typed at the prompt" (shown disabled under it). Off: new Claude Code and Copilot
   tabs start without the generated `--settings` hooks and the plugin, and show "Recent

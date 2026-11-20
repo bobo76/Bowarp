@@ -16,6 +16,10 @@ omitted unless they affect how the app is used.
 - File viewer: Ctrl+F searches a rendered Markdown file. Every match is highlighted, Enter and
   Shift+Enter move between them, and the bar shows the count, with Match case (Alt+C) and
   Whole word (Alt+W) toggles. A selected word starts the search there; Esc closes the bar.
+- Settings → Git: a **Git status in tabs and explorer** switch (on). Off: tabs show their
+  folder instead of the branch, the explorer drops changed-file colors and git-ignored dimming,
+  the hover card shows no `+N`, and no `git` runs for them. The Git page is unaffected. The
+  settings group "Git page" is now "Git".
 
 ## 0.4.5
 

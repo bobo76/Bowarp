@@ -189,6 +189,9 @@ directly to model APIs.
 - Let the user turn off the file explorer and viewer: both panes and their entry points
   disappear after unsaved edits are resolved, nothing is watched or scanned for them, and
   file links in the terminal are offered to the system's own application instead.
+- Let the user turn off git status outside the Git page: tabs show their folder instead of
+  the branch, the explorer has no changed-file colors or git-ignored dimming, the hover card
+  no `+N`, and no `git` runs for them; the Git page is unaffected.
 - Let the user turn off in-app notifications for agent events; status and attention badges
   stay, and a crashed agent, failures and warnings are still shown.
 - Let the user turn off agent status for `claude` / `copilot` typed at a shell prompt: shells

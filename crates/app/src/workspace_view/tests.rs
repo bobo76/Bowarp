@@ -1739,6 +1739,58 @@ fn explorer_dims_what_git_ignores_until_it_hides(cx: &mut gpui_kit::TestAppConte
 }
 
 #[gpui::test]
+fn git_status_switch_drops_branch_colors_and_dimming_live(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("git-status-switch", cx);
+    let initialized = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&h.folder)
+        .status()
+        .is_ok_and(|status| status.success());
+    if !initialized {
+        eprintln!("git not available, skipping");
+        return;
+    }
+    std::fs::write(h.folder.join(".gitignore"), "*.log\n").unwrap();
+    std::fs::write(h.folder.join("a.log"), "").unwrap();
+    // (dimmed row names, folders holding git state, colored paths, the tab shows a branch)
+    let git_state = |h: &mut PanesHarness| {
+        h.cx.executor().advance_clock(Duration::from_secs(1));
+        h.cx.run_until_parked();
+        h.workspace.read_with(&h.cx, |workspace, cx| {
+            let explorer = workspace.explorer.read(cx);
+            let (dimmed, held) = explorer.ignored_for_test();
+            let location = workspace.tabs[0].view.read(cx).location().cloned();
+            let branch = location.is_some_and(|location| location.head.is_some());
+            (dimmed.len(), held, explorer.changes_for_test(), branch)
+        })
+    };
+    let switch_to = |h: &mut PanesHarness, on: bool| {
+        h.cx.update(|_, cx| {
+            settings_file::update(cx, |settings| settings.git_status = FeatureSwitch::new(on));
+        });
+    };
+    switch_to(&mut h, false);
+    h.toggle_explorer();
+    assert_eq!(
+        git_state(&mut h),
+        (0, 0, 0, false),
+        "off: git is asked nothing"
+    );
+    switch_to(&mut h, true);
+    let (dimmed, held, colored, branch) = git_state(&mut h);
+    assert!(
+        dimmed > 0 && held == 1 && colored > 0 && branch,
+        "on again: git is asked"
+    );
+    switch_to(&mut h, false);
+    assert_eq!(
+        git_state(&mut h),
+        (0, 0, 0, false),
+        "off drops what git answered"
+    );
+}
+
+#[gpui::test]
 fn agent_status_off_warning_stays_once_beside_the_fallback_warning(
     cx: &mut gpui_kit::TestAppContext,
 ) {

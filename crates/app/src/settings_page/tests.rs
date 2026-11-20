@@ -243,3 +243,33 @@ fn closing_and_reopening_the_page_keeps_the_blurred_edit(cx: &mut TestAppContext
         );
     });
 }
+
+fn card_piece_caption(field: TabCardField, settings: &Settings) -> Option<String> {
+    let states: Vec<_> = card_piece_parents(field)
+        .iter()
+        .map(|(name, parent)| (*name, parent(settings)))
+        .collect();
+    DependentState::requiring(&states).caption
+}
+
+#[test]
+fn card_rows_for_changes_need_git_status_after_the_card() {
+    let mut settings = Settings {
+        git_status: FeatureSwitch::new(false),
+        ..Settings::default()
+    };
+    let git_caption = format!("Needs \"{GIT_STATUS_TITLE}\" to be on.");
+    for field in [TabCardField::Changes, TabCardField::ChangedFiles] {
+        assert_eq!(
+            card_piece_caption(field, &settings),
+            Some(git_caption.clone())
+        );
+    }
+    assert_eq!(card_piece_caption(TabCardField::Status, &settings), None);
+
+    settings.tab_card.enabled = false;
+    assert_eq!(
+        card_piece_caption(TabCardField::Changes, &settings),
+        Some("Needs \"Tab hover card\" to be on.".to_string())
+    );
+}

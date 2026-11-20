@@ -1,7 +1,7 @@
 //! The file explorer panel: the selected tab's folder as a tree. Folders are read off the UI
 //! thread when they are expanded and re-read when a watcher on the expanded folders reports a
 //! change; after each read, git is asked off the UI thread which entries it ignores, and those
-//! are dimmed.
+//! are dimmed (unless the "Git status in tabs and explorer" switch is off).
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -36,6 +36,7 @@ use crate::assets::{
 use crate::folder_watcher::{FolderWatcher, WatchedFolders, WatchesFolders};
 use crate::launcher::Launcher;
 use crate::open_menu::OpenMenu;
+use crate::settings_file::{self, AppSettings};
 use crate::sidebar;
 
 const ROW_HEIGHT: f32 = 24.;
@@ -137,6 +138,10 @@ pub struct FileExplorer {
     /// again or changed from the explorer.
     watches: WatchedFolders,
     rows: Rc<[ListRow]>,
+    /// The "Git status in tabs and explorer" switch: off asks git nothing, so nothing is
+    /// colored or dimmed.
+    git_status: bool,
+    _settings: Subscription,
 }
 
 impl EventEmitter<ExplorerEvent> for FileExplorer {}
@@ -204,7 +209,35 @@ impl FileExplorer {
             menu: OpenMenu::default(),
             watches: WatchedFolders::new(FolderWatcher::new(window, cx)),
             rows: Rc::new([]),
+            git_status: settings_file::git_status(cx),
+            _settings: cx.observe_global::<AppSettings>(|explorer, cx| {
+                explorer.set_git_status(settings_file::git_status(cx), cx);
+            }),
         }
+    }
+
+    /// Follow the "Git status in tabs and explorer" switch: off drops git's answers and the
+    /// checks going (their tasks are cancelled), on asks git again for every open folder.
+    fn set_git_status(&mut self, git_status: bool, cx: &mut Context<Self>) {
+        if git_status == self.git_status {
+            return;
+        }
+        self.git_status = git_status;
+        if git_status {
+            self.unchecked.extend(self.listings.keys().cloned());
+        } else {
+            self.drop_git_answers();
+        }
+        self.refresh(cx);
+    }
+
+    fn drop_git_answers(&mut self) {
+        self.ignored.clear();
+        self.unchecked.clear();
+        self.ignore_checks.clear();
+        self.changes.clear();
+        self.changes_check = None;
+        self.changes_stale = false;
     }
 
     /// The root and the expanded folders shown.
@@ -232,6 +265,12 @@ impl FileExplorer {
         (dimmed.collect(), held.len())
     }
 
+    /// How many paths are colored as changed.
+    #[cfg(test)]
+    pub(crate) fn changes_for_test(&self) -> usize {
+        self.changes.len()
+    }
+
     /// Whether a name editor or an entry menu is open, which a popup must not cover.
     pub fn holds_popups(&self) -> bool {
         self.editing.is_some() || self.menu.is_open()
@@ -253,12 +292,7 @@ impl FileExplorer {
         // Folders left unwatched may have changed meanwhile.
         self.listings.clear();
         self.reads.clear();
-        self.ignored.clear();
-        self.unchecked.clear();
-        self.ignore_checks.clear();
-        self.changes.clear();
-        self.changes_check = None;
-        self.changes_stale = false;
+        self.drop_git_answers();
         self.refresh(cx);
     }
 
@@ -329,7 +363,7 @@ impl FileExplorer {
     /// Ask git off the UI thread which files of the root's repository changed, after a short
     /// pause that gathers a burst of writes into one run; one run at a time.
     fn check_changes(&mut self, cx: &mut Context<Self>) {
-        let Some(root) = self.root.clone() else {
+        let Some(root) = self.root.clone().filter(|_| self.git_status) else {
             return;
         };
         if self.changes_check.is_some() {
@@ -400,7 +434,7 @@ impl FileExplorer {
     /// Ask git off the UI thread which entries of `folder`'s listing it ignores, replacing
     /// (cancelling) a check still running for an older listing.
     fn check_ignored(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
-        let Some(Ok(entries)) = self.listings.get(&folder) else {
+        let Some(Ok(entries)) = self.listings.get(&folder).filter(|_| self.git_status) else {
             self.ignore_checks.remove(&folder);
             return;
         };

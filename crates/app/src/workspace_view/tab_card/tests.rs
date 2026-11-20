@@ -1,6 +1,6 @@
 use super::*;
 
-use workspace_model::{ChangedFile, FileChange};
+use workspace_model::{ChangedFile, FeatureSwitch, FileChange};
 
 #[gpui::test]
 fn card_settings_stop_existing_clocks_and_skip_disabled_work(cx: &mut gpui_kit::TestAppContext) {
@@ -176,6 +176,15 @@ fn assert_changed_files_follow_their_setting(
     settings_file::preview(cx, |settings| settings.tab_card.changed_files = true);
     let card = workspace.tab_card(1, cx).unwrap();
     assert_eq!(card.changes.len(), 1);
+    settings_file::preview(cx, |settings| {
+        settings.git_status = FeatureSwitch::new(false)
+    });
+    let card = workspace.tab_card(1, cx).unwrap();
+    assert_eq!(card.lines_added, None, "no +N without git status");
+    assert!(card.changes.is_empty());
+    settings_file::preview(cx, |settings| {
+        settings.git_status = FeatureSwitch::new(true)
+    });
     settings_file::preview(cx, |settings| settings.tab_card.changed_files = false);
     workspace.cards.forget(1);
 }
@@ -275,6 +284,23 @@ fn cards_show_lines_added_only_for_the_folder_they_were_counted_in() {
     assert_eq!(cards.lines_added(1, Path::new("/other")), None);
     cards.forget(1);
     assert_eq!(cards.lines_added(1, repo), None);
+}
+
+#[test]
+fn discarded_lines_added_ignore_the_run_going_and_run_again() {
+    let mut cards = TabCards::default();
+    let (repo, now) = (Path::new("/repo"), Instant::now());
+    let generation = cards.start_diff_stat(1, repo, now).unwrap();
+    cards.discard_diff_stats();
+    assert!(!cards.finish_diff_stat(1, generation, changed(4), now));
+    assert_eq!(cards.lines_added(1, repo), None);
+    let again = cards
+        .start_diff_stat(1, repo, now)
+        .expect("a discarded answer is asked again");
+    assert!(cards.finish_diff_stat(1, again, changed(5), now));
+    cards.discard_diff_stats();
+    assert_eq!(cards.lines_added(1, repo), None);
+    assert!(cards.start_diff_stat(1, repo, now).is_some());
 }
 
 #[gpui::test]
