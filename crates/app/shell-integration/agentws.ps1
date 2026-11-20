@@ -52,16 +52,35 @@ if (-not $global:__agentws_loaded -and $global:__agentws_token -and (Get-Module 
         "$finished$esc]133;A$mark$text$esc]133;B$mark"
     }
 
+    # The C mark's `;cmd=<hex>` field for $Line, or '' when the line is not to be saved: over
+    # 4096 bytes, or turned away by PSReadLine's AddToHistoryHandler (its default one keeps lines
+    # mentioning a password, token or secret out of its history). PowerShell 7's handler returns
+    # MemoryAndFile, MemoryOnly or SkipAdding, Windows PowerShell 5.1's a bool; anything but a
+    # keep (MemoryOnly too: the saved command is a file) skips. A failing handler saves the line.
+    function global:__agentws_command_mark([string]$Line) {
+        if ($Line.Length -gt 4096) {
+            return ''
+        }
+        try {
+            $handler = (Get-PSReadLineOption).AddToHistoryHandler
+            if ($handler) {
+                $verdict = "$(@($handler.Invoke($Line))[0])"
+                if ($verdict -in 'False', 'SkipAdding', 'MemoryOnly') {
+                    return ''
+                }
+            }
+        } catch {
+        }
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Line)
+        $hex = -join ($bytes | ForEach-Object { $_.ToString('x2') })
+        ";cmd=$hex"
+    }
+
     Set-PSReadLineKeyHandler -Chord Enter -ScriptBlock {
         $line = $null
         $cursor = $null
         [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
-        $command = ''
-        if ($line.Length -le 4096) {
-            $bytes = [System.Text.Encoding]::UTF8.GetBytes($line)
-            $hex = -join ($bytes | ForEach-Object { $_.ToString('x2') })
-            $command = ";cmd=$hex"
-        }
+        $command = __agentws_command_mark $line
         [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
         [Console]::Write("$([char]27)]133;C;aw=$global:__agentws_token$command$([char]7)")
     }

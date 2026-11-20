@@ -107,7 +107,7 @@ pub use keymap::{
     is_terminal_input, short_name,
 };
 pub use lap::{Lap, format_lap, until_next_second};
-pub use last_command::LastCommand;
+pub use last_command::{LastCommand, saves_last_command};
 pub use launcher_icon::{LauncherIcon, distro_icon, shell_icon};
 pub use layout::{
     DropTarget, Group, GroupId, Item, Layout, SavedGroup, SavedItem, SavedLayout, TabId,

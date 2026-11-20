@@ -1,7 +1,30 @@
+use crate::file_tree::ShellSyntax;
 use crate::is_recordable;
 
 const TRIVIAL_COMMANDS: &[&str] = &[
-    "exit", "logout", "clear", "cls", "reset", "ls", "ll", "dir", "pwd", "cd", "history",
+    "exit",
+    "logout",
+    "clear",
+    "cls",
+    "reset",
+    "ls",
+    "ll",
+    "dir",
+    "pwd",
+    "cd",
+    "history",
+    // PowerShell names and aliases (the list is matched ignoring case, as PowerShell does).
+    "clear-host",
+    "set-location",
+    "sl",
+    "cd..",
+    "cd\\",
+    "get-childitem",
+    "gci",
+    "get-location",
+    "gl",
+    "get-history",
+    "h",
 ];
 
 /// A shell's saved command and its one-shot, never-executed restoration suggestion.
@@ -57,12 +80,23 @@ impl LastCommand {
     }
 }
 
+/// Whether an integrated tab running `shell` saves and offers its last command: the shells
+/// whose `C` mark carries the command line (PowerShell's comes from PSReadLine's buffer, so
+/// an inline prediction is not part of it). cmd has no integration.
+pub fn saves_last_command(shell: ShellSyntax) -> bool {
+    match shell {
+        ShellSyntax::Posix | ShellSyntax::Wsl | ShellSyntax::PowerShell => true,
+        ShellSyntax::Cmd => false,
+    }
+}
+
 fn is_last_command(command: &str) -> bool {
     is_recordable(command)
-        && command
-            .split_whitespace()
-            .next()
-            .is_some_and(|word| !TRIVIAL_COMMANDS.contains(&word))
+        && command.split_whitespace().next().is_some_and(|word| {
+            !TRIVIAL_COMMANDS
+                .iter()
+                .any(|trivial| trivial.eq_ignore_ascii_case(word))
+        })
 }
 
 #[cfg(test)]
@@ -76,13 +110,32 @@ mod tests {
         for command in TRIVIAL_COMMANDS
             .iter()
             .map(|word| format!("{word} argument"))
-            .chain([" secret".into(), "bad\ncommand".into(), "".into()])
+            .chain([
+                " secret".into(),
+                "bad\ncommand".into(),
+                "".into(),
+                "Clear-Host".into(),
+                "EXIT 1".into(),
+                "CD ..".into(),
+            ])
         {
             assert!(!last.record(&command), "{command:?}");
             assert_eq!(last.saved(), Some("cargo test"));
         }
         assert!(last.record("lsof -i"));
         assert!(!last.record("lsof -i"));
+    }
+
+    #[test]
+    fn integrated_shells_but_cmd_save_the_last_command() {
+        for shell in [
+            ShellSyntax::Posix,
+            ShellSyntax::Wsl,
+            ShellSyntax::PowerShell,
+        ] {
+            assert!(saves_last_command(shell), "{shell:?}");
+        }
+        assert!(!saves_last_command(ShellSyntax::Cmd));
     }
 
     #[test]

@@ -496,10 +496,7 @@ impl TerminalView {
             last_command: workspace_model::LastCommand::default(),
             last_command_supported: spec.kind == SessionKind::Shell
                 && spec.mark_token.is_some()
-                && matches!(
-                    launcher::shell_syntax(spec),
-                    ShellSyntax::Posix | ShellSyntax::Wsl
-                ),
+                && workspace_model::saves_last_command(launcher::shell_syntax(spec)),
             search: TerminalSearch::default(),
             search_bar: None,
             search_retry: None,

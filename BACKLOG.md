@@ -10,6 +10,10 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Windows, pwsh 7 and Windows PowerShell 5.1: run `git status`, then `dir`, restart the app;
+  the restored tab offers `git status` dimmed at its first empty prompt (with the "last
+  session" hint), Right or End types it, Enter doesn't run it; with PSReadLine's inline
+  prediction on, a command accepted while a prediction showed saves only what was typed.
 - Git page discard (Windows, Linux): hover a Changes row, ↶ asks, Cancel and Esc keep the
   file, Discard restores it (its staged part kept) and the open file viewer reloads it; ↶ on
   an untracked file deletes it; Discard all on the header; `R`, `S` and `U` on the selected
@@ -376,10 +380,6 @@ Packaged app on Linux: a smoke test and the About dialog's version and commit.
 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
-
-- PowerShell: after an app restart, a restored PowerShell tab doesn't show its last command
-  (the restored-tab suggestion that bash, zsh and Git Bash tabs get). Find whether the
-  command is never saved for PowerShell tabs or saved but not offered on restore.
 
 - Search a Markdown file in its rendered view: Ctrl+F while the viewer shows a rendered `.md`
   file opens a search bar over the rendered text (all matches highlighted, Enter / Shift+Enter

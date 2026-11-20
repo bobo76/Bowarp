@@ -10,6 +10,9 @@ omitted unless they affect how the app is used.
   diff stays readable.
 - Git page: a long file name is cut short with "…" so the stage and discard buttons stay in
   reach; hover the name for the full path.
+- PowerShell tabs restored after a restart offer their last command, as bash and zsh tabs do.
+  Lines PSReadLine keeps out of its history (passwords, tokens) are not saved, and commands
+  like `Clear-Host` or `cls` never replace the saved one.
 
 ## 0.4.5
 

@@ -217,18 +217,22 @@ own shell; when other shells have commands, its header shows a chip per shell pl
 switches between them. Commands saved by earlier versions have no shell and show only under
 "All". Commands starting with a space
 are not kept, nor bash commands that bash keeps out of its own history (`HISTCONTROL`,
-`HISTIGNORE`). Up still goes to the program in full-screen programs (`less`, editors), while a
+`HISTIGNORE`), nor PowerShell lines that PSReadLine's `AddToHistoryHandler` keeps out of its
+history (by default those mentioning a password, token or secret); these are not saved as the
+last command either. Up still goes to the program in full-screen programs (`less`, editors), while a
 command runs, in Claude Code and Copilot tabs, and in shells without integration (fish, cmd,
 WSL shells other than bash, shells started with their own arguments other than Git Bash and
 WSL distros).
 
-On restart, an integrated bash or zsh tab (including Git Bash and bash in WSL) offers its
-last non-trivial command at its first empty prompt, dimmed with a fainter "last session"
-hint when space allows. Right or End accepts it; Tab keeps shell completion, and Enter
+On restart, an integrated bash, zsh or PowerShell tab (including Git Bash and bash in WSL)
+offers its last non-trivial command at its first empty prompt, dimmed with a fainter "last
+session" hint when space allows. Right or End accepts it; Tab keeps shell completion, and Enter
 never runs the suggestion. Any other line action, including opening HISTORY, dismisses it
-for that session. PowerShell, cmd, agent tabs and shells without integration do not offer it.
+for that session. cmd, agent tabs and shells without integration do not offer it.
 Commands beginning with `exit`, `logout`, `clear`, `cls`, `reset`, `ls`, `ll`, `dir`, `pwd`,
-`cd` or `history` do not replace the saved command. Private/unrecordable commands are never
+`cd` or `history` (ignoring case), or with PowerShell's `Clear-Host`, `Set-Location`, `sl`, `cd..`,
+`cd\`, `Get-ChildItem`, `gci`, `Get-Location`, `gl`, `Get-History` or `h`, do not replace the saved
+command. Private/unrecordable commands are never
 saved. Saving to `tabs.json` is queued immediately when a command starts, without a debounce
 delay; one background writer saves snapshots in order. A crash can lose an in-flight or queued
 update, including a deletion. Deleting a command from HISTORY also forgets it in the tabs of
