@@ -79,6 +79,10 @@ impl TabHistory {
         for list in [&mut self.back, &mut self.forward] {
             list.retain(|&other| other != id);
             list.dedup();
+            // Nor on the selected tab: 1, 2, 1 with 2 closed leaves 1, 1.
+            if self.current.is_some() && list.last().copied() == self.current {
+                list.pop();
+            }
         }
     }
 }
@@ -102,6 +106,22 @@ mod tests {
             history.visit(id);
         }
         history
+    }
+
+    #[test]
+    fn closing_a_tab_never_leaves_back_on_the_selected_one() {
+        let mut history = visited(&[1, 2, 1]);
+        history.remove(2);
+        assert_eq!(history.last(), None);
+        assert!(!history.can_go_back());
+
+        // The same for Forward.
+        let mut history = visited(&[3, 1, 2, 1]);
+        history.back();
+        history.back();
+        // Selected 1 (the first visit), Forward 1 then 2.
+        history.remove(2);
+        assert_eq!(history.forward(), None);
     }
 
     #[test]
