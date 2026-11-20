@@ -350,17 +350,32 @@ pub fn quote_path(path: &Path, shell: ShellSyntax) -> Result<String, TypeError> 
     }
 }
 
-/// `text`, a Windows path, as WSL sees it under its default `/mnt` mount root: `C:\x` is
-/// `/mnt/c/x` and `\\wsl$\<distro>\x` (or `\\wsl.localhost\...`) is `/x`. Other paths are
-/// kept as they are.
-fn wsl_path(text: &str) -> Result<String, TypeError> {
-    let text = match text.strip_prefix(r"\\?\") {
+/// `text`, a Windows path, without its verbatim prefix: `\\?\C:\x` is `C:\x` and
+/// `\\?\UNC\host\x` is `\\host\x`.
+fn without_verbatim(text: &str) -> String {
+    match text.strip_prefix(r"\\?\") {
         Some(rest) => match rest.strip_prefix(r"UNC\") {
             Some(unc) => format!(r"\\{unc}"),
             None => rest.to_string(),
         },
         None => text.to_string(),
-    };
+    }
+}
+
+/// `path` as git and other programs print it on Windows: without the verbatim prefix
+/// `fs::canonicalize` adds there. Kept as it is when not `windows` or not valid UTF-8.
+pub fn without_verbatim_prefix(path: &Path, windows: bool) -> PathBuf {
+    match path.to_str() {
+        Some(text) if windows => PathBuf::from(without_verbatim(text)),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// `text`, a Windows path, as WSL sees it under its default `/mnt` mount root: `C:\x` is
+/// `/mnt/c/x` and `\\wsl$\<distro>\x` (or `\\wsl.localhost\...`) is `/x`. Other paths are
+/// kept as they are.
+fn wsl_path(text: &str) -> Result<String, TypeError> {
+    let text = without_verbatim(text);
     if let Some(unc) = text.strip_prefix(r"\\") {
         let mut parts = unc.splitn(3, '\\');
         let host = parts.next().unwrap_or_default();

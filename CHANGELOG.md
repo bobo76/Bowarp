@@ -20,6 +20,8 @@ omitted unless they affect how the app is used.
   folder instead of the branch, the explorer drops changed-file colors and git-ignored dimming,
   the hover card shows no `+N`, and no `git` runs for them. The Git page is unaffected. The
   settings group "Git page" is now "Git".
+- Windows: the explorer colors changed files again in a folder reached through a short (8.3)
+  name such as `C:\Users\RUNNER~1`.
 
 ## 0.4.5
 

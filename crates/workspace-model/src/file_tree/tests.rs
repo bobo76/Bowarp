@@ -319,6 +319,18 @@ fn parent_folder_stops_at_a_drive_root() {
 }
 
 #[test]
+fn verbatim_prefix_is_dropped_only_on_windows() {
+    let plain = |text: &str, windows| without_verbatim_prefix(Path::new(text), windows);
+    assert_eq!(plain(r"\\?\C:\Users\me", true), Path::new(r"C:\Users\me"));
+    assert_eq!(
+        plain(r"\\?\UNC\host\share", true),
+        Path::new(r"\\host\share")
+    );
+    assert_eq!(plain(r"C:\Users", true), Path::new(r"C:\Users"));
+    assert_eq!(plain(r"\\?\C:\Users", false), Path::new(r"\\?\C:\Users"));
+}
+
+#[test]
 fn wsl_paths_use_the_distro_form() {
     let wsl = ShellSyntax::Wsl;
     assert_eq!(

@@ -25,7 +25,7 @@ use notify::event::ModifyKind;
 use notify::{Event, EventKind};
 use workspace_model::file_tree::{
     self, DirEntry, EntryKind, ExpandedFolders, FileKind, TreeRow, entry_folder, entry_name,
-    parent_folder, relative_path, validate_name,
+    parent_folder, relative_path, validate_name, without_verbatim_prefix,
 };
 use workspace_model::{FileChange, changed_files, ignored_names};
 
@@ -1278,7 +1278,11 @@ fn changed_marks(root: &Path) -> HashMap<PathBuf, FileChange> {
     let Some(changes) = changed_files(root) else {
         return HashMap::new();
     };
-    let real_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    // Git prints long names without Windows' verbatim prefix, which `canonicalize` adds:
+    // a root named by its 8.3 short name (`RUNNER~1`) only matches once both are dropped.
+    let real_root = fs::canonicalize(root)
+        .map(|real| without_verbatim_prefix(&real, cfg!(windows)))
+        .unwrap_or_else(|_| root.to_path_buf());
     changes
         .marks()
         .into_iter()
