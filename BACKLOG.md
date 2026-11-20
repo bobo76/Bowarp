@@ -382,6 +382,19 @@ File viewer off the UI thread, cached (reviews/performance-review.md):
 
 Packaged app on Linux: a smoke test and the About dialog's version and commit.
 
+Remote hosts, folder choice in the `+` menu (Windows app, Linux host):
+
+- With a remote shell tab selected, `cd` somewhere: the `+` menu's first entry reads
+  "Shell · <host>" and its agents "Claude Code · <host>"; each opens on the host in that
+  folder. The host submenu's Shell / Claude Code / Copilot CLI open there too, and in the home
+  folder from a local tab or a tab on another host.
+- Host submenu → Open in folder…: the field holds the selected tab's folder on that host, else
+  the last answer (with its program picked), selected and focused. Enter and Open open it,
+  Escape and Cancel close it without opening, an empty field opens the home folder, a missing
+  folder gives the server's error toast; the new tab gets the keyboard once it opens.
+- `settings.json`: the host gets `last_folder` and `last_program`, and keeps them when edited
+  on the settings page.
+
 ## Backlog
 
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional

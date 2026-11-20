@@ -157,8 +157,9 @@ Build the app and `agentws-server` from the same commit: a protocol version mism
 
 Done: protocol, server, daemon and proxy (`agentws-server`, with `list`, `show`, `close` and
 `status`), client, snapshot, remote sessions in the app's tabs, from the `+` menu's host
-submenus (hosts set on the settings page) or the command line (`--remote <host>`), and the
-remote folder: shown on the tab, and where agents and new tabs opened from it start;
+submenus (hosts set on the settings page, with Open in folder…) or the command line
+(`--remote <host>`), and the remote folder: shown on the tab, and where agents and new tabs
+opened from it start;
 Reconnect for tabs whose connection was lost; each host's server state on the settings page
 (Check) and in its `+` submenu; Start and Stop (protocol 3).
 
@@ -182,10 +183,12 @@ Next steps are in [BACKLOG.md](../BACKLOG.md) ("Remote sessions").
   on a Linux server (read from `/proc`).
 - A host's submenu always lists its default shell, Claude Code and Copilot CLI: an agent not
   installed there fails when started, with the server's message. The settings' agent launch
-  arguments don't apply to remote agents (they may name files on this machine).
-- Tabs opened from a host's submenu start in its home folder. From a remote tab, a shell picked
-  by name in the `+` menu opens on this machine (its programs are this machine's); "New tab"
-  opens the host's default shell.
+  arguments apply to remote agents too: an argument naming a file on this machine fails there.
+- Tabs opened from a host's submenu start in its home folder, unless the selected tab runs on
+  that host (then in its folder there); **Open in folder…** takes a typed path, with no
+  browsing of the host's folders. From a remote tab, a shell picked by name in the `+` menu
+  opens on this machine (its programs are this machine's); the menu's first entry and "New
+  tab" open the host's default shell.
 - A remote agent that exits cleanly keeps its last screen: its tab doesn't go on as a shell.
 - Reconnect is manual: the app does not retry a lost connection by itself.
 - Closing the app ends its remote sessions, like local ones.

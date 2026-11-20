@@ -10,6 +10,7 @@ fn configured() -> workspace_model::RemoteHosts {
         name: "Build box".into(),
         destination: "me@box".into(),
         server_program: "~/.cargo/bin/agentws-server".into(),
+        ..RemoteHost::default()
     }])
 }
 

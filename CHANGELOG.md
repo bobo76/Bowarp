@@ -22,6 +22,13 @@ omitted unless they affect how the app is used.
   settings group "Git page" is now "Git".
 - Windows: the explorer colors changed files again in a folder reached through a short (8.3)
   name such as `C:\Users\RUNNER~1`.
+- `+` menu, remote hosts: **Open in folder…** in each host's submenu opens a shell, Claude
+  Code or Copilot CLI in a folder you type on that host, offering the selected tab's folder
+  there, else the last one used. The host's Shell, Claude Code and Copilot CLI entries start
+  in the selected tab's folder when that tab runs on the same host, as the top-level entries
+  do, and send the agents' launch arguments from the settings, as the top-level entries do.
+- With a remote tab selected, the `+` menu's first entry and its agents say which host they
+  open on ("Claude Code · box"), and the first entry opens the host's shell, as New tab does.
 
 ## 0.4.5
 
