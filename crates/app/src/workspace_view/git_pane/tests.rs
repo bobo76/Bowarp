@@ -220,3 +220,78 @@ fn the_git_button_tooltip_names_the_key(cx: &mut gpui_kit::TestAppContext) {
         h.cx.update(|_, cx| shortcuts::with_shortcut("Git", &ToggleGitPage, cx));
     assert_eq!(tooltip.as_ref(), "Git (Ctrl+Shift+G)");
 }
+
+/// Make `folder` a repository with its files committed on `main` and a `topic` branch;
+/// `false` when git is missing.
+fn commit_folder(folder: &std::path::Path) -> bool {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(["-c", "user.name=test", "-c", "user.email=test@example.com"])
+            .args(args)
+            .current_dir(folder)
+            .output()
+            .is_ok_and(|output| output.status.success())
+    };
+    git(&["init", "-q", "-b", "main"])
+        && git(&["add", "."])
+        && git(&["commit", "-q", "-m", "first"])
+        && git(&["branch", "topic"])
+}
+
+#[gpui::test]
+fn a_switch_asks_about_unsaved_files_then_tabs_read_their_branch(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use gpui_kit::component::WindowExt;
+    use workspace_model::GitHead;
+
+    let mut h = PanesHarness::new("git-switch", cx);
+    if !commit_folder(&h.folder) {
+        eprintln!("git not available, skipping");
+        return;
+    }
+    let viewer = h.open_dirty_viewer();
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| workspace.update(cx, |w, cx| w.open_git(window, cx)));
+    h.cx.run_until_parked();
+
+    // B, then "topic" and Enter in the picker: the viewer's unsaved file is in the working
+    // tree, so the question comes first.
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    h.cx.simulate_keystrokes("b");
+    h.cx.run_until_parked();
+    h.cx.simulate_input("topic");
+    h.cx.simulate_keystrokes("enter");
+    h.cx.run_until_parked();
+    assert!(h.cx.update(|window, cx| window.has_active_dialog(cx)));
+    // The keyboard went back to the page's list when the choice was made, before the question
+    // took focus: closing the question gives it back to the list, not the closed filter.
+    let page = workspace.read_with(&h.cx, |w, _| w.git.page.clone().unwrap());
+    let list_focused = |h: &mut PanesHarness| {
+        h.cx.update(|window, cx| page.read(cx).focus_handle().is_focused(window))
+    };
+    let head = |h: &mut PanesHarness| {
+        h.cx.update(|_, cx| {
+            let tab = &workspace.read(cx).tabs[0];
+            tab.view
+                .read(cx)
+                .location()
+                .and_then(|location| location.head.clone())
+        })
+    };
+    assert_ne!(head(&mut h), Some(GitHead::Branch("topic".into())));
+
+    // Switch: the tab reads its branch again (its shell has exited and prints nothing).
+    h.cx.simulate_keystrokes("enter");
+    h.cx.run_until_parked();
+    assert_eq!(head(&mut h), Some(GitHead::Branch("topic".into())));
+    // OK closes the dialog animated: it gives the focus back after 250 ms.
+    h.cx.executor()
+        .advance_clock(std::time::Duration::from_millis(500));
+    h.cx.run_until_parked();
+    assert!(
+        list_focused(&mut h),
+        "the list has the keyboard after the question"
+    );
+    assert!(h.cx.update(|_, cx| viewer.upgrade().unwrap().read(cx).is_dirty()));
+}

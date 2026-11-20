@@ -304,5 +304,13 @@ entry when the limitation is lifted.
   also discards changes past the 10,000 listed files, though its confirmation counts only the
   listed ones; it keeps nested repositories in untracked folders. Hunks and single lines can't
   be discarded yet.
+- Git page branch switching: local and remote-tracking branches only (no tags, commits or
+  detached HEAD, no new branch); a remote branch whose name a local branch already uses for
+  something else can't be checked out from the page. The question before a switch counts busy
+  tabs as the busy-close warning does, and a busy tab whose folder isn't known isn't listed; a
+  branch checked out in another worktree is asked about before git refuses it. A switch has no
+  timeout and can't be cancelled. A checkout typed in a terminal, or made from another app
+  instance, shows in the other tabs of that working tree only on their next output, title
+  change or hook event, or when they are selected.
 - Git page merge conflicts are listed (`!`) but can't be resolved, discarded or staged by line
   on the page. No key opens the page (the title bar button does).

@@ -429,7 +429,7 @@ impl PanesHarness {
     }
 
     /// Opens the file and the explorer, then makes the file's edits unsaved.
-    fn open_dirty_viewer(&mut self) -> WeakEntity<FileViewer> {
+    pub(super) fn open_dirty_viewer(&mut self) -> WeakEntity<FileViewer> {
         self.toggle_explorer();
         self.open_file();
         let (on, explorer, viewer) = self.state();

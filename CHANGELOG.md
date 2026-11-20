@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Git page: switch branches from the header. Click the branch name (or press B in the list or
+  diff) to open a picker with a filter, local branches first, then remote ones; picking a
+  remote branch creates a local branch tracking it. A switch needs a clean working tree
+  (nothing staged, changed or untracked) and never stashes or discards; when a tab working in
+  the repository is busy, or a file there has unsaved edits, it asks first. Tabs in the
+  repository show the new branch afterwards.
 - Git page: drag the divider between the file list and the diff to resize the list
   (double-click resets it); its width is kept. On a narrow window the list shrinks first so the
   diff stays readable.

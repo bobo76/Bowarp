@@ -7,7 +7,7 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::{Icon, Selectable, Sizable};
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, FocusHandle, IntoElement, SharedString,
-    Subscription, Window,
+    Subscription, Task, Window,
 };
 
 use super::{ToggleGitPage, WorkspaceView};
@@ -29,6 +29,11 @@ pub(super) struct GitPane {
     page: Option<Entity<GitPage>>,
     /// Redraws the Git row when the page changes repository.
     _page_changes: Option<Subscription>,
+    /// Follows the page's branch switches ([`GitPageEvent`]).
+    _page_events: Option<Subscription>,
+    /// Finds which busy tabs and unsaved files are in the working tree a switch was asked
+    /// for; a newer request replaces it.
+    switch_check: Option<Task<()>>,
     /// Follows the "Git page" switch (`apply_git_page_setting`).
     _switch: Option<Subscription>,
 }
@@ -141,6 +146,7 @@ impl WorkspaceView {
         }
         let page = cx.new(|cx| GitPage::new(window, cx));
         self.git._page_changes = Some(cx.observe(&page, |_, _, cx| cx.notify()));
+        self.git._page_events = Some(cx.subscribe_in(&page, window, Self::on_git_page_event));
         self.git.page = Some(page.clone());
         page
     }
@@ -235,5 +241,6 @@ impl WorkspaceView {
     }
 }
 
+mod branch_switch;
 #[cfg(test)]
 mod tests;

@@ -159,6 +159,29 @@ pub fn unsaved_edits_warning(files: &[String]) -> Option<CloseWarning> {
     })
 }
 
+/// The question asked before switching the branch of a working tree in which `busy` tabs work
+/// or file viewers hold unsaved edits of `files` (named as their viewer header does): the
+/// files change under them. `None` when there is neither.
+pub fn switch_warning(branch: &str, busy: &[BusyTab], files: &[String]) -> Option<CloseWarning> {
+    if busy.is_empty() && files.is_empty() {
+        return None;
+    }
+    let unsaved = files.iter().map(|file| format!("{file}: unsaved edits"));
+    let all: Vec<String> = busy.iter().map(busy_list_line).chain(unsaved).collect();
+    let mut lines: Vec<String> = all.iter().take(MAX_LISTED).cloned().collect();
+    if all.len() > MAX_LISTED {
+        lines.push(format!("and {} more", all.len() - MAX_LISTED));
+    }
+    Some(CloseWarning {
+        title: format!("Switch to \"{branch}\" anyway?"),
+        intro: "These are in use in this working tree; switching branches changes its files \
+                under them:"
+            .to_string(),
+        lines,
+        ok_text: "Switch",
+    })
+}
+
 fn busy_sentence(reason: &BusyReason) -> String {
     match reason {
         BusyReason::Command(Some(command)) => format!("\"{command}\" is still running."),
@@ -196,6 +219,30 @@ mod tests {
             name: name.to_string(),
             reason,
         }
+    }
+
+    #[test]
+    fn switch_warning_lists_busy_tabs_then_unsaved_files() {
+        assert_eq!(switch_warning("main", &[], &[]), None);
+        let warning = switch_warning(
+            "main",
+            &[busy("claude", BusyReason::AgentWorking)],
+            &["plan.md".to_string()],
+        )
+        .unwrap();
+        assert_eq!(warning.title, "Switch to \"main\" anyway?");
+        assert_eq!(
+            warning.lines,
+            ["claude: agent working", "plan.md: unsaved edits"]
+        );
+        assert_eq!(warning.ok_text, "Switch");
+
+        let files: Vec<String> = (0..MAX_LISTED + 1).map(|i| format!("f{i}.rs")).collect();
+        let many = switch_warning("main", &[busy("sh", BusyReason::Command(None))], &files);
+        let lines = many.unwrap().lines;
+        assert_eq!(lines.len(), MAX_LISTED + 1);
+        assert_eq!(lines[0], "sh: running a command");
+        assert_eq!(lines.last().unwrap(), "and 2 more");
     }
 
     #[test]

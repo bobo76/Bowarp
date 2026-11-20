@@ -750,6 +750,11 @@ impl FileViewer {
         }
     }
 
+    /// The file shown, if any.
+    pub(crate) fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
     pub(crate) fn file_name(&self) -> String {
         self.path.as_deref().map(entry_name).unwrap_or_default()
     }

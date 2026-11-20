@@ -120,8 +120,13 @@ directly to model APIs.
   shows git's message and keeps the message typed.
 - Discard a file's unstaged changes, or all of them, after a confirmation naming what is lost
   (an untracked file is deleted).
-- Change the working tree only to discard: otherwise the page changes only the index and makes
-  commits.
+- Switch to a local branch, or check out a remote-tracking one as a new local branch tracking
+  it, from a filterable picker on the branch label (a key opens it). Only with a clean working
+  tree (no staged, unstaged, untracked or conflicted file; never stashing or discarding);
+  asking first when a tab working there is busy or a file there has unsaved edits. Afterwards
+  the tabs re-read their branch.
+- Change the working tree only to discard or switch branches: otherwise the page changes only
+  the index and makes commits.
 
 ## Agent Activity and Attention
 

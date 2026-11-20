@@ -7,7 +7,7 @@
 //! The selected file's diff shows on the right ([`diff_view`]), read with the status so the
 //! two always match. Its changed lines can be selected and staged or unstaged alone
 //! ([`line_staging`]). What is staged is committed from the box above the lists
-//! ([`commit_box`]).
+//! ([`commit_box`]). The header's branch label switches branches ([`branch_picker`]).
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -16,13 +16,14 @@ use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
 use gpui_kit::component::input::TextareaState;
+use gpui_kit::component::list::ListState;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, App, AppContext, Context, Div, Entity, FocusHandle, FontWeight, Hsla,
+    AnyElement, App, AppContext, Context, Div, Entity, EventEmitter, FocusHandle, FontWeight, Hsla,
     InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, MouseButton, ParentElement, Render,
     ScrollStrategy, SharedString, Stateful, StatefulInteractiveElement, Styled, Subscription, Task,
     UniformListScrollHandle, Window, actions, div, px, uniform_list,
@@ -30,16 +31,18 @@ use gpui_kit::{
 use notify::event::ModifyKind;
 use notify::{Event, EventKind};
 use workspace_model::git::{
-    self, Change, DiffSide, FileDiff, FileStatus, Head, LineSelection, MAX_STATUS_FILES, RepoEntry,
-    RepoStatus, StatusRow,
+    self, Branches, Change, DiffSide, FileDiff, FileStatus, Head, LineSelection, MAX_STATUS_FILES,
+    RepoEntry, RepoStatus, StatusRow,
 };
 use workspace_model::layout::Direction;
 use workspace_model::pane_width::GitListWidth;
 
+use self::branch_picker::{BranchDelegate, SwitchDone};
+pub use self::branch_picker::{GitPageEvent, SwitchRequest};
 use self::commit_box::{COMMIT_CONTEXT, CommitDone};
 use self::diff_view::ShownDiff;
 
-use crate::assets::{GIT_BRANCH_ICON, UNDO_ICON};
+use crate::assets::UNDO_ICON;
 use crate::divider_drag::DividerDrag;
 use crate::folder_watcher::{FolderWatcher, WatchesFolders};
 use crate::sidebar;
@@ -83,6 +86,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-tab", FocusPrevious, Some(&message)),
         KeyBinding::new("secondary-enter", Commit, Some(&message)),
     ]);
+    branch_picker::init(cx);
 }
 
 /// Something to do with `git`, in the order asked.
@@ -104,6 +108,10 @@ enum Op {
     ReadDiff,
     /// Commit what is staged in the repository shown when it was asked, with this message.
     Commit(Target, String),
+    /// Read the branches of the repository shown, for the picker (not the status).
+    ListBranches,
+    /// Switch branches in the request's working tree when it is clean.
+    Switch(SwitchRequest),
 }
 
 /// The repository an [`Op::Change`] is for, as the page showed it when it was asked.
@@ -151,6 +159,10 @@ struct Outcome {
     diff: Option<DiffRead>,
     /// The commit the op made or tried.
     commit: Option<CommitDone>,
+    /// The branches an [`Op::ListBranches`] read.
+    branches: Option<Result<Branches, String>>,
+    /// The switch an [`Op::Switch`] ran or refused.
+    switched: Option<SwitchDone>,
 }
 
 struct StatusRead {
@@ -218,7 +230,15 @@ pub struct GitPage {
     committing: bool,
     /// The list's width while its edge is dragged; otherwise the saved `git_list_width`.
     list_drag: DividerDrag<GitListWidth>,
+    /// The branch picker's filter and list.
+    branch_list: Entity<ListState<BranchDelegate>>,
+    /// The branch picker shows.
+    picker_open: bool,
+    /// Where the keyboard was when the picker opened (the list or the diff), to go back to.
+    picker_return: Option<FocusHandle>,
 }
+
+impl EventEmitter<GitPageEvent> for GitPage {}
 
 impl WatchesFolders for GitPage {
     const OWNER: &'static str = "git page";
@@ -277,6 +297,9 @@ impl GitPage {
             drafts: HashMap::new(),
             committing: false,
             list_drag: DividerDrag::new(Self::save_list_width),
+            branch_list: branch_picker::new_branch_list(window, cx),
+            picker_open: false,
+            picker_return: None,
         }
     }
 
@@ -301,6 +324,7 @@ impl GitPage {
     /// The page is hidden: stop watching (a running op still finishes).
     pub fn hide(&mut self, cx: &mut Context<Self>) {
         self.shown = false;
+        self.close_branch_picker(cx);
         self.sync_watches();
         // A drag of the list's edge still going (the page hid by key) ends here: the release
         // would reach no page listener.
@@ -324,6 +348,10 @@ impl GitPage {
                 .queue
                 .iter()
                 .any(|queued| matches!(queued, Op::ReadDiff)),
+            Op::ListBranches => self
+                .queue
+                .iter()
+                .any(|queued| matches!(queued, Op::ListBranches)),
             _ => false,
         };
         if covered {
@@ -360,6 +388,8 @@ impl GitPage {
             status,
             diff,
             commit,
+            branches,
+            switched,
         } = outcome;
         self.running = false;
         self.take_repos(repos);
@@ -371,6 +401,12 @@ impl GitPage {
         }
         if let Some(done) = commit {
             self.finish_commit(done, window, cx);
+        }
+        if let Some(branches) = branches {
+            self.take_branches(branches, window, cx);
+        }
+        if let Some(done) = switched {
+            self.finish_switch(done, window, cx);
         }
         self.take_diff(diff);
         self.sync_diff(window, cx);
@@ -674,7 +710,7 @@ impl GitPage {
 
     /// In the list: Up / Down move the selection between files; on the selected one, Space
     /// stages or unstages it, S stages it, U unstages it and R discards its unstaged changes
-    /// (after a confirmation). (Tab is [`FocusNext`].)
+    /// (after a confirmation). B opens the branch picker. (Tab is [`FocusNext`].)
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus.is_focused(window) {
             return;
@@ -687,6 +723,7 @@ impl GitPage {
         match key.as_str() {
             "up" => self.step_selection(Direction::Up, window, cx),
             "down" => self.step_selection(Direction::Down, window, cx),
+            "b" => self.open_branch_picker(window, cx),
             "space" | "s" | "u" | "r" => {
                 let Some(StatusRow::File { side, index }) =
                     self.selected_row().map(|row| self.rows[row])
@@ -730,6 +767,10 @@ impl GitPage {
     /// Move the keyboard to the next (Down) or previous (Up) of the commit message (when it
     /// shows), the list and the diff, around; from elsewhere to the list.
     fn cycle_focus(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
+        // The picker keeps the keyboard until it closes.
+        if self.picker_open {
+            return;
+        }
         let mut stops = Vec::with_capacity(3);
         if self.repo.is_some() {
             stops.push(self.message_focus(cx));
@@ -771,7 +812,6 @@ impl GitPage {
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
         let repo_label: SharedString = match &self.repo {
             Some(repo) => repo.name.clone().into(),
             None => "No repository".into(),
@@ -782,6 +822,8 @@ impl GitPage {
                 .clone()
                 .unwrap_or_else(|| "detached HEAD".to_string())
         });
+        let branch_picker = branch.map(|branch| self.render_branch_picker(branch, cx));
+        let border = cx.theme().border;
         let page = cx.entity().downgrade();
         let (repos, current) = (self.repos.clone(), self.repo.clone());
         div()
@@ -792,7 +834,7 @@ impl GitPage {
             .h(px(HEADER_HEIGHT))
             .px_3()
             .border_b_1()
-            .border_color(theme.border)
+            .border_color(border)
             .child(
                 Button::new("git-repo-picker")
                     .icon(Icon::empty().path(crate::assets::GIT_ICON))
@@ -818,16 +860,7 @@ impl GitPage {
                         menu
                     }),
             )
-            .children(branch.map(|branch| {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .text_sm()
-                    .text_color(theme.muted_foreground)
-                    .child(Icon::empty().path(GIT_BRANCH_ICON).small())
-                    .child(branch)
-            }))
+            .children(branch_picker)
             .child(div().flex_1())
             .child(
                 Button::new("git-refresh")
@@ -1185,13 +1218,16 @@ struct OpDone {
     repo: Option<RepoEntry>,
     error: Option<String>,
     commit: Option<CommitDone>,
+    switched: Option<SwitchDone>,
 }
 
 /// Run `op`, then read the status of `repo` (or of the one `op` picks) and the diff of
 /// `selection`; for [`Op::ReadDiff`], the diff only. Off the UI thread.
 fn perform(op: Op, repo: Option<RepoEntry>, selection: Option<Selection>) -> Outcome {
-    if matches!(op, Op::ReadDiff) {
-        return Outcome::diff_only(read_selection_diff(repo, selection));
+    match op {
+        Op::ReadDiff => return Outcome::diff_only(read_selection_diff(repo, selection)),
+        Op::ListBranches => return Outcome::branches_only(read_branches(repo)),
+        _ => {}
     }
     let done = run_op(op, repo);
     let read = read_state(done.repo);
@@ -1202,6 +1238,8 @@ fn perform(op: Op, repo: Option<RepoEntry>, selection: Option<Selection>) -> Out
         status: Some(read),
         diff,
         commit: done.commit,
+        branches: None,
+        switched: done.switched,
     }
 }
 
@@ -1212,17 +1250,23 @@ fn run_op(op: Op, repo: Option<RepoEntry>) -> OpDone {
         repo,
         error: None,
         commit: None,
+        switched: None,
     };
     match op {
         Op::FindRepos { folders, selected } => done.find_repos(&folders, selected.as_deref()),
         Op::Choose(chosen) => done.repo = Some(chosen),
-        Op::Refresh | Op::ReadDiff => {}
+        Op::Refresh | Op::ReadDiff | Op::ListBranches => {}
         Op::Change(target, change) => {
             done.error = change_repo(&target, change)
                 .err()
                 .map(|err| err.to_string());
         }
         Op::Commit(target, message) => done.commit(target, &message),
+        Op::Switch(request) => {
+            let (switched, error) = branch_picker::run_switch(request);
+            done.switched = Some(switched);
+            done.error = error;
+        }
     }
     done
 }
@@ -1256,8 +1300,24 @@ impl Outcome {
             status: None,
             diff,
             commit: None,
+            branches: None,
+            switched: None,
         }
     }
+
+    /// What an [`Op::ListBranches`] gives: the branches only.
+    fn branches_only(branches: Option<Result<Branches, String>>) -> Self {
+        Self {
+            branches,
+            ..Self::diff_only(None)
+        }
+    }
+}
+
+/// The branches of `repo`, for the picker.
+fn read_branches(repo: Option<RepoEntry>) -> Option<Result<Branches, String>> {
+    let repo = repo?;
+    Some(git::read_branches(&repo.root).map_err(|err| err.to_string()))
 }
 
 /// The status of `repo` and the folders to watch for it.
@@ -1390,6 +1450,7 @@ fn change_color(change: Change, cx: &App) -> Hsla {
     }
 }
 
+mod branch_picker;
 mod commit_box;
 mod diff_view;
 mod line_staging;

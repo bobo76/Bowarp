@@ -336,7 +336,7 @@ impl GitPage {
     /// In the diff: PageUp / PageDown, Home / End scroll, and so do Up / Down where lines
     /// can't be staged (else they move the line cursor, see [`Self::line_key_down`]). Escape
     /// clears the selected lines, or with none gives the keyboard back to the list (as Tab
-    /// does, see `FocusNext`).
+    /// does, see `FocusNext`). B opens the branch picker.
     fn diff_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         if keystroke.key == "escape" && !keystroke.modifiers.modified() {
@@ -353,6 +353,11 @@ impl GitPage {
             return;
         }
         if keystroke.modifiers.modified() {
+            return;
+        }
+        if keystroke.key == "b" {
+            self.open_branch_picker(window, cx);
+            cx.stop_propagation();
             return;
         }
         let scroll = match keystroke.key.as_str() {

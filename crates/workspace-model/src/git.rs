@@ -3,6 +3,7 @@
 //! staging (whole files, hunks or single lines), committing and discarding.
 
 mod actions;
+mod branches;
 mod diff;
 mod patch;
 mod runner;
@@ -18,6 +19,10 @@ pub use self::actions::{
     DiscardPrompt, RepoEntry, apply_patch, choose_repo, commit, commit_failure,
     commit_message_ready, discard, discard_all, discard_prompt, locate, missing_identity, repos_of,
     stage, stage_all, unstage, unstage_all,
+};
+pub use self::branches::{
+    BranchChoice, Branches, LocalBranch, RemoteBranch, SwitchPlan, read_branches, switch_blocker,
+    switch_branch, switch_plan,
 };
 pub use self::diff::{
     DiffLine, DiffRow, FileDiff, Hunk, LineKind, MAX_DIFF_BYTES, TextDiff, read_diff,

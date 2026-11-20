@@ -767,6 +767,12 @@ impl TerminalView {
         }));
     }
 
+    /// Read the folder and its branch again, now (a branch switch from the Git page; the tab
+    /// may print nothing about it).
+    pub fn refresh_branch(&mut self, cx: &mut Context<Self>) {
+        self.refresh_location(cx);
+    }
+
     /// Follow the "Git status in tabs and explorer" switch: read the location again, with or
     /// without its branch (a read going is replaced, so its branch is never shown).
     fn apply_git_status(&mut self, git_status: bool, cx: &mut Context<Self>) {
