@@ -85,12 +85,19 @@ next tab. Closing the window works as usual; at the next start the groups come b
 default shell opens as the first tab.
 
 Remote hosts (see [Remote hosts](#remote-hosts)) follow the local programs in the `+` menu, one
-submenu each, with the host's default shell, Claude Code and Copilot CLI, started in its home
-folder, and named after it ("Shell (box)") until the program sets a title. Connecting takes a
-moment: a "Connecting to <host>" toast shows meanwhile, and the tab opens once the session
-runs there. When it can't start (ssh's own message, e.g. a host it can't resolve or a key it
-refuses), an error toast says why and stays until dismissed. Each submenu ends with the
-host's server state as last known this run (as on the settings page) and **Check server**.
+submenu each, with the host's default shell, Claude Code and Copilot CLI, and named after it
+("Shell (box)") until the program sets a title. They start in its home folder, or in the
+selected tab's folder when that tab runs on the same host. **Open in folder…** asks for a
+folder on the host and what to run there (Shell, Claude Code or Copilot CLI), offering the
+selected tab's folder on that host, else your last answer for it (saved in the host's
+`last_folder` and `last_program` in `settings.json`); an empty folder is the home folder.
+With a remote tab selected, the `+` menu's first entry and its agents open on that tab's
+host, in its folder, and say so ("Claude Code · box"); shells picked by name open on this
+machine. Connecting takes a moment: a "Connecting to <host>" toast shows meanwhile, and the
+tab opens once the session runs there. When it can't start (ssh's own message, e.g. a host it
+can't resolve or a key it refuses), an error toast says why and stays until dismissed. Each
+submenu ends with the host's server state as last known this run (as on the settings page)
+and **Check server**.
 
 | Keys | Action |
 |---|---|

@@ -1,6 +1,7 @@
 mod busy_close;
 mod empty_state;
 mod git_pane;
+mod open_in_folder;
 mod reconnect;
 mod restart;
 mod settings_pane;
@@ -36,11 +37,12 @@ use workspace_model::layout::Direction;
 use workspace_model::pane_width::{self, DEFAULT_VIEWER_FRACTION, ExplorerWidth, ViewerFraction};
 use workspace_model::{
     Attention, DropTarget, FeatureSwitch, FileLinkAction, GroupId, Layout, PaneChange, PaneEntry,
-    Shortcut, TabColor, TabHistory, TabId, TabMeta, TabsState, TitleSubject, ToastKind,
+    RemoteHost, Shortcut, TabColor, TabHistory, TabId, TabMeta, TabsState, TitleSubject, ToastKind,
     exit_toast_kind, next_attention, pane_change, waiting_count, window_title,
 };
 
 use self::git_pane::GitPane;
+use self::open_in_folder::OpenInFolder;
 use self::settings_pane::SettingsPane;
 use self::spinner_clock::SpinnerClock;
 use self::start_failure::StartFailure;
@@ -1212,27 +1214,103 @@ impl WorkspaceView {
         if launcher.kind.agent().is_some()
             && let Some((host, folder)) = self.remote_origin(cx)
         {
-            self.open_remote(launcher, &host, folder.as_deref(), window, cx);
+            self.open_remote(launcher.kind, &host, folder.as_deref(), window, cx);
             return;
         }
         let folder = self.new_tab_folder(cx);
         self.open_launcher_in(launcher, folder, window, cx);
     }
 
-    /// Open what `launcher` starts on `host`, in `folder` there.
+    /// The name of the host the `+` menu's agents and default shell open on: the selected
+    /// tab's, when it runs on another machine.
+    fn remote_menu_host(&self, cx: &App) -> Option<String> {
+        let (host, _) = self.remote_origin(cx)?;
+        let hosts = &settings_file::settings(cx).remote_hosts;
+        Some(hosts.label_for(&host).to_owned())
+    }
+
+    /// An entry of host `destination`'s `+` submenu: `kind` there, in the selected tab's
+    /// folder when that tab runs on the same host (as the top-level entries), else the home
+    /// folder.
+    fn open_on_host(
+        &mut self,
+        kind: SessionKind,
+        destination: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let origin = self.remote_origin(cx);
+        let selected = origin
+            .as_ref()
+            .map(|(host, folder)| (host.as_str(), folder.as_deref()));
+        let folder = settings_file::settings(cx)
+            .remote_hosts
+            .folder_on(destination, selected)
+            .map(str::to_owned);
+        self.open_remote(kind, destination, folder.as_deref(), window, cx);
+    }
+
+    /// "Open in folder…" of host `destination`'s `+` submenu: ask for a folder there and
+    /// what to run in it, offering the selected tab's folder on that host, else the last
+    /// answer.
+    fn ask_open_in_folder(
+        &mut self,
+        destination: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<OpenInFolder> {
+        let origin = self.remote_origin(cx);
+        let selected = origin
+            .as_ref()
+            .map(|(host, folder)| (host.as_str(), folder.as_deref()));
+        let hosts = &settings_file::settings(cx).remote_hosts;
+        let request = open_in_folder::Request {
+            destination: destination.to_owned(),
+            label: hosts.label_for(destination).to_owned(),
+            folder: hosts.offered_folder(destination, selected),
+            kind: hosts
+                .find(destination)
+                .map_or(SessionKind::Shell, RemoteHost::last_kind),
+        };
+        OpenInFolder::open(cx.entity().downgrade(), request, window, cx)
+    }
+
+    /// The answer to "Open in folder…": remembered for the host, then opened there (an empty
+    /// folder is the home folder).
+    fn open_in_folder(
+        &mut self,
+        destination: &str,
+        folder: &str,
+        kind: SessionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        settings_file::update(cx, |settings| {
+            settings
+                .remote_hosts
+                .remember_launch(destination, folder, kind)
+        });
+        let folder = Some(folder.trim()).filter(|folder| !folder.is_empty());
+        self.open_remote(kind, destination, folder, window, cx);
+    }
+
+    /// Open `kind` on `host`, in `folder` there.
     fn open_remote(
         &mut self,
-        launcher: &Launcher,
+        kind: SessionKind,
         host: &str,
         folder: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let settings = settings_file::settings(cx);
-        match launcher::remote_spec(launcher.kind, host, folder, settings) {
+        match launcher::remote_spec(kind, host, folder, settings) {
             Ok(spec) => self.open_tab_or_notify(spec, window, cx),
             Err(error) => window.push_notification(
-                Notification::error(format!("{} arguments: {error}", launcher.label)),
+                Notification::error(format!(
+                    "{} arguments: {error}",
+                    launcher::remote_label(kind)
+                )),
                 cx,
             ),
         }

@@ -372,29 +372,32 @@ pub fn default_name(spec: &LaunchSpec) -> String {
 pub struct RemoteLaunch {
     pub label: String,
     pub icon: LauncherIcon,
-    pub spec: LaunchSpec,
+    pub kind: SessionKind,
 }
 
-/// What a remote host's `+` submenu offers: the server's default shell, then the agent CLIs,
-/// all in the server's home folder on `destination`.
-pub fn remote_launches(destination: &str) -> Vec<RemoteLaunch> {
+/// What a remote host's `+` submenu offers: the server's default shell, then the agent CLIs.
+/// [`remote_spec`] makes the launch, in the folder chosen for it.
+pub fn remote_launches() -> Vec<RemoteLaunch> {
     let shell = RemoteLaunch {
-        label: "Shell".into(),
+        label: REMOTE_SHELL_LABEL.into(),
         icon: LauncherIcon::Shell,
-        spec: LaunchSpec::shell(None),
+        kind: SessionKind::Shell,
     };
     let agents = agents().map(|agent| RemoteLaunch {
         label: agent.label().into(),
         icon: LauncherIcon::Agent(agent),
-        spec: LaunchSpec::agent(agent, None),
+        kind: SessionKind::Agent(agent),
     });
-    std::iter::once(shell)
-        .chain(agents)
-        .map(|mut launch| {
-            launch.spec.host = Some(destination.to_owned());
-            launch
-        })
-        .collect()
+    std::iter::once(shell).chain(agents).collect()
+}
+
+/// The name of a host's default shell, which this machine can't know.
+pub const REMOTE_SHELL_LABEL: &str = "Shell";
+
+/// What a remote launch of `kind` is called: the agent's name, else [`REMOTE_SHELL_LABEL`].
+pub fn remote_label(kind: SessionKind) -> &'static str {
+    kind.agent()
+        .map_or(REMOTE_SHELL_LABEL, |agent| agent.label())
 }
 
 /// A remote tab's name: what it runs, then its host. A shell without a program is the
@@ -409,7 +412,7 @@ fn remote_name(spec: &LaunchSpec, host: &str) -> String {
     let base = match (spec.kind.agent(), program) {
         (Some(agent), _) => agent.label().into(),
         (None, Some(program)) => program,
-        (None, None) => "Shell".into(),
+        (None, None) => REMOTE_SHELL_LABEL.into(),
     };
     format!("{base} ({})", workspace_model::host_part(host.trim()))
 }
