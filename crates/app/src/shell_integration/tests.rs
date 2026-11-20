@@ -1009,3 +1009,21 @@ fn powershell_agent_functions_are_not_defined_when_switched_off() {
         );
     }
 }
+
+#[test]
+fn rewriting_a_script_replaces_it_whole_and_leaves_no_temporary_file() {
+    let dir = std::env::temp_dir().join(format!("agentws-rewrite-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    write_scripts(&dir).unwrap();
+    let script = dir.join(BASH_FILE);
+    fs::write(&script, "# an older version\n").unwrap();
+    write_scripts(&dir).unwrap();
+    assert_eq!(fs::read_to_string(&script).unwrap(), BASH_SCRIPT);
+    let leftovers: Vec<_> = fs::read_dir(script.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+    fs::remove_dir_all(&dir).unwrap();
+}
