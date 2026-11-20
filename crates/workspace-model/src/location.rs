@@ -16,6 +16,12 @@ impl Location {
         let head = GitHead::read(&folder);
         Self { folder, head }
     }
+
+    /// `folder` alone, without touching `.git` (the "Git status in tabs and explorer" switch is
+    /// off).
+    pub fn without_branch(folder: PathBuf) -> Self {
+        Self { folder, head: None }
+    }
 }
 
 /// `path` for display, with the home folder shortened to `~`.
@@ -46,6 +52,17 @@ mod tests {
         let location = Location::read(repo.0.clone());
         assert_eq!(location.folder, repo.0);
         assert_eq!(location.head, Some(GitHead::Branch("main".into())));
+    }
+
+    #[test]
+    fn reads_no_branch_without_branch_constructor() {
+        let repo = TempDir::new();
+        fs::create_dir_all(repo.0.join(".git")).unwrap();
+        fs::write(repo.0.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+
+        let location = Location::without_branch(repo.0.clone());
+        assert_eq!(location.folder, repo.0);
+        assert_eq!(location.head, None);
     }
 
     #[cfg(unix)]

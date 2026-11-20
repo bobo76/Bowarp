@@ -18,7 +18,7 @@ use crate::AgentId;
 use crate::clipboard_guard::ClipboardPolicy;
 use crate::diff_colors::DiffColors;
 use crate::keymap::KeybindingOverlay;
-use crate::pane_width::{ExplorerWidth, ViewerFraction};
+use crate::pane_width::{ExplorerWidth, GitListWidth, ViewerFraction};
 use crate::remote_hosts::RemoteHosts;
 use crate::window_background::{WindowBlur, WindowOpacity};
 use crate::window_state::write_atomic;
@@ -108,6 +108,11 @@ pub struct Settings {
     /// stay in memory) and runs no `git` for it.
     #[serde(deserialize_with = "lenient")]
     pub git_page: FeatureSwitch<true>,
+    /// Git status outside the Git page: each tab's branch, the explorer's changed-file colors
+    /// and git-ignored dimming, and the hover card's `+N`. Off reads no branch and runs no
+    /// `git` for them (the folder shows instead); the Git page is unaffected.
+    #[serde(deserialize_with = "lenient")]
+    pub git_status: FeatureSwitch<true>,
     /// Toasts about agents (needs attention, ready for review, exited); status dots and
     /// badges stay either way. See [`crate::NotificationFeatures`].
     #[serde(deserialize_with = "lenient")]
@@ -120,6 +125,10 @@ pub struct Settings {
     /// settings page).
     #[serde(deserialize_with = "lenient")]
     pub file_explorer_width: ExplorerWidth,
+    /// The Git page's list of changes' width in pixels (170-680), set by dragging its edge
+    /// (not on the settings page).
+    #[serde(deserialize_with = "lenient")]
+    pub git_list_width: GitListWidth,
     /// The machines remote tabs can run on (docs/remote.md), in menu order.
     #[serde(deserialize_with = "lenient")]
     pub remote_hosts: RemoteHosts,
@@ -269,6 +278,17 @@ impl TabCardFields {
                 TabCardField::ProgramTitle => self.program_title,
                 TabCardField::SessionKind => self.session_kind,
             }
+    }
+
+    /// The fields as shown: without the "Git status in tabs and explorer" switch
+    /// (`git_status` false) there is no `+N` nor changed files; their values are kept in
+    /// the settings.
+    pub fn with_git_status(self, git_status: bool) -> Self {
+        Self {
+            changes: self.changes && git_status,
+            changed_files: self.changed_files && git_status,
+            ..self
+        }
     }
 
     /// Do not even compute a piece that is unchecked or whose card is disabled.

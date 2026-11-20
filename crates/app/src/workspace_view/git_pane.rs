@@ -60,7 +60,7 @@ impl GitPane {
         }
         self.shown = false;
         if let Some(page) = &self.page {
-            page.update(cx, |page, _| page.hide());
+            page.update(cx, |page, cx| page.hide(cx));
         }
     }
 

@@ -231,6 +231,8 @@ pub struct TerminalView {
     location: Option<Location>,
     /// Reads [`Self::location`] off the UI thread; dropping it cancels it.
     location_read: Option<Task<()>>,
+    /// The "Git status in tabs and explorer" switch: off reads no branch for [`Self::location`].
+    git_status: bool,
     /// How the program parses typed paths.
     pub(crate) shell: ShellSyntax,
     /// Agent status from hooks or progress reports once the provider sends its first one;
@@ -445,6 +447,7 @@ impl TerminalView {
                 view.session.set_palette(palette);
                 cx.notify();
             }
+            view.apply_git_status(settings_file::git_status(cx), cx);
             let features = settings_file::workspace_features(cx);
             if features == view.workspace_features {
                 return;
@@ -469,6 +472,7 @@ impl TerminalView {
                 .clone()
                 .map(|folder| Location { folder, head: None }),
             location_read: None,
+            git_status: settings_file::git_status(cx),
             launch_folder,
             shell: launcher::shell_syntax(spec),
             agent: (reporting == StatusReporting::Hooks).then(|| AgentTracker::new(Instant::now())),
@@ -496,10 +500,7 @@ impl TerminalView {
             last_command: workspace_model::LastCommand::default(),
             last_command_supported: spec.kind == SessionKind::Shell
                 && spec.mark_token.is_some()
-                && matches!(
-                    launcher::shell_syntax(spec),
-                    ShellSyntax::Posix | ShellSyntax::Wsl
-                ),
+                && workspace_model::saves_last_command(launcher::shell_syntax(spec)),
             search: TerminalSearch::default(),
             search_bar: None,
             search_retry: None,
@@ -755,11 +756,25 @@ impl TerminalView {
         let Some(folder) = self.current_folder() else {
             return;
         };
-        let read = cx.background_spawn(async move { Location::read(folder) });
+        let read_location = match self.git_status {
+            true => Location::read,
+            false => Location::without_branch,
+        };
+        let read = cx.background_spawn(async move { read_location(folder) });
         self.location_read = Some(cx.spawn(async move |this, cx| {
             let location = read.await;
             let _ = this.update(cx, |view, cx| view.set_location(location, cx));
         }));
+    }
+
+    /// Follow the "Git status in tabs and explorer" switch: read the location again, with or
+    /// without its branch (a read going is replaced, so its branch is never shown).
+    fn apply_git_status(&mut self, git_status: bool, cx: &mut Context<Self>) {
+        if git_status == self.git_status {
+            return;
+        }
+        self.git_status = git_status;
+        self.refresh_location(cx);
     }
 
     fn set_location(&mut self, location: Location, cx: &mut Context<Self>) {

@@ -720,6 +720,24 @@ fn file_explorer_width_is_read_clamped_and_defaults() {
     );
 }
 
+#[test]
+fn git_list_width_is_read_clamped_and_defaults() {
+    assert_eq!(Settings::default().git_list_width, GitListWidth::default());
+    for (text, width) in [
+        (r#"{"git_list_width": 420}"#, 420.),
+        (r#"{"git_list_width": 20}"#, GitListWidth::MIN),
+        (r#"{"git_list_width": 5000}"#, GitListWidth::MAX),
+        (r#"{"git_list_width": "wide"}"#, 340.),
+        (r#"{"git_list_width": null}"#, 340.),
+    ] {
+        let settings = Settings::from_json(text).unwrap();
+        assert_eq!(settings.git_list_width.get(), width, "{text}");
+    }
+    let settings = Settings::from_json(r#"{"git_list_width": 5000}"#).unwrap();
+    let json = settings.to_json().unwrap();
+    assert!(json.contains(r#""git_list_width": 680.0"#), "{json}");
+}
+
 #[derive(Debug, Default, PartialEq, Deserialize)]
 #[serde(default)]
 struct Sample {
@@ -1025,6 +1043,49 @@ fn git_page_switch_defaults_on_round_trips_and_falls_back_when_mistyped() {
         let settings = Settings::from_json(&format!(r#"{{"git_page": {wrong}}}"#)).unwrap();
         assert!(settings.git_page.is_on(), "{wrong}");
     }
+}
+
+#[test]
+fn git_status_switch_defaults_on_round_trips_and_falls_back_when_mistyped() {
+    assert!(Settings::default().git_status.is_on());
+    assert!(Settings::from_json("{}").unwrap().git_status.is_on());
+    let off = Settings {
+        git_status: FeatureSwitch::new(false),
+        ..Settings::default()
+    };
+    let json = off.to_json().unwrap();
+    let value: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["git_status"], Value::Bool(false));
+    assert_eq!(Settings::from_json(&json).unwrap(), off);
+    for wrong in ["\"no\"", "0", "null", "[]"] {
+        let settings = Settings::from_json(&format!(r#"{{"git_status": {wrong}}}"#)).unwrap();
+        assert!(settings.git_status.is_on(), "{wrong}");
+    }
+}
+
+#[test]
+fn card_changes_hide_without_git_status_and_keep_their_values() {
+    let fields = TabCardFields {
+        changed_files: true,
+        ..TabCardFields::default()
+    };
+    let shown = fields.with_git_status(false);
+    assert!(!shown.keeps(TabCardField::Changes));
+    assert!(!shown.keeps(TabCardField::ChangedFiles));
+    assert!(shown.keeps(TabCardField::Location));
+    assert!(shown.active());
+    assert_eq!(fields.with_git_status(true), fields);
+    let only_changes = TabCardFields {
+        status: false,
+        location: false,
+        program_title: false,
+        session_kind: false,
+        ..TabCardFields::default()
+    };
+    assert!(
+        !only_changes.with_git_status(false).active(),
+        "nothing left to show"
+    );
 }
 
 #[test]

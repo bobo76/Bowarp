@@ -72,6 +72,29 @@ fn initial_and_detached_heads() {
 }
 
 #[test]
+fn full_path_label_names_a_staged_renames_origin_only() {
+    let renamed = FileStatus {
+        path: "src/new name.rs".into(),
+        orig_path: Some("src/old.rs".into()),
+        staged: Some(Change::Renamed),
+        unstaged: Some(Change::Modified),
+    };
+    assert_eq!(
+        renamed.full_path_label(DiffSide::Staged),
+        "src/new name.rs from src/old.rs"
+    );
+    assert_eq!(
+        renamed.full_path_label(DiffSide::Unstaged),
+        "src/new name.rs"
+    );
+    let plain = FileStatus {
+        orig_path: None,
+        ..renamed
+    };
+    assert_eq!(plain.full_path_label(DiffSide::Staged), "src/new name.rs");
+}
+
+#[test]
 fn only_text_changes_stage_by_line() {
     let file = FileStatus {
         path: "a".to_string(),

@@ -18,12 +18,13 @@ use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
 use gpui_kit::component::input::TextareaState;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, App, AppContext, Context, Entity, FocusHandle, FontWeight, Hsla,
-    InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, ParentElement, Render,
-    ScrollStrategy, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
+    AnyElement, App, AppContext, Context, Div, Entity, FocusHandle, FontWeight, Hsla,
+    InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, MouseButton, ParentElement, Render,
+    ScrollStrategy, SharedString, Stateful, StatefulInteractiveElement, Styled, Subscription, Task,
     UniformListScrollHandle, Window, actions, div, px, uniform_list,
 };
 use notify::event::ModifyKind;
@@ -33,20 +34,18 @@ use workspace_model::git::{
     RepoStatus, StatusRow,
 };
 use workspace_model::layout::Direction;
+use workspace_model::pane_width::GitListWidth;
 
 use self::commit_box::{COMMIT_CONTEXT, CommitDone};
 use self::diff_view::ShownDiff;
 
 use crate::assets::{GIT_BRANCH_ICON, UNDO_ICON};
+use crate::divider_drag::DividerDrag;
 use crate::folder_watcher::{FolderWatcher, WatchesFolders};
 use crate::sidebar;
 
 /// Height of a row of the list of changes.
 const ROW_HEIGHT: f32 = 26.;
-/// Width of the list of changes.
-const LIST_WIDTH: f32 = 340.;
-/// The widest a file's name gets in its row (its folder takes the rest).
-const FILE_NAME_MAX_WIDTH: f32 = LIST_WIDTH * 0.6;
 /// Width of a file row's status letter.
 const CHANGE_LETTER_WIDTH: f32 = 12.;
 /// Height of the page's header.
@@ -217,6 +216,8 @@ pub struct GitPage {
     drafts: HashMap<PathBuf, String>,
     /// A commit is queued or running.
     committing: bool,
+    /// The list's width while its edge is dragged; otherwise the saved `git_list_width`.
+    list_drag: DividerDrag<GitListWidth>,
 }
 
 impl WatchesFolders for GitPage {
@@ -275,6 +276,7 @@ impl GitPage {
             _message_events: message_events,
             drafts: HashMap::new(),
             committing: false,
+            list_drag: DividerDrag::new(Self::save_list_width),
         }
     }
 
@@ -297,9 +299,12 @@ impl GitPage {
     }
 
     /// The page is hidden: stop watching (a running op still finishes).
-    pub fn hide(&mut self) {
+    pub fn hide(&mut self, cx: &mut Context<Self>) {
         self.shown = false;
         self.sync_watches();
+        // A drag of the list's edge still going (the page hid by key) ends here: the release
+        // would reach no page listener.
+        self.end_list_drag(cx);
     }
 
     /// The chosen repository's name, for the sidebar row.
@@ -989,11 +994,6 @@ impl GitPage {
         };
         let theme = cx.theme();
         let change = file.change(side).unwrap_or(Change::Modified);
-        let (name, folder) = split_path(&file.path);
-        let detail = match &file.orig_path {
-            Some(orig) if side == DiffSide::Staged => format!("from {orig}"),
-            _ => folder.to_string(),
-        };
         let selected = self.selected_row() == Some(row);
         let (icon, tooltip) = match side {
             DiffSide::Staged => (IconName::Minus, "Unstage"),
@@ -1011,6 +1011,8 @@ impl GitPage {
             .flex()
             .items_center()
             .gap_2()
+            // Laid out alone by the list, a row with no width takes its content's.
+            .w_full()
             .h(px(ROW_HEIGHT))
             .pl_6()
             .pr_2()
@@ -1021,30 +1023,12 @@ impl GitPage {
                 window.focus(&page.focus, cx);
                 page.select(clicked.clone(), window, cx);
             }))
+            .child(self.render_file_path(row, file, side, change, cx))
             .child(
                 div()
-                    .flex_none()
-                    .max_w(px(FILE_NAME_MAX_WIDTH))
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .when(change == Change::Deleted, |name| name.line_through())
-                    .child(name.to_string()),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(detail),
-            )
-            .child(
-                div()
+                    .debug_selector(move || format!("git-file-buttons-{row}"))
                     .flex()
+                    .flex_none()
                     .invisible()
                     .group_hover(group, |style| style.visible())
                     .when(discardable, |buttons| {
@@ -1076,6 +1060,7 @@ impl GitPage {
             )
             .child(
                 div()
+                    .debug_selector(move || format!("git-file-letter-{row}"))
                     .flex_none()
                     .w(px(CHANGE_LETTER_WIDTH))
                     .text_xs()
@@ -1085,12 +1070,62 @@ impl GitPage {
             )
             .into_any_element()
     }
+
+    /// A file row's name and folder (or a staged rename's origin), hovered for the full path.
+    /// They take what the buttons and the letter leave: the folder (no basis) gives way first,
+    /// then the name (its width as basis) shrinks to an ellipsis.
+    fn render_file_path(
+        &self,
+        row: usize,
+        file: &FileStatus,
+        side: DiffSide,
+        change: Change,
+        cx: &App,
+    ) -> Stateful<Div> {
+        let (name, folder) = split_path(&file.path);
+        let detail = match file.shown_origin(side) {
+            Some(orig) => format!("from {orig}"),
+            None => folder.to_string(),
+        };
+        let full_path = SharedString::from(file.full_path_label(side));
+        div()
+            .id(("git-file-path", row))
+            .debug_selector(move || format!("git-file-path-{row}"))
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .items_center()
+            .gap_2()
+            .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
+            .child(
+                div()
+                    .min_w_0()
+                    .max_w(px(self.file_name_max_width(cx)))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .when(change == Change::Deleted, |name| name.line_through())
+                    .child(name.to_string()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(detail),
+            )
+    }
 }
 
 impl Render for GitPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (background, border) = (theme.background, theme.border);
+        let list_width = self.list_width(cx).get();
         div()
             .id("git-page")
             .debug_selector(|| "git-page".into())
@@ -1099,6 +1134,13 @@ impl Render for GitPage {
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
             .on_key_down(cx.listener(Self::key_down))
+            // Both halves of "any release" end a drag of the list's edge: over the page, and
+            // outside it.
+            .capture_any_mouse_up(cx.listener(|page, _, _, cx| page.end_list_drag(cx)))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|page, _, _, cx| page.end_list_drag(cx)),
+            )
             .flex()
             .flex_col()
             .size_full()
@@ -1109,19 +1151,26 @@ impl Render for GitPage {
                     .flex()
                     .flex_1()
                     .min_h_0()
+                    .on_drag_move(cx.listener(Self::drag_list_edge))
                     .child(
                         div()
+                            .debug_selector(|| "git-list".into())
+                            .relative()
                             .flex()
                             .flex_col()
-                            .flex_none()
-                            .w(px(LIST_WIDTH))
+                            // On a narrow page the list gives way first, the diff keeping
+                            // MIN_GIT_DIFF_WIDTH: far above the diff's shrink factor of 1.
+                            .flex_shrink(1000.)
+                            .min_w(px(GitListWidth::MIN))
+                            .w(px(list_width))
                             .h_full()
                             .border_r_1()
                             .border_color(border)
                             .when(self.repo.is_some(), |column| {
                                 column.child(self.render_commit_box(cx))
                             })
-                            .child(self.render_list(cx)),
+                            .child(self.render_list(cx))
+                            .child(self.render_list_divider(cx)),
                     )
                     .child(self.render_diff_pane(window, cx)),
             )
@@ -1344,5 +1393,6 @@ fn change_color(change: Change, cx: &App) -> Hsla {
 mod commit_box;
 mod diff_view;
 mod line_staging;
+mod list_width;
 #[cfg(test)]
 mod tests;

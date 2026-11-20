@@ -83,7 +83,10 @@ fn lists_and_stages_the_changes_of_a_tab_repository(cx: &mut gpui_kit::TestAppCo
         eprintln!("git not available, skipping");
         return;
     };
-    cx.update(gpui_kit::init);
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::settings_file::init_in_memory(cx);
+    });
     let captured = Rc::new(RefCell::new(None));
     let capture = captured.clone();
     let window = cx.add_window(move |window, cx| {
@@ -156,7 +159,7 @@ fn lists_and_stages_the_changes_of_a_tab_repository(cx: &mut gpui_kit::TestAppCo
     assert_eq!(status.files[0].unstaged, Some(Change::Untracked));
     assert!(!status.has_staged());
 
-    page.update(&mut cx, |page, _| page.hide());
+    page.update(&mut cx, |page, cx| page.hide(cx));
     assert!(page.read_with(&cx, |page, _| page.watched.is_empty()));
     let _ = std::fs::remove_dir_all(&folder);
 }
@@ -175,7 +178,10 @@ fn a_change_asked_before_another_repository_shows_stays_in_its_own(
         eprintln!("git not available, skipping");
         return;
     };
-    cx.update(gpui_kit::init);
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::settings_file::init_in_memory(cx);
+    });
     let captured = Rc::new(RefCell::new(None));
     let capture = captured.clone();
     let window = cx.add_window(move |window, cx| {
@@ -208,7 +214,7 @@ fn a_change_asked_before_another_repository_shows_stays_in_its_own(
     assert_eq!(note(&second).staged, None);
     assert_eq!(note(&second).unstaged, Some(Change::Untracked));
 
-    page.update(&mut cx, |page, _| page.hide());
+    page.update(&mut cx, |page, cx| page.hide(cx));
     let _ = std::fs::remove_dir_all(&first);
     let _ = std::fs::remove_dir_all(&second);
 }
@@ -401,7 +407,7 @@ fn shows_the_diff_of_the_selected_file(cx: &mut gpui_kit::TestAppContext) {
     cx.simulate_keystrokes("shift-tab");
     assert_eq!(focus(&mut cx), (true, false));
 
-    page.update(&mut cx, |page, _| page.hide());
+    page.update(&mut cx, |page, cx| page.hide(cx));
     let _ = std::fs::remove_dir_all(&folder);
 }
 
@@ -473,7 +479,7 @@ fn a_commit_keeps_the_selected_unstaged_file(cx: &mut gpui_kit::TestAppContext) 
     );
     assert_eq!(selected, Some(b));
 
-    page.update(&mut cx, |page, _| page.hide());
+    page.update(&mut cx, |page, cx| page.hide(cx));
     let _ = std::fs::remove_dir_all(&folder);
 }
 
@@ -490,7 +496,10 @@ fn shows_the_selected_tabs_repository_when_given_else_keeps_the_shown_one(
         eprintln!("git not available, skipping");
         return;
     };
-    cx.update(gpui_kit::init);
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::settings_file::init_in_memory(cx);
+    });
     let captured = Rc::new(RefCell::new(None));
     let capture = captured.clone();
     let window = cx.add_window(move |window, cx| {
@@ -616,6 +625,199 @@ fn the_list_keys_stage_unstage_and_discard_after_a_confirmation(cx: &mut gpui_ki
     assert!(!folder.join("new.txt").exists());
     assert!(cx.update(|_, cx| page.read(cx).rows.is_empty()));
 
-    page.update(&mut cx, |page, _| page.hide());
+    page.update(&mut cx, |page, cx| page.hide(cx));
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[gpui::test]
+fn dragging_the_list_edge_resizes_it_and_saves_once_on_release(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::Root;
+    use gpui_kit::{AppContext, Modifiers, MouseButton, VisualTestContext, point};
+    use std::cell::RefCell;
+    use workspace_model::pane_width::DEFAULT_GIT_LIST_WIDTH;
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::settings_file::init_in_memory(cx);
+    });
+    let captured = Rc::new(RefCell::new(None));
+    let capture = captured.clone();
+    let window = cx.add_window(move |window, cx| {
+        let page = cx.new(|cx| GitPage::new(window, cx));
+        *capture.borrow_mut() = Some(page.clone());
+        Root::new(page, window, cx)
+    });
+    let page = captured.borrow().clone().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    let saved = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| crate::settings_file::settings(cx).git_list_width.get())
+    };
+    let shown = |cx: &mut VisualTestContext| cx.update(|_, cx| page.read(cx).list_width(cx).get());
+
+    let saves = Rc::new(std::cell::Cell::new(0));
+    let count = saves.clone();
+    cx.update(|_, cx| {
+        cx.observe_global::<crate::settings_file::AppSettings>(move |_| count.set(count.get() + 1))
+            .detach()
+    });
+    let at = |x: f32| point(px(x), px(200.));
+
+    // The strip is the list's last 6 px, under the header.
+    let edge = DEFAULT_GIT_LIST_WIDTH - 3.;
+    cx.simulate_mouse_down(at(edge), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(at(edge + 40.), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(at(edge + 80.), MouseButton::Left, Modifiers::none());
+    // The edge follows the pointer, in memory only while dragged.
+    let dragged = edge + 80.;
+    assert_eq!(shown(&mut cx), dragged);
+    assert_eq!(saved(&mut cx), DEFAULT_GIT_LIST_WIDTH);
+    cx.simulate_mouse_up(at(dragged), MouseButton::Left, Modifiers::none());
+    assert_eq!(saved(&mut cx), dragged);
+    assert_eq!(saves.get(), 1, "one write on release");
+
+    // A double-click on the strip, now at its new place, gives the default back.
+    let edge = dragged - 3.;
+    cx.simulate_event(gpui_kit::MouseDownEvent {
+        position: at(edge),
+        button: MouseButton::Left,
+        modifiers: Modifiers::none(),
+        click_count: 2,
+        first_mouse: false,
+    });
+    assert_eq!(saved(&mut cx), DEFAULT_GIT_LIST_WIDTH);
+    assert_eq!(shown(&mut cx), DEFAULT_GIT_LIST_WIDTH);
+}
+
+#[gpui::test]
+fn hiding_the_page_mid_drag_saves_the_dragged_width(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::Root;
+    use gpui_kit::{AppContext, Modifiers, MouseButton, VisualTestContext, point};
+    use std::cell::RefCell;
+    use workspace_model::pane_width::DEFAULT_GIT_LIST_WIDTH;
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::settings_file::init_in_memory(cx);
+    });
+    let captured = Rc::new(RefCell::new(None));
+    let capture = captured.clone();
+    let window = cx.add_window(move |window, cx| {
+        let page = cx.new(|cx| GitPage::new(window, cx));
+        *capture.borrow_mut() = Some(page.clone());
+        Root::new(page, window, cx)
+    });
+    let page = captured.borrow().clone().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    let saved = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| crate::settings_file::settings(cx).git_list_width.get())
+    };
+
+    let edge = DEFAULT_GIT_LIST_WIDTH - 3.;
+    let at = |x: f32| point(px(x), px(200.));
+    cx.simulate_mouse_down(at(edge), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(at(edge + 30.), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(at(edge + 60.), MouseButton::Left, Modifiers::none());
+    assert_eq!(saved(&mut cx), DEFAULT_GIT_LIST_WIDTH);
+
+    // Ctrl+Shift+G hides the page: the release will never reach it.
+    page.update(&mut cx, |page, cx| page.hide(cx));
+    assert_eq!(saved(&mut cx), edge + 60.);
+}
+
+#[gpui::test]
+fn long_file_names_leave_the_row_buttons_in_reach(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::Root;
+    use gpui_kit::{AppContext, VisualTestContext, size};
+    use std::cell::RefCell;
+
+    let Some(folder) = temp_repo("long-names") else {
+        eprintln!("git not available, skipping");
+        return;
+    };
+    let long = "a-very-long-file-name-that-never-fits-in-the-list-of-changes-at-all.txt";
+    let deep = "some/deeply/nested/folder/with/many/levels/and-a-long-file-name-too.rs";
+    std::fs::create_dir_all(folder.join("some/deeply/nested/folder/with/many/levels")).unwrap();
+    for path in [long, deep] {
+        std::fs::write(folder.join(path), "one\n").unwrap();
+    }
+    run_git(&folder, &["add", "."]);
+    run_git(&folder, &["commit", "-q", "-m", "first"]);
+    for path in [long, deep] {
+        std::fs::write(folder.join(path), "two\n").unwrap();
+    }
+    run_git(
+        &folder,
+        &[
+            "mv",
+            "note.txt",
+            "a-renamed-note-with-a-very-long-name-as-well.txt",
+        ],
+    );
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::settings_file::init_in_memory(cx);
+    });
+    let captured = Rc::new(RefCell::new(None));
+    let capture = captured.clone();
+    let window = cx.add_window(move |window, cx| {
+        let page = cx.new(|cx| GitPage::new(window, cx));
+        *capture.borrow_mut() = Some(page.clone());
+        Root::new(page, window, cx)
+    });
+    let page = captured.borrow().clone().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.update(|window, cx| {
+        page.update(cx, |page, cx| {
+            page.show(vec![folder.clone()], None, window, cx)
+        });
+    });
+    cx.run_until_parked();
+    let rows = cx.update(|_, cx| page.read(cx).rows.clone());
+    let file_rows: Vec<usize> = (0..rows.len())
+        .filter(|&row| matches!(rows[row], StatusRow::File { .. }))
+        .collect();
+    assert_eq!(file_rows.len(), 3, "{rows:?}");
+
+    // (window width, saved list width): the list's whole range, and the smallest page (720 px
+    // window less the 240 px sidebar), where a wide saved list is squeezed to its minimum.
+    for (window_width, list_width) in [(1400., 170.), (1400., 340.), (1400., 680.), (480., 680.)] {
+        cx.simulate_resize(size(px(window_width), px(800.)));
+        cx.update(|_, cx| {
+            crate::settings_file::save_layout(cx, |settings| {
+                settings.git_list_width = GitListWidth::new(list_width)
+            })
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        // `debug_bounds` needs debug assertions: release test runs skip the drawn checks.
+        if !cfg!(debug_assertions) {
+            continue;
+        }
+        let list = cx.debug_bounds("git-list").unwrap();
+        for row in &file_rows {
+            // `debug_bounds` takes a `&'static str`.
+            let mut bounds = |name: &str| {
+                let selector = format!("git-file-{name}-{row}").leak();
+                cx.debug_bounds(selector).unwrap()
+            };
+            let (path, buttons, letter) = (bounds("path"), bounds("buttons"), bounds("letter"));
+            let case = format!("row {row}, window {window_width}, list {list_width}");
+            assert!(buttons.size.width > px(0.), "{case}");
+            assert!(
+                path.size.width > px(20.),
+                "{case}: the name has no room: {path:?}"
+            );
+            assert!(
+                path.right() <= buttons.left(),
+                "{case}: {path:?} {buttons:?}"
+            );
+            assert!(buttons.right() <= letter.left(), "{case}");
+            // Clear of the list's resize strip, which takes the presses on its last 6 px.
+            let reach = list.right() - px(crate::divider_drag::DIVIDER_WIDTH);
+            assert!(letter.right() <= reach, "{case}: {letter:?} {list:?}");
+            assert_eq!(letter.size.width, px(CHANGE_LETTER_WIDTH), "{case}");
+        }
+    }
 }

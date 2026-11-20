@@ -217,18 +217,22 @@ own shell; when other shells have commands, its header shows a chip per shell pl
 switches between them. Commands saved by earlier versions have no shell and show only under
 "All". Commands starting with a space
 are not kept, nor bash commands that bash keeps out of its own history (`HISTCONTROL`,
-`HISTIGNORE`). Up still goes to the program in full-screen programs (`less`, editors), while a
+`HISTIGNORE`), nor PowerShell lines that PSReadLine's `AddToHistoryHandler` keeps out of its
+history (by default those mentioning a password, token or secret); these are not saved as the
+last command either. Up still goes to the program in full-screen programs (`less`, editors), while a
 command runs, in Claude Code and Copilot tabs, and in shells without integration (fish, cmd,
 WSL shells other than bash, shells started with their own arguments other than Git Bash and
 WSL distros).
 
-On restart, an integrated bash or zsh tab (including Git Bash and bash in WSL) offers its
-last non-trivial command at its first empty prompt, dimmed with a fainter "last session"
-hint when space allows. Right or End accepts it; Tab keeps shell completion, and Enter
+On restart, an integrated bash, zsh or PowerShell tab (including Git Bash and bash in WSL)
+offers its last non-trivial command at its first empty prompt, dimmed with a fainter "last
+session" hint when space allows. Right or End accepts it; Tab keeps shell completion, and Enter
 never runs the suggestion. Any other line action, including opening HISTORY, dismisses it
-for that session. PowerShell, cmd, agent tabs and shells without integration do not offer it.
+for that session. cmd, agent tabs and shells without integration do not offer it.
 Commands beginning with `exit`, `logout`, `clear`, `cls`, `reset`, `ls`, `ll`, `dir`, `pwd`,
-`cd` or `history` do not replace the saved command. Private/unrecordable commands are never
+`cd` or `history` (ignoring case), or with PowerShell's `Clear-Host`, `Set-Location`, `sl`, `cd..`,
+`cd\`, `Get-ChildItem`, `gci`, `Get-Location`, `gl`, `Get-History` or `h`, do not replace the saved
+command. Private/unrecordable commands are never
 saved. Saving to `tabs.json` is queued immediately when a command starts, without a debounce
 delay; one background writer saves snapshots in order. A crash can lose an in-flight or queued
 update, including a deletion. Deleting a command from HISTORY also forgets it in the tabs of
@@ -576,6 +580,19 @@ and SVG, checked Raw/Rendered choices. The existing mode buttons and Ctrl+S stil
 | Keys | Action |
 |---|---|
 | Ctrl+S | Save the file (a `●` after its name marks unsaved edits) |
+| Ctrl+F | Search the rendered Markdown view (click in the page first); again: back to the field with the query selected |
+| Enter / Shift+Enter | Next / previous match, wrapping around (in the search field) |
+| Alt+C / Alt+W | Match case / whole word on or off (in the search field) |
+| Esc | Close the search bar and go back to the page (in the field or the page) |
+
+Search (rendered Markdown only so far) shows a bar under the header: the query, "N of M" (or
+"0 matches"), previous / next, close, and the "Aa" (match case) and "W" (whole word) toggles
+at the field's right end, both off by default. Every match is tinted in the page with the
+terminal palette's search colors, the current one stronger, and scrolled to when it is off
+screen. A one-line selection in the page becomes the query. The bar stays while you work in
+the terminal (Esc there is the terminal's); the Raw view, another file or closing the panel
+closes it, and a reload on disk change searches the new text again without scrolling. Each
+tab's panel keeps its query and toggles until it closes; they are never saved.
 
 Opening another file, closing the panel or the tab with unsaved edits asks "Save changes?"
 (Save, the default, Discard or Cancel); closing the window asks once for every file with
@@ -597,6 +614,10 @@ The header's repository picker lists every repository the open tabs are in, the 
 tab's first, with the current branch and a Refresh button. The page refreshes by itself when
 the index, HEAD or a changed file's folder changes.
 
+Drag the edge between the list and the diff to resize the list (170 to 680 px; a narrow window
+narrows the list first, the diff keeping 320 px); double-click it for the default width. The
+width is saved (`"git_list_width"` in settings.json).
+
 - **Commit box** (top of the list): a message that grows to six lines, then scrolls, and a
   Commit button, enabled once something is staged and the message has text. Ctrl+Enter
   (Cmd+Enter on macOS) commits; Enter adds a line. The repository's hooks run. On success the
@@ -604,7 +625,8 @@ the index, HEAD or a changed file's folder changes.
   and staged files are kept. Each repository keeps its own unsent message while the app runs.
 - **Staged Changes / Changes**: each changed file with its status letter (M modified, A added,
   D deleted, R renamed, C copied, T type changed, U untracked, ! conflicted); a file changed
-  on both sides is in both. Hover a file for + (stage) or − (unstage),
+  on both sides is in both. A name too long for the list ends in "…": hover it for the full
+  path. Hover a file for + (stage) or − (unstage),
   or a group header for Stage all / Unstage all. Click a header to fold its group. In
   Changes, the ↶ button (on a file, or Discard all on the header) throws away unstaged
   changes after a confirmation naming what is lost: a tracked file goes back to its staged
@@ -749,7 +771,8 @@ Missing or wrong-typed booleans each default to true. Changes apply live.
 
 Settings → Workspace has three switches, all on by default (`restore_tabs`,
 `remember_last_command`, `file_panes`; missing or non-boolean means on). The Git page's
-switch (`git_page`, also on) heads Settings → Git.
+switch (`git_page`, also on) heads Settings → Git, followed by **Git status in tabs and
+explorer** (`git_status`, also on).
 
 - **Restore previous tabs** off: the next start opens one fresh default tab, and `tabs.json`
   is neither read nor written (it is kept as it is, so turning the switch on again restores
@@ -772,6 +795,12 @@ switch (`git_page`, also on) heads Settings → Git.
   Ctrl+Shift+G does nothing; a shown Git page closes with its sidebar row (the selected tab
   shows again) and no new `git` command runs for it. Commit messages being written are kept while the app runs. Turned on
   again, the button returns; the row comes back when the page is opened.
+- **Git status in tabs and explorer** (Settings → Git) off (applies live): tab rows show the
+  folder instead of the branch (also on the hover card, and the tab menu offers no Copy
+  branch), the explorer drops its changed-file colors and git-ignored dimming, and the hover
+  card shows no `+N` or changed files (their switches show disabled, values kept). No `git`
+  runs and no branch is read for them; the Git page is unaffected. Turned on again, the
+  branch, colors and `+N` are read again.
 
 ### Notifications
 

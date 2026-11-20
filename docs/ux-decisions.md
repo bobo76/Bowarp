@@ -236,6 +236,38 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   for `.gitignore` only). `.git/info/exclude`, global excludes and tracking changes still need
   a collapse/expand. [UX agent]
 
+## File viewer search
+
+- **The bar is the terminal search bar's row**, under the viewer header, pushing the file
+  down rather than covering its first lines: same field, count ("N of M", "0 matches"; blank
+  for an empty query), previous/next, close. Case and whole-word are "Aa" / "W" toggle
+  buttons inside the field's right end (VS Code's place; the icon set has neither icon), with
+  the shown state and Alt+C / Alt+W in their tooltips; the keys work in the field only, so the
+  file and the terminal keep theirs. [UX agent]
+- **Match colors are tints of the theme's terminal search colors** (other matches light,
+  current strong): the text view paints a background only, so the opaque terminal colors
+  would leave light text unreadable on Dark. The current match is also told by the count and
+  by being scrolled to, not by color alone. [UX agent]
+- **Ctrl+F (Cmd+F on macOS) opens it in every view that shows text**: rendered Markdown first,
+  then the raw/source editor and rendered JSON with "File viewer search and replace". SVG,
+  images and files that can't be shown do nothing (no toast). Fixed like Ctrl+S, not
+  rebindable. The editor's own built-in search panel stays off, so there is one bar. [UX agent]
+- **Ctrl+F while open** refocuses the field and selects the query; a selection in the file
+  within one line replaces the query first (VS Code). [UX agent]
+- **Lifetime**: focus leaving for the terminal keeps the bar, highlights and count (Esc there
+  is the terminal's). A switch between two views that both search keeps the bar and re-runs
+  the query; a switch to a view without search (Raw, until source search exists), opening
+  another file (a followed link too) or closing the viewer closes it. A reload on disk change
+  re-runs the query on the new text, keeps the current match as the nearest one and does not
+  scroll (the reload keeps the reading position). Esc in the bar or the file closes it and
+  focuses the file. [UX agent]
+- **Where it starts**: typing picks the first match at or after the top of the visible text
+  (as the terminal does) and scrolls only if it is off screen; Enter / Shift+Enter wrap
+  silently. Closing keeps the scroll position and clears the highlights. [UX agent]
+- **Defaults**: case-insensitive, whole word off, like the terminal search. The query and both
+  toggles are kept per viewer (per tab) while the app runs, never saved; Ctrl+F reopens with
+  the last query selected. [UX agent]
+
 ## Git page
 
 - **The page replaces the tab like Settings**, with its own sidebar row and a title bar

@@ -139,7 +139,7 @@ impl Harness {
     }
 
     fn close(mut self, folder: &Path) {
-        self.update(|page, _, _| page.hide());
+        self.update(|page, _, cx| page.hide(cx));
         let _ = std::fs::remove_dir_all(folder);
     }
 }

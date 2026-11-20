@@ -791,6 +791,106 @@ fn a_file_is_read_in_the_background_and_shown_again_when_it_changes(
 }
 
 #[gpui::test]
+fn ctrl_f_searches_the_rendered_markdown_page(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("viewer-md-search", cx);
+    let file = h.folder.join("notes.md");
+    std::fs::write(
+        &file,
+        "# Title\n\nAlpha beta alpha.\n\nGamma ALPHA alphabet\n",
+    )
+    .unwrap();
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let id = workspace.tabs[0].id;
+            workspace.open_file_in(id, file.clone(), FilePlace::default(), window, cx);
+        });
+    });
+    h.cx.run_until_parked();
+    let viewer = h.state().2.expect("viewer").upgrade().unwrap();
+    let count = |h: &mut PanesHarness| {
+        h.cx.run_until_parked();
+        h.cx.update(|_, cx| viewer.read(cx).search_count_for_test(cx))
+    };
+    let keys = |h: &mut PanesHarness, keys: &str| {
+        h.cx.update(|window, cx| window.draw(cx).clear(cx));
+        h.cx.simulate_keystrokes(keys);
+    };
+    h.cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        viewer.update(cx, |viewer, cx| viewer.focus_page_for_test(window, cx));
+    });
+
+    // Ctrl+F in the page opens the bar, blank for an empty query.
+    keys(&mut h, "ctrl-f");
+    assert_eq!(count(&mut h).as_deref(), Some(""));
+    h.cx.simulate_input("alpha");
+    // Case is ignored and a match may sit inside a word.
+    assert_eq!(count(&mut h).as_deref(), Some("1 of 4"));
+    keys(&mut h, "enter");
+    assert_eq!(count(&mut h).as_deref(), Some("2 of 4"));
+    keys(&mut h, "shift-enter shift-enter");
+    assert_eq!(count(&mut h).as_deref(), Some("4 of 4"), "wraps");
+    keys(&mut h, "alt-w");
+    assert_eq!(
+        count(&mut h).as_deref(),
+        Some("1 of 3"),
+        "whole word, wrapped"
+    );
+    keys(&mut h, "alt-c");
+    assert_eq!(count(&mut h).as_deref(), Some("1 of 1"), "and case");
+    let (current, matches) =
+        h.cx.update(|_, cx| viewer.read(cx).search_matches_for_test());
+    assert_eq!(matches.len(), 1);
+    assert_eq!(current, matches.first().cloned());
+
+    // A reload searches the new text again.
+    std::fs::write(&file, "alpha, alpha and alpha\n").unwrap();
+    h.cx.update(|window, cx| viewer.update(cx, |viewer, cx| viewer.reload_for_test(window, cx)));
+    // The current match was the second "alpha", at the offset of the new text's third.
+    assert_eq!(
+        count(&mut h).as_deref(),
+        Some("3 of 3"),
+        "the nearest match"
+    );
+
+    // Esc closes the bar and focuses the page; Ctrl+F brings the query back.
+    keys(&mut h, "escape");
+    assert_eq!(count(&mut h), None);
+    let (current, matches) =
+        h.cx.update(|_, cx| viewer.read(cx).search_matches_for_test());
+    assert!(
+        current.is_none() && matches.is_empty(),
+        "highlights cleared"
+    );
+    assert!(h.cx.update(|window, cx| viewer.read(cx).page_focused_for_test(window, cx)));
+    keys(&mut h, "ctrl-f");
+    assert_eq!(count(&mut h).as_deref(), Some("1 of 3"));
+    keys(&mut h, "x");
+    assert_eq!(
+        count(&mut h).as_deref(),
+        Some("0 matches"),
+        "the query was selected"
+    );
+
+    // Going to a line shows the raw view, which has no search yet: the bar closes and
+    // Ctrl+F in the editor opens nothing.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let id = workspace.tabs[0].id;
+            let place = FilePlace {
+                line: Some(1),
+                column: None,
+            };
+            workspace.open_file_in(id, file.clone(), place, window, cx);
+        });
+    });
+    assert_eq!(count(&mut h), None);
+    keys(&mut h, "ctrl-f");
+    assert_eq!(count(&mut h), None);
+}
+
+#[gpui::test]
 fn edits_typed_while_a_save_writes_stay_unsaved(cx: &mut gpui_kit::TestAppContext) {
     let mut h = PanesHarness::new("viewer-save-race", cx);
     h.open_file();
@@ -1635,6 +1735,58 @@ fn explorer_dims_what_git_ignores_until_it_hides(cx: &mut gpui_kit::TestAppConte
         dimmed(&mut h),
         (Vec::new(), 0),
         "hiding the explorer drops git's answers"
+    );
+}
+
+#[gpui::test]
+fn git_status_switch_drops_branch_colors_and_dimming_live(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("git-status-switch", cx);
+    let initialized = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&h.folder)
+        .status()
+        .is_ok_and(|status| status.success());
+    if !initialized {
+        eprintln!("git not available, skipping");
+        return;
+    }
+    std::fs::write(h.folder.join(".gitignore"), "*.log\n").unwrap();
+    std::fs::write(h.folder.join("a.log"), "").unwrap();
+    // (dimmed row names, folders holding git state, colored paths, the tab shows a branch)
+    let git_state = |h: &mut PanesHarness| {
+        h.cx.executor().advance_clock(Duration::from_secs(1));
+        h.cx.run_until_parked();
+        h.workspace.read_with(&h.cx, |workspace, cx| {
+            let explorer = workspace.explorer.read(cx);
+            let (dimmed, held) = explorer.ignored_for_test();
+            let location = workspace.tabs[0].view.read(cx).location().cloned();
+            let branch = location.is_some_and(|location| location.head.is_some());
+            (dimmed.len(), held, explorer.changes_for_test(), branch)
+        })
+    };
+    let switch_to = |h: &mut PanesHarness, on: bool| {
+        h.cx.update(|_, cx| {
+            settings_file::update(cx, |settings| settings.git_status = FeatureSwitch::new(on));
+        });
+    };
+    switch_to(&mut h, false);
+    h.toggle_explorer();
+    assert_eq!(
+        git_state(&mut h),
+        (0, 0, 0, false),
+        "off: git is asked nothing"
+    );
+    switch_to(&mut h, true);
+    let (dimmed, held, colored, branch) = git_state(&mut h);
+    assert!(
+        dimmed > 0 && held == 1 && colored > 0 && branch,
+        "on again: git is asked"
+    );
+    switch_to(&mut h, false);
+    assert_eq!(
+        git_state(&mut h),
+        (0, 0, 0, false),
+        "off drops what git answered"
     );
 }
 

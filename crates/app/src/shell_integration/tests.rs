@@ -625,6 +625,7 @@ fn powershell_script_keeps_windows_powershell_syntax_and_reports_exit_status() {
         );
     }
     assert!(PWSH_SCRIPT.contains("133;D;aw=$global:__agentws_token;exit=$exit"));
+    assert!(PWSH_SCRIPT.contains("AddToHistoryHandler"));
     assert!(PWSH_SCRIPT.contains("function global:claude"));
     assert!(PWSH_SCRIPT.contains("function global:copilot"));
 }
@@ -871,6 +872,48 @@ fn powershell_agent_functions_wrap_an_alias_of_the_agent() {
             marks.contains(&AgentFinished(Some(3))),
             "{program}: {marks:?}"
         );
+    }
+}
+
+/// Unverified locally (no pwsh here): runs on the Windows CI under pwsh 7 and 5.1.
+#[test]
+fn powershell_enter_skips_lines_that_psreadline_keeps_out_of_its_history() {
+    let handlers = [
+        // Windows PowerShell 5.1's PSReadLine 2.0: a bool.
+        "{ param($l) if ($l -match 'token') { $false } else { $true } }",
+        // PowerShell 7: a delegate returning AddToHistoryOption.
+        "[Func[string,object]]{ param($l) if ($l -match 'password') { 'SkipAdding' } \
+         elseif ($l -match 'secret') { 'MemoryOnly' } elseif ($l -match 'boom') { throw 'x' } \
+         else { 'MemoryAndFile' } }",
+    ];
+    let test = concat!(
+        "foreach ($l in 'ls', 'echo password', 'echo secret', 'echo token', 'echo boom') {\n",
+        "    [Console]::Write(\"[$l=$(__agentws_command_mark $l)]\")\n",
+        "}\n",
+    );
+    for program in POWERSHELLS {
+        for handler in handlers {
+            let user = format!(
+                "function global:Get-PSReadLineOption {{ [pscustomobject]@{{ \
+                 AddToHistoryHandler = {handler} }} }}\n"
+            );
+            let Some((_, output)) = run_powershell(program, "pwsh-history-handler", &user, test)
+            else {
+                continue;
+            };
+            assert!(output.contains("[ls=;cmd=6c73]"), "{program}: {output}");
+            let skipped = |line: &str| output.contains(&format!("[{line}=]"));
+            let kept = |line: &str| output.contains(&format!("[{line}=;cmd="));
+            if handler.starts_with("{ param") {
+                assert!(skipped("echo token"), "{program}: {output}");
+                assert!(kept("echo password"), "{program}: {output}");
+                continue;
+            }
+            assert!(skipped("echo password"), "{program}: {output}");
+            assert!(skipped("echo secret"), "{program}: {output}");
+            assert!(kept("echo token"), "{program}: {output}");
+            assert!(kept("echo boom"), "{program}: {output}");
+        }
     }
 }
 

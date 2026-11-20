@@ -34,7 +34,8 @@ use gpui_kit::{
 };
 use workspace_model::{
     BlurControl, ClipboardPolicy, DependentState, DiffColors, FeatureSwitch, FontSize, RgbaColor,
-    Settings, TerminalColors, UiTheme, WindowBlur, WindowOpacity, blur_options, shown_blur,
+    Settings, TabCardField, TerminalColors, UiTheme, WindowBlur, WindowOpacity, blur_options,
+    shown_blur,
 };
 
 use crate::about;
@@ -197,21 +198,43 @@ fn appearance_groups() -> Vec<SettingGroup> {
 /// The Git page: the diff's colors.
 fn git_groups() -> Vec<SettingGroup> {
     vec![
-        SettingGroup::new().title("Git page").item(
-            switch_row(
-                "Git page",
-                "Show the Git page (Ctrl+Shift+G, the title bar button) to stage, unstage \
-                 and commit in the selected tab's repository. Off: the button is hidden and \
-                 the shortcut does nothing, the page and its sidebar row close, no new \
-                 git command runs for it, and commit messages being written are kept while the \
-                 app runs.",
-                SettingsField::new(
-                    |settings| settings.git_page.is_on(),
-                    |settings, value| settings.git_page = FeatureSwitch::new(value),
-                ),
+        SettingGroup::new()
+            .title("Git")
+            .item(
+                switch_row(
+                    "Git page",
+                    "Show the Git page (Ctrl+Shift+G, the title bar button) to stage, unstage \
+                     and commit in the selected tab's repository. Off: the button is hidden and \
+                     the shortcut does nothing, the page and its sidebar row close, no new \
+                     git command runs for it, and commit messages being written are kept while \
+                     the app runs.",
+                    SettingsField::new(
+                        |settings| settings.git_page.is_on(),
+                        |settings, value| settings.git_page = FeatureSwitch::new(value),
+                    ),
+                )
+                .keywords([
+                    "git",
+                    "commit",
+                    "stage",
+                    "diff",
+                    "repository",
+                    "changes",
+                ]),
             )
-            .keywords(["git", "commit", "stage", "diff", "repository", "changes"]),
-        ),
+            .item(
+                switch_row(
+                    GIT_STATUS_TITLE,
+                    "Show each tab's branch, the explorer's changed-file colors and git-ignored \
+                 dimming, and the hover card's +N. Off: the tab shows its folder instead and \
+                     no git runs for them; the Git page is unaffected.",
+                    SettingsField::new(
+                        |settings| settings.git_status.is_on(),
+                        |settings, value| settings.git_status = FeatureSwitch::new(value),
+                    ),
+                )
+                .keywords(["git", "branch", "explorer", "ignored", "changes", "status"]),
+            ),
         SettingGroup::new().title("Diff colors").items([
             color_row(
                 "Diff background",
@@ -256,6 +279,9 @@ fn git_groups() -> Vec<SettingGroup> {
         ]),
     ]
 }
+
+/// The "Git status in tabs and explorer" switch, named too by the hover card rows needing it.
+const GIT_STATUS_TITLE: &str = "Git status in tabs and explorer";
 
 /// The font size slider's range and step; the file accepts `FontSize::MIN..=MAX`.
 const FONT_SIZE_SLIDER: SliderRange = SliderRange {
@@ -691,6 +717,7 @@ fn tab_card_group() -> SettingGroup {
         ),
     ));
     type Piece = (
+        TabCardField,
         &'static str,
         &'static str,
         fn(&Settings) -> bool,
@@ -698,57 +725,81 @@ fn tab_card_group() -> SettingGroup {
     );
     let pieces: [Piece; 6] = [
         (
+            TabCardField::Status,
             "Status",
             "Status chip, command and elapsed working or running time.",
             |s| s.tab_card.status,
             |s, v| s.tab_card.status = v,
         ),
         (
+            TabCardField::Location,
             "Location",
             "Full folder and git branch.",
             |s| s.tab_card.location,
             |s, v| s.tab_card.location = v,
         ),
         (
+            TabCardField::Changes,
             "Changes",
             "Lines added in the working tree (+N from git diff).",
             |s| s.tab_card.changes,
             |s, v| s.tab_card.changes = v,
         ),
         (
+            TabCardField::ChangedFiles,
             "Changed files",
             "The changed files under +N, clickable to open (needs Changes).",
             |s| s.tab_card.changed_files,
             |s, v| s.tab_card.changed_files = v,
         ),
         (
+            TabCardField::ProgramTitle,
             "Program title",
             "The program's title when a custom tab name hides it.",
             |s| s.tab_card.program_title,
             |s, v| s.tab_card.program_title = v,
         ),
         (
+            TabCardField::SessionKind,
             "Session kind",
             "Kind icon, agent or shell name, and agent mode.",
             |s| s.tab_card.session_kind,
             |s, v| s.tab_card.session_kind = v,
         ),
     ];
-    for (title, description, get, set) in pieces {
+    for (field, title, description, get, set) in pieces {
         group = group.item(
             bound_row(
                 title,
                 description,
                 SettingsField::new(get, set),
-                dependent_switch_control(
-                    "Tab hover card",
-                    Rc::new(|settings: &Settings| settings.tab_card.enabled),
-                ),
+                card_piece_control(field),
             )
             .keywords(["tab", "hover", "card", "sidebar"]),
         );
     }
     group
+}
+
+/// A hover card row's switch: it needs the card, and `+N` and the changed files need git
+/// status too.
+fn card_piece_control(field: TabCardField) -> Control<bool> {
+    dependent_switch_control_all(card_piece_parents(field))
+}
+
+/// The options a hover card row needs, in the order the caption names the first one off.
+fn card_piece_parents(field: TabCardField) -> Vec<(&'static str, Rc<ParentFn>)> {
+    let mut parents: Vec<(&'static str, Rc<ParentFn>)> = vec![(
+        "Tab hover card",
+        Rc::new(|settings: &Settings| settings.tab_card.enabled),
+    )];
+    if matches!(field, TabCardField::Changes | TabCardField::ChangedFiles) {
+        parents.push((
+            GIT_STATUS_TITLE,
+            Rc::new(|settings: &Settings| settings.git_status.is_on()),
+        ));
+    }
+    parents
 }
 
 /// Reads whether a parent option is on.

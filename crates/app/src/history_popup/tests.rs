@@ -101,9 +101,9 @@ fn restored_command_is_one_shot_and_never_accepted_by_tab_or_enter(
         assert!(Instant::now() < deadline, "accepted command was not typed");
         std::thread::sleep(Duration::from_millis(10));
     }
-    for program in ["pwsh", "powershell", "cmd"] {
-        let mut excluded = spec.clone();
-        excluded.program = Some(program.into());
+    for (program, saves) in [("pwsh", true), ("powershell", true), ("cmd", false)] {
+        let mut other = spec.clone();
+        other.program = Some(program.into());
         let session = Session::spawn(
             2,
             &spec,
@@ -112,10 +112,20 @@ fn restored_command_is_one_shot_and_never_accepted_by_tab_or_enter(
             Arc::new(|_| {}),
         )
         .unwrap();
-        let excluded = cx.new(|cx| TerminalView::from_test_session(session, &excluded, cx));
-        excluded.update(cx, |view, cx| {
+        let other = cx.new(|cx| TerminalView::from_test_session(session, &other, cx));
+        other.update(cx, |view, cx| {
             view.restore_last_command(Some("git push".into()), cx);
-            assert_eq!(view.last_command(), None, "{program}");
+            let expected = saves.then_some("git push");
+            assert_eq!(view.last_command(), expected, "{program}");
+            view.dispatch_test_event(
+                SessionEvent::CommandExecuted(ExecutedCommand {
+                    command: "cargo build".into(),
+                    folder: None,
+                }),
+                cx,
+            );
+            let expected = saves.then_some("cargo build");
+            assert_eq!(view.last_command(), expected, "{program} records");
         });
     }
 }

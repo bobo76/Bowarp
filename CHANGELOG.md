@@ -5,6 +5,24 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Git page: drag the divider between the file list and the diff to resize the list
+  (double-click resets it); its width is kept. On a narrow window the list shrinks first so the
+  diff stays readable.
+- Git page: a long file name is cut short with "…" so the stage and discard buttons stay in
+  reach; hover the name for the full path.
+- PowerShell tabs restored after a restart offer their last command, as bash and zsh tabs do.
+  Lines PSReadLine keeps out of its history (passwords, tokens) are not saved, and commands
+  like `Clear-Host` or `cls` never replace the saved one.
+- File viewer: Ctrl+F searches a rendered Markdown file. Every match is highlighted, Enter and
+  Shift+Enter move between them, and the bar shows the count, with Match case (Alt+C) and
+  Whole word (Alt+W) toggles. A selected word starts the search there; Esc closes the bar.
+- Settings → Git: a **Git status in tabs and explorer** switch (on). Off: tabs show their
+  folder instead of the branch, the explorer drops changed-file colors and git-ignored dimming,
+  the hover card shows no `+N`, and no `git` runs for them. The Git page is unaffected. The
+  settings group "Git page" is now "Git".
+- Windows: the explorer colors changed files again in a folder reached through a short (8.3)
+  name such as `C:\Users\RUNNER~1`.
+
 ## 0.4.5
 
 - Git page: discard a file's unstaged changes with the ↶ button on its row in Changes or the

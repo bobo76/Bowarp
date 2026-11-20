@@ -108,6 +108,22 @@ impl FileStatus {
         !matches!(self.unstaged, None | Some(Change::Conflicted))
     }
 
+    /// Its full path as its row on `side` names it: the path, then `from <orig>` for a staged
+    /// rename or copy (as the row's detail says).
+    pub fn full_path_label(&self, side: DiffSide) -> String {
+        match self.shown_origin(side) {
+            Some(orig) => format!("{} from {orig}", self.path),
+            None => self.path.clone(),
+        }
+    }
+
+    /// The path it came from, as its row on `side` names it: a staged rename's or copy's.
+    pub fn shown_origin(&self, side: DiffSide) -> Option<&str> {
+        self.orig_path
+            .as_deref()
+            .filter(|_| side == DiffSide::Staged)
+    }
+
     /// Whether lines of it can be staged or unstaged one by one on `side` (a text diff git can
     /// apply in parts: not untracked, not a merge conflict, not a type change, whose diff
     /// removes one file and adds another).

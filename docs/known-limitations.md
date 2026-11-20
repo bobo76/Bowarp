@@ -78,6 +78,13 @@ entry when the limitation is lifted.
   only shows Needs attention.
 - Not supported in the file viewer: AVIF images (GPUI's decoder lacks it: "The image could
   not be read."), a `#heading` in a document link (the file opens at the top).
+- Markdown search in the file viewer starts at the top of the page, or at the current match
+  when the query or a toggle changes, not at the first line in view: the rendered page tells
+  where a text offset is drawn but not which text is at the top. Searching the page needs the
+  page to have keyboard focus first (click in it): Ctrl+F in the explorer or the terminal
+  does not reach the viewer. Matches are literal and case is compared one character at a time
+  (`İ` matches only itself). A match in what the page draws outside its text (HTML blocks,
+  inline objects) counts but is not tinted.
 - File viewer images: still WebP files share animated GIF/WebP's 2 MB limit (other images
   50 MB), and images over 16384 pixels on a side are refused rather than scaled down.
 - An OSC 8 link spanning several lines: only its row is underlined.

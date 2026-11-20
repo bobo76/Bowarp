@@ -110,9 +110,11 @@ directly to model APIs.
   Settings page take turns. A switch turns the page off.
 - Pick any repository the open tabs are in, the selected tab's first; see its branch.
 - List the changed files in "Staged Changes" and "Changes" groups with their status letters;
-  stage or unstage a file, or all of them.
+  stage or unstage a file, or all of them. A long name is cut short with "…" (full path in a
+  tooltip) so a row's buttons stay in reach.
 - Show the selected file's unified diff (staged or unstaged side; an untracked file as all
-  added lines).
+  added lines). A divider between the file list and the diff resizes the list; its width is
+  kept.
 - Stage or unstage a hunk or the selected lines from the diff, with the mouse or the keyboard.
 - Commit what is staged with a message (Ctrl+Enter); the repository's hooks run, and a failure
   shows git's message and keeps the message typed.
@@ -187,6 +189,9 @@ directly to model APIs.
 - Let the user turn off the file explorer and viewer: both panes and their entry points
   disappear after unsaved edits are resolved, nothing is watched or scanned for them, and
   file links in the terminal are offered to the system's own application instead.
+- Let the user turn off git status outside the Git page: tabs show their folder instead of
+  the branch, the explorer has no changed-file colors or git-ignored dimming, the hover card
+  no `+N`, and no `git` runs for them; the Git page is unaffected.
 - Let the user turn off in-app notifications for agent events; status and attention badges
   stay, and a crashed agent, failures and warnings are still shown.
 - Let the user turn off agent status for `claude` / `copilot` typed at a shell prompt: shells
