@@ -39,6 +39,9 @@ entry when the limitation is lifted.
   default shell changed meanwhile in Settings is not picked up by Retry (the launcher buttons
   and Ctrl+Shift+T use it). A folder named with `--remote` is not checked before connecting.
   Only start-up shows the error in the empty state; a tab that fails to open later toasts.
+- Remote daemon on a Windows server: `agentws-server proxy` doesn't check which user owns the
+  named pipe it connects to (Linux does). Another user can't open our pipe read/write, but
+  could create the machine-wide name first while no daemon of ours runs.
 - Agent status off (`agentws-hook` missing or the status listener could not start): Claude
   Code tabs fall back to output activity ("Status unavailable" when quiet) and a bell asks for
   attention as in a shell; a Copilot CLI permission prompt reads Working, not Needs attention,

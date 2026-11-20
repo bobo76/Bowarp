@@ -19,7 +19,8 @@ and the app can attach to them again, like tmux.
   port is opened. ssh must log in without asking (a key or an agent): there is no terminal
   to type a password into.
 - **Daemon.** `agentws-server proxy` connects to this user's daemon on a local socket
-  (abstract namespace on Linux, a named pipe on Windows; peers of another user are refused),
+  (abstract namespace on Linux, a named pipe on Windows; on Linux both sides refuse a peer of
+  another user, so a socket name squatted by another user is never used),
   starting `agentws-server serve` in its own session (`setsid`) when none runs. The daemon
   exits after 60 s with no session and no connection. Sessions outlive the ssh connection.
 - **Sessions on the server** are real `term_core::Session`s, so the program's terminal queries
