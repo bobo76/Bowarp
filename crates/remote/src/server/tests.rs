@@ -763,3 +763,23 @@ fn a_shutdown_ends_every_session_and_refuses_new_ones() {
     assert!(client.list().unwrap().is_empty());
     assert!(client.spawn(shell(None), size(20, 4), quiet()).is_err());
 }
+
+#[test]
+fn a_paste_larger_than_a_frame_arrives_whole() {
+    let server = Server::new();
+    let (client, _cut, _reason) = connect(&server);
+    let total = crate::protocol::MAX_FRAME + 1024 * 1024;
+    // Raw and silent, so the pty passes every byte on and echoes none back.
+    let script = format!("stty raw -echo; head -c {total} | wc -c | tr -d ' '; sleep 30");
+    let remote = client
+        .spawn(shell(Some(&script)), size(40, 6), quiet())
+        .unwrap();
+    thread::sleep(Duration::from_millis(300));
+    remote.session.write(vec![b'x'; total]);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !screen_contains(&remote, &total.to_string()) {
+        assert!(Instant::now() < deadline, "the paste did not arrive whole");
+        assert!(client.is_connected());
+        thread::sleep(Duration::from_millis(20));
+    }
+}

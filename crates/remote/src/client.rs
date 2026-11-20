@@ -29,6 +29,8 @@ use crate::protocol::{
 const REPLY_TIMEOUT: Duration = Duration::from_secs(20);
 /// How much of the transport command's error output is kept for error messages.
 const MAX_STDERR: usize = 4096;
+/// The most input bytes in one message, well under `MAX_FRAME`.
+const MAX_INPUT: usize = 1024 * 1024;
 /// How long `over_command` waits for the server's hello before killing the command.
 #[cfg(not(test))]
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -236,9 +238,6 @@ impl Client {
             writer.flush()?;
         }
         let (outgoing, queue) = mpsc::channel();
-        thread::Builder::new()
-            .name("agentws-remote-writer".into())
-            .spawn(move || write_messages(writer, &queue))?;
         let inner = Arc::new(Inner {
             outgoing: Mutex::new(Some(outgoing)),
             pending: Mutex::new(HashMap::new()),
@@ -247,6 +246,16 @@ impl Client {
             connected: AtomicBool::new(true),
             child: Mutex::new(None),
         });
+        let writing = Arc::downgrade(&inner);
+        thread::Builder::new()
+            .name("agentws-remote-writer".into())
+            .spawn(move || {
+                if let Err(err) = write_messages(writer, &queue)
+                    && let Some(inner) = writing.upgrade()
+                {
+                    inner.write_failed(&err);
+                }
+            })?;
         let reading = inner.clone();
         thread::Builder::new()
             .name("agentws-remote-reader".into())
@@ -398,22 +407,19 @@ fn collect_stderr(mut stderr: impl Read, errors: &Mutex<Vec<u8>>) {
     }
 }
 
-/// Send queued messages until the queue closes or the connection fails; flushes once the
+/// Send queued messages until the queue closes (`Ok`) or a write fails; flushes once the
 /// queue is empty, so a burst of keystrokes goes out in one write.
-fn write_messages(writer: impl Write, queue: &Receiver<ClientMessage>) {
+fn write_messages(writer: impl Write, queue: &Receiver<ClientMessage>) -> io::Result<()> {
     let mut writer = BufWriter::new(writer);
     while let Ok(message) = queue.recv() {
         let mut next = Some(message);
         while let Some(message) = next.take() {
-            if write_frame(&mut writer, &message.encode()).is_err() {
-                return;
-            }
+            write_frame(&mut writer, &message.encode())?;
             next = queue.try_recv().ok();
         }
-        if writer.flush().is_err() {
-            return;
-        }
+        writer.flush()?;
     }
+    Ok(())
 }
 
 impl Inner {
@@ -553,6 +559,16 @@ impl Inner {
         }
     }
 
+    /// The writer could not send: nothing more reaches the server, so the connection is over.
+    /// Killing the command also ends the reader, which reports the disconnect.
+    fn write_failed(&self, err: &io::Error) {
+        log::warn!("remote connection: write failed: {err}");
+        self.disconnected(&format!("connection lost: {err}"));
+        if let Some(child) = self.child.lock().unwrap().as_mut() {
+            let _ = child.kill();
+        }
+    }
+
     fn disconnected(&self, reason: &str) {
         self.connected.store(false, Ordering::Release);
         // The writer thread ends once its queue closes.
@@ -573,13 +589,17 @@ struct Link {
 }
 
 impl RemoteLink for Link {
+    /// A large paste goes in several messages: one frame can't exceed `MAX_FRAME`.
     fn write(&self, bytes: std::borrow::Cow<'static, [u8]>) {
-        let message = ClientMessage::Input {
-            session: self.session,
-            bytes: bytes.into_owned(),
-        };
-        if let Err(err) = self.client.send(message) {
-            log::debug!("remote input dropped: {err}");
+        for chunk in bytes.chunks(MAX_INPUT) {
+            let message = ClientMessage::Input {
+                session: self.session,
+                bytes: chunk.to_vec(),
+            };
+            if let Err(err) = self.client.send(message) {
+                log::debug!("remote input dropped: {err}");
+                return;
+            }
         }
     }
 
