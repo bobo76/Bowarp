@@ -108,6 +108,10 @@ struct Hosted {
     kind: String,
     session: Session,
     fanout: Arc<Mutex<Fanout>>,
+    /// Held across a resize of the pty and then of the mirror, so two clients resizing at
+    /// once leave both at the same size. Not the fan-out lock: the pty reader holds the
+    /// terminal's lock while its tap takes the fan-out lock, so resizing under it deadlocks.
+    resizing: Mutex<()>,
 }
 
 /// What a session's output goes to.
@@ -587,6 +591,7 @@ impl Server {
             kind: spec.kind.clone(),
             session,
             fanout,
+            resizing: Mutex::new(()),
         });
         self.sessions().insert(id, hosted.clone());
         log::info!("session {id} started: {:?}", launch.program);
@@ -595,6 +600,7 @@ impl Server {
 
     fn attach(&self, connection: &Connection, request: u32, hosted: &Hosted, size: TermDimensions) {
         let (client, outbox) = (connection.client, connection.outbox);
+        let _resizing = hosted.resizing.lock().unwrap();
         // Before the fan-out lock: resizing locks the session's terminal.
         hosted.session.resize(size);
         let mut fanout = hosted.fanout.lock().unwrap();
@@ -705,6 +711,7 @@ impl Hosted {
     }
 
     fn resize(&self, client: u64, size: TermDimensions) {
+        let _resizing = self.resizing.lock().unwrap();
         self.session.resize(size);
         let mut fanout = self.fanout.lock().unwrap();
         if fanout.mirror.size() != size {
