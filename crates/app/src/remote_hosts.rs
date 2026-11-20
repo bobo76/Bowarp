@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
 
 use agentws_remote::status::{self, Action, CheckOutcome, HostCheck, StatusTone};
@@ -219,8 +219,12 @@ impl RemoteReattach {
 impl HostLink {
     fn client(&self) -> io::Result<Arc<Client>> {
         // Held while connecting: a second tab on the host waits for this connection instead
-        // of opening one of its own.
-        let mut connection = self.connection.lock().unwrap();
+        // of opening one of its own. A panic while connecting must not leave the host unusable
+        // until restart: the guarded value is only a cached client.
+        let mut connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if let Some(client) = connection.as_ref().filter(|client| client.is_connected()) {
             return Ok(client.clone());
         }
