@@ -169,7 +169,7 @@ impl Render for Empty {
 }
 
 #[gpui::test]
-fn native_failure_notifies_without_changing_the_root_and_retry_applies_it(cx: &mut TestAppContext) {
+fn native_failure_notifies_once_and_another_choice_retries_it(cx: &mut TestAppContext) {
     use gpui_kit::component::WindowExt;
 
     cx.update(gpui_kit::init);
@@ -182,12 +182,16 @@ fn native_failure_notifies_without_changing_the_root_and_retry_applies_it(cx: &m
         fail: Some(Call::Frame(true)),
         ..Default::default()
     };
-    for _ in 0..2 {
+    for attempt in 0..2 {
         cx.update(|cx| {
             apply_with(window.into(), &applied, Backdrop::Mica, cx, |_| {
                 applied.update(Backdrop::Mica, true, &mut native)
             });
         });
+        if attempt == 1 {
+            // Another settings change: the failed backdrop is not tried again.
+            assert_eq!(native.calls.len(), 3, "{:?}", native.calls);
+        }
         window
             .update(cx, |root, _, _| {
                 assert!(root.style().background.is_none());
@@ -207,11 +211,14 @@ fn native_failure_notifies_without_changing_the_root_and_retry_applies_it(cx: &m
         assert_eq!(applied.backdrop.get(), None);
     }
     native.fail = None;
-    cx.update(|cx| {
-        apply_with(window.into(), &applied, Backdrop::Mica, cx, |_| {
-            applied.update(Backdrop::Mica, true, &mut native)
+    // Choosing another backdrop, then Mica again, retries it.
+    for backdrop in [Backdrop::Opaque, Backdrop::Mica] {
+        cx.update(|cx| {
+            apply_with(window.into(), &applied, backdrop, cx, |_| {
+                applied.update(backdrop, true, &mut native)
+            });
         });
-    });
+    }
     window
         .update(cx, |root, _, _| assert!(root.style().background.is_some()))
         .unwrap();
