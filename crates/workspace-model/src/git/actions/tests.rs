@@ -540,3 +540,16 @@ fn the_discard_prompt_names_what_is_lost() {
     assert_eq!(discard_prompt(&[&conflict, &staged_only]), None);
     assert_eq!(discard_prompt(&[]), None);
 }
+
+#[cfg(unix)]
+#[test]
+fn locates_a_repository_whose_folder_name_ends_in_a_space() {
+    let base = TempDir::new();
+    let folder = base.0.join("project ");
+    fs::create_dir(&folder).unwrap();
+    if !git(&folder, &["init", "-q", "-b", "main"]) {
+        return;
+    }
+    let repo = locate(&folder).unwrap();
+    assert_eq!(repo.root.file_name().unwrap(), "project ");
+}

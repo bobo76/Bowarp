@@ -88,10 +88,8 @@ pub fn locate(dir: &Path) -> Option<RepoEntry> {
     .into_result()
     .ok()?;
     let output = String::from_utf8(output).ok()?;
-    let mut lines = output
-        .lines()
-        .map(str::trim_end)
-        .filter(|line| !line.is_empty());
+    // `lines` drops the line ends (`\r\n` too); a folder name may end in spaces.
+    let mut lines = output.lines().filter(|line| !line.is_empty());
     let root = PathBuf::from(lines.next()?);
     let git_dir = PathBuf::from(lines.next()?);
     let name = root.file_name().map_or_else(
