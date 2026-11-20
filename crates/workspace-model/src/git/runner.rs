@@ -138,7 +138,9 @@ pub(super) fn execute_capped(
 /// another repository.
 fn git_command(dir: &Path, args: &[&str], access: Access, stdin: Stdio) -> Command {
     let mut command = Command::new("git");
-    // A repository's config must not run commands (`core.fsmonitor`) behind the user's back.
+    // No `core.fsmonitor` command from a repository's config behind the user's back: status
+    // reads run on their own. Other configured commands (`filter.*` drivers, hooks on
+    // writes) still run, as they would for the user's own git.
     command.args(["-c", "core.fsmonitor=false"]);
     if access == Access::Read {
         command.arg("--no-optional-locks");
