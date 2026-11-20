@@ -387,6 +387,10 @@ Packaged app on Linux: a smoke test and the About dialog's version and commit.
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
+- Switch branch from the Git page: select a local branch or check out a remote-tracking
+  branch. Requires a clean working tree (the safety rule under Git below); define safeguards
+  for active agents and refresh branch/status information for all affected tabs after a switch.
+
 ### General
 
 - Agent status switch for agent tabs, "Agent status" (on), the parent of "Agent status for
@@ -608,9 +612,6 @@ limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the comma
   `git` race for the index lock), and the repository's hooks run.
 - Discard a hunk or the selected lines from the working tree (the diff's unstaged side), with
   a confirmation naming what is lost, like discarding a file.
-- Switch branch from the Git page: select a local branch or check out a remote-tracking
-  branch. Requires a clean working tree (safety rule above); define safeguards for active
-  agents and refresh branch/status information for all affected tabs after a switch.
 - Fetch / pull / push: authentication without a prompt (`GIT_TERMINAL_PROMPT=0`; rely on
   credential helpers), the safety rule for pull, conflicts, remote tracking; refresh every tab
   in the repository afterwards.
