@@ -458,7 +458,7 @@ fn prompt_events_and_history_changes_reconcile_the_open_popup(cx: &mut gpui_kit:
 
     cx.update(|cx| {
         gpui_kit::init(cx);
-        crate::settings_file::init(cx);
+        crate::settings_file::init_in_memory(cx);
         crate::terminal_element::init(cx);
         crate::terminal_view::init(cx);
         history::init_in_memory(cx);

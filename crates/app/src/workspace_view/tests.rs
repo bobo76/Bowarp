@@ -43,7 +43,7 @@ fn last_command_events_and_history_deletion_are_flushed_with_the_final_snapshot(
 
     cx.update(|cx| {
         gpui_kit::init(cx);
-        settings_file::init(cx);
+        settings_file::init_in_memory(cx);
         crate::terminal_element::init(cx);
         crate::terminal_view::init(cx);
         crate::history::init_in_memory(cx);
@@ -1019,7 +1019,7 @@ fn duplicate_shortcut_does_not_send_eof_to_the_original_terminal(
 
     cx.update(|cx| {
         gpui_kit::init(cx);
-        settings_file::init(cx);
+        settings_file::init_in_memory(cx);
         crate::terminal_element::init(cx);
         crate::terminal_view::init(cx);
         init(cx);
@@ -1118,7 +1118,7 @@ fn tab_actions_capture_shortcuts_while_search_has_focus(cx: &mut gpui_kit::TestA
 
     cx.update(|cx| {
         gpui_kit::init(cx);
-        settings_file::init(cx);
+        settings_file::init_in_memory(cx);
         init(cx);
     });
     let captured = Rc::new(RefCell::new(None));
@@ -1158,7 +1158,7 @@ fn startup_fallback_warning_is_deferred_until_the_root_exists(cx: &mut gpui_kit:
     use gpui_kit::component::Root;
 
     cx.update(gpui_kit::init);
-    cx.update(settings_file::init);
+    cx.update(settings_file::init_in_memory);
     let window = cx.add_window(move |window, cx| {
         let (_, messages) = futures::channel::mpsc::unbounded();
         let workspace = cx.new(|cx| {
@@ -1798,7 +1798,7 @@ fn agent_status_off_warning_stays_once_beside_the_fallback_warning(
     use gpui_kit::component::Root;
 
     cx.update(gpui_kit::init);
-    cx.update(settings_file::init);
+    cx.update(settings_file::init_in_memory);
     let window = cx.add_window(move |window, cx| {
         let (_, messages) = futures::channel::mpsc::unbounded();
         let workspace = cx.new(|cx| {
@@ -2799,7 +2799,7 @@ fn enter_on_an_exited_tab_restarts_its_launch_in_place(cx: &mut gpui_kit::TestAp
 
     cx.update(|cx| {
         gpui_kit::init(cx);
-        settings_file::init(cx);
+        settings_file::init_in_memory(cx);
         crate::terminal_element::init(cx);
         crate::terminal_view::init(cx);
         init(cx);
@@ -2886,7 +2886,7 @@ fn a_failed_local_restart_keeps_the_exited_view_and_toasts_once(cx: &mut gpui_ki
 
     cx.update(|cx| {
         gpui_kit::init(cx);
-        settings_file::init(cx);
+        settings_file::init_in_memory(cx);
         crate::terminal_element::init(cx);
         crate::terminal_view::init(cx);
         init(cx);

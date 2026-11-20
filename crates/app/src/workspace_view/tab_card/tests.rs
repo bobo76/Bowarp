@@ -14,7 +14,7 @@ fn card_settings_stop_existing_clocks_and_skip_disabled_work(cx: &mut gpui_kit::
 
     cx.update(|cx| {
         gpui_kit::init(cx);
-        settings_file::init(cx);
+        settings_file::init_in_memory(cx);
         crate::terminal_element::init(cx);
         settings_file::preview(cx, |settings| settings.tab_card = Default::default());
     });
