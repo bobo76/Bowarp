@@ -610,6 +610,14 @@ impl GitPage {
     }
 
     /// Stage a file of the Changes group, or unstage one of the Staged group.
+    /// Where the file at `path` is in the current status.
+    fn file_index(&self, path: &str) -> Option<usize> {
+        self.status()?
+            .files
+            .iter()
+            .position(|file| file.path == path)
+    }
+
     fn toggle_file(
         &mut self,
         side: DiffSide,
@@ -1047,6 +1055,8 @@ impl GitPage {
         let group = SharedString::from(format!("git-file-{row}"));
         let discardable = side == DiffSide::Unstaged && file.discardable();
         let clicked = (side, file.path.clone());
+        // By path: the status may be refreshed (and the files renumbered) before the click.
+        let (discarded, toggled) = (file.path.clone(), file.path.clone());
         let selected_background =
             crate::window_background::panel_background(theme.sidebar_accent, cx);
         let hovered = sidebar::hover_background(cx);
@@ -1086,7 +1096,9 @@ impl GitPage {
                                 .tooltip("Discard changes")
                                 .on_click(cx.listener(move |page, _, window, cx| {
                                     cx.stop_propagation();
-                                    page.confirm_discard_file(index, window, cx);
+                                    if let Some(index) = page.file_index(&discarded) {
+                                        page.confirm_discard_file(index, window, cx);
+                                    }
                                 })),
                         )
                     })
@@ -1099,7 +1111,9 @@ impl GitPage {
                             .tooltip(tooltip)
                             .on_click(cx.listener(move |page, _, window, cx| {
                                 cx.stop_propagation();
-                                page.toggle_file(side, index, window, cx);
+                                if let Some(index) = page.file_index(&toggled) {
+                                    page.toggle_file(side, index, window, cx);
+                                }
                             })),
                     ),
             )
