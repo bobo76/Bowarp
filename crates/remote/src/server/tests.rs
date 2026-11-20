@@ -783,3 +783,14 @@ fn a_paste_larger_than_a_frame_arrives_whole() {
         thread::sleep(Duration::from_millis(20));
     }
 }
+
+#[test]
+fn an_accepted_connection_restarts_the_idle_time() {
+    let server = Server::new();
+    // The first look starts the idle time.
+    server.idle_for();
+    thread::sleep(Duration::from_millis(100));
+    assert!(server.idle_for().unwrap() >= Duration::from_millis(100));
+    server.connection_accepted();
+    assert!(server.idle_for().unwrap() < Duration::from_millis(50));
+}

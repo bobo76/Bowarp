@@ -274,6 +274,12 @@ impl Server {
         }
     }
 
+    /// A client has just connected: the idle time starts over, so the daemon doesn't exit
+    /// while the connection is being set up (before [`Self::serve_connection`] counts it).
+    pub fn connection_accepted(&self) {
+        *self.inner.idle_since.lock().unwrap() = Some(Instant::now());
+    }
+
     /// How long the server had no connection and no session; `None` while it has either.
     pub fn idle_for(&self) -> Option<Duration> {
         if self.inner.connections.load(Ordering::Acquire) > 0 || !self.sessions().is_empty() {
