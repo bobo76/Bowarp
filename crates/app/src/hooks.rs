@@ -5,6 +5,7 @@ use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::thread;
 
 use agent_status::{AGENT_ENV, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, default_pipe_name};
 use term_core::LaunchSpec;
@@ -234,13 +235,17 @@ impl AgentHooks {
         Ok(plugin)
     }
 
-    /// Remove a session's plugin after its process exits or its tab closes.
-    pub fn remove_session(&self, session: u64) {
-        for (agent, path) in &self.artifacts {
-            if agent.hook_artifact_kind() == HookArtifactKind::PluginDirectory {
-                remove_artifact(&path.join(session.to_string()));
-            }
-        }
+    /// Remove a session's plugin after its process exits or its tab closes, on a thread of its
+    /// own: this runs on the UI thread, and the folder may be slow. Session ids are never
+    /// reused, so nothing waits for it.
+    pub fn remove_session(&self, session: u64) -> thread::JoinHandle<()> {
+        let plugins: Vec<PathBuf> = self
+            .artifacts
+            .iter()
+            .filter(|(agent, _)| agent.hook_artifact_kind() == HookArtifactKind::PluginDirectory)
+            .map(|(_, path)| path.join(session.to_string()))
+            .collect();
+        thread::spawn(move || plugins.iter().for_each(|plugin| remove_artifact(plugin)))
     }
 
     /// Delete the app-owned settings and plugins when all sessions are shutting down.

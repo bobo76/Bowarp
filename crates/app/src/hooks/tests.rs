@@ -87,7 +87,7 @@ fn attachments_are_provider_driven_and_keep_hooks_before_user_arguments() {
     );
     assert!(!shell.env.contains_key(AGENT_ENV));
     assert!(shell_plugin.join("hooks.json").is_file());
-    hooks.remove_session(13);
+    hooks.remove_session(13).join().unwrap();
     assert!(
         !shell_plugin.exists(),
         "closing a shell tab removes its plugin"
@@ -111,7 +111,7 @@ fn attachments_are_provider_driven_and_keep_hooks_before_user_arguments() {
     assert_eq!(claude.env[SESSION_ENV], "14");
     assert!(!claude.env.contains_key("AGENTWS_HOOK"));
 
-    hooks.remove_session(12);
+    hooks.remove_session(12).join().unwrap();
     assert!(!plugin.exists(), "closing a tab removes its plugin");
     hooks.remove_settings();
     assert!(!root.join("copilot").exists());
