@@ -396,13 +396,12 @@ fn compact_locked(path: &Path, text: &[u8]) -> io::Result<()> {
     let temp = path.with_extension(format!("jsonl.{}.tmp", std::process::id()));
     // A leftover from a crash keeps its mode when reopened.
     let _ = fs::remove_file(&temp);
-    private_file()
+    let written = private_file()
         .write(true)
         .truncate(true)
-        .open(&temp)?
-        .write_all(text)?;
-    fs::rename(&temp, path)?;
-    Ok(())
+        .open(&temp)
+        .and_then(|mut file| file.write_all(text).map(|()| file));
+    crate::window_state::rename_into_place(&temp, path, written)
 }
 
 /// Empty the history file at `path` (the "Clear history" action). A missing file is fine.

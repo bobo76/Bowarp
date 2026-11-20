@@ -158,3 +158,15 @@ fn save_then_load() {
     assert_eq!(WindowState::load(&dir.join("missing.json")), None);
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn a_failed_atomic_write_leaves_no_temporary_file() {
+    let dir = crate::git::tests::TempDir::new();
+    // The target is a folder: the rename fails after the temporary file was written.
+    let path = dir.0.join("window.json");
+    std::fs::create_dir(&path).unwrap();
+    std::fs::write(path.join("inside"), "").unwrap();
+    assert!(write_atomic(&path, "{}").is_err());
+    assert!(write_private_atomic(&path, "{}").is_err());
+    assert!(!temp_path(&path).exists());
+}
