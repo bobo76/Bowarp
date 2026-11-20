@@ -1192,10 +1192,13 @@ impl TerminalView {
         }
         self.activity_task = Some(cx.spawn(async move |this, cx| {
             loop {
-                let Ok(Some(last_output)) =
-                    this.read_with(cx, |view, _| view.session.last_output())
+                let Ok(last_output) = this.read_with(cx, |view, _| view.session.last_output())
                 else {
                     return;
+                };
+                // No output yet (a remote tab resized by another client): quiet at once.
+                let Some(last_output) = last_output else {
+                    break;
                 };
                 let quiet_at = last_output + ACTIVITY_WINDOW;
                 let now = Instant::now();

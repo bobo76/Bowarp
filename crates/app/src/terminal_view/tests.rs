@@ -1501,3 +1501,36 @@ fn the_menu_on_a_url_copies_the_link(cx: &mut gpui_kit::TestAppContext) {
     let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
     assert_eq!(copied.as_deref(), Some(url));
 }
+
+#[gpui::test]
+fn a_wakeup_before_any_output_does_not_leave_the_tab_active(cx: &mut gpui_kit::TestAppContext) {
+    let mut spec = LaunchSpec::new(SessionKind::Shell, Some("sh".into()), Vec::new(), None);
+    spec.host = Some("box".into());
+    let (session, feed) = Session::remote(
+        1,
+        SessionKind::Shell,
+        TermDimensions::new(40, 5),
+        Palette::default(),
+        Arc::new(|_| {}),
+        Box::new(NoLink),
+    );
+    let view = cx.new(|cx| TerminalView::from_test_session(session, &spec, cx));
+    // Another client resized the session: a wakeup, no output.
+    view.update(cx, |view, cx| {
+        view.on_session_event(SessionEvent::Wakeup, cx)
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert_ne!(view.tab_status(), TabStatus::Active)
+    });
+
+    // Output after it still marks the tab active.
+    feed.output(b"hello");
+    view.update(cx, |view, cx| {
+        view.on_session_event(SessionEvent::Wakeup, cx)
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.tab_status(), TabStatus::Active)
+    });
+}
