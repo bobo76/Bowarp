@@ -95,9 +95,15 @@ fn deliver_batches<V: WatchesFolders>(
     cx.spawn_in(window, async move |this, cx| {
         while let Some(first) = changes.next().await {
             cx.background_executor().timer(CHANGE_BATCH).await;
+            // A burst (a build writing one file many times) repeats paths: each goes once,
+            // in the order first reported. The channel is drained every batch, so it stays
+            // small however fast changes come.
+            let mut seen = HashSet::from([first.clone()]);
             let mut paths = vec![first];
             while let Ok(path) = changes.try_recv() {
-                paths.push(path);
+                if seen.insert(path.clone()) {
+                    paths.push(path);
+                }
             }
             if this
                 .update_in(cx, |view, window, cx| {
@@ -293,6 +299,9 @@ mod tests {
         cx.run_until_parked();
         sender.unbounded_send(PathBuf::from("first.txt")).unwrap();
         cx.run_until_parked();
+        sender.unbounded_send(PathBuf::from("second.txt")).unwrap();
+        // Repeats within a batch go once.
+        sender.unbounded_send(PathBuf::from("first.txt")).unwrap();
         sender.unbounded_send(PathBuf::from("second.txt")).unwrap();
         cx.run_until_parked();
         assert!(owner.read_with(cx, |owner, _| owner.batches.is_empty()));
