@@ -109,6 +109,11 @@ fn replays_cursor_position_and_modes() {
 }
 
 #[test]
+fn replays_the_cursor_in_origin_mode() {
+    assert_round_trip(b"\x1b[?6hhello\x1b[3;4H", 20, 5);
+}
+
+#[test]
 fn replays_hyperlinks() {
     let text = "see \x1b]8;id=a;https://example.com\x1b\\here\x1b]8;;\x1b\\ done";
     assert_round_trip(text.as_bytes(), 30, 3);
