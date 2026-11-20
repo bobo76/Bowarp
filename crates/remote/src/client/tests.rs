@@ -1,13 +1,14 @@
+//! Unix only: the tests run `sh`.
+#![cfg(unix)]
+
 use super::*;
 
-#[cfg(unix)]
 fn over_shell(script: &str) -> io::Result<Client> {
     let mut command = Command::new("sh");
     command.args(["-c", script]);
     Client::over_command(command, None, Box::new(|_| {}))
 }
 
-#[cfg(unix)]
 #[test]
 fn a_silent_server_times_out() {
     let started = std::time::Instant::now();
@@ -16,7 +17,6 @@ fn a_silent_server_times_out() {
     assert!(started.elapsed() < Duration::from_secs(10));
 }
 
-#[cfg(unix)]
 #[test]
 fn a_process_left_holding_stderr_does_not_stall_the_error() {
     let started = std::time::Instant::now();
