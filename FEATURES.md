@@ -112,7 +112,8 @@ directly to model APIs.
 - List the changed files in "Staged Changes" and "Changes" groups with their status letters;
   stage or unstage a file, or all of them.
 - Show the selected file's unified diff (staged or unstaged side; an untracked file as all
-  added lines).
+  added lines). A divider between the file list and the diff resizes the list; its width is
+  kept.
 - Stage or unstage a hunk or the selected lines from the diff, with the mouse or the keyboard.
 - Commit what is staged with a message (Ctrl+Enter); the repository's hooks run, and a failure
   shows git's message and keeps the message typed.

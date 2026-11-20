@@ -1,7 +1,8 @@
 //! The file viewer's width beside the terminal: a share of the space the sidebar and the
 //! explorer leave, so it follows window resizes, kept within limits that leave both panes
 //! usable. The share is saved in the settings file as a [`ViewerFraction`]. The file
-//! explorer's width ([`ExplorerWidth`]) is here too.
+//! explorer's width ([`ExplorerWidth`]) and the Git page's list width ([`GitListWidth`]) are
+//! here too.
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -116,6 +117,56 @@ impl Default for ExplorerWidth {
 }
 
 impl<'de> Deserialize<'de> for ExplorerWidth {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        f32::deserialize(deserializer).map(Self::new)
+    }
+}
+
+/// The Git page's list of changes' width in pixels until it is dragged, and after a
+/// double-click on its edge.
+pub const DEFAULT_GIT_LIST_WIDTH: f32 = 340.;
+/// The narrowest the Git page's diff gets beside the list, in pixels, while the list keeps
+/// [`GitListWidth::MIN`].
+pub const MIN_GIT_DIFF_WIDTH: f32 = 320.;
+
+/// The Git page's list width in pixels as saved in the settings file, kept within
+/// [`GitListWidth::MIN`]..=[`GitListWidth::MAX`] (half to twice the default): a value outside
+/// is clamped when read, a value of the wrong type gives [`DEFAULT_GIT_LIST_WIDTH`].
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct GitListWidth(f32);
+
+impl GitListWidth {
+    pub const MIN: f32 = DEFAULT_GIT_LIST_WIDTH / 2.;
+    pub const MAX: f32 = DEFAULT_GIT_LIST_WIDTH * 2.;
+
+    /// `width` clamped to the range; not a number gives the default.
+    pub fn new(width: f32) -> Self {
+        if width.is_nan() {
+            return Self::default();
+        }
+        Self(width.clamp(Self::MIN, Self::MAX))
+    }
+
+    /// The width when the list's edge is dragged to `x`, measured from the left edge of the
+    /// page's row, `row_width` pixels wide (the list starts there): the diff keeps
+    /// [`MIN_GIT_DIFF_WIDTH`] as long as the list keeps [`Self::MIN`].
+    pub fn at(x: f32, row_width: f32) -> Self {
+        Self::new(x.min(row_width - MIN_GIT_DIFF_WIDTH))
+    }
+
+    pub fn get(self) -> f32 {
+        self.0
+    }
+}
+
+impl Default for GitListWidth {
+    fn default() -> Self {
+        Self(DEFAULT_GIT_LIST_WIDTH)
+    }
+}
+
+impl<'de> Deserialize<'de> for GitListWidth {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         f32::deserialize(deserializer).map(Self::new)
     }
@@ -249,5 +300,30 @@ mod tests {
         assert_eq!(ExplorerWidth::at(2000., 240.).get(), 600.);
         // No sidebar.
         assert_eq!(ExplorerWidth::at(200., 0.).get(), 200.);
+    }
+
+    #[test]
+    fn git_list_width_is_clamped() {
+        assert_eq!(GitListWidth::MIN, 170.);
+        assert_eq!(GitListWidth::MAX, 680.);
+        assert_eq!(GitListWidth::new(400.).get(), 400.);
+        assert_eq!(GitListWidth::new(10.).get(), 170.);
+        assert_eq!(GitListWidth::new(9000.).get(), 680.);
+        assert_eq!(GitListWidth::new(f32::NEG_INFINITY).get(), 170.);
+        assert_eq!(GitListWidth::new(f32::NAN), GitListWidth::default());
+        assert_eq!(GitListWidth::default().get(), DEFAULT_GIT_LIST_WIDTH);
+    }
+
+    #[test]
+    fn dragging_the_git_list_edge_leaves_the_diff_its_minimum() {
+        // A 1360 px row: the diff keeps 320, so the list reaches at most 1040 (then MAX).
+        assert_eq!(GitListWidth::at(340., 1360.).get(), 340.);
+        assert_eq!(GitListWidth::at(500., 1360.).get(), 500.);
+        assert_eq!(GitListWidth::at(2000., 1360.).get(), 680.);
+        assert_eq!(GitListWidth::at(20., 1360.).get(), 170.);
+        // An 800 px row: the diff's minimum stops the edge at 480.
+        assert_eq!(GitListWidth::at(700., 800.).get(), 480.);
+        // Too narrow for both minimums: the list keeps its own.
+        assert_eq!(GitListWidth::at(300., 400.).get(), 170.);
     }
 }

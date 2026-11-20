@@ -1,5 +1,4 @@
 mod busy_close;
-mod divider_drag;
 mod empty_state;
 mod git_pane;
 mod reconnect;
@@ -41,7 +40,6 @@ use workspace_model::{
     exit_toast_kind, next_attention, pane_change, waiting_count, window_title,
 };
 
-use self::divider_drag::DividerDrag;
 use self::git_pane::GitPane;
 use self::settings_pane::SettingsPane;
 use self::spinner_clock::SpinnerClock;
@@ -51,6 +49,7 @@ use self::tab_list::TabList;
 use self::tab_search::TabSearch;
 use crate::about;
 use crate::assets::FILES_ICON;
+use crate::divider_drag::{DIVIDER_WIDTH, DividerDrag};
 use crate::file_explorer::{CdAvailability, ExplorerEvent, FileExplorer};
 use crate::file_viewer::{FilePlace, FileViewer, ViewerEvent};
 use crate::history;
@@ -76,9 +75,6 @@ use crate::window_bounds;
 
 const NEW_GROUP_NAME: &str = "New group";
 const KEY_CONTEXT: &str = "Workspace";
-
-/// The width of the strip on the file viewer's left edge that resizes it.
-const DIVIDER_WIDTH: f32 = 6.;
 
 actions!(
     workspace,

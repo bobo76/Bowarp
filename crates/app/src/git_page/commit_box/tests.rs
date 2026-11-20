@@ -106,7 +106,7 @@ impl Harness {
     }
 
     fn close(mut self, folders: &[PathBuf]) {
-        self.update(|page, _, _| page.hide());
+        self.update(|page, _, cx| page.hide(cx));
         for folder in folders {
             let _ = std::fs::remove_dir_all(folder);
         }

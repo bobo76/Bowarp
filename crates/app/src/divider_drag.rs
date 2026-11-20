@@ -1,5 +1,8 @@
 use gpui_kit::App;
 
+/// The width of the strip on a pane's edge that resizes it.
+pub const DIVIDER_WIDTH: f32 = 6.;
+
 /// The value a pane divider's drag has reached, kept in memory while the pointer moves and
 /// saved once when the drag ends ([`Self::finish`]).
 pub struct DividerDrag<T> {

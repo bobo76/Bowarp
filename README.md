@@ -597,6 +597,10 @@ The header's repository picker lists every repository the open tabs are in, the 
 tab's first, with the current branch and a Refresh button. The page refreshes by itself when
 the index, HEAD or a changed file's folder changes.
 
+Drag the edge between the list and the diff to resize the list (170 to 680 px; a narrow window
+narrows the list first, the diff keeping 320 px); double-click it for the default width. The
+width is saved (`"git_list_width"` in settings.json).
+
 - **Commit box** (top of the list): a message that grows to six lines, then scrolls, and a
   Commit button, enabled once something is staged and the message has text. Ctrl+Enter
   (Cmd+Enter on macOS) commits; Enter adds a line. The repository's hooks run. On success the

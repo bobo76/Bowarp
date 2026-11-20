@@ -150,6 +150,11 @@ Git page, commit:
 - The message grows to six lines, then scrolls; each repository keeps its draft when switching
   in the picker.
 
+Git page, list divider:
+
+- Windows and Linux: the pointer turns to the resize cursor over the edge between the list
+  and the diff; dragging it past the window's edge and releasing there keeps the width.
+
 Git page, line and hunk staging:
 
 - Stage a single line, a range across two hunks (Shift+click, drag) and a hunk, then compare
@@ -368,31 +373,19 @@ Packaged app on Linux: a smoke test and the About dialog's version and commit.
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-### Remote sessions
+- Git page: on a Changes / Staged Changes row whose file name is too long, the `+` (stage) and
+  ↶ (discard) buttons are pushed out of reach. Truncate the name with an ellipsis ("very-long-
+  na… + ↶") so the buttons always stay visible and clickable; the full path shows in a
+  tooltip.
+- PowerShell: after an app restart, a restored PowerShell tab doesn't show its last command
+  (the restored-tab suggestion that bash, zsh and Git Bash tabs get). Find whether the
+  command is never saved for PowerShell tabs or saved but not offered on restore.
 
-Tabs whose programs run on another machine through `agentws-server` over ssh; design and
-limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the command line
-(`--remote <host>`); next steps, in order:
-
-- Restore: `tabs.json` saves a remote tab's host and session id; on start, attach to it again
-  (or offer to start a new one when it is gone); a host's running sessions not shown in a tab
-  are listed to attach.
-- Shell integration and status on the server: the server writes the integration scripts and
-  sets the mark token, forwards `CommandStarted/Finished/Executed`, `AgentStarted/Finished`
-  and progress as protocol events; agents get their hook settings and the server's own
-  `HookServer`, whose reports are forwarded to the app.
-- Git branch and `~` folder for remote tabs: the server reads the branch (`workspace-model`
-  git, in the folder from `/proc`) and sends it with `FolderChanged`, and sends its home
-  folder in the hello so the tab shows the folder shortened to `~`. Protocol bump; the card,
-  row and hover card show them like a local tab's.
-- File explorer for remote tabs: until built, the explorer shows "Files on <host> aren't
-  available yet" instead of "No folder". Then a request/reply pair in the protocol (answered
-  off the UI thread) for folder listings and file reads, run by `workspace-model` file tree
-  on the server: first read-only (tree, git-ignored dimming, viewer), then refresh on change
-  (a watcher on the server), then create, rename and delete.
-- Server on Windows: build and test `agentws-server` there (named pipe, detached start).
-- Packaging: ship `agentws-server` in the Linux release and document installing it on the
-  server (README); a version check that names both versions when they differ.
+- Search a Markdown file in its rendered view: Ctrl+F while the viewer shows a rendered `.md`
+  file opens a search bar over the rendered text (all matches highlighted, Enter / Shift+Enter
+  to move, scrolled into view, match count, case and whole-word toggles); Esc closes it and
+  returns focus to the file. Terminal shortcuts unchanged. Built first of "File viewer search
+  and replace" below, whose search bar it shares.
 
 ### General
 
@@ -415,23 +408,11 @@ limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the comma
 UX review, top 10 by value per cost ([reviews/ux-review.md](reviews/ux-review.md), IDs are
 its items), regrouped into steps, in order:
 
-1. Shell tab names (#4, the user chose option A on 2026-11-13): a shell row shows the
+- Shell tab names (#4, the user chose option A on 2026-11-13): a shell row shows the
    program's title (`user@host: ~/path`), so shells in different folders look the same. With
    shell integration, name the tab by the running command, else the folder's last component;
    the program title moves to the hover card. A custom name always wins; agent tabs keep
    their titles.
-
-- System notification and sound for agent attention (follow-up of #11): beside the window's
-  attention request, `show_system_notification` and a sound, so the Settings / Git page in
-  the active window (where the request does nothing) also gets a signal.
-
-- Search a Markdown file in its rendered view: Ctrl+F while the viewer shows a rendered `.md`
-  file opens a search bar over the rendered text (all matches highlighted, Enter / Shift+Enter
-  to move, scrolled into view, match count, case and whole-word toggles); Esc closes it and
-  returns focus to the file. Terminal shortcuts unchanged. Built first of "File viewer search
-  and replace" below, whose search bar it shares.
-
-UX review, Tier 2 (small polish, one batch):
 
 - Shortcut hints and wording (#29, #28, #8): "Close tab" shows Ctrl+Shift+W
   (`tab_menu.rs:124`); "Copy pane title" becomes "Copy title" (`tab_menu.rs:102`); "Close
@@ -447,9 +428,6 @@ UX review, Tier 2 (small polish, one batch):
 - "Hold Shift to select" hint (#19): on the first drag in a mouse-reporting tab per run, an
   info toast "Hold Shift to select text". One flag.
 
-- PowerShell: after an app restart, a restored PowerShell tab doesn't show its last command
-  (the restored-tab suggestion that bash, zsh and Git Bash tabs get). Find whether the
-  command is never saved for PowerShell tabs or saved but not offered on restore.
 - Hiding the sidebar (Ctrl+Shift+B) while the search field or a tab name editor has the
   keyboard leaves focus on an element no longer drawn (only the tab list itself hands the
   keyboard back, `toggle_sidebar` checks `is_focused`): check the whole sidebar
@@ -595,6 +573,32 @@ UX review, Tier 2 (small polish, one batch):
   keyboard, the idle window keeps redrawing (about 22 CPU ticks/s in Xvfb, even after going
   back to the terminal; a fresh start idles at 0-2). Find what keeps notifying (cursor blink of
   the unfocused input?) and stop it.
+
+### Remote sessions
+
+Tabs whose programs run on another machine through `agentws-server` over ssh; design and
+limitations in [docs/remote.md](docs/remote.md). Remote tabs open from the command line
+(`--remote <host>`); next steps, in order:
+
+- Restore: `tabs.json` saves a remote tab's host and session id; on start, attach to it again
+  (or offer to start a new one when it is gone); a host's running sessions not shown in a tab
+  are listed to attach.
+- Shell integration and status on the server: the server writes the integration scripts and
+  sets the mark token, forwards `CommandStarted/Finished/Executed`, `AgentStarted/Finished`
+  and progress as protocol events; agents get their hook settings and the server's own
+  `HookServer`, whose reports are forwarded to the app.
+- Git branch and `~` folder for remote tabs: the server reads the branch (`workspace-model`
+  git, in the folder from `/proc`) and sends it with `FolderChanged`, and sends its home
+  folder in the hello so the tab shows the folder shortened to `~`. Protocol bump; the card,
+  row and hover card show them like a local tab's.
+- File explorer for remote tabs: until built, the explorer shows "Files on <host> aren't
+  available yet" instead of "No folder". Then a request/reply pair in the protocol (answered
+  off the UI thread) for folder listings and file reads, run by `workspace-model` file tree
+  on the server: first read-only (tree, git-ignored dimming, viewer), then refresh on change
+  (a watcher on the server), then create, rename and delete.
+- Server on Windows: build and test `agentws-server` there (named pipe, detached start).
+- Packaging: ship `agentws-server` in the Linux release and document installing it on the
+  server (README); a version check that names both versions when they differ.
 
 ### Git
 

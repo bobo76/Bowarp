@@ -22,7 +22,7 @@ use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Sizable, Win
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, FocusHandle, FontWeight, Hsla,
-    InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, ParentElement, Render,
+    InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, MouseButton, ParentElement, Render,
     ScrollStrategy, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
     UniformListScrollHandle, Window, actions, div, px, uniform_list,
 };
@@ -33,20 +33,18 @@ use workspace_model::git::{
     RepoStatus, StatusRow,
 };
 use workspace_model::layout::Direction;
+use workspace_model::pane_width::GitListWidth;
 
 use self::commit_box::{COMMIT_CONTEXT, CommitDone};
 use self::diff_view::ShownDiff;
 
 use crate::assets::{GIT_BRANCH_ICON, UNDO_ICON};
+use crate::divider_drag::DividerDrag;
 use crate::folder_watcher::{FolderWatcher, WatchesFolders};
 use crate::sidebar;
 
 /// Height of a row of the list of changes.
 const ROW_HEIGHT: f32 = 26.;
-/// Width of the list of changes.
-const LIST_WIDTH: f32 = 340.;
-/// The widest a file's name gets in its row (its folder takes the rest).
-const FILE_NAME_MAX_WIDTH: f32 = LIST_WIDTH * 0.6;
 /// Width of a file row's status letter.
 const CHANGE_LETTER_WIDTH: f32 = 12.;
 /// Height of the page's header.
@@ -217,6 +215,8 @@ pub struct GitPage {
     drafts: HashMap<PathBuf, String>,
     /// A commit is queued or running.
     committing: bool,
+    /// The list's width while its edge is dragged; otherwise the saved `git_list_width`.
+    list_drag: DividerDrag<GitListWidth>,
 }
 
 impl WatchesFolders for GitPage {
@@ -275,6 +275,7 @@ impl GitPage {
             _message_events: message_events,
             drafts: HashMap::new(),
             committing: false,
+            list_drag: DividerDrag::new(Self::save_list_width),
         }
     }
 
@@ -297,9 +298,12 @@ impl GitPage {
     }
 
     /// The page is hidden: stop watching (a running op still finishes).
-    pub fn hide(&mut self) {
+    pub fn hide(&mut self, cx: &mut Context<Self>) {
         self.shown = false;
         self.sync_watches();
+        // A drag of the list's edge still going (the page hid by key) ends here: the release
+        // would reach no page listener.
+        self.end_list_drag(cx);
     }
 
     /// The chosen repository's name, for the sidebar row.
@@ -1024,7 +1028,7 @@ impl GitPage {
             .child(
                 div()
                     .flex_none()
-                    .max_w(px(FILE_NAME_MAX_WIDTH))
+                    .max_w(px(self.file_name_max_width(cx)))
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
@@ -1091,6 +1095,7 @@ impl Render for GitPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (background, border) = (theme.background, theme.border);
+        let list_width = self.list_width(cx).get();
         div()
             .id("git-page")
             .debug_selector(|| "git-page".into())
@@ -1099,6 +1104,13 @@ impl Render for GitPage {
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
             .on_key_down(cx.listener(Self::key_down))
+            // Both halves of "any release" end a drag of the list's edge: over the page, and
+            // outside it.
+            .capture_any_mouse_up(cx.listener(|page, _, _, cx| page.end_list_drag(cx)))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|page, _, _, cx| page.end_list_drag(cx)),
+            )
             .flex()
             .flex_col()
             .size_full()
@@ -1109,19 +1121,25 @@ impl Render for GitPage {
                     .flex()
                     .flex_1()
                     .min_h_0()
+                    .on_drag_move(cx.listener(Self::drag_list_edge))
                     .child(
                         div()
+                            .relative()
                             .flex()
                             .flex_col()
-                            .flex_none()
-                            .w(px(LIST_WIDTH))
+                            // On a narrow page the list gives way first, the diff keeping
+                            // MIN_GIT_DIFF_WIDTH: far above the diff's shrink factor of 1.
+                            .flex_shrink(1000.)
+                            .min_w(px(GitListWidth::MIN))
+                            .w(px(list_width))
                             .h_full()
                             .border_r_1()
                             .border_color(border)
                             .when(self.repo.is_some(), |column| {
                                 column.child(self.render_commit_box(cx))
                             })
-                            .child(self.render_list(cx)),
+                            .child(self.render_list(cx))
+                            .child(self.render_list_divider(cx)),
                     )
                     .child(self.render_diff_pane(window, cx)),
             )
@@ -1344,5 +1362,6 @@ fn change_color(change: Change, cx: &App) -> Hsla {
 mod commit_box;
 mod diff_view;
 mod line_staging;
+mod list_width;
 #[cfg(test)]
 mod tests;

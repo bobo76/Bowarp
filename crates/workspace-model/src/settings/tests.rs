@@ -720,6 +720,24 @@ fn file_explorer_width_is_read_clamped_and_defaults() {
     );
 }
 
+#[test]
+fn git_list_width_is_read_clamped_and_defaults() {
+    assert_eq!(Settings::default().git_list_width, GitListWidth::default());
+    for (text, width) in [
+        (r#"{"git_list_width": 420}"#, 420.),
+        (r#"{"git_list_width": 20}"#, GitListWidth::MIN),
+        (r#"{"git_list_width": 5000}"#, GitListWidth::MAX),
+        (r#"{"git_list_width": "wide"}"#, 340.),
+        (r#"{"git_list_width": null}"#, 340.),
+    ] {
+        let settings = Settings::from_json(text).unwrap();
+        assert_eq!(settings.git_list_width.get(), width, "{text}");
+    }
+    let settings = Settings::from_json(r#"{"git_list_width": 5000}"#).unwrap();
+    let json = settings.to_json().unwrap();
+    assert!(json.contains(r#""git_list_width": 680.0"#), "{json}");
+}
+
 #[derive(Debug, Default, PartialEq, Deserialize)]
 #[serde(default)]
 struct Sample {

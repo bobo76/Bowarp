@@ -16,6 +16,7 @@ use gpui_kit::{
 use workspace_model::git::{
     self, DiffLine, DiffRow, DiffSide, FileDiff, LineKind, LineRef, TextDiff,
 };
+use workspace_model::pane_width::MIN_GIT_DIFF_WIDTH;
 
 use super::{DiffRead, GitPage, HEADER_HEIGHT};
 use crate::color::to_hsla;
@@ -260,7 +261,11 @@ impl GitPage {
             )
             .flex()
             .flex_col()
-            .flex_1()
+            // Keeps MIN_GIT_DIFF_WIDTH while the list can shrink, then gives way too (no
+            // overflow on a narrow page).
+            .flex_grow(1.)
+            .flex_shrink(1.)
+            .flex_basis(px(MIN_GIT_DIFF_WIDTH))
             .min_w_0()
             .h_full();
         let body = match shown {
