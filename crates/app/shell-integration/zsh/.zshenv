@@ -99,9 +99,10 @@ if [[ -o interactive && -n $__agentws_token && -z ${__agentws_loaded-} ]]; then
     __agentws_cd() {
         local file=$__agentws_cd_file dir hook
         [[ -n $file && -f $file ]] || return 0
-        dir=$(<$file)
-        command rm -f -- $file
-        builtin cd -- $dir 2>/dev/null || return 0
+        # Quoted: the user's sh_word_split or glob_subst would split or glob them.
+        dir=$(<"$file")
+        command rm -f -- "$file"
+        builtin cd -- "$dir" 2>/dev/null || return 0
         for hook in $precmd_functions; do
             $hook
         done

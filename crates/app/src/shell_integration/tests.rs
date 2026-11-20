@@ -300,6 +300,37 @@ fn zsh_script_marks_the_prompt_and_restores_zdotdir() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn zsh_hidden_cd_survives_word_splitting_options() {
+    let dir = scratch("zsh-cd-split");
+    let zdotdir = dir.join("scripts").join(ZSH_DIR);
+    let home = dir.join("home");
+    let target = dir.join("a  b*");
+    fs::create_dir_all(&target).unwrap();
+    let cd_file = dir.join("cd file");
+    fs::write(&cd_file, target.to_str().unwrap()).unwrap();
+    fs::write(home.join(".zshrc"), "setopt sh_word_split glob_subst\n").unwrap();
+    let Some((_, output)) = run_shell(
+        "zsh",
+        &["-i"],
+        &[
+            ("HOME", &home),
+            (ZSH_DIR_ENV, &zdotdir),
+            ("AGENTWS_CD_FILE", &cd_file),
+        ],
+        "__agentws_cd 2>/dev/null; print -r -- \"pwd=$PWD\"\nexit\n",
+    ) else {
+        return;
+    };
+    assert!(
+        output.contains(&format!("pwd={}", target.display())),
+        "{output}"
+    );
+    assert!(!cd_file.exists(), "the file is removed once read");
+    fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Runs `command` (a `sh -c` line) in a terminal (`script` from util-linux) typing `input`,
 /// and returns the marks and the output; `None` without `script` or `shell`.
 #[cfg(unix)]
