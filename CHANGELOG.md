@@ -5,6 +5,8 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.4.6
+
 - Git page: drag the divider between the file list and the diff to resize the list
   (double-click resets it); its width is kept. On a narrow window the list shrinks first so the
   diff stays readable.
