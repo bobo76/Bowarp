@@ -1606,3 +1606,61 @@ fn a_press_on_something_over_the_scroll_bar_does_not_scroll(cx: &mut gpui_kit::T
     press(&mut cx, size.height * 0.25);
     assert_ne!(offset(&mut cx), 0, "the press reached the scroll bar");
 }
+
+#[gpui::test]
+fn chorded_presses_report_every_release(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::Root;
+    use gpui_kit::{Modifiers, MouseButton, point, px};
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        settings_file::init_in_memory(cx);
+        crate::terminal_element::init(cx);
+    });
+    let spec = LaunchSpec::new(SessionKind::Shell, Some("sh".into()), Vec::new(), None);
+    let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (session, feed) = Session::remote(
+        1,
+        SessionKind::Shell,
+        TermDimensions::new(40, 5),
+        Palette::default(),
+        Arc::new(|_| {}),
+        Box::new(RecordingLink(typed.clone())),
+    );
+    let view = cx.new(|cx| TerminalView::from_test_session(session, &spec, cx));
+    let root = view.clone();
+    let window = cx.add_window(move |window, cx| Root::new(root, window, cx));
+    let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+    // Button presses and releases, in SGR form.
+    feed.output(b"\x1b[?1000h\x1b[?1006h");
+    view.update(&mut cx, |view, cx| {
+        view.on_session_event(SessionEvent::Wakeup, cx)
+    });
+    cx.run_until_parked();
+    let at = point(px(20.), px(20.));
+    cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(at, MouseButton::Right, Modifiers::none());
+    cx.run_until_parked();
+
+    let typed = String::from_utf8(std::mem::take(&mut *typed.lock().unwrap())).unwrap();
+    let reports: Vec<&str> = typed
+        .split("\x1b[<")
+        .filter(|report| !report.is_empty())
+        .collect();
+    let kinds: Vec<(&str, char)> = reports
+        .iter()
+        .map(|report| {
+            (
+                report.split(';').next().unwrap(),
+                report.chars().last().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [("0", 'M'), ("2", 'M'), ("0", 'm'), ("2", 'm')],
+        "{typed:?}"
+    );
+}
