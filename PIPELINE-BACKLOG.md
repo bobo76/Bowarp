@@ -60,7 +60,7 @@ In this order:
 - For agent 2: the path of agent 1's retro and agent 1's final report (what was verified and how, what was not driven, the choices made). Read those before the code instead of working them out again.
 - For agent 3: agent 2's final report and any user decisions; point to `REVIEW.md` for the findings instead of pasting them, and use REVIEW.md's finding numbers. No retros needed.
 - Tell agents to run the toolchain memory's comment-width command right after their edit batch (and after each doc edit), before the full test run, not only before committing.
-- Tell agents to run `cargo test --no-fail-fast`, tee its output to a scratch file named with the slug (the scratchpad is shared) and count from it with the toolchain memory's test-count command (it skips filtered reruns), not run the tests twice, and to take the app's real shortcuts from project memory rather than guessing them.
+- Tell agents to run `cargo test --no-fail-fast` (agent 2 only when it commits a fix), tee its output to a scratch file named with the slug (the scratchpad is shared) and count from it with the toolchain memory's test-count command (it skips filtered reruns), not run the tests twice, and to take the app's real shortcuts from project memory rather than guessing them.
 
 ## Agent 1 — implement the step (general-purpose, `model: "opus"`, I wait for it)
 Launch this agent with the Agent tool's `model` set to `opus`.
@@ -77,7 +77,7 @@ Prompt contents:
   - Put pure logic in a non-UI crate with unit tests.
   - Keep each new function to one concern and ~15 lines (agent 2's FM IPL pass flags longer
     ones, and splitting them later costs agent 3 a refactor and a re-check).
-- Verify with `cargo fmt`, `cargo clippy --all-targets`, `cargo build` and `cargo test`; when the step has UI, run only the touched crate's tests first, drive the app, then run the full suite once (a fix found in the app then costs no second full run). If the step has UI, drive the app with the scripts in `pipeline/tools/` (see "UI test tools"); don't set up the display by hand. Say up front which parts the harness can't drive.
+- Verify with `cargo fmt`, `cargo clippy --all-targets`, `cargo build` and `cargo test`, clippy before the full test run (a lint-forced refactor after it costs a rerun); when the step has UI, run only the touched crate's tests first, drive the app, then run the full suite once (a fix found in the app then costs no second full run). If the step has UI, drive the app with the scripts in `pipeline/tools/` (see "UI test tools"); don't set up the display by hand. Say up front which parts the harness can't drive.
 - Update `BACKLOG.md`: remove the step from "Next steps" and add the checks the harness couldn't drive under "Fixed, not tested yet" (the rest of the cleanup happens after Verification). Add any new known limitation to `docs/known-limitations.md`. No test counts or verification records in `BACKLOG.md`; the test count goes in the `end` log line.
 - Update `README.md` where it describes the behaviour the step changes (not `CHANGELOG.md`); grep README, docs and code comments for stale wording of the changed behaviour.
 - Commit the code, `BACKLOG.md`, `README.md` and `docs/known-limitations.md` (if changed) with an imperative summary of the step as the message.
