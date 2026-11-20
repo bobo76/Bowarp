@@ -15,14 +15,14 @@ use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariant, ButtonVari
 use gpui_kit::component::input::{Editor, EditorState, InputEvent, Position};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::text::TextView;
+use gpui_kit::component::text::{TextView, TextViewState};
 use gpui_kit::component::{ActiveTheme, IconName, Selectable, Sizable, WindowExt};
 use gpui_kit::{
-    AnyElement, App, AppContext, ClickEvent, Context, DevicePixels, ElementId, Entity,
-    EventEmitter, ImgResourceLoader, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    ObjectFit, ParentElement, Render, RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR, SharedString,
-    Size, StatefulInteractiveElement, Styled, StyledImage, Subscription, Task, WeakEntity, Window,
-    div, img, px,
+    AnyElement, App, AppContext, ClickEvent, Context, DevicePixels, Entity, EventEmitter,
+    ImgResourceLoader, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ObjectFit,
+    ParentElement, Render, RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR, ScrollHandle,
+    SharedString, Size, StatefulInteractiveElement, Styled, StyledImage, Subscription, Task,
+    WeakEntity, Window, div, img, px,
 };
 use image::{ImageError, ImageReader};
 use notify::{Event, EventKind};
@@ -32,6 +32,10 @@ use workspace_model::file_view::{self, JsonError, ViewKind};
 use workspace_model::links;
 
 use crate::folder_watcher::{FolderWatcher, WatchesFolders};
+
+mod search;
+
+use search::ViewerSearch;
 
 /// Shown for an image (or an SVG drawing) that does not decode.
 const UNREADABLE_IMAGE: &str = "The image could not be read.";
@@ -63,11 +67,19 @@ enum Mode {
 
 /// The rendered view of the text, as it was when the view was last shown.
 enum Rendered {
-    Markdown(SharedString),
+    Markdown(MarkdownPage),
     Json(Entity<EditorState>),
     InvalidJson(JsonError),
     /// An SVG drawn from the text at its own size, or `Err` when it does not parse.
     Svg(Result<Arc<RenderImage>, ()>),
+}
+
+/// The Markdown page: its state (text, highlights) and the container scrolling it.
+struct MarkdownPage {
+    state: Entity<TextViewState>,
+    scroll: ScrollHandle,
+    /// Tells the search when the page's text changes.
+    _changes: Subscription,
 }
 
 struct OpenFile {
@@ -107,6 +119,8 @@ pub struct FileViewer {
     saving: Option<Task<()>>,
     /// For shortening the folder to `~` in the header.
     home: Option<PathBuf>,
+    /// Ctrl+F in the rendered Markdown view.
+    search: ViewerSearch,
 }
 
 /// What was read of the file to show.
@@ -172,6 +186,7 @@ impl FileViewer {
             place: FilePlace::default(),
             saving: None,
             home: std::env::home_dir(),
+            search: ViewerSearch::default(),
         }
     }
 
@@ -228,6 +243,7 @@ impl FileViewer {
     /// Close the panel, asking first when the file has unsaved edits.
     fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.discard_then(window, cx, |viewer, window, cx| {
+            viewer.hide_search(cx);
             viewer.forget_image(window, cx);
             viewer.path = None;
             viewer.content = None;
@@ -343,6 +359,7 @@ impl FileViewer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.hide_search(cx);
         self.forget_image(window, cx);
         self.content = Some(Content::Loading);
         self.place = place;
@@ -398,13 +415,20 @@ impl FileViewer {
     }
 
     fn set_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open_file().is_none_or(|file| file.mode == mode) {
+            return;
+        }
+        // The raw view has no search yet: the bar closes, its focus going to the editor.
+        let search_focused = self.search_has_focus(window, cx);
+        self.hide_search(cx);
         let Some(file) = self.open_file_mut() else {
             return;
         };
-        if file.mode == mode {
-            return;
-        }
         file.mode = mode;
+        if search_focused {
+            file.editor
+                .update(cx, |editor, cx| editor.focus(window, cx));
+        }
         if mode == Mode::Rendered {
             // Show the edits made in the raw view.
             let text = file.editor.read(cx).value();
@@ -733,8 +757,17 @@ impl FileViewer {
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let modifiers = &keystroke.modifiers;
-        if keystroke.key == "s" && modifiers.secondary() && !modifiers.shift && !modifiers.alt {
-            self.save(window, cx);
+        let plain = !modifiers.shift && !modifiers.alt;
+        let handled = match keystroke.key.as_str() {
+            "s" if modifiers.secondary() && plain => {
+                self.save(window, cx);
+                true
+            }
+            "f" if modifiers.secondary() && plain => self.open_search(window, cx),
+            "escape" if !modifiers.modified() => self.close_search(window, cx),
+            _ => false,
+        };
+        if handled {
             cx.stop_propagation();
         }
     }
@@ -875,38 +908,37 @@ impl FileViewer {
                 .text_color(muted)
                 .child(UNREADABLE_IMAGE)
                 .into_any_element(),
-            (Mode::Rendered, Some(Rendered::Markdown(text))) => self.render_markdown(text, cx),
+            (Mode::Rendered, Some(Rendered::Markdown(page))) => self.render_markdown(page, cx),
         }
     }
 
-    fn render_markdown(&self, text: &SharedString, cx: &mut Context<Self>) -> AnyElement {
+    fn render_markdown(&self, page: &MarkdownPage, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
-        let path = self
-            .path
-            .as_ref()
-            .map(|path| path.to_string_lossy().into_owned());
         let folder = self
             .path
             .as_ref()
             .and_then(|path| path.parent())
             .map(|folder| display_path(folder, self.home.as_deref()));
         let viewer = cx.entity().downgrade();
+        let scroll = page.scroll.clone();
         div()
             .id("viewer-markdown")
             .size_full()
             .overflow_y_scroll()
+            .track_scroll(&page.scroll)
             .px_5()
             .py_4()
             .children(folder.map(|folder| div().mb_3().text_xs().text_color(muted).child(folder)))
             .child(
-                TextView::markdown(
-                    ElementId::Name(path.unwrap_or_default().into()),
-                    text.clone(),
-                )
-                .selectable(true)
-                .on_link_click(move |url, event, window, cx| {
-                    on_link_click(&viewer, url, event, window, cx);
-                }),
+                TextView::new(&page.state)
+                    .selectable(true)
+                    .on_link_click(move |url, event, window, cx| {
+                        on_link_click(&viewer, url, event, window, cx);
+                    })
+                    .on_reveal(move |line, window, _| {
+                        search::scroll_line_into_view(&scroll, line);
+                        window.refresh();
+                    }),
             )
             .into_any_element()
     }
@@ -1127,7 +1159,7 @@ fn render_text(
     cx: &mut Context<FileViewer>,
 ) -> Option<Rendered> {
     match kind {
-        ViewKind::Markdown => Some(Rendered::Markdown(text.to_string().into())),
+        ViewKind::Markdown => Some(Rendered::Markdown(markdown_page(text, previous, cx))),
         ViewKind::Svg => {
             // GPUI draws SVGs at twice their size for smoothness (its `img` paints them so); this
             // draws one at its own size, the size the header shows.
@@ -1139,6 +1171,26 @@ fn render_text(
         }
         ViewKind::Json => Some(render_json(text, previous, window, cx)),
         ViewKind::Source | ViewKind::Image => None,
+    }
+}
+
+/// The page showing `text`: the one of `previous` given the new text (it keeps its scroll
+/// position), else a new one.
+fn markdown_page(
+    text: &str,
+    previous: Option<Rendered>,
+    cx: &mut Context<FileViewer>,
+) -> MarkdownPage {
+    if let Some(Rendered::Markdown(page)) = previous {
+        page.state.update(cx, |state, cx| state.set_text(text, cx));
+        return page;
+    }
+    let state = cx.new(|cx| TextViewState::markdown(text, cx));
+    let changes = cx.observe(&state, |viewer, _, cx| viewer.on_page_changed(cx));
+    MarkdownPage {
+        state,
+        scroll: ScrollHandle::new(),
+        _changes: changes,
     }
 }
 
@@ -1233,6 +1285,7 @@ impl Render for FileViewer {
             .border_color(border)
             .on_key_down(cx.listener(Self::on_key_down))
             .child(self.render_header(window, cx))
+            .children(self.render_search_bar(cx))
             .child(div().flex_1().min_h_0().child(self.render_body(cx)))
     }
 }

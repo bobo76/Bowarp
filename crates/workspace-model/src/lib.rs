@@ -57,6 +57,7 @@ mod tab_history;
 mod tab_list;
 mod tabs_state;
 mod terminal_menu;
+pub mod text_search;
 mod time;
 mod wheel;
 mod window_background;

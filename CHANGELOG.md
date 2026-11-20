@@ -13,6 +13,9 @@ omitted unless they affect how the app is used.
 - PowerShell tabs restored after a restart offer their last command, as bash and zsh tabs do.
   Lines PSReadLine keeps out of its history (passwords, tokens) are not saved, and commands
   like `Clear-Host` or `cls` never replace the saved one.
+- File viewer: Ctrl+F searches a rendered Markdown file. Every match is highlighted, Enter and
+  Shift+Enter move between them, and the bar shows the count, with Match case (Alt+C) and
+  Whole word (Alt+W) toggles. A selected word starts the search there; Esc closes the bar.
 
 ## 0.4.5
 

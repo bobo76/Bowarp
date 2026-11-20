@@ -22,6 +22,9 @@ Built with automated coverage on Linux; the manual checks below are still to do.
   Claude tab and in a shell tab running `claude`; Ctrl+V with copied text still pastes it.
 - Windows: a tab hover card (and a group card) closes as soon as the pointer leaves the window
   over its row; back over the same row it stays hidden until the pointer leaves the row.
+- Markdown search (Ctrl+F in the rendered view): on the Light and Sepia themes the match tints
+  keep the text readable and the current match stands out; Windows: Ctrl+F, Alt+C / Alt+W in
+  the field; macOS: Cmd+F.
 
 Explorer Delete to the trash:
 
@@ -381,12 +384,6 @@ Packaged app on Linux: a smoke test and the About dialog's version and commit.
 Optional behavior gets one switch per major feature, not per action (FEATURES.md, "Optional
 behavior"); items below name their switch where they need one.
 
-- Search a Markdown file in its rendered view: Ctrl+F while the viewer shows a rendered `.md`
-  file opens a search bar over the rendered text (all matches highlighted, Enter / Shift+Enter
-  to move, scrolled into view, match count, case and whole-word toggles); Esc closes it and
-  returns focus to the file. Terminal shortcuts unchanged. Built first of "File viewer search
-  and replace" below, whose search bar it shares.
-
 ### General
 
 - Git status outside the Git page, one switch "Git status in tabs and explorer" (on). Off: no
@@ -451,13 +448,12 @@ its items), regrouped into steps, in order:
   shortcuts and the menu-only ones such as Duplicate, Move to group or Copy branch), showing
   each one's shortcut, plus the tabs by name ("go to tab"). Enter runs the action on the
   selected tab.
-- File viewer search and replace: Ctrl+F opens a search bar for the open file (highlight all
-  matches, Enter / Shift+Enter to move, match count, case and whole-word toggles); Ctrl+H
-  adds a replace field with Replace and Replace all in editable source mode. Replacements
-  update the editor buffer and mark it unsaved, using the existing Save and unsaved-edit
-  confirmation flow; read-only and rendered views only get search. Shortcuts apply while
-  the viewer is focused, leaving terminal shortcuts unchanged; Esc closes the bar and
-  returns focus to the file.
+- File viewer search and replace: the rendered Markdown view's Ctrl+F bar
+  (`file_viewer/search.rs`) also in the raw/source editor and rendered JSON (a switch between
+  two views that search keeps the bar and re-runs the query, docs/ux-decisions.md "File viewer
+  search"); Ctrl+H adds a replace field with Replace and Replace all in editable source mode.
+  Replacements update the editor buffer and mark it unsaved, using the existing Save and
+  unsaved-edit confirmation flow; read-only and rendered views only get search.
 - File viewer close shortcut: Ctrl+Shift+X closes the selected tab's file viewer from
   either the terminal or the viewer, using the same unsaved-edit confirmation as its close
   button. Return focus to the terminal after closing; do nothing when no viewer is open.
@@ -573,6 +569,10 @@ its items), regrouped into steps, in order:
   keyboard, the idle window keeps redrawing (about 22 CPU ticks/s in Xvfb, even after going
   back to the terminal; a fresh start idles at 0-2). Find what keeps notifying (cursor blink of
   the unfocused input?) and stop it.
+
+- File viewer: a large Markdown file (a 1.9 MB `.md`) never shows in the rendered view (blank
+  page, one core busy in a debug build). Find where the time goes (parse, layout) and render
+  big files incrementally or fall back to the source view with a note.
 
 ### Remote sessions
 

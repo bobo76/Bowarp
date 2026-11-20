@@ -580,6 +580,19 @@ and SVG, checked Raw/Rendered choices. The existing mode buttons and Ctrl+S stil
 | Keys | Action |
 |---|---|
 | Ctrl+S | Save the file (a `●` after its name marks unsaved edits) |
+| Ctrl+F | Search the rendered Markdown view (click in the page first); again: back to the field with the query selected |
+| Enter / Shift+Enter | Next / previous match, wrapping around (in the search field) |
+| Alt+C / Alt+W | Match case / whole word on or off (in the search field) |
+| Esc | Close the search bar and go back to the page (in the field or the page) |
+
+Search (rendered Markdown only so far) shows a bar under the header: the query, "N of M" (or
+"0 matches"), previous / next, close, and the "Aa" (match case) and "W" (whole word) toggles
+at the field's right end, both off by default. Every match is tinted in the page with the
+terminal palette's search colors, the current one stronger, and scrolled to when it is off
+screen. A one-line selection in the page becomes the query. The bar stays while you work in
+the terminal (Esc there is the terminal's); the Raw view, another file or closing the panel
+closes it, and a reload on disk change searches the new text again without scrolling. Each
+tab's panel keeps its query and toggles until it closes; they are never saved.
 
 Opening another file, closing the panel or the tab with unsaved edits asks "Save changes?"
 (Save, the default, Discard or Cancel); closing the window asks once for every file with

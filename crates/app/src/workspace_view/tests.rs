@@ -791,6 +791,106 @@ fn a_file_is_read_in_the_background_and_shown_again_when_it_changes(
 }
 
 #[gpui::test]
+fn ctrl_f_searches_the_rendered_markdown_page(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("viewer-md-search", cx);
+    let file = h.folder.join("notes.md");
+    std::fs::write(
+        &file,
+        "# Title\n\nAlpha beta alpha.\n\nGamma ALPHA alphabet\n",
+    )
+    .unwrap();
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let id = workspace.tabs[0].id;
+            workspace.open_file_in(id, file.clone(), FilePlace::default(), window, cx);
+        });
+    });
+    h.cx.run_until_parked();
+    let viewer = h.state().2.expect("viewer").upgrade().unwrap();
+    let count = |h: &mut PanesHarness| {
+        h.cx.run_until_parked();
+        h.cx.update(|_, cx| viewer.read(cx).search_count_for_test(cx))
+    };
+    let keys = |h: &mut PanesHarness, keys: &str| {
+        h.cx.update(|window, cx| window.draw(cx).clear(cx));
+        h.cx.simulate_keystrokes(keys);
+    };
+    h.cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        viewer.update(cx, |viewer, cx| viewer.focus_page_for_test(window, cx));
+    });
+
+    // Ctrl+F in the page opens the bar, blank for an empty query.
+    keys(&mut h, "ctrl-f");
+    assert_eq!(count(&mut h).as_deref(), Some(""));
+    h.cx.simulate_input("alpha");
+    // Case is ignored and a match may sit inside a word.
+    assert_eq!(count(&mut h).as_deref(), Some("1 of 4"));
+    keys(&mut h, "enter");
+    assert_eq!(count(&mut h).as_deref(), Some("2 of 4"));
+    keys(&mut h, "shift-enter shift-enter");
+    assert_eq!(count(&mut h).as_deref(), Some("4 of 4"), "wraps");
+    keys(&mut h, "alt-w");
+    assert_eq!(
+        count(&mut h).as_deref(),
+        Some("1 of 3"),
+        "whole word, wrapped"
+    );
+    keys(&mut h, "alt-c");
+    assert_eq!(count(&mut h).as_deref(), Some("1 of 1"), "and case");
+    let (current, matches) =
+        h.cx.update(|_, cx| viewer.read(cx).search_matches_for_test());
+    assert_eq!(matches.len(), 1);
+    assert_eq!(current, matches.first().cloned());
+
+    // A reload searches the new text again.
+    std::fs::write(&file, "alpha, alpha and alpha\n").unwrap();
+    h.cx.update(|window, cx| viewer.update(cx, |viewer, cx| viewer.reload_for_test(window, cx)));
+    // The current match was the second "alpha", at the offset of the new text's third.
+    assert_eq!(
+        count(&mut h).as_deref(),
+        Some("3 of 3"),
+        "the nearest match"
+    );
+
+    // Esc closes the bar and focuses the page; Ctrl+F brings the query back.
+    keys(&mut h, "escape");
+    assert_eq!(count(&mut h), None);
+    let (current, matches) =
+        h.cx.update(|_, cx| viewer.read(cx).search_matches_for_test());
+    assert!(
+        current.is_none() && matches.is_empty(),
+        "highlights cleared"
+    );
+    assert!(h.cx.update(|window, cx| viewer.read(cx).page_focused_for_test(window, cx)));
+    keys(&mut h, "ctrl-f");
+    assert_eq!(count(&mut h).as_deref(), Some("1 of 3"));
+    keys(&mut h, "x");
+    assert_eq!(
+        count(&mut h).as_deref(),
+        Some("0 matches"),
+        "the query was selected"
+    );
+
+    // Going to a line shows the raw view, which has no search yet: the bar closes and
+    // Ctrl+F in the editor opens nothing.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let id = workspace.tabs[0].id;
+            let place = FilePlace {
+                line: Some(1),
+                column: None,
+            };
+            workspace.open_file_in(id, file.clone(), place, window, cx);
+        });
+    });
+    assert_eq!(count(&mut h), None);
+    keys(&mut h, "ctrl-f");
+    assert_eq!(count(&mut h), None);
+}
+
+#[gpui::test]
 fn edits_typed_while_a_save_writes_stay_unsaved(cx: &mut gpui_kit::TestAppContext) {
     let mut h = PanesHarness::new("viewer-save-race", cx);
     h.open_file();
