@@ -14,7 +14,7 @@ use std::io::{self, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -54,6 +54,29 @@ struct Inner {
     ping: PingTimes,
     /// A client asked the server to stop: it starts no session any more.
     stopping: AtomicBool,
+}
+
+/// Counts a connection while it lives, also when its thread panics: otherwise the daemon
+/// would never be idle again.
+struct ConnectionCount<'a>(&'a Inner);
+
+impl<'a> ConnectionCount<'a> {
+    fn new(inner: &'a Inner) -> Self {
+        inner.connections.fetch_add(1, Ordering::AcqRel);
+        Self(inner)
+    }
+}
+
+impl Drop for ConnectionCount<'_> {
+    fn drop(&mut self) {
+        let mut idle_since = self
+            .0
+            .idle_since
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *idle_since = Some(Instant::now());
+        self.0.connections.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 /// When connections are pinged and dropped: constants, shorter in tests.
@@ -279,7 +302,7 @@ impl Server {
         writer: impl Write + Send + 'static,
         hang_up: impl FnOnce() + Send + 'static,
     ) {
-        self.inner.connections.fetch_add(1, Ordering::AcqRel);
+        let _counted = ConnectionCount::new(&self.inner);
         let client = self.inner.next_client.fetch_add(1, Ordering::AcqRel);
         let (outbox, receiver) = Outbox::new();
         let writer_thread = thread::Builder::new()
@@ -299,8 +322,6 @@ impl Server {
             Err(err) => log::warn!("client {client}: no writer thread: {err}"),
         }
         self.drop_viewers(client);
-        *self.inner.idle_since.lock().unwrap() = Some(Instant::now());
-        self.inner.connections.fetch_sub(1, Ordering::AcqRel);
     }
 
     /// Take the connection out of every session: it gets no more output and is not counted.

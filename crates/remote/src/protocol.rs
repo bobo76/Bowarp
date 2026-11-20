@@ -19,6 +19,11 @@ pub const PROTOCOL_VERSION: u16 = 7;
 
 /// No frame is longer: a peer that sends one is broken (or not speaking this protocol).
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
+/// Terminal sizes accepted from the wire; others are clamped into these ranges.
+const MIN_COLUMNS: u16 = 2;
+const MAX_COLUMNS: u16 = 1000;
+const MIN_LINES: u16 = 1;
+const MAX_LINES: u16 = 500;
 
 /// What to start on the server.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -599,10 +604,12 @@ impl Decoder<'_> {
         Ok(items)
     }
 
+    /// Columns and lines are clamped: alacritty crashes the whole process on a 0-column or
+    /// 0-line terminal, and a huge one exhausts memory.
     fn size(&mut self) -> io::Result<TermDimensions> {
         Ok(TermDimensions {
-            columns: self.u16()?,
-            lines: self.u16()?,
+            columns: self.u16()?.clamp(MIN_COLUMNS, MAX_COLUMNS),
+            lines: self.u16()?.clamp(MIN_LINES, MAX_LINES),
             cell_width: self.u16()?,
             cell_height: self.u16()?,
         })
