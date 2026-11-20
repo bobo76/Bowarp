@@ -13,7 +13,7 @@ use gpui_kit::{
     InteractiveElement, IntoElement, ParentElement, SharedString, Stateful,
     StatefulInteractiveElement, Styled, WeakEntity, Window, div, px,
 };
-use workspace_model::{DropTarget, Group, GroupId, Item, Location, display_path};
+use workspace_model::{DropTarget, Group, GroupId, Item, LauncherIcon, Location, display_path};
 
 use super::{RenameTarget, WorkspaceView};
 use crate::launcher::{self, Launcher};
@@ -660,6 +660,8 @@ impl WorkspaceView {
 
     /// The `+` menu: the default shell (with its shortcut), the other shells, the agent CLIs,
     /// then a submenu per remote host (settings `remote_hosts`) with its shell and agents.
+    /// With a remote tab selected, the default shell and the agents open on its host, and say
+    /// so ("Claude Code · box"); shells picked by name are this machine's.
     fn new_tab_button(&self, workspace: WeakEntity<Self>, cx: &App) -> impl IntoElement + use<> {
         let launchers = self.launchers.clone();
         Button::new("new-tab")
@@ -669,6 +671,13 @@ impl WorkspaceView {
             .tooltip(shortcuts::with_shortcut("New tab", &NewTab, cx))
             .dropdown_menu(move |mut menu, window, cx| {
                 OpenMenu::track(&workspace, |workspace| &mut workspace.menu, cx);
+                let remote_host = workspace
+                    .upgrade()
+                    .and_then(|workspace| workspace.read(cx).remote_menu_host(cx));
+                let on_host = |label: &str| match &remote_host {
+                    Some(host) => format!("{label} · {host}"),
+                    None => label.to_owned(),
+                };
                 let open = |launcher: &Launcher| {
                     let launcher = launcher.clone();
                     let workspace = workspace.clone();
@@ -683,7 +692,12 @@ impl WorkspaceView {
                     settings_file::settings(cx).default_shell(),
                 );
                 if let Some(default) = default {
-                    let label = default.label.clone();
+                    // What New tab opens: the host's default shell from a remote tab.
+                    let (label, icon) = match &remote_host {
+                        Some(_) => (on_host(launcher::REMOTE_SHELL_LABEL), LauncherIcon::Shell),
+                        None => (default.label.clone(), default.icon),
+                    };
+                    let workspace = workspace.clone();
                     menu = menu.item(
                         PopupMenuItem::element(move |_, cx| {
                             shortcuts::menu_label_with_hint(
@@ -693,56 +707,37 @@ impl WorkspaceView {
                                 cx,
                             )
                         })
-                        .icon(sidebar::launcher_icon(default.icon))
-                        .on_click(open(default)),
+                        .icon(sidebar::launcher_icon(icon))
+                        .on_click(move |_, window, cx| {
+                            let _ = workspace.update(cx, |workspace, cx| {
+                                workspace.open_default_shell(window, cx)
+                            });
+                        }),
                     );
                 }
-                for (index, group) in [shells, agents].into_iter().enumerate() {
-                    if index > 0 {
-                        menu = menu.separator();
-                    }
-                    for launcher in group {
-                        let label = launcher.display_label();
-                        menu = menu.item(
-                            PopupMenuItem::new(label)
-                                .icon(sidebar::launcher_icon(launcher.icon))
-                                .disabled(launcher.program.is_none())
-                                .on_click(open(launcher)),
-                        );
-                    }
+                for launcher in shells {
+                    menu = menu.item(
+                        PopupMenuItem::new(launcher.display_label())
+                            .icon(sidebar::launcher_icon(launcher.icon))
+                            .disabled(launcher.program.is_none())
+                            .on_click(open(launcher)),
+                    );
                 }
-                let hosts: Vec<_> = settings_file::settings(cx)
-                    .remote_hosts
-                    .usable()
-                    .filter_map(|(host, destination)| {
-                        let target = remote_hosts::host_target(host)?;
-                        Some((host.label().to_owned(), destination.to_owned(), target))
-                    })
-                    .collect();
-                if !hosts.is_empty() {
-                    menu = menu.separator();
+                menu = menu.separator();
+                for launcher in agents {
+                    // On a host, an agent missing here may well be installed there.
+                    let (label, disabled) = match &remote_host {
+                        Some(_) => (on_host(&launcher.label), false),
+                        None => (launcher.display_label(), launcher.program.is_none()),
+                    };
+                    menu = menu.item(
+                        PopupMenuItem::new(label)
+                            .icon(sidebar::launcher_icon(launcher.icon))
+                            .disabled(disabled)
+                            .on_click(open(launcher)),
+                    );
                 }
-                for (label, destination, target) in hosts {
-                    let workspace = workspace.clone();
-                    menu = menu.submenu(label, window, cx, move |mut submenu, _, cx| {
-                        for launch in launcher::remote_launches(&destination) {
-                            let workspace = workspace.clone();
-                            let spec = launch.spec;
-                            submenu = submenu.item(
-                                PopupMenuItem::new(launch.label)
-                                    .icon(sidebar::launcher_icon(launch.icon))
-                                    .on_click(move |_, window, cx| {
-                                        let spec = spec.clone();
-                                        let _ = workspace.update(cx, |workspace, cx| {
-                                            workspace.open_tab_or_notify(spec, window, cx)
-                                        });
-                                    }),
-                            );
-                        }
-                        host_state_items(submenu.separator(), target.clone(), cx)
-                    });
-                }
-                menu
+                host_submenus(menu, &workspace, window, cx)
             })
     }
 
@@ -852,6 +847,57 @@ fn tab_detail(location: &Location, home: Option<&Path>) -> TabDetail {
         Some(head) => TabDetail::Branch(SharedString::from(head.name().to_string())),
         None => TabDetail::Folder(display_path(&location.folder, home).into()),
     }
+}
+
+/// The `+` menu's submenu per remote host (settings `remote_hosts`): its shell and agents,
+/// "Open in folder…", then its server's state.
+fn host_submenus(
+    mut menu: PopupMenu,
+    workspace: &WeakEntity<WorkspaceView>,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let hosts: Vec<_> = settings_file::settings(cx)
+        .remote_hosts
+        .usable()
+        .filter_map(|(host, destination)| {
+            let target = remote_hosts::host_target(host)?;
+            Some((host.label().to_owned(), destination.to_owned(), target))
+        })
+        .collect();
+    if !hosts.is_empty() {
+        menu = menu.separator();
+    }
+    for (label, destination, target) in hosts {
+        let workspace = workspace.clone();
+        menu = menu.submenu(label, window, cx, move |mut submenu, _, cx| {
+            for launch in launcher::remote_launches() {
+                let workspace = workspace.clone();
+                let (kind, destination) = (launch.kind, destination.clone());
+                submenu = submenu.item(
+                    PopupMenuItem::new(launch.label)
+                        .icon(sidebar::launcher_icon(launch.icon))
+                        .on_click(move |_, window, cx| {
+                            let _ = workspace.update(cx, |workspace, cx| {
+                                workspace.open_on_host(kind, &destination, window, cx)
+                            });
+                        }),
+                );
+            }
+            let (workspace, destination) = (workspace.clone(), destination.clone());
+            submenu = submenu.separator().item(
+                PopupMenuItem::new("Open in folder…")
+                    .icon(IconName::FolderOpen)
+                    .on_click(move |_, window, cx| {
+                        let _ = workspace.update(cx, |workspace, cx| {
+                            workspace.ask_open_in_folder(&destination, window, cx)
+                        });
+                    }),
+            );
+            host_state_items(submenu.separator(), target.clone(), cx)
+        });
+    }
+    menu
 }
 
 /// A host's `+` submenu ends with its server's last known state (as on Settings → Remote

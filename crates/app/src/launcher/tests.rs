@@ -34,24 +34,25 @@ fn remote_tabs_are_named_after_their_program_and_host() {
 }
 
 #[test]
-fn a_remote_host_offers_its_shell_then_the_agents_in_its_home_folder() {
-    let launches = remote_launches("me@box");
+fn a_remote_host_offers_its_shell_then_the_agents() {
+    let launches = remote_launches();
     let labels: Vec<_> = launches
         .iter()
         .map(|launch| launch.label.as_str())
         .collect();
     assert_eq!(labels, ["Shell", CLAUDE.label(), COPILOT.label()]);
-    assert_eq!(launches[1].spec.kind, SessionKind::Agent(CLAUDE));
-    for launch in &launches {
-        assert_eq!(launch.spec.host.as_deref(), Some("me@box"));
-        assert_eq!(launch.spec.cwd, None, "the server's home folder");
-    }
-    // The server's default shell, and agents found on its PATH, not paths on this machine.
-    assert_eq!(launches[0].spec.program, None);
+    let kinds: Vec<_> = launches.iter().map(|launch| launch.kind).collect();
     assert_eq!(
-        launches[1].spec.program.as_deref(),
-        Some(CLAUDE.executable())
+        kinds,
+        [
+            SessionKind::Shell,
+            SessionKind::Agent(CLAUDE),
+            SessionKind::Agent(COPILOT)
+        ]
     );
+    for launch in &launches {
+        assert_eq!(remote_label(launch.kind), launch.label);
+    }
 }
 
 #[test]

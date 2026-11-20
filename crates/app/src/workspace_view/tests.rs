@@ -2,6 +2,8 @@ use super::*;
 
 use std::time::{Duration, Instant};
 
+use workspace_model::RemoteHosts;
+
 /// Let the PTY reader finish before GPUI's deterministic executor polls the event receiver; a
 /// later wake from that thread fails the test.
 fn wait_for_exit(session: &term_core::Session) {
@@ -2935,4 +2937,81 @@ fn a_failed_local_restart_keeps_the_exited_view_and_toasts_once(cx: &mut gpui_ki
         );
     });
     assert_eq!(cx.update(|window, cx| window.notifications(cx).len()), 1);
+}
+
+fn remote_host(name: &str, destination: &str) -> RemoteHost {
+    RemoteHost {
+        name: name.into(),
+        destination: destination.into(),
+        ..RemoteHost::default()
+    }
+}
+
+#[gpui::test]
+fn the_new_tab_menu_names_the_selected_remote_tabs_host(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("remote-menu-host", cx);
+    let workspace = h.workspace.clone();
+    h.cx.update(|_, cx| {
+        settings_file::update(cx, |settings| {
+            settings.remote_hosts = RemoteHosts::new(vec![remote_host("Build box", "me@build")]);
+        });
+        workspace.update(cx, |workspace, cx| {
+            assert_eq!(workspace.remote_menu_host(cx), None, "a local tab");
+            // A tab opened with `--remote <name>` names the host by its name.
+            workspace.tabs[0].spec.host = Some("Build box".into());
+            assert_eq!(workspace.remote_menu_host(cx).as_deref(), Some("Build box"));
+            workspace.tabs[0].spec.host = Some("me@elsewhere".into());
+            assert_eq!(
+                workspace.remote_menu_host(cx).as_deref(),
+                Some("me@elsewhere")
+            );
+        });
+    });
+}
+
+#[gpui::test]
+fn open_in_folder_offers_the_last_answer_and_cancels_without_opening(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use gpui_kit::component::WindowExt;
+    use workspace_model::agents::CLAUDE;
+
+    let mut h = PanesHarness::new("open-in-folder", cx);
+    let workspace = h.workspace.clone();
+    let dialog = |h: &mut PanesHarness| h.cx.update(|window, cx| window.has_active_dialog(cx));
+    h.cx.update(|_, cx| {
+        settings_file::update(cx, |settings| {
+            let mut hosts = RemoteHosts::new(vec![remote_host("Build box", "me@build")]);
+            hosts.remember_launch("me@build", "/srv/app", SessionKind::Agent(CLAUDE));
+            settings.remote_hosts = hosts;
+        });
+    });
+    let form = h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.ask_open_in_folder("me@build", window, cx)
+        })
+    });
+    h.cx.run_until_parked();
+    assert!(dialog(&mut h));
+    let choice = h.cx.update(|_, cx| form.read(cx).choice(cx));
+    assert_eq!(choice, ("/srv/app".into(), SessionKind::Agent(CLAUDE)));
+    h.cx.update(|_, cx| form.update(cx, |form, cx| form.select(SessionKind::Shell, cx)));
+    assert_eq!(
+        h.cx.update(|_, cx| form.read(cx).choice(cx)).1,
+        SessionKind::Shell
+    );
+
+    let tabs = h.cx.update(|_, cx| workspace.read(cx).tabs.len());
+    h.cx.update(|window, cx| window.close_dialog(cx));
+    h.cx.run_until_parked();
+    assert!(!dialog(&mut h));
+    h.cx.update(|_, cx| {
+        assert_eq!(workspace.read(cx).tabs.len(), tabs);
+        // Cancelling remembers nothing.
+        let host = settings_file::settings(cx)
+            .remote_hosts
+            .find("me@build")
+            .cloned();
+        assert_eq!(host.unwrap().last_kind(), SessionKind::Agent(CLAUDE));
+    });
 }

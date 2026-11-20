@@ -1,10 +1,11 @@
 use super::*;
+use crate::agents::CLAUDE;
 
 fn host(name: &str, destination: &str) -> RemoteHost {
     RemoteHost {
         name: name.into(),
         destination: destination.into(),
-        server_program: String::new(),
+        ..RemoteHost::default()
     }
 }
 
@@ -39,6 +40,7 @@ fn entries_of_the_wrong_shape_are_dropped_and_wrong_fields_are_empty() {
                 name: "a".into(),
                 destination: "me@a".into(),
                 server_program: "/opt/s".into(),
+                ..RemoteHost::default()
             },
             host("", "b"),
             RemoteHost::default(),
@@ -113,4 +115,72 @@ fn editing_ignores_hosts_that_are_gone() {
     assert_eq!(hosts.all().len(), 1);
     hosts.remove(0);
     assert!(hosts.all().is_empty());
+}
+
+#[test]
+fn launch_memory_is_read_and_written_only_when_set() {
+    let hosts: RemoteHosts = serde_json::from_str(
+        r#"[{"destination": "box", "last_folder": "/srv/app", "last_program": "claude"}]"#,
+    )
+    .unwrap();
+    let read = &hosts.all()[0];
+    assert_eq!(read.last_folder, "/srv/app");
+    assert_eq!(read.last_kind(), SessionKind::Agent(CLAUDE));
+    let json = serde_json::to_value(RemoteHosts::new(vec![host("a", "me@a")])).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([{"name": "a", "destination": "me@a", "server_program": ""}])
+    );
+}
+
+#[test]
+fn an_unknown_or_missing_last_program_is_a_shell() {
+    let mut box_host = host("", "box");
+    assert_eq!(box_host.last_kind(), SessionKind::Shell);
+    box_host.last_program = "emacs".into();
+    assert_eq!(box_host.last_kind(), SessionKind::Shell);
+}
+
+#[test]
+fn same_host_matches_a_destination_with_its_hosts_name() {
+    let hosts = RemoteHosts::new(vec![host("Build box", "me@build"), host("", "other")]);
+    assert!(hosts.same_host("Build box", " me@build "));
+    assert!(hosts.same_host("me@elsewhere", "me@elsewhere"));
+    assert!(!hosts.same_host("me@build", "other"));
+}
+
+#[test]
+fn a_launch_starts_in_the_selected_tabs_folder_only_on_its_host() {
+    let hosts = RemoteHosts::new(vec![host("Build box", "me@build"), host("", "other")]);
+    let on_build = Some(("Build box", Some("/srv/app")));
+    assert_eq!(hosts.folder_on("me@build", on_build), Some("/srv/app"));
+    assert_eq!(hosts.folder_on("other", on_build), None);
+    // A local tab, or a remote one whose folder is unknown: the home folder.
+    assert_eq!(hosts.folder_on("me@build", None), None);
+    assert_eq!(hosts.folder_on("me@build", Some(("me@build", None))), None);
+}
+
+#[test]
+fn open_in_folder_offers_the_tabs_folder_else_the_last_one_used() {
+    let mut hosts = RemoteHosts::new(vec![host("Build box", "me@build"), host("", "other")]);
+    assert_eq!(hosts.offered_folder("me@build", None), "");
+    hosts.remember_launch(" me@build ", " /srv/last ", SessionKind::Agent(CLAUDE));
+    assert_eq!(hosts.offered_folder("me@build", None), "/srv/last");
+    assert_eq!(
+        hosts.find("me@build").unwrap().last_kind(),
+        SessionKind::Agent(CLAUDE)
+    );
+    let on_build = Some(("me@build", Some("/srv/tab")));
+    assert_eq!(hosts.offered_folder("me@build", on_build), "/srv/tab");
+    assert_eq!(hosts.offered_folder("other", on_build), "");
+}
+
+#[test]
+fn remembering_a_launch_on_an_unknown_host_changes_nothing() {
+    let mut hosts = RemoteHosts::new(vec![host("", "box")]);
+    hosts.remember_launch("elsewhere", "/srv", SessionKind::Shell);
+    assert_eq!(hosts.all(), [host("", "box")]);
+    hosts.remember_launch("box", "", SessionKind::Shell);
+    assert_eq!(hosts.all()[0].last_program, "shell");
+    assert_eq!(hosts.all()[0].last_folder, "");
 }
