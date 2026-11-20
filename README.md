@@ -904,8 +904,9 @@ dismisses it.
 
 The version is the workspace `version` in `Cargo.toml`. `scripts/bump-version.sh
 [patch|minor|major]` (default `patch`) raises it, refreshes `Cargo.lock` and prints the new
-version; it refuses a `Cargo.toml` with uncommitted changes. Each pushed feature is one patch
-higher and tagged `v<version>`; finishing a milestone bumps `minor`.
+version; it refuses a `Cargo.toml` with uncommitted changes. Features collect under
+"Unreleased" in the changelog until a bump (`patch`, or `minor` when a milestone is finished);
+a release is tagged `v<version>`.
 
 ## Design decisions
 
