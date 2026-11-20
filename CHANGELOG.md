@@ -5,6 +5,12 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Remote tabs: connecting to a host that is reachable but never answers (a stuck server, a
+  shell startup file waiting for input) now fails after 30 s with "the server did not answer",
+  instead of waiting forever and holding up every other tab on that host.
+- Remote servers on Linux: `agentws-server proxy` refuses a daemon socket owned by another
+  user, and a client sending a bad terminal size can no longer crash the server.
+
 - Git page: switch branches from the header. Click the branch name (or press B in the list or
   diff) to open a picker with a filter, local branches first, then remote ones; picking a
   remote branch creates a local branch tracking it. A switch needs a clean working tree
