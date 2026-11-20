@@ -324,14 +324,19 @@ fn owned_entry(name: &str) -> Option<OwnedEntry> {
     })
 }
 
-/// Remove the hook artifacts of instances that are gone (crashed).
+/// Remove the hook artifacts of instances that are gone (crashed). An entry that can't be
+/// read is skipped: the others are still swept.
 fn sweep_stale_files(dir: &Path, is_running: impl Fn(u32) -> bool) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
-        let entry = entry?;
+        let Ok(entry) = entry else {
+            continue;
+        };
         let Some(owned) = entry.file_name().to_str().and_then(owned_entry) else {
             continue;
         };
-        let file_type = entry.file_type()?;
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         let expected_type = match owned.kind {
             HookArtifactKind::PluginDirectory => file_type.is_dir(),
             HookArtifactKind::SettingsFile => file_type.is_file(),
@@ -343,7 +348,10 @@ fn sweep_stale_files(dir: &Path, is_running: impl Fn(u32) -> bool) -> io::Result
         {
             use std::os::unix::fs::MetadataExt;
             // The fallback runtime directory can be shared with other users.
-            if entry.metadata()?.uid() != processes::effective_uid() {
+            let ours = entry
+                .metadata()
+                .is_ok_and(|metadata| metadata.uid() == processes::effective_uid());
+            if !ours {
                 continue;
             }
         }
