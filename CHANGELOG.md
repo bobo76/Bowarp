@@ -5,6 +5,9 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- File viewer: opening a FIFO, a device or a link to one (`notes.txt -> /dev/zero`) says
+  "Only regular files can be shown." instead of hanging or running out of memory.
+
 - Git page: Discard all deletes only the untracked files its confirmation counted; a file
   created meanwhile (by an agent, say) is kept. With more than 10,000 changed files it
   refuses and says why, since the confirmation can't list them all.

@@ -1225,7 +1225,7 @@ fn render_json(
 /// wider or taller than a GPU texture. Only the file's header is read. Whether it decodes is
 /// known once it is drawn.
 fn check_image(path: &Path) -> Result<(), String> {
-    let size = fs::metadata(path).map_err(|err| err.to_string())?.len();
+    let size = regular_file_size(path)?;
     let mut header = Vec::with_capacity(file_view::IMAGE_HEADER_LEN);
     File::open(path)
         .and_then(|file| {
@@ -1269,10 +1269,28 @@ fn write_file(save: &Save, saved: &str, check: DiskCheck) -> SaveOutcome {
 
 /// The file's text, or why it is not shown.
 fn read_text(path: &Path) -> Result<String, String> {
-    let size = fs::metadata(path).map_err(|err| err.to_string())?.len();
+    let size = regular_file_size(path)?;
     file_view::check_size(size).map_err(|reason| reason.to_string())?;
-    let bytes = fs::read(path).map_err(|err| err.to_string())?;
+    // Read at most one byte past the limit: the file may have grown since.
+    let mut bytes = Vec::new();
+    File::open(path)
+        .and_then(|file| {
+            file.take(file_view::MAX_VIEW_BYTES + 1)
+                .read_to_end(&mut bytes)
+        })
+        .map_err(|err| err.to_string())?;
+    file_view::check_size(bytes.len() as u64).map_err(|reason| reason.to_string())?;
     file_view::decode_text(bytes).map_err(|reason| reason.to_string())
+}
+
+/// The size of the file at `path` (following symlinks), or why it is not read: a FIFO would
+/// block the read forever and a device such as `/dev/zero` never ends; both report size 0.
+fn regular_file_size(path: &Path) -> Result<u64, String> {
+    let metadata = fs::metadata(path).map_err(|err| err.to_string())?;
+    if !metadata.is_file() {
+        return Err("Only regular files can be shown.".to_owned());
+    }
+    Ok(metadata.len())
 }
 
 impl Render for FileViewer {
@@ -1298,6 +1316,24 @@ impl Render for FileViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn devices_and_links_to_them_are_not_read() {
+        let dir = std::env::temp_dir().join(format!("agentws-device-read-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let link = dir.join("notes.txt");
+        std::os::unix::fs::symlink("/dev/zero", &link).unwrap();
+        let image = dir.join("photo.png");
+        std::os::unix::fs::symlink("/dev/zero", &image).unwrap();
+
+        let refused = "Only regular files can be shown.".to_owned();
+        assert_eq!(read_text(&link), Err(refused.clone()));
+        assert_eq!(read_text(Path::new("/dev/zero")), Err(refused.clone()));
+        assert_eq!(check_image(&image), Err(refused));
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn check_image_reads_the_header_for_format_and_dimensions() {
