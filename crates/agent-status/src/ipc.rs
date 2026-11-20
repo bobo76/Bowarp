@@ -44,6 +44,8 @@ const CONVERSATION_KEY: &str = "conv=";
 const DESCRIPTION_KEY: &str = " desc=";
 /// How long a connection may take to send its line; a hook sends it right after connecting.
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long the listener waits after a failed accept before the next.
+const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 /// Most connections read at once. A hook sends its line right after connecting, so only a
 /// misbehaving peer keeps one open; past this, new connections are dropped.
 const MAX_READERS: usize = 16;
@@ -164,6 +166,8 @@ fn hook_line(agent: Option<AgentId>, session: u64, at: u64, input: &[u8]) -> io:
                 && either("parent_agent_id", "parentAgentId").is_some();
             unnamed_start.then(|| "SubagentStart".to_owned())
         })
+        // One wire field, like every other value on the line.
+        .filter(|name| token(name).is_some())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing hook_event_name"))?;
     let mut line = format!("{session} {at} {event_name}");
     if let Some(kind) = field("notification_type").and_then(token) {
@@ -303,7 +307,13 @@ fn read_message(stream: Stream) -> Option<HookMessage> {
     BufReader::new(io::Read::take(stream, MAX_LINE))
         .read_line(&mut line)
         .ok()?;
-    parse_line(&line)
+    parse_received(&line)
+}
+
+/// The message in a received `line`; `None` for one without its newline, cut at
+/// [`MAX_LINE`] or by a peer that hung up mid-line.
+fn parse_received(line: &str) -> Option<HookMessage> {
+    line.ends_with('\n').then(|| parse_line(line)).flatten()
 }
 
 /// Receives raw agent reports from `agentws-hook` processes.
@@ -333,6 +343,8 @@ impl HookServer {
                         Ok(stream) => stream,
                         Err(err) => {
                             log::warn!("hook connection failed: {err}");
+                            // Out of file descriptors, say: accepting again at once would spin.
+                            thread::sleep(ACCEPT_RETRY);
                             continue;
                         }
                     };
@@ -346,12 +358,16 @@ impl HookServer {
                     };
                     // A connection that never sends must not hold up the others.
                     let on_message = on_message.clone();
-                    thread::spawn(move || {
+                    // `thread::spawn` would panic, ending this loop and every agent status.
+                    let spawned = thread::Builder::new().spawn(move || {
                         let _slot = slot;
                         if let Some(message) = read_message(stream) {
                             on_message(message);
                         }
                     });
+                    if let Err(err) = spawned {
+                        log::warn!("no thread for a hook connection: {err}");
+                    }
                 }
             })?;
         Ok(Self { pipe_name })
@@ -447,6 +463,25 @@ mod tests {
             None,
             "Copilot's progress reports Working"
         );
+    }
+
+    #[test]
+    fn event_names_that_are_not_one_field_are_refused() {
+        for input in [
+            br#"{"hook_event_name":"Stop now"}"#.as_slice(),
+            br#"{"hook_event_name":"Stop
+x"}"#,
+            br#"{"hook_event_name":""}"#,
+        ] {
+            assert!(hook_line(Some(CLAUDE), 7, 1000, input).is_err());
+        }
+    }
+
+    #[test]
+    fn a_line_without_its_newline_is_dropped() {
+        assert!(parse_received("7 1000 Stop\n").is_some());
+        assert_eq!(parse_received("7 1000 Stop"), None);
+        assert_eq!(parse_received(""), None);
     }
 
     #[test]
