@@ -99,9 +99,12 @@ impl TabsState {
         Self::from_json(&fs::read_to_string(path).ok()?)
     }
 
-    /// Write atomically, creating the folder and using owner-only permissions on Unix.
+    /// Write atomically, creating the folder and using owner-only permissions on Unix. Fails
+    /// (`InvalidData`) on a folder that is not UTF-8, which JSON can't hold.
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        write_private_atomic(path, &self.to_json())
+        let text = serde_json::to_string_pretty(self)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        write_private_atomic(path, &text)
     }
 
     /// Remove the saved last command of every tab (`only: None`) or of the tabs whose last
@@ -148,6 +151,7 @@ impl TabsState {
         state.save(path)
     }
 
+    /// The state as JSON. Panics on a folder that is not UTF-8: use [`Self::save`] to write.
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("tabs state serializes")
     }

@@ -288,3 +288,15 @@ fn save_then_load() {
     assert_eq!(TabsState::load(&path), None);
     assert_eq!(TabsState::load(&root.0.join("missing.json")), None);
 }
+
+#[cfg(unix)]
+#[test]
+fn saving_a_folder_that_is_not_utf8_fails_without_panicking() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = TempDir::new();
+    let mut state = sample();
+    state.layout.pinned[0].folder = Some(std::ffi::OsStr::from_bytes(b"/tmp/\xff").into());
+    let err = state.save(&dir.0.join("tabs.json")).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
