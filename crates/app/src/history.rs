@@ -3,12 +3,15 @@
 //! (`workspace_model::CommandHistory`). Each instance loads the file at start and appends each
 //! command it records.
 
+use std::future::{self, Future};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::mpsc::{self, SendError, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use futures::channel::oneshot;
 use gpui_kit::{App, Global};
 use term_core::ExecutedCommand;
 use workspace_model::{
@@ -66,7 +69,7 @@ impl History {
 enum Job {
     Append(HistoryEntry),
     Remove(String, HistoryScope),
-    Clear(Sender<io::Result<()>>),
+    Clear(oneshot::Sender<io::Result<()>>),
 }
 
 /// Writes the history file on its own thread, in order: another instance may hold the file's
@@ -110,15 +113,6 @@ impl HistoryWriter {
         apply(&self.path, job);
     }
 
-    /// Empty the file behind the changes queued before, and wait for the result.
-    fn clear(&self) -> io::Result<()> {
-        let (reply, result) = mpsc::channel();
-        self.queue(Job::Clear(reply));
-        result
-            .recv()
-            .unwrap_or_else(|_| Err(io::Error::other("the history writer stopped")))
-    }
-
     /// Write every queued change before returning.
     fn finish(&mut self) {
         if let Some(Worker { sender, thread }) = self.worker.take() {
@@ -154,7 +148,7 @@ fn apply(path: &Path, job: Job) {
                 );
             }
         }
-        // The caller waits for the answer; it may be gone only if it panicked.
+        // The caller may have stopped waiting for the answer.
         Job::Clear(reply) => {
             let _ = reply.send(clear_history_file(path));
         }
@@ -215,34 +209,49 @@ pub fn forget(command: &str, scope: &HistoryScope, cx: &mut App) {
     }
 }
 
-/// "Clear history": forget every command, in this run and in the history file. When the file
-/// can't be cleared the commands are gone for this run only, and the error says so.
-pub fn clear(cx: &mut App) -> Result<(), String> {
+/// What a clear action reports once it is done: an error message for the user.
+pub type Cleared = Pin<Box<dyn Future<Output = Result<(), String>>>>;
+
+/// "Clear history": forget every command, in this run and in the history file. The file is
+/// emptied on the writer's thread, which may wait for another instance's lock: the result
+/// comes later. When the file can't be cleared the commands are gone for this run only, and
+/// the error says so.
+pub fn clear(cx: &mut App) -> Cleared {
     let history = cx.global_mut::<History>();
     history.forgotten = None;
     history.commands.clear();
     let Some(writer) = &history.writer else {
-        return Ok(());
+        return Box::pin(future::ready(Ok(())));
     };
-    writer.clear().map_err(|err| {
-        format!(
-            "Couldn't clear {}: {err}. The commands return on the next start.",
-            writer.path.display()
-        )
+    let path = writer.path.clone();
+    let (reply, result) = oneshot::channel();
+    writer.queue(Job::Clear(reply));
+    Box::pin(async move {
+        let cleared = result
+            .await
+            .unwrap_or_else(|_| Err(io::Error::other("the history writer stopped")));
+        cleared.map_err(|err| {
+            format!(
+                "Couldn't clear {}: {err}. The commands return on the next start.",
+                path.display()
+            )
+        })
     })
 }
 
 /// "Clear saved session commands": every tab drops its saved last command and the tab
 /// snapshot is saved again through the ordered writer. Nothing is rerun.
-pub fn clear_saved_session_commands(cx: &mut App) -> Result<(), String> {
+pub fn clear_saved_session_commands(cx: &mut App) -> Cleared {
     cx.global_mut::<History>().saved_cleared += 1;
-    Ok(())
+    Box::pin(future::ready(Ok(())))
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::PathBuf;
+
+    use futures::executor::block_on;
 
     use super::*;
 
@@ -267,8 +276,10 @@ mod tests {
         let path = folder.join("history.jsonl");
         set_history(cx, path.clone(), "{\"cmd\":\"ls\",\"time\":1}\n");
         assert_eq!(cx.update(|cx| cx.global::<History>().commands().len()), 1);
-        assert_eq!(cx.update(clear), Ok(()));
+        let cleared = cx.update(clear);
+        // Memory is cleared at once, the file by the writer.
         assert_eq!(cx.update(|cx| cx.global::<History>().commands().len()), 0);
+        assert_eq!(block_on(cleared), Ok(()));
         assert_eq!(fs::read_to_string(&path).unwrap(), "");
         let _ = fs::remove_dir_all(&folder);
     }
@@ -311,6 +322,33 @@ mod tests {
     }
 
     #[gpui::test]
+    fn clear_does_not_wait_for_another_instances_history_lock(cx: &mut gpui_kit::TestAppContext) {
+        use std::time::{Duration, Instant};
+
+        let folder = temp_folder("clear-locked");
+        let path = folder.join("history.jsonl");
+        set_history(cx, path.clone(), "{\"cmd\":\"ls\",\"time\":1}\n");
+        let lock = fs::File::create(path.with_extension("lock")).unwrap();
+        lock.lock().unwrap();
+        let holder = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(2));
+            drop(lock);
+        });
+
+        let started = Instant::now();
+        let cleared = cx.update(clear);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "clear blocked the UI thread for {:?}",
+            started.elapsed()
+        );
+        assert_eq!(block_on(cleared), Ok(()));
+        holder.join().unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "");
+        let _ = fs::remove_dir_all(&folder);
+    }
+
+    #[gpui::test]
     fn clear_reports_a_file_that_cannot_be_cleared(cx: &mut gpui_kit::TestAppContext) {
         let folder = temp_folder("clear-error");
         let blocker = folder.join("blocker");
@@ -320,7 +358,7 @@ mod tests {
             let path = Some(blocker.join("history.jsonl"));
             cx.set_global(History::new(CommandHistory::default(), path));
         });
-        let error = cx.update(clear).unwrap_err();
+        let error = block_on(cx.update(clear)).unwrap_err();
         assert!(error.contains("Couldn't clear"), "{error}");
         let _ = fs::remove_dir_all(&folder);
     }
@@ -328,7 +366,7 @@ mod tests {
     #[gpui::test]
     fn clear_saved_session_commands_counts_requests(cx: &mut gpui_kit::TestAppContext) {
         cx.update(init_in_memory);
-        assert_eq!(cx.update(clear_saved_session_commands), Ok(()));
+        assert_eq!(block_on(cx.update(clear_saved_session_commands)), Ok(()));
         assert_eq!(cx.update(|cx| cx.global::<History>().saved_cleared()), 1);
     }
 }

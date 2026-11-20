@@ -317,11 +317,15 @@ fn history_switches_apply_live_pass_keys_through_and_keep_data(cx: &mut gpui_kit
     view.update(cx, |view, cx| {
         view.restore_last_command(Some("git push".into()), cx)
     });
-    assert_eq!(cx.update(history::clear_saved_session_commands), Ok(()));
+    let cleared = cx.update(history::clear_saved_session_commands);
+    assert_eq!(futures::executor::block_on(cleared), Ok(()));
     cx.run_until_parked();
     view.read_with(cx, |view, _| assert_eq!(view.last_command(), None));
     assert_eq!(history_len(cx), 2);
-    assert_eq!(cx.update(history::clear), Ok(()));
+    assert_eq!(
+        futures::executor::block_on(cx.update(history::clear)),
+        Ok(())
+    );
     assert_eq!(history_len(cx), 0);
 }
 

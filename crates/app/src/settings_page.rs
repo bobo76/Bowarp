@@ -639,7 +639,7 @@ fn clear_action_row(
     question: &'static str,
     warning: &'static str,
     done: &'static str,
-    action: fn(&mut App) -> Result<(), String>,
+    action: fn(&mut App) -> history::Cleared,
 ) -> SettingItem {
     SettingItem::new(
         title,
@@ -657,11 +657,18 @@ fn clear_action_row(
                             .ok_variant(ButtonVariant::Danger)
                             .show_cancel(true)
                             .on_ok(move |_, window, cx| {
-                                let notification = match action(cx) {
-                                    Ok(()) => Notification::success(done),
-                                    Err(message) => Notification::error(message),
-                                };
-                                window.push_notification(notification, cx);
+                                let cleared = action(cx);
+                                window
+                                    .spawn(cx, async move |cx| {
+                                        let notification = match cleared.await {
+                                            Ok(()) => Notification::success(done),
+                                            Err(message) => Notification::error(message),
+                                        };
+                                        cx.update(|window, cx| {
+                                            window.push_notification(notification, cx)
+                                        })
+                                    })
+                                    .detach();
                                 true
                             })
                     });
