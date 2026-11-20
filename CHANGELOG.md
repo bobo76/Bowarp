@@ -5,6 +5,10 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Links: a `file://` link naming another computer (`file://server/share/x`) is no longer a
+  link in the terminal, and a Markdown link in the file viewer opens only web and mail
+  addresses; others (`smb:`, network shares, other registered handlers) show "Can't open".
+
 - File viewer: opening a FIFO, a device or a link to one (`notes.txt -> /dev/zero`) says
   "Only regular files can be shown." instead of hanging or running out of memory.
 

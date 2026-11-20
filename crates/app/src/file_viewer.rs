@@ -732,7 +732,13 @@ impl FileViewer {
                 );
             }
             None if url.starts_with('#') => {}
-            None => cx.open_url(url),
+            None if links::opens_in_browser(url) => cx.open_url(url),
+            // `smb:`, `ms-msdt:`, a network share: one click in an untrusted README must
+            // not reach them.
+            None => window.push_notification(
+                Notification::error(format!("Can't open {}", url.trim())),
+                cx,
+            ),
         }
     }
 

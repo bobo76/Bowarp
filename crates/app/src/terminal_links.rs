@@ -228,19 +228,18 @@ fn path_target(path_ref: PathRef, folder: Option<&Path>, home: Option<&Path>) ->
     })
 }
 
-/// A URL link: a `file://` one naming an existing file opens in the viewer, any other in the
-/// browser. `None` (not a link) for schemes not to open (`links::is_openable_hyperlink`).
+/// A URL link: a local `file:` one opens in the viewer, any other in the browser. `None` (not
+/// a link) for schemes not to open (`links::opens_in_browser`) and for a `file:` URL naming
+/// another host, which the system's handler would reach over the network.
 fn hyperlink_target(uri: String, folder: Option<&Path>) -> Option<Unchecked> {
+    if links::opens_in_browser(&uri) {
+        return Some(Unchecked::Url(uri));
+    }
     if !links::is_openable_hyperlink(&uri) {
         return None;
     }
-    let is_file_url = uri
-        .get(.."file://".len())
-        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"));
-    if is_file_url && let Some(path) = links::local_link(&uri, folder.unwrap_or(Path::new("/"))) {
-        return Some(Unchecked::FileUrl { uri, path });
-    }
-    Some(Unchecked::Url(uri))
+    let path = links::local_link(&uri, folder.unwrap_or(Path::new("/")))?;
+    Some(Unchecked::FileUrl { uri, path })
 }
 
 #[cfg(test)]
@@ -258,6 +257,20 @@ mod tests {
         assert_eq!(target.known(), Some(LinkTarget::Url(uri.clone())));
         assert_eq!(target.check(), Some(LinkTarget::Url(uri)));
         assert_eq!(hyperlink_target("javascript:alert(1)".into(), None), None);
+    }
+
+    #[test]
+    fn file_urls_to_another_host_are_not_links() {
+        for uri in [
+            "file://evil-host/share/x.exe",
+            "file://localhostfoo/x",
+            "FILE://host/x",
+        ] {
+            assert_eq!(hyperlink_target(uri.into(), None), None, "{uri}");
+        }
+        // A network path on Windows, a local one elsewhere.
+        let unc = hyperlink_target("file:////host/share/x".into(), None);
+        assert_eq!(unc.is_none(), cfg!(windows));
     }
 
     #[test]

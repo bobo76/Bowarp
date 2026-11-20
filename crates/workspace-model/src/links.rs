@@ -274,6 +274,13 @@ pub fn is_openable_hyperlink(uri: &str) -> bool {
         .any(|allowed| allowed.eq_ignore_ascii_case(scheme))
 }
 
+/// Whether `url` may go to the system's URL handler (a browser, a mail client): an
+/// [`is_openable_hyperlink`] that is not a `file:` URL. A `file:` URL that is not a
+/// [`local_link`] names a network share, which the handler would reach over SMB.
+pub fn opens_in_browser(url: &str) -> bool {
+    is_openable_hyperlink(url) && strip_prefix_ignore_case(url.trim_start(), "file:").is_none()
+}
+
 /// The cells of a link on one row of a grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RowSpan {
@@ -311,8 +318,12 @@ pub fn local_link(url: &str, folder: &Path) -> Option<PathBuf> {
     let url = url.trim();
     let without_fragment = url.split('#').next().unwrap_or_default();
     if let Some(rest) = strip_prefix_ignore_case(without_fragment, "file://") {
-        // `file:///home/x` and `file://localhost/home/x`.
-        let path = rest.strip_prefix("localhost").unwrap_or(rest);
+        // `file:///home/x` and `file://localhost/home/x`; another host is a network share.
+        let host = &rest[..rest.find('/').unwrap_or(rest.len())];
+        if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+            return None;
+        }
+        let path = &rest[host.len()..];
         let path = percent_decode(path.split('?').next().unwrap_or_default())?;
         let local = !path.is_empty() && !is_network_path(&path, cfg!(windows));
         return local.then(|| file_url_path(&path));
