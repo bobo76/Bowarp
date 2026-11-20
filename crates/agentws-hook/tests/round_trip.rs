@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
@@ -11,7 +12,10 @@ use agent_status::{
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 fn start_server() -> (HookServer, Receiver<HookMessage>) {
-    let pipe_name = format!("agentws-hook-test-{}.sock", now_micros());
+    // Tests run in parallel: the counter keeps two started in the same microsecond apart.
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let test = NEXT.fetch_add(1, Ordering::Relaxed);
+    let pipe_name = format!("agentws-hook-test-{}-{test}.sock", now_micros());
     let (sender, receiver) = mpsc::channel();
     let server = HookServer::start(pipe_name, move |message| {
         let _ = sender.send(message);
