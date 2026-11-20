@@ -596,8 +596,9 @@ impl Decoder<'_> {
 
     fn list<T>(&mut self, item: impl Fn(&mut Self) -> io::Result<T>) -> io::Result<Vec<T>> {
         let count = self.u32()? as usize;
-        // Every item takes at least one byte: a bogus count cannot reserve much.
-        let mut items = Vec::with_capacity(count.min(self.0.len()));
+        // Reserve at most one item per 4 bytes left (a string's length prefix): a bogus count
+        // must not reserve `size_of::<T>()` bytes for every byte of the frame.
+        let mut items = Vec::with_capacity(count.min(self.0.len() / 4));
         for _ in 0..count {
             items.push(item(self)?);
         }
