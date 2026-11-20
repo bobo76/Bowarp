@@ -5,6 +5,9 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Saved tabs: after running an older version, a tab or color it doesn't know drops only that
+  tab (or its color) at start-up; before, every saved tab was lost.
+
 - Links: a `file://` link naming another computer (`file://server/share/x`) is no longer a
   link in the terminal, and a Markdown link in the file viewer opens only web and mail
   addresses; others (`smb:`, network shares, other registered handlers) show "Can't open".
