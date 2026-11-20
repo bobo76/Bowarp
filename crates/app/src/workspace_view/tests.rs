@@ -2004,6 +2004,9 @@ fn a_restored_agent_tab_offers_to_resume_its_conversation(cx: &mut gpui_kit::Tes
     use workspace_model::agents::CLAUDE;
     use workspace_model::{SavedItem, SavedKind, SavedLayout, SavedTab};
 
+    // The agents restarted below exit on their own: their PTY threads wake UI tasks at any
+    // time, which the test scheduler otherwise reports as non-deterministic.
+    cx.executor().allow_parking();
     let mut h = PanesHarness::new("resume", cx);
     let workspace = h.workspace.clone();
     let saved = SavedTab {
