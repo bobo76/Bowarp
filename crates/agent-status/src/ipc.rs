@@ -128,9 +128,19 @@ pub fn now_micros() -> u64 {
         .map_or(0, |elapsed| elapsed.as_micros() as u64)
 }
 
-/// A socket name unique to this process.
+/// A socket name unique to this process. Not guessable from the pid alone: on Linux the
+/// name is in the abstract namespace, where another user could bind it first.
 pub fn default_pipe_name() -> String {
-    format!("agentws-{}.sock", std::process::id())
+    format!("agentws-{}-{:016x}.sock", std::process::id(), random_tag())
+}
+
+/// A random number, different in every call, for names other users must not guess.
+pub fn random_tag() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    // Each `RandomState` gets fresh random keys from the OS (per thread, then incremented).
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u64(now_micros());
+    hasher.finish()
 }
 
 /// Forward a hook's JSON input (its stdin) to the server listening on `pipe_name`. `agent` is

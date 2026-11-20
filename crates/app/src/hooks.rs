@@ -268,17 +268,12 @@ impl AgentHooks {
 fn artifact_path(dir: &Path, agent: AgentId) -> PathBuf {
     let plan = agent.hook_artifact_plan();
     let name = match plan.kind {
-        HookArtifactKind::SettingsFile => {
-            format!(
-                "agentws-{}{suffix}",
-                std::process::id(),
-                suffix = plan.resource_suffix
-            )
-        }
-        HookArtifactKind::PluginDirectory => format!(
+        // The pid tells stale files apart; the random tag keeps another user from creating
+        // the name first (the folder may be the shared temp directory).
+        HookArtifactKind::SettingsFile | HookArtifactKind::PluginDirectory => format!(
             "agentws-{}-{}{suffix}",
             std::process::id(),
-            agent_status::now_micros(),
+            agent_status::random_tag(),
             suffix = plan.resource_suffix
         ),
     };
@@ -305,13 +300,18 @@ fn owned_entry(name: &str) -> Option<OwnedEntry> {
     agents().find_map(|agent| {
         let plan = agent.hook_artifact_plan();
         match plan.kind {
-            HookArtifactKind::SettingsFile => name
-                .strip_suffix(plan.resource_suffix)
-                .and_then(valid_pid)
-                .map(|pid| OwnedEntry {
+            // `<pid>-<tag>`, or `<pid>` as older versions named it.
+            HookArtifactKind::SettingsFile => {
+                let rest = name.strip_suffix(plan.resource_suffix)?;
+                let pid = match rest.split_once('-') {
+                    Some((pid, tag)) => tag.parse::<u64>().ok().map(|_| pid)?,
+                    None => rest,
+                };
+                valid_pid(pid).map(|pid| OwnedEntry {
                     pid,
                     kind: HookArtifactKind::SettingsFile,
-                }),
+                })
+            }
             HookArtifactKind::PluginDirectory => {
                 let (pid, timestamp) = name.strip_suffix(plan.resource_suffix)?.split_once('-')?;
                 timestamp.parse::<u64>().ok()?;
@@ -366,9 +366,36 @@ fn create_private_dir(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
     builder.mode(0o700);
     match builder.create(path) {
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => check_private_dir(path),
         result => result,
     }
+}
+
+/// An existing `path` is fit to hold our hook files: a real folder (not a link to one) that
+/// only we can write to. In a shared temp directory, another user could have made it first.
+fn check_private_dir(path: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{} exists and is not a folder", path.display()),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let others_write = metadata.permissions().mode() & 0o022 != 0;
+        if metadata.uid() != processes::effective_uid() || others_write {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "{} belongs to another user or is writable by others",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The per-user runtime directory when there is one, else the shared temp directory.

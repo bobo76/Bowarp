@@ -11,7 +11,7 @@ mod status;
 
 pub use ipc::{
     AGENT_ENV, AgentEvent, AgentReport, HookMessage, HookServer, PIPE_ENV, SESSION_ENV,
-    default_pipe_name, forward_hook, now_micros,
+    default_pipe_name, forward_hook, now_micros, random_tag,
 };
 pub use mode::AgentModeState;
 pub use status::{AgentState, AgentStatus, HookEvent, WaitReason};
