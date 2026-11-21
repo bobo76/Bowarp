@@ -5,8 +5,13 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+use crate::agents::{AgentId, SessionKind};
+
 /// The program the server side runs when a host names none.
 pub const DEFAULT_SERVER_PROGRAM: &str = "agentws-server";
+
+/// `last_program` for a shell; an agent is saved by its CLI selector.
+const SHELL_PROGRAM: &str = "shell";
 
 /// One machine remote tabs can run on.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -18,6 +23,12 @@ pub struct RemoteHost {
     /// `agentws-server` on the host, when it is not on the `PATH` of non-interactive ssh
     /// logins (e.g. `~/.cargo/bin/agentws-server`); empty for the default.
     pub server_program: String,
+    /// The folder "Open in folder…" last opened on the host; empty for its home folder.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub last_folder: String,
+    /// What "Open in folder…" last opened there: `shell` or an agent's CLI selector.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub last_program: String,
 }
 
 /// A text field of a [`RemoteHost`], as the settings page edits it.
@@ -54,6 +65,12 @@ impl RemoteHost {
         }
     }
 
+    /// What "Open in folder…" last opened on the host: a shell when nothing (known) was.
+    pub fn last_kind(&self) -> SessionKind {
+        AgentId::from_cli_selector(self.last_program.trim())
+            .map_or(SessionKind::Shell, SessionKind::Agent)
+    }
+
     pub fn field(&self, field: RemoteHostField) -> &str {
         match field {
             RemoteHostField::Name => &self.name,
@@ -85,6 +102,8 @@ impl RemoteHost {
             name: text("name"),
             destination: text("destination"),
             server_program: text("server_program"),
+            last_folder: text("last_folder"),
+            last_program: text("last_program"),
         })
     }
 }
@@ -135,6 +154,68 @@ impl RemoteHosts {
     /// from `--remote`): the label of the host it matches, else `host` itself, trimmed.
     pub fn label_for<'a>(&'a self, host: &'a str) -> &'a str {
         self.find(host).map_or(host.trim(), RemoteHost::label)
+    }
+
+    /// The destination `host` (a launch's host) connects to: the configured host's when it
+    /// names one, else `host` itself, trimmed.
+    pub fn destination_of<'a>(&'a self, host: &'a str) -> &'a str {
+        self.find(host)
+            .and_then(RemoteHost::destination)
+            .unwrap_or(host.trim())
+    }
+
+    /// Whether two launch hosts (destinations, or a host's name from `--remote`) are the
+    /// same configured machine.
+    pub fn same_host(&self, a: &str, b: &str) -> bool {
+        self.destination_of(a) == self.destination_of(b)
+    }
+
+    /// Where a launch on `destination` starts, given the selected tab's host and its folder
+    /// there: that folder when the tab runs on the same host, else `None` (the home folder).
+    pub fn folder_on<'a>(
+        &self,
+        destination: &str,
+        selected: Option<(&str, Option<&'a str>)>,
+    ) -> Option<&'a str> {
+        let (host, folder) = selected?;
+        if self.same_host(host, destination) {
+            folder
+        } else {
+            None
+        }
+    }
+
+    /// The folder "Open in folder…" offers on `destination`: the selected tab's there (see
+    /// [`Self::folder_on`]), else the last one opened there, else empty (the home folder).
+    pub fn offered_folder(
+        &self,
+        destination: &str,
+        selected: Option<(&str, Option<&str>)>,
+    ) -> String {
+        if let Some(folder) = self.folder_on(destination, selected) {
+            return folder.to_owned();
+        }
+        self.find(destination)
+            .map(|host| host.last_folder.trim().to_owned())
+            .unwrap_or_default()
+    }
+
+    /// Remember what "Open in folder…" opened on `destination`, offered there next time.
+    /// Nothing for a host that isn't in the list.
+    pub fn remember_launch(&mut self, destination: &str, folder: &str, kind: SessionKind) {
+        let destination = destination.trim();
+        let Some(host) = self
+            .0
+            .iter_mut()
+            .find(|host| host.destination() == Some(destination))
+        else {
+            return;
+        };
+        host.last_folder = folder.trim().to_owned();
+        host.last_program = kind
+            .agent()
+            .map_or(SHELL_PROGRAM, AgentId::cli_selector)
+            .to_owned();
     }
 
     /// Append an empty host, for the settings page to fill in.
