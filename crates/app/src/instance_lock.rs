@@ -5,6 +5,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process;
+use std::time::Duration;
 
 use workspace_model::{held_by_other, lock_pid, lock_text};
 
@@ -69,6 +70,11 @@ fn try_create(path: &Path) -> io::Result<bool> {
                 if held_by_other(&text, process::id(), is_alive) {
                     return Ok(false);
                 }
+                // Empty, but just created: another instance starting now has yet to write its
+                // pid. Taking it over would give the tabs to both.
+                if lock_pid(&text).is_none() && just_created(path) {
+                    return Ok(false);
+                }
                 match fs::remove_file(path) {
                     Ok(()) => {}
                     Err(err) if err.kind() == io::ErrorKind::NotFound => {}
@@ -79,6 +85,15 @@ fn try_create(path: &Path) -> io::Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// How long after its creation an empty lock file is taken as still being written.
+const LOCK_WRITE_GRACE: Duration = Duration::from_secs(2);
+
+fn just_created(path: &Path) -> bool {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age < LOCK_WRITE_GRACE))
 }
 
 /// Whether `pid` is a running instance of this app. On Linux, a process with that pid and our
@@ -135,6 +150,25 @@ mod tests {
             lock_pid(&fs::read_to_string(&path).unwrap()),
             Some(process::id())
         );
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn an_empty_lock_is_stale_only_once_it_is_old() {
+        let path = temp_lock("empty");
+        // Another instance has just created it and not yet written its pid.
+        fs::write(&path, "").unwrap();
+        assert!(!try_create(&path).unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "");
+        // Left empty by a crash long ago.
+        let old = std::time::SystemTime::now() - LOCK_WRITE_GRACE * 2;
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert!(try_create(&path).unwrap());
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 

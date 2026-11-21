@@ -75,6 +75,11 @@ pub fn snapshot_within<L>(term: &Term<L>, max_bytes: usize) -> Vec<u8> {
         }
     }
     pen.reset(&mut out);
+    // Before the cursor: setting origin mode moves the cursor home. The scroll region is not
+    // kept, so it is the whole screen and the cursor's row needs no offset.
+    if mode.contains(TermMode::ORIGIN) {
+        out.push_str("\x1b[?6h");
+    }
     let cursor = &grid.cursor;
     let _ = write!(
         out,
@@ -282,7 +287,6 @@ fn push_modes(mode: TermMode, out: &mut String) {
     // Private modes whose reset state is the default of a fresh terminal.
     for (flag, number) in [
         (TermMode::APP_CURSOR, 1),
-        (TermMode::ORIGIN, 6),
         (TermMode::MOUSE_REPORT_CLICK, 1000),
         (TermMode::MOUSE_DRAG, 1002),
         (TermMode::MOUSE_MOTION, 1003),

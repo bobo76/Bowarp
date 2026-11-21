@@ -84,6 +84,9 @@ pub fn follow_settings(window: AnyWindowHandle, cx: &mut App) {
 #[derive(Default)]
 struct Applied {
     backdrop: Cell<Option<Backdrop>>,
+    /// The backdrop that failed last: not tried again (nor its warning shown again) on every
+    /// settings change, only once another backdrop was chosen.
+    failed: Cell<Option<Backdrop>>,
     /// Mica at any time since the window opened: only the DWM can take it away again.
     mica: Cell<bool>,
 }
@@ -237,7 +240,7 @@ fn apply_with(
     cx: &mut App,
     set_background: impl FnOnce(&mut Window) -> Result<(), String>,
 ) {
-    if applied.backdrop.get() == Some(backdrop) {
+    if applied.backdrop.get() == Some(backdrop) || applied.failed.get() == Some(backdrop) {
         return;
     }
     // Fails once the window is gone (nothing left to apply) or while it is being updated.
@@ -256,6 +259,7 @@ fn apply_with(
     });
     match result {
         Ok(Ok(())) => {
+            applied.failed.set(None);
             applied.backdrop.set(Some(backdrop));
             applied
                 .mica
@@ -266,6 +270,7 @@ fn apply_with(
             use gpui_kit::component::notification::Notification;
 
             applied.backdrop.set(None);
+            applied.failed.set(Some(backdrop));
             log::error!("Window background: {message}");
             let _ = window.update(cx, |_, window, cx| {
                 window.push_notification(

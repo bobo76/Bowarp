@@ -618,8 +618,9 @@ the page shows goes back to the tab; clicking the button again while the page ha
 keyboard does too. The **Git page** switch (Settings → Workspace) turns the page off.
 
 The header's repository picker lists every repository the open tabs are in, the selected
-tab's first, with the current branch and a Refresh button. The page refreshes by itself when
-the index, HEAD or a changed file's folder changes.
+tab's first. Next to it, the current branch's button opens the branch picker (also `B` in the
+file list or the diff), and a Refresh button reads the status again. The page refreshes by
+itself when the index, HEAD or a changed file's folder changes.
 
 Drag the edge between the list and the diff to resize the list (170 to 680 px; a narrow window
 narrows the list first, the diff keeping 320 px); double-click it for the default width. The
@@ -644,8 +645,22 @@ width is saved (`"git_list_width"` in settings.json).
   changed line to select it, Shift+click or drag for a range, Ctrl+click to add or remove one;
   a "Stage N lines" bar then shows at the top right, and right-clicking offers the same.
 
-The page only changes the index and makes commits; discarding is the one action that changes
-your files.
+- **Switching branches**: the branch picker lists the local branches, then the
+  remote-tracking ones (Remote, without `origin/HEAD` and the branches a local branch already
+  tracks), the current one checked; type to filter, Enter or a click switches, Esc or a click
+  outside closes it. A branch checked out in another worktree is marked so (git refuses it). A
+  remote branch is checked out as a new local branch of its name tracking it; when a local
+  branch of that name tracks something else, nothing runs and the page says so. The working
+  tree must be clean: with any staged, unstaged, untracked or conflicted file the picker says
+  so above its filter, and choosing a branch only shows "Commit or discard your N changed
+  files first"; nothing is stashed or discarded. When a tab in that working tree is busy (an
+  agent working or waiting, a command running) or a file viewer has unsaved edits of a file in
+  it, "Switch to x anyway?" lists them first (Switch / Cancel). Afterwards git's message shows,
+  the page reads the status again and every tab re-reads its branch. The repository's hooks
+  run, and a switch is never stopped (the Refresh button spins while it runs).
+
+The page only changes the index and makes commits; discarding and switching branches are the
+actions that change your files.
 
 | Where | Keys | Action |
 |---|---|---|
@@ -656,6 +671,7 @@ your files.
 | File list | Space | Stage or unstage the selected file |
 | File list | `S` / `U` | Stage / unstage the selected file |
 | File list | `R` | Discard the selected file's unstaged changes (asks first) |
+| File list, Diff | `B` | Open the branch picker |
 | Diff | Up / Down | Move between changed lines |
 | Diff | Shift+Up / Shift+Down | Extend the selection |
 | Diff | `S` / `U` | Stage / unstage the selected lines (else the cursor's line) |
@@ -911,8 +927,9 @@ dismisses it.
 
 The version is the workspace `version` in `Cargo.toml`. `scripts/bump-version.sh
 [patch|minor|major]` (default `patch`) raises it, refreshes `Cargo.lock` and prints the new
-version; it refuses a `Cargo.toml` with uncommitted changes. Each pushed feature is one patch
-higher and tagged `v<version>`; finishing a milestone bumps `minor`.
+version; it refuses a `Cargo.toml` with uncommitted changes. Features collect under
+"Unreleased" in the changelog until a bump (`patch`, or `minor` when a milestone is finished);
+a release is tagged `v<version>`.
 
 ## Design decisions
 

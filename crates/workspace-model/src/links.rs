@@ -13,6 +13,10 @@ const SCHEMES: &[&str] = &["https", "http", "ftp", "file"];
 /// so a link to any other registered handler (`smb:`, `vscode:`) is not a link.
 const HYPERLINK_SCHEMES: &[&str] = &["https", "http", "ftp", "mailto", "file"];
 
+/// Stands for the second cell of a wide character (CJK, emoji) in a line read one char per
+/// terminal cell: part of a link, and left out of the link's text.
+pub const WIDE_SPACER: char = '\u{2060}';
+
 /// A link found in a line of text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoundLink {
@@ -62,7 +66,7 @@ pub fn find_link(line: &[char], index: usize) -> Option<FoundLink> {
         let range = start + url_start..start + url_start + url.len();
         return range.contains(&index).then(|| FoundLink {
             range,
-            target: LinkText::Url(url.iter().collect()),
+            target: LinkText::Url(without_spacers(url)),
         });
     }
 
@@ -76,7 +80,7 @@ pub fn find_link(line: &[char], index: usize) -> Option<FoundLink> {
     if !range.contains(&index) {
         return None;
     }
-    let text: String = path.iter().collect();
+    let text = without_spacers(path);
     let path_ref = parse_path_ref(&text);
     let looks_like_path = path_ref.path.starts_with('~')
         || path_ref.path.chars().any(|c| matches!(c, '/' | '\\' | '.'));
@@ -86,13 +90,19 @@ pub fn find_link(line: &[char], index: usize) -> Option<FoundLink> {
     })
 }
 
+fn without_spacers(chars: &[char]) -> String {
+    chars.iter().filter(|&&c| c != WIDE_SPACER).collect()
+}
+
 /// Chars a URL or a path may hold. Quotes, backticks, angle brackets, pipes and box drawing
 /// end one.
 fn is_link_char(c: char) -> bool {
     c.is_alphanumeric()
         || matches!(
             c,
-            '-' | '.'
+            WIDE_SPACER
+                | '-'
+                | '.'
                 | '_'
                 | '~'
                 | ':'
@@ -274,6 +284,13 @@ pub fn is_openable_hyperlink(uri: &str) -> bool {
         .any(|allowed| allowed.eq_ignore_ascii_case(scheme))
 }
 
+/// Whether `url` may go to the system's URL handler (a browser, a mail client): an
+/// [`is_openable_hyperlink`] that is not a `file:` URL. A `file:` URL that is not a
+/// [`local_link`] names a network share, which the handler would reach over SMB.
+pub fn opens_in_browser(url: &str) -> bool {
+    is_openable_hyperlink(url) && strip_prefix_ignore_case(url.trim_start(), "file:").is_none()
+}
+
 /// The cells of a link on one row of a grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RowSpan {
@@ -311,8 +328,12 @@ pub fn local_link(url: &str, folder: &Path) -> Option<PathBuf> {
     let url = url.trim();
     let without_fragment = url.split('#').next().unwrap_or_default();
     if let Some(rest) = strip_prefix_ignore_case(without_fragment, "file://") {
-        // `file:///home/x` and `file://localhost/home/x`.
-        let path = rest.strip_prefix("localhost").unwrap_or(rest);
+        // `file:///home/x` and `file://localhost/home/x`; another host is a network share.
+        let host = &rest[..rest.find('/').unwrap_or(rest.len())];
+        if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+            return None;
+        }
+        let path = &rest[host.len()..];
         let path = percent_decode(path.split('?').next().unwrap_or_default())?;
         let local = !path.is_empty() && !is_network_path(&path, cfg!(windows));
         return local.then(|| file_url_path(&path));

@@ -10,7 +10,7 @@ use std::io::{self, BufReader, BufWriter, ErrorKind, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
 
@@ -29,6 +29,15 @@ use crate::protocol::{
 const REPLY_TIMEOUT: Duration = Duration::from_secs(20);
 /// How much of the transport command's error output is kept for error messages.
 const MAX_STDERR: usize = 4096;
+/// The most input bytes in one message, well under `MAX_FRAME`.
+const MAX_INPUT: usize = 1024 * 1024;
+/// How long `over_command` waits for the server's hello before killing the command.
+#[cfg(not(test))]
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(500);
+/// How long a failed `over_command` waits for the rest of the command's stderr once it ended.
+const STDERR_GRACE: Duration = Duration::from_millis(500);
 
 /// Called once when the connection ends, with the reason.
 pub type DisconnectCallback = Box<dyn FnOnce(String) + Send>;
@@ -133,17 +142,53 @@ impl Client {
         let stderr = child.stderr.take().expect("piped stderr");
         let errors = Arc::new(Mutex::new(Vec::new()));
         let collected = errors.clone();
-        let stderr_reader = thread::spawn(move || collect_stderr(stderr, &collected));
-        match Self::connect(stdout, stdin, identity, on_disconnect) {
+        let (stderr_done, stderr_ended) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            collect_stderr(stderr, &collected);
+            drop(stderr_done);
+        });
+        // A remote that is alive but silent (a wedged daemon, an rc file reading stdin) would
+        // block the handshake for good: kill the command after a while, which ends the read.
+        let child = Arc::new(Mutex::new(child));
+        let (handshake_done, handshake_ended) = mpsc::channel::<()>();
+        let watchdog = thread::spawn({
+            let child = child.clone();
+            move || match handshake_ended.recv_timeout(HANDSHAKE_TIMEOUT) {
+                Err(RecvTimeoutError::Timeout) => {
+                    let _ = child.lock().unwrap().kill();
+                    true
+                }
+                _ => false,
+            }
+        });
+        let connected = Self::connect(stdout, stdin, identity, on_disconnect);
+        drop(handshake_done);
+        let timed_out = watchdog.join().unwrap_or(false);
+        let mut child = Arc::into_inner(child)
+            .expect("the watchdog has ended")
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner);
+        match connected {
             Ok(client) => {
                 *client.inner.child.lock().unwrap() = Some(child);
                 Ok(client)
             }
+            Err(_) if timed_out => {
+                let _ = child.wait();
+                Err(io::Error::new(
+                    ErrorKind::TimedOut,
+                    format!(
+                        "the server did not answer within {} s",
+                        HANDSHAKE_TIMEOUT.as_secs()
+                    ),
+                ))
+            }
             Err(err) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                // It ends with the child: then it has read everything.
-                let _ = stderr_reader.join();
+                // It ends with the child, then it has read everything; but a process ssh left
+                // behind (a `ControlPersist` master) can hold stderr open long after.
+                let _ = stderr_ended.recv_timeout(STDERR_GRACE);
                 let stderr = String::from_utf8_lossy(&errors.lock().unwrap())
                     .trim()
                     .to_string();
@@ -193,9 +238,6 @@ impl Client {
             writer.flush()?;
         }
         let (outgoing, queue) = mpsc::channel();
-        thread::Builder::new()
-            .name("agentws-remote-writer".into())
-            .spawn(move || write_messages(writer, &queue))?;
         let inner = Arc::new(Inner {
             outgoing: Mutex::new(Some(outgoing)),
             pending: Mutex::new(HashMap::new()),
@@ -204,6 +246,16 @@ impl Client {
             connected: AtomicBool::new(true),
             child: Mutex::new(None),
         });
+        let writing = Arc::downgrade(&inner);
+        thread::Builder::new()
+            .name("agentws-remote-writer".into())
+            .spawn(move || {
+                if let Err(err) = write_messages(writer, &queue)
+                    && let Some(inner) = writing.upgrade()
+                {
+                    inner.write_failed(&err);
+                }
+            })?;
         let reading = inner.clone();
         thread::Builder::new()
             .name("agentws-remote-reader".into())
@@ -355,22 +407,19 @@ fn collect_stderr(mut stderr: impl Read, errors: &Mutex<Vec<u8>>) {
     }
 }
 
-/// Send queued messages until the queue closes or the connection fails; flushes once the
+/// Send queued messages until the queue closes (`Ok`) or a write fails; flushes once the
 /// queue is empty, so a burst of keystrokes goes out in one write.
-fn write_messages(writer: impl Write, queue: &Receiver<ClientMessage>) {
+fn write_messages(writer: impl Write, queue: &Receiver<ClientMessage>) -> io::Result<()> {
     let mut writer = BufWriter::new(writer);
     while let Ok(message) = queue.recv() {
         let mut next = Some(message);
         while let Some(message) = next.take() {
-            if write_frame(&mut writer, &message.encode()).is_err() {
-                return;
-            }
+            write_frame(&mut writer, &message.encode())?;
             next = queue.try_recv().ok();
         }
-        if writer.flush().is_err() {
-            return;
-        }
+        writer.flush()?;
     }
+    Ok(())
 }
 
 impl Inner {
@@ -510,6 +559,16 @@ impl Inner {
         }
     }
 
+    /// The writer could not send: nothing more reaches the server, so the connection is over.
+    /// Killing the command also ends the reader, which reports the disconnect.
+    fn write_failed(&self, err: &io::Error) {
+        log::warn!("remote connection: write failed: {err}");
+        self.disconnected(&format!("connection lost: {err}"));
+        if let Some(child) = self.child.lock().unwrap().as_mut() {
+            let _ = child.kill();
+        }
+    }
+
     fn disconnected(&self, reason: &str) {
         self.connected.store(false, Ordering::Release);
         // The writer thread ends once its queue closes.
@@ -530,13 +589,17 @@ struct Link {
 }
 
 impl RemoteLink for Link {
+    /// A large paste goes in several messages: one frame can't exceed `MAX_FRAME`.
     fn write(&self, bytes: std::borrow::Cow<'static, [u8]>) {
-        let message = ClientMessage::Input {
-            session: self.session,
-            bytes: bytes.into_owned(),
-        };
-        if let Err(err) = self.client.send(message) {
-            log::debug!("remote input dropped: {err}");
+        for chunk in bytes.chunks(MAX_INPUT) {
+            let message = ClientMessage::Input {
+                session: self.session,
+                bytes: chunk.to_vec(),
+            };
+            if let Err(err) = self.client.send(message) {
+                log::debug!("remote input dropped: {err}");
+                return;
+            }
         }
     }
 
@@ -570,3 +633,6 @@ impl RemoteLink for Link {
         self.session
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -223,18 +223,52 @@ impl RemoteHosts {
         self.0.push(RemoteHost::default());
     }
 
-    /// Remove host `index`; nothing when there is none (the list changed meanwhile).
-    pub fn remove(&mut self, index: usize) {
-        if index < self.0.len() {
+    /// Remove the host shown as `shown` at `index` (see [`Self::locate`]); nothing when it is
+    /// gone.
+    pub fn remove(&mut self, index: usize, shown: &RemoteHost) {
+        if let Some(index) = self.locate(index, shown, None) {
             self.0.remove(index);
         }
     }
 
-    /// Set a field of host `index`; nothing when there is none.
-    pub fn set_field(&mut self, index: usize, field: RemoteHostField, value: String) {
-        if let Some(host) = self.0.get_mut(index) {
-            *host.field_mut(field) = value;
+    /// Set `field` of the host shown as `shown` at `index` (see [`Self::locate`]); `shown` may
+    /// already hold the new value. Nothing when the host is gone.
+    pub fn set_field(
+        &mut self,
+        index: usize,
+        shown: &RemoteHost,
+        field: RemoteHostField,
+        value: String,
+    ) {
+        if let Some(index) = self.locate(index, shown, Some(field)) {
+            *self.0[index].field_mut(field) = value;
         }
+    }
+
+    /// Where the host the settings page showed as `shown` at `index` is now: the page edits a
+    /// list re-read from the file, which another instance or a hand edit may have reordered.
+    /// `index` when the host there matches `shown` (all fields but `except`), else the first
+    /// one that does.
+    fn locate(
+        &self,
+        index: usize,
+        shown: &RemoteHost,
+        except: Option<RemoteHostField>,
+    ) -> Option<usize> {
+        let fields = [
+            RemoteHostField::Name,
+            RemoteHostField::Destination,
+            RemoteHostField::ServerProgram,
+        ];
+        let matches = |host: &RemoteHost| {
+            fields
+                .iter()
+                .all(|&field| Some(field) == except || host.field(field) == shown.field(field))
+        };
+        if self.0.get(index).is_some_and(matches) {
+            return Some(index);
+        }
+        self.0.iter().position(matches)
     }
 }
 

@@ -39,6 +39,9 @@ entry when the limitation is lifted.
   default shell changed meanwhile in Settings is not picked up by Retry (the launcher buttons
   and Ctrl+Shift+T use it). A folder named with `--remote` is not checked before connecting.
   Only start-up shows the error in the empty state; a tab that fails to open later toasts.
+- Remote daemon on a Windows server: `agentws-server proxy` doesn't check which user owns the
+  named pipe it connects to (Linux does). Another user can't open our pipe read/write, but
+  could create the machine-wide name first while no daemon of ours runs.
 - Agent status off (`agentws-hook` missing or the status listener could not start): Claude
   Code tabs fall back to output activity ("Status unavailable" when quiet) and a bell asks for
   attention as in a shell; a Copilot CLI permission prompt reads Working, not Needs attention,
@@ -294,15 +297,23 @@ entry when the limitation is lifted.
   with no change yet, shows on Refresh or the next watched change.
 - Git page sizes: at most 10,000 changed files are listed, and a diff over 8 MB isn't shown
   (the file can still be staged whole). The diff has no syntax highlighting.
-- Git page commits: a commit waits up to 5 minutes for its hooks and can't be cancelled.
-  Signing that needs a passphrase prompt (GPG, SSH) can't be answered from the app: it fails,
-  or waits for the timeout while a GUI pinentry is pending. The "missing identity" hint reads
+- Git page commits: staging, discarding and committing are never stopped (git killed
+  halfway would leave `.git/index.lock` behind) and can't be cancelled: a hook that never
+  ends keeps the page busy until it does. Signing that needs a passphrase prompt (GPG, SSH)
+  can't be answered from the app: it fails, or waits while a GUI pinentry is pending. The "missing identity" hint reads
   git's English message only. Unsent messages are kept per repository while the app runs, not
   across restarts. No amend, sign-off or "stage all and commit".
 - Git page discard: an untracked file is deleted for good, not moved to the trash, and its
-  folder stays even when that leaves it empty (Discard all removes such folders). Discard all
-  also discards changes past the 10,000 listed files, though its confirmation counts only the
-  listed ones; it keeps nested repositories in untracked folders. Hunks and single lines can't
+  folder stays even when that leaves it empty. Discard all refuses when more than 10,000 files
+  changed, and deletes only the untracked files its confirmation counted. Hunks and single lines can't
   be discarded yet.
+- Git page branch switching: local and remote-tracking branches only (no tags, commits or
+  detached HEAD, no new branch); a remote branch whose name a local branch already uses for
+  something else can't be checked out from the page. The question before a switch counts busy
+  tabs as the busy-close warning does, and a busy tab whose folder isn't known isn't listed; a
+  branch checked out in another worktree is asked about before git refuses it. A switch has no
+  timeout and can't be cancelled. A checkout typed in a terminal, or made from another app
+  instance, shows in the other tabs of that working tree only on their next output, title
+  change or hook event, or when they are selected.
 - Git page merge conflicts are listed (`!`) but can't be resolved, discarded or staged by line
   on the page. No key opens the page (the title bar button does).

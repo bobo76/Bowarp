@@ -14,7 +14,7 @@ use std::io::{self, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -56,6 +56,29 @@ struct Inner {
     stopping: AtomicBool,
 }
 
+/// Counts a connection while it lives, also when its thread panics: otherwise the daemon
+/// would never be idle again.
+struct ConnectionCount<'a>(&'a Inner);
+
+impl<'a> ConnectionCount<'a> {
+    fn new(inner: &'a Inner) -> Self {
+        inner.connections.fetch_add(1, Ordering::AcqRel);
+        Self(inner)
+    }
+}
+
+impl Drop for ConnectionCount<'_> {
+    fn drop(&mut self) {
+        let mut idle_since = self
+            .0
+            .idle_since
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *idle_since = Some(Instant::now());
+        self.0.connections.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// When connections are pinged and dropped: constants, shorter in tests.
 #[derive(Clone, Copy)]
 struct PingTimes {
@@ -85,6 +108,10 @@ struct Hosted {
     kind: String,
     session: Session,
     fanout: Arc<Mutex<Fanout>>,
+    /// Held across a resize of the pty and then of the mirror, so two clients resizing at
+    /// once leave both at the same size. Not the fan-out lock: the pty reader holds the
+    /// terminal's lock while its tap takes the fan-out lock, so resizing under it deadlocks.
+    resizing: Mutex<()>,
 }
 
 /// What a session's output goes to.
@@ -247,6 +274,12 @@ impl Server {
         }
     }
 
+    /// A client has just connected: the idle time starts over, so the daemon doesn't exit
+    /// while the connection is being set up (before [`Self::serve_connection`] counts it).
+    pub fn connection_accepted(&self) {
+        *self.inner.idle_since.lock().unwrap() = Some(Instant::now());
+    }
+
     /// How long the server had no connection and no session; `None` while it has either.
     pub fn idle_for(&self) -> Option<Duration> {
         if self.inner.connections.load(Ordering::Acquire) > 0 || !self.sessions().is_empty() {
@@ -279,7 +312,7 @@ impl Server {
         writer: impl Write + Send + 'static,
         hang_up: impl FnOnce() + Send + 'static,
     ) {
-        self.inner.connections.fetch_add(1, Ordering::AcqRel);
+        let _counted = ConnectionCount::new(&self.inner);
         let client = self.inner.next_client.fetch_add(1, Ordering::AcqRel);
         let (outbox, receiver) = Outbox::new();
         let writer_thread = thread::Builder::new()
@@ -299,8 +332,6 @@ impl Server {
             Err(err) => log::warn!("client {client}: no writer thread: {err}"),
         }
         self.drop_viewers(client);
-        *self.inner.idle_since.lock().unwrap() = Some(Instant::now());
-        self.inner.connections.fetch_sub(1, Ordering::AcqRel);
     }
 
     /// Take the connection out of every session: it gets no more output and is not counted.
@@ -566,6 +597,7 @@ impl Server {
             kind: spec.kind.clone(),
             session,
             fanout,
+            resizing: Mutex::new(()),
         });
         self.sessions().insert(id, hosted.clone());
         log::info!("session {id} started: {:?}", launch.program);
@@ -574,6 +606,7 @@ impl Server {
 
     fn attach(&self, connection: &Connection, request: u32, hosted: &Hosted, size: TermDimensions) {
         let (client, outbox) = (connection.client, connection.outbox);
+        let _resizing = hosted.resizing.lock().unwrap();
         // Before the fan-out lock: resizing locks the session's terminal.
         hosted.session.resize(size);
         let mut fanout = hosted.fanout.lock().unwrap();
@@ -684,6 +717,7 @@ impl Hosted {
     }
 
     fn resize(&self, client: u64, size: TermDimensions) {
+        let _resizing = self.resizing.lock().unwrap();
         self.session.resize(size);
         let mut fanout = self.fanout.lock().unwrap();
         if fanout.mirror.size() != size {

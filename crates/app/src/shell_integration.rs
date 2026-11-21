@@ -272,9 +272,24 @@ fn write_scripts(dir: &Path) -> io::Result<()> {
         if fs::read_to_string(&path).is_ok_and(|current| current == contents) {
             continue;
         }
-        fs::write(&path, contents)?;
+        replace_file(&path, contents)?;
     }
     Ok(())
+}
+
+/// Write `contents` to `path` through a temporary file renamed over it, so a shell that
+/// another instance starts meanwhile never sources a half-written script. Where the rename
+/// can't replace the file (open in a shell on Windows), it is written in place.
+fn replace_file(path: &Path, contents: &str) -> io::Result<()> {
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(format!(".{}.tmp", std::process::id()));
+    let temp = PathBuf::from(temp);
+    let renamed = fs::write(&temp, contents).and_then(|()| fs::rename(&temp, path));
+    if renamed.is_ok() {
+        return Ok(());
+    }
+    let _ = fs::remove_file(&temp);
+    fs::write(path, contents)
 }
 
 #[cfg(test)]

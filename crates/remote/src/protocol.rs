@@ -19,6 +19,11 @@ pub const PROTOCOL_VERSION: u16 = 7;
 
 /// No frame is longer: a peer that sends one is broken (or not speaking this protocol).
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
+/// Terminal sizes accepted from the wire; others are clamped into these ranges.
+const MIN_COLUMNS: u16 = 2;
+const MAX_COLUMNS: u16 = 1000;
+const MIN_LINES: u16 = 1;
+const MAX_LINES: u16 = 500;
 
 /// What to start on the server.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -591,18 +596,21 @@ impl Decoder<'_> {
 
     fn list<T>(&mut self, item: impl Fn(&mut Self) -> io::Result<T>) -> io::Result<Vec<T>> {
         let count = self.u32()? as usize;
-        // Every item takes at least one byte: a bogus count cannot reserve much.
-        let mut items = Vec::with_capacity(count.min(self.0.len()));
+        // Reserve at most one item per 4 bytes left (a string's length prefix): a bogus count
+        // must not reserve `size_of::<T>()` bytes for every byte of the frame.
+        let mut items = Vec::with_capacity(count.min(self.0.len() / 4));
         for _ in 0..count {
             items.push(item(self)?);
         }
         Ok(items)
     }
 
+    /// Columns and lines are clamped: alacritty crashes the whole process on a 0-column or
+    /// 0-line terminal, and a huge one exhausts memory.
     fn size(&mut self) -> io::Result<TermDimensions> {
         Ok(TermDimensions {
-            columns: self.u16()?,
-            lines: self.u16()?,
+            columns: self.u16()?.clamp(MIN_COLUMNS, MAX_COLUMNS),
+            lines: self.u16()?.clamp(MIN_LINES, MAX_LINES),
             cell_width: self.u16()?,
             cell_height: self.u16()?,
         })

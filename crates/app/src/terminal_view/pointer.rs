@@ -17,8 +17,9 @@ use crate::mouse::{self, Cell, MouseAction, ReportButton, WheelAction};
 pub(super) struct PointerState {
     wheel: WheelScroll,
     selecting: bool,
-    /// Button whose press was reported to the program; its release and drags are reported too.
-    reported_button: Option<ReportButton>,
+    /// Buttons whose press was reported to the program and not yet released, in press order:
+    /// their releases are reported too, and drags with the last one.
+    reported_buttons: Vec<ReportButton>,
     /// Last cell a motion report was sent for, so motion is reported once per cell.
     last_motion_cell: Option<Cell>,
 }
@@ -121,7 +122,8 @@ impl TerminalView {
         };
         if mouse::is_reporting_to_program(self.mode(), &event.modifiers) {
             self.send_mouse_report(button, MouseAction::Press, event.position, &event.modifiers);
-            self.pointer.reported_button = Some(button);
+            self.pointer.reported_buttons.retain(|held| *held != button);
+            self.pointer.reported_buttons.push(button);
             return;
         }
         match event.button {
@@ -162,10 +164,15 @@ impl TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pointer.reported_button.is_some()
+        if !self.pointer.reported_buttons.is_empty()
             || mouse::is_reporting_to_program(self.mode(), &event.modifiers)
         {
-            let button = self.pointer.reported_button.unwrap_or(ReportButton::None);
+            let button = self
+                .pointer
+                .reported_buttons
+                .last()
+                .copied()
+                .unwrap_or(ReportButton::None);
             self.send_mouse_report(
                 button,
                 MouseAction::Motion,
@@ -190,11 +197,14 @@ impl TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let button = ReportButton::from_gpui(event.button);
-        if button.is_some() && button == self.pointer.reported_button {
-            self.pointer.reported_button = None;
+        let reported = ReportButton::from_gpui(event.button).and_then(|button| {
+            let held = &mut self.pointer.reported_buttons;
+            let index = held.iter().position(|held| *held == button)?;
+            Some(held.remove(index))
+        });
+        if let Some(button) = reported {
             self.send_mouse_report(
-                button.unwrap_or(ReportButton::None),
+                button,
                 MouseAction::Release,
                 event.position,
                 &event.modifiers,

@@ -270,5 +270,7 @@ fn agent_constants_name_their_definitions() {
         Some(["--resume".to_string(), "1b04".to_string()])
     );
     assert_eq!(COPILOT.resume_args("1b04"), None);
+    assert_eq!(CLAUDE.resume_args("--dangerously-skip-permissions"), None);
+    assert_eq!(CLAUDE.resume_args(""), None);
     assert_eq!(COPILOT.saved_kind(), "copilot-cli");
 }

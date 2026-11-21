@@ -7,11 +7,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 
-use crate::AgentId;
-use crate::TabMeta;
-use crate::layout::{SavedItem, SavedLayout};
+use crate::layout::{SavedGroup, SavedItem, SavedLayout};
 use crate::window_state::write_private_atomic;
+use crate::{AgentId, TabColor, TabMeta};
 
 /// What a saved tab runs, as the new-tab menu tells them apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,9 +99,12 @@ impl TabsState {
         Self::from_json(&fs::read_to_string(path).ok()?)
     }
 
-    /// Write atomically, creating the folder and using owner-only permissions on Unix.
+    /// Write atomically, creating the folder and using owner-only permissions on Unix. Fails
+    /// (`InvalidData`) on a folder that is not UTF-8, which JSON can't hold.
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        write_private_atomic(path, &self.to_json())
+        let text = serde_json::to_string_pretty(self)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        write_private_atomic(path, &text)
     }
 
     /// Remove the saved last command of every tab (`only: None`) or of the tabs whose last
@@ -148,12 +151,110 @@ impl TabsState {
         state.save(path)
     }
 
+    /// The state as JSON. Panics on a folder that is not UTF-8: use [`Self::save`] to write.
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("tabs state serializes")
     }
 
+    /// The state in `text`; `None` when it is not JSON or not shaped as a tabs file. A tab
+    /// this version can't read (a kind or a color from a newer version) is dropped, or loses
+    /// only its color, so the next save keeps every other tab.
     pub fn from_json(text: &str) -> Option<Self> {
-        serde_json::from_str(text).ok()
+        let lenient: LenientState = serde_json::from_str(text).ok()?;
+        let mut tabs = TabReader::new(lenient.selected);
+        let pinned = lenient
+            .layout
+            .pinned
+            .into_iter()
+            .filter_map(|tab| tabs.read(tab))
+            .collect();
+        let items = lenient
+            .layout
+            .items
+            .into_iter()
+            .filter_map(|item| tabs.read_item(item))
+            .collect();
+        Some(Self {
+            layout: SavedLayout { pinned, items },
+            selected: tabs.selected,
+        })
+    }
+}
+
+/// A tabs file read with each tab and item left as JSON, to read them one by one.
+#[derive(Deserialize)]
+struct LenientState {
+    #[serde(default)]
+    layout: LenientLayout,
+    #[serde(default)]
+    selected: Option<usize>,
+}
+
+#[derive(Default, Deserialize)]
+struct LenientLayout {
+    #[serde(default)]
+    pinned: Vec<Value>,
+    #[serde(default)]
+    items: Vec<Value>,
+}
+
+/// Reads saved tabs in order, keeping `selected` on the same tab when earlier ones are
+/// dropped (`None` when the selected one is).
+struct TabReader {
+    /// How many tabs of the file were read so far, dropped ones included.
+    seen: usize,
+    kept: usize,
+    wanted: Option<usize>,
+    selected: Option<usize>,
+}
+
+impl TabReader {
+    fn new(wanted: Option<usize>) -> Self {
+        Self {
+            seen: 0,
+            kept: 0,
+            wanted,
+            selected: None,
+        }
+    }
+
+    /// The tab in `value`; without its color when only that is unknown.
+    fn read(&mut self, mut value: Value) -> Option<SavedTab> {
+        let tab = serde_json::from_value(value.clone()).ok().or_else(|| {
+            value.as_object_mut()?.remove("color")?;
+            serde_json::from_value(value).ok()
+        });
+        if tab.is_some() {
+            if self.wanted == Some(self.seen) {
+                self.selected = Some(self.kept);
+            }
+            self.kept += 1;
+        }
+        self.seen += 1;
+        tab
+    }
+
+    /// A tab or a group of the sidebar's items; a group keeps the tabs it can read and drops
+    /// a color it doesn't know. `None` for an item of an unknown kind.
+    fn read_item(&mut self, mut value: Value) -> Option<SavedItem<SavedTab>> {
+        if let Some(tab) = value.get_mut("tab") {
+            return self.read(tab.take()).map(SavedItem::Tab);
+        }
+        let group = value.get_mut("group")?.as_object_mut()?;
+        let tabs = match group.remove("tabs") {
+            Some(Value::Array(tabs)) => tabs,
+            _ => Vec::new(),
+        };
+        if group
+            .get("color")
+            .is_some_and(|color| serde_json::from_value::<TabColor>(color.clone()).is_err())
+        {
+            group.remove("color");
+        }
+        let mut group: SavedGroup<SavedTab> =
+            serde_json::from_value(Value::Object(std::mem::take(group))).ok()?;
+        group.tabs = tabs.into_iter().filter_map(|tab| self.read(tab)).collect();
+        Some(SavedItem::Group(group))
     }
 }
 

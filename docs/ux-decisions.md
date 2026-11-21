@@ -293,6 +293,40 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   [pipeline]
 - **The "Git page" switch heads Settings → Git**, above the diff colors, rather than sitting
   with the File explorer switch on Workspace: users look for it on the Git page. [user]
+- **Branch switching starts from the header's branch label**, which becomes a picker button
+  in the repository picker's style, with its tooltip naming B, the key that opens it from the
+  list or diff (plain letter like S / U; the message box keeps its letters). It opens a filter
+  field over two sections, Local then Remote, the current branch checked (none when
+  detached): hundreds of branches need the filter, as in VS Code's branch quick pick. Remote
+  omits `<remote>/HEAD` and branches a local branch already tracks; a branch checked out in
+  another worktree is marked (git refuses it, and its message shows). The branch list is read
+  when the picker opens, never on refresh, so it costs nothing idle. No tags or commits
+  (switching to a detached HEAD) in v1. [UX agent]
+- **A remote branch is checked out as a new local branch tracking it**, named after it, and
+  never through git's guess by name (ambiguous with several remotes). When a local branch of
+  that name exists and tracks something else, nothing runs and the page says so, naming the
+  local branch: switching to it silently would show other commits. [UX agent]
+- **The clean-tree rule is checked by the page, not left to git**: git carries changes that
+  don't conflict over to the new branch, which the rule forbids. Any staged, unstaged,
+  untracked or conflicted file counts (ignored files don't); it is checked again when the
+  switch runs, since the shown status may be stale. The picker still opens, with the reason
+  above its filter, and choosing a branch then only shows the same message where op errors
+  show: "Commit or discard your N changed files first: switching branches needs a clean
+  working tree." No stash or discard offered from it. A merge, rebase or cherry-pick in
+  progress is left to git's own refusal and message. [UX agent]
+- **Busy tabs and unsaved files in the repository ask first**: when a tab whose folder is in
+  this working tree (not a linked worktree, not a remote tab) is busy as the close question
+  counts it (agent Working or Waiting, a shell command running), or a file viewer holds unsaved
+  edits of a file in it, a dialog lists them and asks "Switch to x anyway?" (Switch, Cancel).
+  Rejected: blocking, since the user may know the agent is only reading, and saying nothing,
+  since files change under an agent mid-turn. Ready for review and Idle don't count. [UX agent]
+- **After a switch**: the page re-reads status as after any op and shows git's summary where
+  the commit summary shows (hint lines dropped; detached-HEAD "leaving commits behind"
+  warnings kept). Commit drafts stay per repository. Every tab in that working tree re-reads
+  its branch once, whether git succeeded or failed (a failing post-checkout hook still
+  switched); the explorer and viewers follow disk changes as they already do. No timeout: a
+  killed checkout would leave a half-switched tree; the Refresh button's busy state shows it
+  runs. [UX agent]
 
 ## Remote hosts (Settings page)
 

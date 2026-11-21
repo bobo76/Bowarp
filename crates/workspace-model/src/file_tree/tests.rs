@@ -232,6 +232,36 @@ fn posix_quoting() {
     assert_eq!(quote("/tmp/it's", posix).unwrap(), r"'/tmp/it'\''s'");
     assert_eq!(quote("/tmp/$HOME", posix).unwrap(), "'/tmp/$HOME'");
     assert_eq!(quote("", posix).unwrap(), "''");
+    // fish reads \\ and \' as escapes even in single quotes: backslashes go outside.
+    assert_eq!(quote(r"/tmp/a\b", posix).unwrap(), r"'/tmp/a'\\'b'");
+    assert_eq!(quote(r"/tmp/end\", posix).unwrap(), r"'/tmp/end'\\''");
+}
+
+#[cfg(unix)]
+#[test]
+fn posix_quoting_reads_back_the_path_in_real_shells() {
+    for path in [
+        r"/tmp/a\b",
+        r"/tmp/end\",
+        r"/tmp/two\\x",
+        "/tmp/it's",
+        "/tmp/a b",
+    ] {
+        let quoted = quote(path, ShellSyntax::Posix).unwrap();
+        for shell in ["sh", "bash", "zsh", "fish"] {
+            let Ok(output) = std::process::Command::new(shell)
+                .args(["-c", &format!("printf '%s' {quoted}")])
+                .output()
+            else {
+                continue;
+            };
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                path,
+                "{shell}: {quoted}"
+            );
+        }
+    }
 }
 
 #[test]

@@ -15,7 +15,7 @@ use workspace_model::{
     unsaved_edits_warning,
 };
 
-use super::WorkspaceView;
+use super::{Tab, WorkspaceView};
 
 impl WorkspaceView {
     /// Close a tab, ending its process: first asking when it is busy, then about unsaved edits
@@ -145,17 +145,19 @@ impl WorkspaceView {
     fn busy_tabs(&self, ids: &[u64], cx: &App) -> Vec<BusyTab> {
         ids.iter()
             .filter_map(|&id| self.tab_index(id))
-            .filter_map(|index| {
-                let tab = &self.tabs[index];
-                let reason = tab.view.read(cx).busy_reason()?;
-                // The name may be a title the program set: bound and clean it.
-                let name = Self::tab_name(tab, cx);
-                Some(BusyTab {
-                    name: command_label(&name, COMMAND_LABEL_CHARS).unwrap_or(name),
-                    reason,
-                })
-            })
+            .filter_map(|index| Self::busy_tab(&self.tabs[index], cx))
             .collect()
+    }
+
+    /// `tab` as the warnings list it, when it is busy.
+    pub(super) fn busy_tab(tab: &Tab, cx: &App) -> Option<BusyTab> {
+        let reason = tab.view.read(cx).busy_reason()?;
+        // The name may be a title the program set: bound and clean it.
+        let name = Self::tab_name(tab, cx);
+        Some(BusyTab {
+            name: command_label(&name, COMMAND_LABEL_CHARS).unwrap_or(name),
+            reason,
+        })
     }
 
     /// Run `close` now when none of `ids` is busy, else once the user confirms.
@@ -309,7 +311,7 @@ fn unsaved_footer(
         )
 }
 
-fn description(warning: &CloseWarning) -> Div {
+pub(super) fn description(warning: &CloseWarning) -> Div {
     div()
         .flex()
         .flex_col()

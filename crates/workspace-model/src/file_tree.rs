@@ -413,7 +413,8 @@ pub fn cd_command(folder: &Path, shell: ShellSyntax) -> Result<String, TypeError
 }
 
 /// `text` as one word for a POSIX shell: as is when it holds no special character, else in
-/// single quotes (a quote inside becomes `'\''`).
+/// single quotes. A quote or a backslash inside is escaped between quoted runs (`'\''`,
+/// `'\\'`): fish reads `\\` and `\'` as escapes even inside single quotes.
 fn quote_posix(text: &str) -> String {
     let plain = !text.is_empty()
         && text
@@ -422,7 +423,16 @@ fn quote_posix(text: &str) -> String {
     if plain {
         return text.to_string();
     }
-    format!("'{}'", text.replace('\'', r"'\''"))
+    let mut quoted = String::from("'");
+    for c in text.chars() {
+        match c {
+            '\'' => quoted.push_str(r"'\''"),
+            '\\' => quoted.push_str(r"'\\'"),
+            c => quoted.push(c),
+        }
+    }
+    quoted.push('\'');
+    quoted
 }
 
 /// PowerShell's single quotes: the ASCII one and the typographic ones it also accepts.

@@ -5,6 +5,7 @@ use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::thread;
 
 use agent_status::{AGENT_ENV, HookMessage, HookServer, PIPE_ENV, SESSION_ENV, default_pipe_name};
 use term_core::LaunchSpec;
@@ -234,13 +235,17 @@ impl AgentHooks {
         Ok(plugin)
     }
 
-    /// Remove a session's plugin after its process exits or its tab closes.
-    pub fn remove_session(&self, session: u64) {
-        for (agent, path) in &self.artifacts {
-            if agent.hook_artifact_kind() == HookArtifactKind::PluginDirectory {
-                remove_artifact(&path.join(session.to_string()));
-            }
-        }
+    /// Remove a session's plugin after its process exits or its tab closes, on a thread of its
+    /// own: this runs on the UI thread, and the folder may be slow. Session ids are never
+    /// reused, so nothing waits for it.
+    pub fn remove_session(&self, session: u64) -> thread::JoinHandle<()> {
+        let plugins: Vec<PathBuf> = self
+            .artifacts
+            .iter()
+            .filter(|(agent, _)| agent.hook_artifact_kind() == HookArtifactKind::PluginDirectory)
+            .map(|(_, path)| path.join(session.to_string()))
+            .collect();
+        thread::spawn(move || plugins.iter().for_each(|plugin| remove_artifact(plugin)))
     }
 
     /// Delete the app-owned settings and plugins when all sessions are shutting down.
@@ -263,17 +268,12 @@ impl AgentHooks {
 fn artifact_path(dir: &Path, agent: AgentId) -> PathBuf {
     let plan = agent.hook_artifact_plan();
     let name = match plan.kind {
-        HookArtifactKind::SettingsFile => {
-            format!(
-                "agentws-{}{suffix}",
-                std::process::id(),
-                suffix = plan.resource_suffix
-            )
-        }
-        HookArtifactKind::PluginDirectory => format!(
+        // The pid tells stale files apart; the random tag keeps another user from creating
+        // the name first (the folder may be the shared temp directory).
+        HookArtifactKind::SettingsFile | HookArtifactKind::PluginDirectory => format!(
             "agentws-{}-{}{suffix}",
             std::process::id(),
-            agent_status::now_micros(),
+            agent_status::random_tag(),
             suffix = plan.resource_suffix
         ),
     };
@@ -300,13 +300,18 @@ fn owned_entry(name: &str) -> Option<OwnedEntry> {
     agents().find_map(|agent| {
         let plan = agent.hook_artifact_plan();
         match plan.kind {
-            HookArtifactKind::SettingsFile => name
-                .strip_suffix(plan.resource_suffix)
-                .and_then(valid_pid)
-                .map(|pid| OwnedEntry {
+            // `<pid>-<tag>`, or `<pid>` as older versions named it.
+            HookArtifactKind::SettingsFile => {
+                let rest = name.strip_suffix(plan.resource_suffix)?;
+                let pid = match rest.split_once('-') {
+                    Some((pid, tag)) => tag.parse::<u64>().ok().map(|_| pid)?,
+                    None => rest,
+                };
+                valid_pid(pid).map(|pid| OwnedEntry {
                     pid,
                     kind: HookArtifactKind::SettingsFile,
-                }),
+                })
+            }
             HookArtifactKind::PluginDirectory => {
                 let (pid, timestamp) = name.strip_suffix(plan.resource_suffix)?.split_once('-')?;
                 timestamp.parse::<u64>().ok()?;
@@ -319,14 +324,19 @@ fn owned_entry(name: &str) -> Option<OwnedEntry> {
     })
 }
 
-/// Remove the hook artifacts of instances that are gone (crashed).
+/// Remove the hook artifacts of instances that are gone (crashed). An entry that can't be
+/// read is skipped: the others are still swept.
 fn sweep_stale_files(dir: &Path, is_running: impl Fn(u32) -> bool) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
-        let entry = entry?;
+        let Ok(entry) = entry else {
+            continue;
+        };
         let Some(owned) = entry.file_name().to_str().and_then(owned_entry) else {
             continue;
         };
-        let file_type = entry.file_type()?;
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         let expected_type = match owned.kind {
             HookArtifactKind::PluginDirectory => file_type.is_dir(),
             HookArtifactKind::SettingsFile => file_type.is_file(),
@@ -338,7 +348,10 @@ fn sweep_stale_files(dir: &Path, is_running: impl Fn(u32) -> bool) -> io::Result
         {
             use std::os::unix::fs::MetadataExt;
             // The fallback runtime directory can be shared with other users.
-            if entry.metadata()?.uid() != processes::effective_uid() {
+            let ours = entry
+                .metadata()
+                .is_ok_and(|metadata| metadata.uid() == processes::effective_uid());
+            if !ours {
                 continue;
             }
         }
@@ -361,9 +374,36 @@ fn create_private_dir(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
     builder.mode(0o700);
     match builder.create(path) {
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => check_private_dir(path),
         result => result,
     }
+}
+
+/// An existing `path` is fit to hold our hook files: a real folder (not a link to one) that
+/// only we can write to. In a shared temp directory, another user could have made it first.
+fn check_private_dir(path: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{} exists and is not a folder", path.display()),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let others_write = metadata.permissions().mode() & 0o022 != 0;
+        if metadata.uid() != processes::effective_uid() || others_write {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "{} belongs to another user or is writable by others",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The per-user runtime directory when there is one, else the shared temp directory.

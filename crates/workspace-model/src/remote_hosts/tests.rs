@@ -106,15 +106,57 @@ fn label_for_names_the_matching_host_else_the_given_host() {
 fn editing_ignores_hosts_that_are_gone() {
     let mut hosts = RemoteHosts::default();
     hosts.add();
-    hosts.set_field(0, RemoteHostField::Destination, "me@box".into());
-    hosts.set_field(0, RemoteHostField::Name, "Box".into());
-    hosts.set_field(5, RemoteHostField::Name, "nobody".into());
+    let new = RemoteHost::default();
+    hosts.set_field(0, &new, RemoteHostField::Destination, "me@box".into());
+    let shown = host("", "me@box");
+    hosts.set_field(0, &shown, RemoteHostField::Name, "Box".into());
+    hosts.set_field(5, &new, RemoteHostField::Name, "nobody".into());
     assert_eq!(hosts.all(), [host("Box", "me@box")]);
     assert_eq!(hosts.all()[0].field(RemoteHostField::Name), "Box");
-    hosts.remove(3);
+    hosts.remove(3, &new);
     assert_eq!(hosts.all().len(), 1);
-    hosts.remove(0);
+    hosts.remove(0, &host("Box", "me@box"));
     assert!(hosts.all().is_empty());
+}
+
+#[test]
+fn edits_follow_the_shown_host_when_the_list_was_reordered() {
+    let (a, b) = (host("a", "a.example"), host("b", "b.example"));
+    // Shown at 0, but another instance moved it to 1.
+    let mut hosts = RemoteHosts::new(vec![b.clone(), a.clone()]);
+    hosts.set_field(0, &a, RemoteHostField::Name, "renamed".into());
+    assert_eq!(hosts.all()[0], b);
+    assert_eq!(hosts.all()[1].name, "renamed");
+
+    // The shown host may already hold the typed value.
+    let mut shown = hosts.all()[1].clone();
+    shown.destination = "typed.example".into();
+    hosts.set_field(
+        0,
+        &shown,
+        RemoteHostField::Destination,
+        "typed.example".into(),
+    );
+    assert_eq!(hosts.all()[1].destination, "typed.example");
+
+    let renamed = hosts.all()[1].clone();
+    hosts.remove(0, &renamed);
+    assert_eq!(hosts.all(), std::slice::from_ref(&b));
+    // Gone meanwhile: nothing happens.
+    hosts.remove(0, &a);
+    hosts.set_field(0, &a, RemoteHostField::Name, "x".into());
+    assert_eq!(hosts.all(), [b]);
+
+    // Two identical new hosts: the shown index wins.
+    let mut hosts = RemoteHosts::new(vec![RemoteHost::default(), RemoteHost::default()]);
+    hosts.set_field(
+        1,
+        &RemoteHost::default(),
+        RemoteHostField::Name,
+        "second".into(),
+    );
+    assert_eq!(hosts.all()[0].name, "");
+    assert_eq!(hosts.all()[1].name, "second");
 }
 
 #[test]

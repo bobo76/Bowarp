@@ -33,9 +33,10 @@ skips the build, test and lint jobs, so it merges in about a minute.
 "The check" before committing: `cargo fmt --check && cargo build && cargo test && cargo clippy --all-targets -- -D warnings`.
 rustfmt does not wrap comments; keep lines ≤ 100 chars by hand.
 
-Version bumps: `scripts/bump-version.sh [patch|minor|major]` (refuses a dirty `Cargo.toml`). Each
-pushed feature is a patch bump tagged `v<version>`; a finished milestone bumps minor. The release
-checklist is RELEASE.md (also update BACKLOG.md, CHANGELOG.md "Unreleased", README.md).
+Version bumps: `scripts/bump-version.sh [patch|minor|major]` (refuses a dirty `Cargo.toml`). Pushed
+features collect under CHANGELOG.md "Unreleased"; one patch bump closes each pipeline launch (minor
+when a milestone is finished; see PIPELINE-BACKLOG.md). Merging to main and the `v<version>` tag
+follow the release checklist, RELEASE.md (also update BACKLOG.md, README.md).
 
 ## Constraints
 

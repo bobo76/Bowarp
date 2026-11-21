@@ -5,8 +5,35 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Terminal links: paths holding CJK characters or emoji are now detected (Ctrl+click).
+- Remote tabs: a paste over 16 MB arrives whole; before, it silently stopped all typing in
+  the tab until the connection dropped about 45 s later.
+- Settings → Remote hosts: editing or removing a host acts on that host even when another
+  app window or a hand edit reordered the list meanwhile.
+- Saved tabs: after running an older version, a tab or color it doesn't know drops only that
+  tab (or its color) at start-up; before, every saved tab was lost.
+- Links: a `file://` link naming another computer (`file://server/share/x`) is no longer a
+  link in the terminal, and a Markdown link in the file viewer opens only web and mail
+  addresses; others (`smb:`, network shares, other registered handlers) show "Can't open".
+- File viewer: opening a FIFO, a device or a link to one (`notes.txt -> /dev/zero`) says
+  "Only regular files can be shown." instead of hanging or running out of memory.
+- Git page: Discard all deletes only the untracked files its confirmation counted; a file
+  created meanwhile (by an agent, say) is kept. With more than 10,000 changed files it
+  refuses and says why, since the confirmation can't list them all.
+- Remote tabs: connecting to a host that is reachable but never answers (a stuck server, a
+  shell startup file waiting for input) now fails after 30 s with "the server did not answer",
+  instead of waiting forever and holding up every other tab on that host.
+- Remote servers on Linux: `agentws-server proxy` refuses a daemon socket owned by another
+  user, and a client sending a bad terminal size can no longer crash the server.
+
 ## 0.4.6
 
+- Git page: switch branches from the header. Click the branch name (or press B in the list or
+  diff) to open a picker with a filter, local branches first, then remote ones; picking a
+  remote branch creates a local branch tracking it. A switch needs a clean working tree
+  (nothing staged, changed or untracked) and never stashes or discards; when a tab working in
+  the repository is busy, or a file there has unsaved edits, it asks first. Tabs in the
+  repository show the new branch afterwards.
 - Git page: drag the divider between the file list and the diff to resize the list
   (double-click resets it); its width is kept. On a narrow window the list shrinks first so the
   diff stays readable.

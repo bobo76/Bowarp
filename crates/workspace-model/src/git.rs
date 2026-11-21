@@ -3,6 +3,7 @@
 //! staging (whole files, hunks or single lines), committing and discarding.
 
 mod actions;
+mod branches;
 mod diff;
 mod patch;
 mod runner;
@@ -18,6 +19,10 @@ pub use self::actions::{
     DiscardPrompt, RepoEntry, apply_patch, choose_repo, commit, commit_failure,
     commit_message_ready, discard, discard_all, discard_prompt, locate, missing_identity, repos_of,
     stage, stage_all, unstage, unstage_all,
+};
+pub use self::branches::{
+    BranchChoice, Branches, LocalBranch, RemoteBranch, SwitchPlan, read_branches, switch_blocker,
+    switch_branch, switch_plan,
 };
 pub use self::diff::{
     DiffLine, DiffRow, FileDiff, Hunk, LineKind, MAX_DIFF_BYTES, TextDiff, read_diff,
@@ -117,6 +122,8 @@ pub struct ChangedFile {
 /// The files of a repository's working tree that differ from HEAD, in git's order (by path).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WorkingChanges {
+    /// The repository's top folder.
+    pub top: PathBuf,
     pub files: Vec<ChangedFile>,
 }
 
@@ -136,7 +143,8 @@ impl WorkingChanges {
                 continue;
             }
             marks.insert(file.path.clone(), file.change);
-            for folder in file.path.ancestors().skip(1) {
+            let folders = file.path.ancestors().skip(1);
+            for folder in folders.take_while(|folder| *folder != self.top) {
                 if marks.contains_key(folder) {
                     break;
                 }
@@ -198,7 +206,7 @@ pub fn working_changes(dir: &Path) -> Option<WorkingChanges> {
             }
         })
         .collect();
-    Some(WorkingChanges { files })
+    Some(WorkingChanges { top, files })
 }
 
 /// The changed files of the repository containing `dir`, like [`working_changes`] but
@@ -219,7 +227,7 @@ pub fn changed_files(dir: &Path) -> Option<WorkingChanges> {
             removed: None,
         })
         .collect();
-    Some(WorkingChanges { files })
+    Some(WorkingChanges { top, files })
 }
 
 /// The top folder of the repository containing `dir`, with the platform's separators.

@@ -87,7 +87,7 @@ fn attachments_are_provider_driven_and_keep_hooks_before_user_arguments() {
     );
     assert!(!shell.env.contains_key(AGENT_ENV));
     assert!(shell_plugin.join("hooks.json").is_file());
-    hooks.remove_session(13);
+    hooks.remove_session(13).join().unwrap();
     assert!(
         !shell_plugin.exists(),
         "closing a shell tab removes its plugin"
@@ -111,7 +111,7 @@ fn attachments_are_provider_driven_and_keep_hooks_before_user_arguments() {
     assert_eq!(claude.env[SESSION_ENV], "14");
     assert!(!claude.env.contains_key("AGENTWS_HOOK"));
 
-    hooks.remove_session(12);
+    hooks.remove_session(12).join().unwrap();
     assert!(!plugin.exists(), "closing a tab removes its plugin");
     hooks.remove_settings();
     assert!(!root.join("copilot").exists());
@@ -160,6 +160,8 @@ fn sweeps_only_artifacts_owned_by_dead_processes() {
     fs::write(root.join("agentws-8-claude-settings.json"), "{}").unwrap();
     fs::write(root.join("agentws-7-claude-settings.json"), "{}").unwrap();
     fs::write(root.join("agentws-x-claude-settings.json"), "{}").unwrap();
+    fs::write(root.join("agentws-8-123-claude-settings.json"), "{}").unwrap();
+    fs::write(root.join("agentws-7-456-claude-settings.json"), "{}").unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(root.join("unrelated"), root.join("agentws-8-400-copilot")).unwrap();
 
@@ -178,6 +180,8 @@ fn sweeps_only_artifacts_owned_by_dead_processes() {
     assert!(!root.join("agentws-8-claude-settings.json").exists());
     assert!(root.join("agentws-7-claude-settings.json").is_file());
     assert!(root.join("agentws-x-claude-settings.json").is_file());
+    assert!(!root.join("agentws-8-123-claude-settings.json").exists());
+    assert!(root.join("agentws-7-456-claude-settings.json").is_file());
     #[cfg(unix)]
     assert!(root.join("agentws-8-400-copilot").is_symlink());
     fs::remove_dir_all(root).unwrap();
@@ -221,5 +225,46 @@ fn start_failures_explain_the_cause_and_the_fix() {
     assert_eq!(
         HooksError::Other(io::Error::other("no current exe")).warning(),
         "Agent status is off: no current exe."
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_existing_folder_is_used_only_when_it_is_ours_alone() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = std::env::temp_dir().join(format!(
+        "agentws-private-dir-test-{}-{}",
+        std::process::id(),
+        agent_status::now_micros()
+    ));
+    fs::create_dir(&root).unwrap();
+    let ours = root.join("ours");
+    create_private_dir(&ours).unwrap();
+    // Made already: still fine.
+    create_private_dir(&ours).unwrap();
+
+    let open = root.join("open");
+    fs::create_dir(&open).unwrap();
+    fs::set_permissions(&open, fs::Permissions::from_mode(0o777)).unwrap();
+    let err = create_private_dir(&open).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+
+    let link = root.join("link");
+    std::os::unix::fs::symlink(&ours, &link).unwrap();
+    assert!(create_private_dir(&link).is_err());
+    let file = root.join("file");
+    fs::write(&file, "").unwrap();
+    assert!(create_private_dir(&file).is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pipe_names_are_not_guessable_from_the_pid() {
+    let (a, b) = (default_pipe_name(), default_pipe_name());
+    assert_ne!(a, b);
+    assert!(
+        a.starts_with(&format!("agentws-{}-", std::process::id())),
+        "{a}"
     );
 }

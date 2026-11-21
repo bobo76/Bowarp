@@ -155,12 +155,57 @@ fn damaged_files_are_rejected() {
     for text in [
         "",
         "not json",
-        r#"{"layout": {"items": [{"tab": {"kind": "vim"}}]}}"#,
-        r#"{"layout": {"items": [{"tab": {"kind": "shell", "color": "teal"}}]}}"#,
         r#"{"layout": {"pinned": [{"kind": "shell"}], "items": "x"}}"#,
+        r#"{"layout": "x"}"#,
     ] {
         assert_eq!(TabsState::from_json(text), None, "{text}");
     }
+}
+
+#[test]
+fn tabs_from_a_newer_version_drop_only_what_is_unknown() {
+    // Pinned: a known tab, then an unknown kind. Items: a tab with an unknown color, a group
+    // with an unknown color holding an unknown kind and the selected tab, an unknown item.
+    let text = r#"{
+        "layout": {
+            "pinned": [{"kind": "shell", "folder": "/a"}, {"kind": "vim"}],
+            "items": [
+                {"tab": {"kind": "shell", "folder": "/b", "color": "teal", "custom_name": "b"}},
+                {"group": {"name": "G", "color": "teal", "collapsed": true, "tabs": [
+                    {"kind": "vim"},
+                    {"kind": "shell", "folder": "/c"}
+                ]}},
+                {"folder": {"path": "/d"}}
+            ]
+        },
+        "selected": 4
+    }"#;
+    let state = TabsState::from_json(text).unwrap();
+    let folders: Vec<_> = state
+        .layout
+        .tabs()
+        .iter()
+        .map(|tab| tab.folder.clone().unwrap())
+        .collect();
+    assert_eq!(folders, ["/a", "/b", "/c"].map(PathBuf::from));
+    assert_eq!(state.selected, Some(2));
+    let SavedItem::Tab(colorless) = &state.layout.items[0] else {
+        panic!("{:?}", state.layout.items[0]);
+    };
+    assert_eq!(colorless.meta.color, None);
+    assert_eq!(colorless.meta.custom_name.as_deref(), Some("b"));
+    let SavedItem::Group(group) = &state.layout.items[1] else {
+        panic!("{:?}", state.layout.items[1]);
+    };
+    assert_eq!(
+        (group.name.as_str(), group.color, group.collapsed),
+        ("G", None, true)
+    );
+    assert_eq!(state.layout.items.len(), 2);
+
+    // The selected tab itself dropped: nothing is selected.
+    let text = r#"{"layout": {"pinned": [{"kind": "vim"}]}, "selected": 0}"#;
+    assert_eq!(TabsState::from_json(text).unwrap().selected, None);
 }
 
 #[test]
@@ -242,4 +287,16 @@ fn save_then_load() {
     fs::write(&path, "{").unwrap();
     assert_eq!(TabsState::load(&path), None);
     assert_eq!(TabsState::load(&root.0.join("missing.json")), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn saving_a_folder_that_is_not_utf8_fails_without_panicking() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = TempDir::new();
+    let mut state = sample();
+    state.layout.pinned[0].folder = Some(std::ffi::OsStr::from_bytes(b"/tmp/\xff").into());
+    let err = state.save(&dir.0.join("tabs.json")).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }

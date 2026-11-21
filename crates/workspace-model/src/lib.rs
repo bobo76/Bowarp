@@ -79,7 +79,7 @@ pub use clipboard_guard::{
 };
 pub use close_warning::{
     AgentActivity, BusyReason, BusyTab, CloseTarget, CloseWarning, TabActivity, close_warning,
-    unsaved_edits_warning,
+    switch_warning, unsaved_edits_warning,
 };
 pub use conversation::Conversation;
 pub use diff_colors::{DiffColors, RgbaColor};

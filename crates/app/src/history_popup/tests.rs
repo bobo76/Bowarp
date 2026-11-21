@@ -317,11 +317,15 @@ fn history_switches_apply_live_pass_keys_through_and_keep_data(cx: &mut gpui_kit
     view.update(cx, |view, cx| {
         view.restore_last_command(Some("git push".into()), cx)
     });
-    assert_eq!(cx.update(history::clear_saved_session_commands), Ok(()));
+    let cleared = cx.update(history::clear_saved_session_commands);
+    assert_eq!(futures::executor::block_on(cleared), Ok(()));
     cx.run_until_parked();
     view.read_with(cx, |view, _| assert_eq!(view.last_command(), None));
     assert_eq!(history_len(cx), 2);
-    assert_eq!(cx.update(history::clear), Ok(()));
+    assert_eq!(
+        futures::executor::block_on(cx.update(history::clear)),
+        Ok(())
+    );
     assert_eq!(history_len(cx), 0);
 }
 
@@ -458,7 +462,7 @@ fn prompt_events_and_history_changes_reconcile_the_open_popup(cx: &mut gpui_kit:
 
     cx.update(|cx| {
         gpui_kit::init(cx);
-        crate::settings_file::init(cx);
+        crate::settings_file::init_in_memory(cx);
         crate::terminal_element::init(cx);
         crate::terminal_view::init(cx);
         history::init_in_memory(cx);

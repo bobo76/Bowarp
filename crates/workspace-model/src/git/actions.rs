@@ -8,12 +8,11 @@ use std::time::{Duration, Instant};
 use super::runner::{Access, GitError, execute};
 use super::status::{Change, DiffSide, FileStatus, Head};
 
-/// How long staging and unstaging wait for `git`.
-const STAGE_TIMEOUT: Duration = Duration::from_secs(30);
-/// How long discarding waits for `git`.
-const DISCARD_TIMEOUT: Duration = Duration::from_secs(30);
-/// How long a commit waits for `git`, its hooks included (a pre-commit hook may run tests).
-const COMMIT_TIMEOUT: Duration = Duration::from_secs(300);
+/// Commands that write (staging, discarding, committing) are never stopped: git killed
+/// halfway leaves `.git/index.lock` behind, and every later git command fails until it is
+/// removed by hand. A slow hook or LFS filter is waited for. This only keeps the deadline
+/// arithmetic finite.
+const WRITE_DEADLINE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// How long finding a folder's repository waits for `git rev-parse`.
 const ROOT_TIMEOUT: Duration = Duration::from_secs(5);
 /// At most this many lines of a failed commit's message are shown (a hook may print a lot).
@@ -89,10 +88,8 @@ pub fn locate(dir: &Path) -> Option<RepoEntry> {
     .into_result()
     .ok()?;
     let output = String::from_utf8(output).ok()?;
-    let mut lines = output
-        .lines()
-        .map(str::trim_end)
-        .filter(|line| !line.is_empty());
+    // `lines` drops the line ends (`\r\n` too); a folder name may end in spaces.
+    let mut lines = output.lines().filter(|line| !line.is_empty());
     let root = PathBuf::from(lines.next()?);
     let git_dir = PathBuf::from(lines.next()?);
     let name = root.file_name().map_or_else(
@@ -111,7 +108,7 @@ pub fn locate(dir: &Path) -> Option<RepoEntry> {
 pub fn stage(root: &Path, files: &[&FileStatus]) -> Result<(), GitError> {
     let mut args = vec!["--literal-pathspecs", "add", "--all", "--"];
     args.extend(files.iter().map(|file| file.path.as_str()));
-    run_write(root, &args, None, STAGE_TIMEOUT)
+    run_write(root, &args, None)
 }
 
 /// Unstage `files` whole (both paths of a rename), keeping their working-tree changes. With an
@@ -122,19 +119,19 @@ pub fn unstage(root: &Path, files: &[&FileStatus], head: Head) -> Result<(), Git
     args.extend(unstage_command(head));
     args.push("--");
     args.extend(paths.iter().map(String::as_str));
-    run_write(root, &args, None, STAGE_TIMEOUT)
+    run_write(root, &args, None)
 }
 
 /// Stage every change, untracked files included.
 pub fn stage_all(root: &Path) -> Result<(), GitError> {
-    run_write(root, &["add", "--all", "--", ":/"], None, STAGE_TIMEOUT)
+    run_write(root, &["add", "--all", "--", ":/"], None)
 }
 
 /// Unstage everything, keeping the working tree as it is.
 pub fn unstage_all(root: &Path, head: Head) -> Result<(), GitError> {
     let mut args = unstage_command(head).to_vec();
     args.extend(["--", ":/"]);
-    run_write(root, &args, None, STAGE_TIMEOUT)
+    run_write(root, &args, None)
 }
 
 /// Apply a [`super::partial_patch`] of the diff on `side` to the index: staging its lines
@@ -145,7 +142,7 @@ pub fn apply_patch(root: &Path, patch: Vec<u8>, side: DiffSide) -> Result<(), Gi
         args.push("--reverse");
     }
     args.push("-");
-    run_write(root, &args, Some(patch), STAGE_TIMEOUT)
+    run_write(root, &args, Some(patch))
 }
 
 /// Throw away the unstaged changes of `files`: a tracked file goes back to its staged content
@@ -160,27 +157,57 @@ pub fn discard(root: &Path, files: &[&FileStatus]) -> Result<(), GitError> {
     if !tracked.is_empty() {
         let mut args = vec!["--literal-pathspecs", "restore", "--worktree", "--"];
         args.extend(tracked.iter().map(|file| file.path.as_str()));
-        run_write(root, &args, None, DISCARD_TIMEOUT)?;
+        run_write(root, &args, None)?;
     }
     if !untracked.is_empty() {
         let mut args = vec!["--literal-pathspecs", "clean", "-f", "-q", "--"];
         args.extend(untracked.iter().map(|file| file.path.as_str()));
-        run_write(root, &args, None, DISCARD_TIMEOUT)?;
+        run_write(root, &args, None)?;
     }
     Ok(())
 }
 
-/// Throw away every unstaged change: tracked files go back to their staged content and
-/// untracked files are deleted (ignored ones are kept). Merge conflicts are left alone.
-pub fn discard_all(root: &Path) -> Result<(), GitError> {
+/// Throw away every unstaged change: tracked files go back to their staged content, and the
+/// untracked ones among `files` (those the user was told about) are deleted; an untracked
+/// file that appeared since is kept, as are ignored ones. Merge conflicts are left alone.
+/// `files` paths are relative to the work tree's top.
+pub fn discard_all(root: &Path, files: &[&FileStatus]) -> Result<(), GitError> {
     let restore = ["restore", "--worktree", "--ignore-unmerged", "--", ":/"];
-    run_write(root, &restore, None, DISCARD_TIMEOUT)?;
-    run_write(
-        root,
-        &["clean", "-f", "-q", "--", ":/"],
-        None,
-        DISCARD_TIMEOUT,
-    )
+    run_write(root, &restore, None)?;
+    let untracked: Vec<String> = files
+        .iter()
+        .filter(|file| file.discardable() && file.unstaged == Some(Change::Untracked))
+        .map(|file| format!(":(top,literal){}", file.path))
+        .collect();
+    for chunk in arg_chunks(&untracked, MAX_PATHS_LEN) {
+        let mut args = vec!["clean", "-f", "-q", "--"];
+        args.extend(chunk.iter().map(String::as_str));
+        run_write(root, &args, None)?;
+    }
+    Ok(())
+}
+
+/// How many bytes of paths one git command line takes: Windows refuses a command line over
+/// 32K UTF-16 units, and a path's UTF-8 length is never less than its UTF-16 one.
+const MAX_PATHS_LEN: usize = 16 * 1024;
+
+/// `args` split into runs whose lengths add up to at most `max_len` (a longer single one gets
+/// a run of its own).
+fn arg_chunks(args: &[String], max_len: usize) -> Vec<&[String]> {
+    let mut chunks = Vec::new();
+    let (mut start, mut len) = (0, 0);
+    for (index, arg) in args.iter().enumerate() {
+        let arg_len = arg.len() + 1;
+        if index > start && len + arg_len > max_len {
+            chunks.push(&args[start..index]);
+            (start, len) = (index, 0);
+        }
+        len += arg_len;
+    }
+    if start < args.len() {
+        chunks.push(&args[start..]);
+    }
+    chunks
 }
 
 /// What the confirmation before discarding `files` says, naming what is lost.
@@ -264,7 +291,7 @@ pub fn commit(root: &Path, message: &str) -> Result<String, GitError> {
         &["commit", "--file=-"],
         Some(message.as_bytes().to_vec()),
         Access::Write,
-        Instant::now() + COMMIT_TIMEOUT,
+        Instant::now() + WRITE_DEADLINE,
     )?
     .into_result()?;
     let output = String::from_utf8_lossy(&output);
@@ -321,15 +348,16 @@ fn paths_of(files: &[&FileStatus]) -> Vec<String> {
         .collect()
 }
 
-fn run_write(
-    root: &Path,
-    args: &[&str],
-    input: Option<Vec<u8>>,
-    timeout: Duration,
-) -> Result<(), GitError> {
-    execute(root, args, input, Access::Write, Instant::now() + timeout)?
-        .into_result()
-        .map(drop)
+fn run_write(root: &Path, args: &[&str], input: Option<Vec<u8>>) -> Result<(), GitError> {
+    execute(
+        root,
+        args,
+        input,
+        Access::Write,
+        Instant::now() + WRITE_DEADLINE,
+    )?
+    .into_result()
+    .map(drop)
 }
 
 #[cfg(test)]

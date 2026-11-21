@@ -158,8 +158,28 @@ pub(crate) fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
     }
     // One temporary file per process, so two instances closing at once don't clash.
     let temp = temp_path(path);
-    fs::write(&temp, text)?;
-    fs::rename(&temp, path)
+    let written = fs::File::create(&temp).and_then(|mut file| {
+        use std::io::Write;
+        file.write_all(text.as_bytes()).map(|()| file)
+    });
+    rename_into_place(&temp, path, written)
+}
+
+/// Flush the `written` temporary file `temp` to disk and rename it over `path`: after a
+/// power loss the file holds the old text or the new, never an empty one. On failure the
+/// temporary file is removed.
+pub(crate) fn rename_into_place(
+    temp: &Path,
+    path: &Path,
+    written: io::Result<fs::File>,
+) -> io::Result<()> {
+    let result = written
+        .and_then(|file| file.sync_all())
+        .and_then(|()| fs::rename(temp, path));
+    if result.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    result
 }
 
 /// Tabs may contain commands with secrets; secure the temporary file before writing any.
@@ -181,10 +201,10 @@ pub(crate) fn write_private_atomic(path: &Path, text: &str) -> io::Result<()> {
     options.write(true).create_new(true);
     #[cfg(unix)]
     options.mode(0o600);
-    let mut file = options.open(&temp)?;
-    file.write_all(text.as_bytes())?;
-    drop(file);
-    fs::rename(&temp, path)
+    let written = options
+        .open(&temp)
+        .and_then(|mut file| file.write_all(text.as_bytes()).map(|()| file));
+    rename_into_place(&temp, path, written)
 }
 
 pub(crate) fn temp_path(path: &Path) -> std::path::PathBuf {

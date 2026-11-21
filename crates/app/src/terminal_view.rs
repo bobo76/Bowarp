@@ -16,6 +16,7 @@ use std::mem;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use agent_status::{
@@ -294,6 +295,8 @@ pub struct TerminalView {
     /// Where [`Self::change_dir`] leaves the folder for the shell's hidden cd key binding;
     /// `None` when the shell has none.
     cd_file: Option<PathBuf>,
+    /// Writing `cd_file` before sending the hidden cd keys.
+    cd_task: Option<Task<()>>,
     pointer: PointerState,
     /// The right-click menu (`context_menu.rs`).
     context_menu: TerminalMenu,
@@ -514,6 +517,7 @@ impl TerminalView {
                 .env
                 .get(shell_integration::CD_FILE_ENV)
                 .map(PathBuf::from),
+            cd_task: None,
             pointer: PointerState::default(),
             context_menu: TerminalMenu::default(),
             scrollbar: ScrollbarState::default(),
@@ -603,14 +607,26 @@ impl TerminalView {
     /// reports its prompt (the typed line is kept and the prompt redrawn), else by typing a
     /// `cd` line.
     pub fn change_dir(&mut self, folder: &Path, cx: &mut Context<Self>) -> Result<(), TypeError> {
-        if let Some(file) = &self.cd_file
+        if let Some(file) = self.cd_file.clone()
             && self.session.prompt_input().is_some()
         {
-            let text = file_tree::typeable(folder)?;
-            if fs::write(file, text).is_ok() {
-                self.send_input(Cow::Borrowed(HIDDEN_CD_KEYS), cx);
-                return Ok(());
-            }
+            let text = file_tree::typeable(folder)?.to_owned();
+            let folder = folder.to_path_buf();
+            // Written off the UI thread (the config folder may be slow); the keys go once it is.
+            // A newer change replaces this one.
+            self.cd_task = Some(cx.spawn(async move |this, cx| {
+                let written = cx
+                    .background_spawn(async move { fs::write(&file, text).is_ok() })
+                    .await;
+                let _ = this.update(cx, |view, cx| {
+                    if written {
+                        view.send_input(Cow::Borrowed(HIDDEN_CD_KEYS), cx);
+                    } else if let Ok(command) = cd_command(&folder, view.shell) {
+                        view.type_text(command, cx);
+                    }
+                });
+            }));
+            return Ok(());
         }
         let command = cd_command(folder, self.shell)?;
         self.type_text(command, cx);
@@ -765,6 +781,12 @@ impl TerminalView {
             let location = read.await;
             let _ = this.update(cx, |view, cx| view.set_location(location, cx));
         }));
+    }
+
+    /// Read the folder and its branch again, now (a branch switch from the Git page; the tab
+    /// may print nothing about it).
+    pub fn refresh_branch(&mut self, cx: &mut Context<Self>) {
+        self.refresh_location(cx);
     }
 
     /// Follow the "Git status in tabs and explorer" switch: read the location again, with or
@@ -1186,10 +1208,13 @@ impl TerminalView {
         }
         self.activity_task = Some(cx.spawn(async move |this, cx| {
             loop {
-                let Ok(Some(last_output)) =
-                    this.read_with(cx, |view, _| view.session.last_output())
+                let Ok(last_output) = this.read_with(cx, |view, _| view.session.last_output())
                 else {
                     return;
+                };
+                // No output yet (a remote tab resized by another client): quiet at once.
+                let Some(last_output) = last_output else {
+                    break;
                 };
                 let quiet_at = last_output + ACTIVITY_WINDOW;
                 let now = Instant::now();
@@ -1475,9 +1500,10 @@ impl Drop for TerminalView {
         // the pty thread, must find the receiver gone instead of waking this task from there
         // (gpui's test scheduler fails a test on a wake from another thread).
         drop(mem::replace(&mut self._session_events, Task::ready(())));
-        // Left behind when the shell never read it.
-        if let Some(file) = &self.cd_file {
-            let _ = fs::remove_file(file);
+        // Left behind when the shell never read it. Off the UI thread: the config folder may
+        // be slow.
+        if let Some(file) = self.cd_file.take() {
+            thread::spawn(move || fs::remove_file(file));
         }
     }
 }

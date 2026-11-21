@@ -253,9 +253,56 @@ fn network_paths_in_output_or_links_are_not_files_to_check() {
     );
     assert_eq!(resolve_path("//host/share/x", Some(folder), None), None);
     assert_eq!(local_link("file:////host/share/x", folder), None);
+    assert_eq!(local_link("file://evil-host/share/x.exe", folder), None);
+    assert_eq!(local_link("file://localhostfoo/x", folder), None);
+    assert_eq!(local_link("file://localhost", folder), None);
+    assert_eq!(
+        local_link("file://LocalHost/tmp/a.md", folder),
+        Some(PathBuf::from("/tmp/a.md"))
+    );
     assert_eq!(local_link("//host/share/x.md", folder), None);
     assert_eq!(
         resolve_path(r"C:\x.txt", Some(folder), None),
         Some(PathBuf::from(r"C:\x.txt"))
     );
+}
+
+#[test]
+fn only_web_and_mail_links_go_to_the_system_handler() {
+    for url in ["https://example.com", "HTTP://x", "mailto:me@example.com"] {
+        assert!(opens_in_browser(url), "{url}");
+    }
+    for url in [
+        "file:///tmp/a",
+        "FILE://host/x",
+        "smb://host/share",
+        "ms-msdt:/id",
+        "search-ms:query=x",
+        "\\\\host\\share",
+        "notes.md",
+    ] {
+        assert!(!opens_in_browser(url), "{url}");
+    }
+}
+
+#[test]
+fn paths_with_wide_characters_read_one_char_per_cell() {
+    // "docs/数据.md:3" as terminal cells: each wide char is followed by its spacer cell.
+    let s = WIDE_SPACER;
+    let line: Vec<char> = [
+        'o', 'p', 'e', 'n', ' ', 'd', 'o', 'c', 's', '/', '数', s, '据', s,
+    ]
+    .into_iter()
+    .chain(".md:3 ok".chars())
+    .collect();
+    // On the spacer of 数, as on the char itself.
+    for index in [6, 10, 11, 13] {
+        let found = find_link(&line, index).unwrap();
+        assert_eq!(found.range, 5..19, "{index}");
+        let LinkText::Path(path) = found.target else {
+            panic!("{found:?}");
+        };
+        assert_eq!(path.path, "docs/数据.md");
+        assert_eq!(path.line, Some(3));
+    }
 }

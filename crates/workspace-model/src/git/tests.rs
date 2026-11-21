@@ -134,6 +134,7 @@ fn marks_name_changed_files_and_the_folders_holding_them() {
         removed: None,
     };
     let changes = WorkingChanges {
+        top: PathBuf::from("/repo"),
         files: vec![
             file("/repo/src/a/new.rs", FileChange::Untracked),
             file("/repo/src/b.rs", FileChange::Modified),
@@ -148,6 +149,10 @@ fn marks_name_changed_files_and_the_folders_holding_them() {
     assert_eq!(marks[Path::new("/repo/src/a")], FileChange::Modified);
     assert_eq!(marks[Path::new("/repo/src")], FileChange::Modified);
     assert!(!marks.contains_key(Path::new("/repo/gone.rs")));
+    // Up to the top folder, not included.
+    assert!(!marks.contains_key(Path::new("/repo")));
+    assert!(!marks.contains_key(Path::new("/")));
+    assert_eq!(marks.len(), 4);
 }
 
 #[test]

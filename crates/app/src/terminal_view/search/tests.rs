@@ -19,7 +19,7 @@ fn draw(cx: &mut VisualTestContext) {
 fn search_shortcuts_keep_input_out_of_the_program(cx: &mut TestAppContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        crate::settings_file::init(cx);
+        crate::settings_file::init_in_memory(cx);
         crate::terminal_element::init(cx);
         super::super::init(cx);
     });

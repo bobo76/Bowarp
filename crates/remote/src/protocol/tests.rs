@@ -192,6 +192,24 @@ fn bad_markers_and_text_are_refused() {
 }
 
 #[test]
+fn sizes_out_of_range_are_clamped() {
+    let decoded = |columns, lines| {
+        let message = ClientMessage::Resize {
+            session: 3,
+            size: TermDimensions::new(columns, lines),
+        };
+        match ClientMessage::decode(&message.encode()).unwrap() {
+            ClientMessage::Resize { size, .. } => (size.columns, size.lines),
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(decoded(0, 0), (MIN_COLUMNS, MIN_LINES));
+    assert_eq!(decoded(1, 1), (2, 1));
+    assert_eq!(decoded(u16::MAX, u16::MAX), (MAX_COLUMNS, MAX_LINES));
+    assert_eq!(decoded(80, 24), (80, 24));
+}
+
+#[test]
 fn a_huge_list_count_does_not_allocate_it() {
     let frame = [tag::SESSIONS, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff];
     assert!(ServerMessage::decode(&frame).is_err());

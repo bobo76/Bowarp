@@ -16,7 +16,7 @@ use crate::terminal_view::{TabChanged, TerminalView};
 fn settings_toggle_focuses_then_closes_and_restores_the_terminal(cx: &mut TestAppContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        settings_file::init(cx);
+        settings_file::init_in_memory(cx);
         crate::terminal_element::init(cx);
     });
     #[cfg(windows)]

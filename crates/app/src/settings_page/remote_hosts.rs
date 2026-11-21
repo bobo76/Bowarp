@@ -102,7 +102,7 @@ fn host_fields(index: usize, window: &mut Window, cx: &mut App) -> AnyElement {
     for (field, caption, placeholder) in FIELDS {
         let input = text_field(
             host.field(field).to_owned(),
-            &field_binding(index, field),
+            &field_binding(index, &host, field),
             placeholder.into(),
             window,
             cx,
@@ -123,7 +123,7 @@ fn host_fields(index: usize, window: &mut Window, cx: &mut App) -> AnyElement {
         .ghost()
         .xsmall()
         .on_click(move |_, _, cx| {
-            settings_file::update(cx, |settings| settings.remote_hosts.remove(index));
+            settings_file::update(cx, |settings| settings.remote_hosts.remove(index, &host));
         });
     column.child(div().child(remove)).into_any_element()
 }
@@ -204,14 +204,18 @@ fn status_text(index: usize, line: StatusLine, cx: &App) -> AnyElement {
     .into_any_element()
 }
 
-/// Edits field `field` of host `index`; nothing once that host is gone.
-fn field_binding(index: usize, field: RemoteHostField) -> Binding<String> {
-    let set = move |settings: &mut workspace_model::Settings, value: String| {
-        settings.remote_hosts.set_field(index, field, value);
-    };
+/// Edits field `field` of `host`, shown at `index`; nothing once that host is gone.
+fn field_binding(index: usize, host: &RemoteHost, field: RemoteHostField) -> Binding<String> {
+    let host = host.clone();
+    let set = Rc::new(
+        move |settings: &mut workspace_model::Settings, value: String| {
+            settings.remote_hosts.set_field(index, &host, field, value);
+        },
+    );
+    let apply = set.clone();
     Binding {
         key: format!("remote-host-{index}-{field:?}").into(),
-        apply: Rc::new(move |value, cx| settings_file::preview(cx, |s| set(s, value))),
+        apply: Rc::new(move |value, cx| settings_file::preview(cx, |s| apply(s, value))),
         save: Rc::new(move |value, cx| settings_file::update(cx, |s| set(s, value))),
     }
 }

@@ -592,31 +592,50 @@ impl FileExplorer {
         self.refresh(cx);
     }
 
+    /// Create or rename the entry with the typed name, off the UI thread (the folder may be
+    /// on a slow network mount). Never cancelled: a later edit runs beside it.
     fn commit_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(edit) = self.editing.take() else {
             return;
         };
         let typed = edit.input.read(cx).value();
-        let result = match validate_name(&typed) {
-            Ok(name) => match &edit.target {
-                EditTarget::NewFile(folder) => create_file(folder, name),
-                EditTarget::Rename(path) => self.rename(path, name),
-            },
-            // Leaving a new file's name empty cancels it.
-            Err(file_tree::NameError::Empty) => Ok(None),
-            Err(err) => Err(err.to_string()),
-        };
-        match result {
-            Ok(Some(path)) => {
-                if let Some(folder) = path.parent() {
-                    self.read_listing(folder.to_path_buf(), cx);
-                }
-                self.selected = Some(path);
-            }
-            Ok(None) => {}
-            Err(message) => window.push_notification(Notification::error(message), cx),
-        }
         self.end_edit(cx);
+        let name = match validate_name(&typed) {
+            Ok(name) => name.to_owned(),
+            // Leaving a new file's name empty cancels it.
+            Err(file_tree::NameError::Empty) => return,
+            Err(err) => {
+                window.push_notification(Notification::error(err.to_string()), cx);
+                return;
+            }
+        };
+        let target = edit.target;
+        cx.spawn_in(window, async move |this, cx| {
+            let edited = target.clone();
+            let result = cx
+                .background_spawn(async move {
+                    match &edited {
+                        EditTarget::NewFile(folder) => create_file(folder, &name),
+                        EditTarget::Rename(path) => rename_entry(path, &name),
+                    }
+                })
+                .await;
+            let _ = this.update_in(cx, |explorer, window, cx| match result {
+                Ok(Some(path)) => {
+                    if let EditTarget::Rename(from) = &target {
+                        explorer.expanded.rename(from, &path);
+                    }
+                    if let Some(folder) = path.parent() {
+                        explorer.read_listing(folder.to_path_buf(), cx);
+                    }
+                    explorer.selected = Some(path);
+                    explorer.refresh(cx);
+                }
+                Ok(None) => {}
+                Err(message) => window.push_notification(Notification::error(message), cx),
+            });
+        })
+        .detach();
     }
 
     fn cancel_edit(&mut self, cx: &mut Context<Self>) {
@@ -628,27 +647,6 @@ impl FileExplorer {
     fn end_edit(&mut self, cx: &mut Context<Self>) {
         self.refresh(cx);
         cx.emit(ExplorerEvent::EditEnded);
-    }
-
-    /// Rename `path` to `name` in its folder, never replacing an existing entry (only itself,
-    /// for a change of case on a case-insensitive file system). Returns the new path, or
-    /// `None` when the name did not change.
-    fn rename(&mut self, path: &Path, name: &str) -> Result<Option<PathBuf>, String> {
-        let target = path.with_file_name(name);
-        if target == path {
-            return Ok(None);
-        }
-        let renamed = if same_entry(path, &target) {
-            fs::rename(path, &target)
-        } else {
-            rename_no_replace(path, &target)
-        };
-        renamed.map_err(|err| match err.kind() {
-            io::ErrorKind::AlreadyExists => format!("\"{name}\" already exists"),
-            _ => format!("Couldn't rename: {err}"),
-        })?;
-        self.expanded.rename(path, &target);
-        Ok(Some(target))
     }
 
     fn confirm_delete(&mut self, row: TreeRow, window: &mut Window, cx: &mut Context<Self>) {
@@ -1134,6 +1132,26 @@ fn describe(err: &io::Error) -> String {
     }
 }
 
+/// Rename `path` to `name` in its folder, never replacing an existing entry (only itself, for
+/// a change of case on a case-insensitive file system). Returns the new path, or `None` when
+/// the name did not change.
+fn rename_entry(path: &Path, name: &str) -> Result<Option<PathBuf>, String> {
+    let target = path.with_file_name(name);
+    if target == path {
+        return Ok(None);
+    }
+    let renamed = if same_entry(path, &target) {
+        fs::rename(path, &target)
+    } else {
+        rename_no_replace(path, &target)
+    };
+    renamed.map_err(|err| match err.kind() {
+        io::ErrorKind::AlreadyExists => format!("\"{name}\" already exists"),
+        _ => format!("Couldn't rename: {err}"),
+    })?;
+    Ok(Some(target))
+}
+
 /// Create an empty file `name` in `folder`, never replacing an existing one.
 fn create_file(folder: &Path, name: &str) -> Result<Option<PathBuf>, String> {
     let path = folder.join(name);
@@ -1300,6 +1318,61 @@ fn changed_marks(root: &Path) -> HashMap<PathBuf, FileChange> {
 mod tests {
     use super::*;
     use notify::event::DataChange;
+
+    #[gpui::test]
+    fn new_and_renamed_files_are_made_off_the_ui_thread(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::component::Root;
+
+        let folder =
+            std::env::temp_dir().join(format!("agentws-explorer-edit-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("a.txt"), "a").unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::settings_file::init_in_memory(cx);
+        });
+        let mut explorer = None;
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|cx| FileExplorer::new(Vec::new(), window, cx));
+            explorer = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let explorer = explorer.unwrap();
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+        explorer.update(&mut cx, |explorer, cx| {
+            explorer.set_root(Some(folder.clone()), CdAvailability::Unavailable, cx)
+        });
+        cx.run_until_parked();
+        let edit = |cx: &mut gpui_kit::VisualTestContext, target: EditTarget, name: &str| {
+            cx.update(|window, cx| {
+                explorer.update(cx, |explorer, cx| {
+                    explorer.start_edit(target, window, cx);
+                    let input = explorer.editing.as_ref().unwrap().input.clone();
+                    input.update(cx, |input, cx| input.set_value(name.to_owned(), window, cx));
+                    explorer.commit_edit(window, cx);
+                })
+            });
+            cx.run_until_parked();
+        };
+        let selected = |cx: &mut gpui_kit::VisualTestContext| {
+            explorer.read_with(cx, |explorer, _| explorer.selected.clone())
+        };
+
+        edit(&mut cx, EditTarget::Rename(folder.join("a.txt")), "b.txt");
+        assert!(!folder.join("a.txt").exists());
+        assert_eq!(fs::read_to_string(folder.join("b.txt")).unwrap(), "a");
+        assert_eq!(selected(&mut cx), Some(folder.join("b.txt")));
+
+        edit(&mut cx, EditTarget::NewFile(folder.clone()), "c.txt");
+        assert!(folder.join("c.txt").is_file());
+        assert_eq!(selected(&mut cx), Some(folder.join("c.txt")));
+
+        // An existing name is refused, and nothing is replaced.
+        edit(&mut cx, EditTarget::Rename(folder.join("b.txt")), "c.txt");
+        assert_eq!(fs::read_to_string(folder.join("b.txt")).unwrap(), "a");
+        let _ = fs::remove_dir_all(&folder);
+    }
 
     #[test]
     fn trashing_an_entry_that_is_gone_fails_without_offering_a_permanent_delete() {

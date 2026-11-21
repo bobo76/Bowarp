@@ -60,6 +60,7 @@ pub fn serve(name: &str, idle_exit: Option<Duration>) -> io::Result<()> {
                         continue;
                     }
                 };
+                accepting.connection_accepted();
                 if !from_same_user(&stream) {
                     log::warn!("connection from another user refused");
                     continue;
@@ -101,15 +102,25 @@ fn from_same_user(stream: &Stream) -> bool {
     stream.peer_creds().ok().and_then(|creds| creds.euid()) == Some(own)
 }
 
-/// Named pipes are created with a security descriptor that lets only the owner (and
-/// administrators) connect.
+/// The pipe gets the default DACL, which lets other users open it for reading only, so they
+/// can't speak the protocol.
 #[cfg(not(unix))]
 fn from_same_user(_stream: &Stream) -> bool {
     true
 }
 
+/// Connect to the daemon on `name`. Fails when the socket is held by another user: on Linux
+/// the name is in the abstract namespace, so anyone can bind it once our daemon has exited,
+/// and would then receive our sessions' environment and keystrokes.
 pub fn connect(name: &str) -> io::Result<Stream> {
-    Stream::connect(name.to_ns_name::<GenericNamespaced>()?)
+    let stream = Stream::connect(name.to_ns_name::<GenericNamespaced>()?)?;
+    if !from_same_user(&stream) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("the socket {name} is owned by another user"),
+        ));
+    }
+    Ok(stream)
 }
 
 /// Connect to the daemon on `name`, starting `server_program serve` in the background when
