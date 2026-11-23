@@ -249,7 +249,7 @@ impl AgentHooks {
         thread::Builder::new()
             .name("agentws-remove-plugin".into())
             .spawn(move || plugins.iter().for_each(|plugin| remove_artifact(plugin)))
-            .inspect_err(|err| log::warn!("no thread to remove session {session}'s plugin: {err}"))
+            .inspect_err(|err| log::warn!("no thread to remove plugin directory: {err}"))
             .ok()
     }
 
