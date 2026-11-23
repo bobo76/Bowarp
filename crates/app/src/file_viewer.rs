@@ -772,11 +772,11 @@ impl FileViewer {
         let modifiers = &keystroke.modifiers;
         let plain = !modifiers.shift && !modifiers.alt;
         let handled = match keystroke.key.as_str() {
-            "s" if modifiers.secondary() && plain => {
+            "s" if modifiers.secondary(cx) && plain => {
                 self.save(window, cx);
                 true
             }
-            "f" if modifiers.secondary() && plain => self.open_search(window, cx),
+            "f" if modifiers.secondary(cx) && plain => self.open_search(window, cx),
             "escape" if !modifiers.modified() => self.close_search(window, cx),
             _ => false,
         };

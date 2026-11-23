@@ -325,7 +325,8 @@ fn mouse_selects_ranges_and_escape_clears_them(cx: &mut TestAppContext) {
     press(&mut h, minus, Modifiers::default());
     press(&mut h, new, Modifiers::shift());
     assert_eq!(selected(&mut h), [minus, plus, new]);
-    press(&mut h, plus, Modifiers::secondary_key());
+    let secondary = h.cx.update(|_, cx| Modifiers::secondary_key(cx));
+    press(&mut h, plus, secondary);
     assert_eq!(selected(&mut h), [minus, new]);
     h.cx.update(|window, cx| window.draw(cx).clear(cx));
     // `debug_bounds` needs debug assertions: release test runs skip the drawn checks.

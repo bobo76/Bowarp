@@ -84,7 +84,16 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
         KeyBinding::new("tab", FocusNext, Some(&message)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(&message)),
-        KeyBinding::new("secondary-enter", Commit, Some(&message)),
+        // `KeyBinding::new` can't read `secondary-` (it needs the host OS from an `App`).
+        KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-enter"
+            } else {
+                "ctrl-enter"
+            },
+            Commit,
+            Some(&message),
+        ),
     ]);
     branch_picker::init(cx);
 }

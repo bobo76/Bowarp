@@ -106,7 +106,7 @@ mod tests {
     fn keys_read_as_text() {
         let strokes = |keys: &str| -> Vec<Keystroke> {
             keys.split_whitespace()
-                .map(|stroke| Keystroke::parse(stroke).unwrap())
+                .map(|stroke| keymap::parse_keystroke(stroke).unwrap())
                 .collect()
         };
         assert_eq!(keys_text(&strokes("ctrl-shift-t")), "Ctrl+Shift+T");

@@ -4,7 +4,7 @@
 //! shaping and painting happen afterwards so the I/O thread is never blocked on rendering.
 
 use core::panic::Location;
-use std::sync::Arc;
+use std::rc::Rc;
 
 use gpui_kit::{
     App, BorderStyle, Bounds, CursorStyle, DispatchPhase, Element, ElementId, ElementInputHandler,
@@ -439,7 +439,7 @@ impl TerminalElement {
 
 /// Shapes runs of terminal text in the terminal font.
 struct TextShaper {
-    text_system: Arc<WindowTextSystem>,
+    text_system: Rc<WindowTextSystem>,
     font: Font,
     font_size: Pixels,
 }

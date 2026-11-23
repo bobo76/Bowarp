@@ -1161,7 +1161,7 @@ fn a_restart_under_way_blocks_enter_until_it_ends(cx: &mut gpui_kit::TestAppCont
         })
     });
     let press = |key: &str, is_held: bool| gpui_kit::KeyDownEvent {
-        keystroke: gpui_kit::Keystroke::parse(key).unwrap(),
+        keystroke: crate::keymap::parse_keystroke(key).unwrap(),
         is_held,
         prefer_character_input: false,
     };
@@ -1419,13 +1419,12 @@ fn right_click_opens_the_menu_unless_the_program_tracks_the_mouse(
     assert!(menu_open(&mut cx));
     assert_eq!(take(&typed), b"");
 
-    // Paste asks about lines. The first Down lands on the disabled Copy (gpui-component
-    // starts at index 0), whose Enter would do nothing without a selection.
+    // Paste asks about lines. The first Down skips the disabled Copy (nothing is selected).
     view.update(&mut cx, |view, _| view.session.clear_selection());
     cx.simulate_keystrokes("escape");
     right_click(&mut cx, Modifiers::shift());
     cx.update(|_, cx| cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("a\nb\n".into())));
-    cx.simulate_keystrokes("down down enter");
+    cx.simulate_keystrokes("down enter");
     cx.run_until_parked();
     assert!(!menu_open(&mut cx));
     assert!(

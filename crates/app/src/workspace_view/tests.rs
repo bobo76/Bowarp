@@ -25,7 +25,7 @@ fn default_bindings_name_workspace_actions() {
     );
     for shortcut in &bindings {
         assert!(
-            gpui_kit::Keystroke::parse(&shortcut.keys).is_ok(),
+            crate::keymap::parse_keystroke(&shortcut.keys).is_ok(),
             "{}",
             shortcut.keys
         );

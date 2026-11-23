@@ -169,7 +169,7 @@ fn key_chip(action: &'static str, index: usize, key: String, cx: &App) -> impl I
     let theme = cx.theme();
     let strokes = key
         .split_whitespace()
-        .filter_map(|stroke| gpui_kit::Keystroke::parse(stroke).ok())
+        .filter_map(|stroke| keymap::parse_keystroke(stroke).ok())
         .collect::<Vec<_>>();
     let label = keys_text(&strokes);
     let removed = key.clone();
@@ -317,7 +317,7 @@ fn intercept(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
     if refuse_terminal_input(stroke, window, cx) {
         return;
     }
-    let unparsed = stroke.unparse();
+    let unparsed = stroke.unparse(keymap::HOST_OS);
     let keys = keymap::normalize(&unparsed).unwrap_or(unparsed);
     stop(window, cx);
     save_key(action, replacing, keys, window, cx);
@@ -362,7 +362,7 @@ fn save_key(
     if let Some(previous) = previous {
         let strokes = keys
             .split_whitespace()
-            .filter_map(|stroke| gpui_kit::Keystroke::parse(stroke).ok())
+            .filter_map(|stroke| keymap::parse_keystroke(stroke).ok())
             .collect::<Vec<_>>();
         let message = format!(
             "{} now runs {} instead of {}.",

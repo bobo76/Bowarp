@@ -8,8 +8,8 @@
 use std::rc::Rc;
 
 use gpui_kit::{
-    App, DummyKeyboardMapper, Global, KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex,
-    Keystroke,
+    App, Global, InvalidKeystrokeError, KeyBinding, KeyBindingContextPredicate,
+    KeyBindingMetaIndex, Keystroke, OperatingSystem,
 };
 use workspace_model::{KeybindingOverlay, Keymap, KeymapProblem, Shortcut};
 
@@ -19,6 +19,23 @@ use crate::settings_file::{self, AppSettings};
 /// without a meta count as 0 where GPUI compares metas (`NoAction` precedence), so the mark
 /// changes nothing else.
 const OWN_BINDING: KeyBindingMetaIndex = KeyBindingMetaIndex(0);
+
+/// The OS whose key conventions GPUI follows on this build (`secondary-` is Cmd on macOS, Ctrl
+/// elsewhere); what `App::platform_info` reports natively, for code without an `App`.
+pub const HOST_OS: OperatingSystem = if cfg!(target_os = "macos") {
+    OperatingSystem::Mac
+} else if cfg!(windows) {
+    OperatingSystem::Windows
+} else if cfg!(target_os = "freebsd") {
+    OperatingSystem::FreeBsd
+} else {
+    OperatingSystem::Linux
+};
+
+/// One keystroke in GPUI's spelling (`ctrl-shift-t`), `secondary-` read for [`HOST_OS`].
+pub fn parse_keystroke(stroke: &str) -> Result<Keystroke, InvalidKeystrokeError> {
+    Keystroke::parse_with_os(stroke, HOST_OS)
+}
 
 struct AppKeymap {
     defaults: Vec<Shortcut>,
@@ -63,7 +80,7 @@ pub fn current(cx: &App) -> Option<&Keymap> {
 pub fn hint(cx: &App, action: &str) -> Option<Vec<Keystroke>> {
     let keys = current(cx)?.keys(action).next()?;
     keys.split_whitespace()
-        .map(|stroke| Keystroke::parse(stroke).ok())
+        .map(|stroke| parse_keystroke(stroke).ok())
         .collect()
 }
 
@@ -143,15 +160,8 @@ fn key_binding(shortcut: &Shortcut, cx: &App) -> Result<KeyBinding, String> {
         .map(|context| KeyBindingContextPredicate::parse(context).map(Rc::new))
         .transpose()
         .map_err(|err| err.to_string())?;
-    KeyBinding::load(
-        &shortcut.keys,
-        action,
-        context,
-        false,
-        None,
-        &DummyKeyboardMapper,
-    )
-    .map_err(|err| err.to_string())
+    KeyBinding::load(&shortcut.keys, action, context, false, None, cx)
+        .map_err(|err| err.to_string())
 }
 
 /// `keys` in GPUI's spelling (`shift-ctrl-V` is `ctrl-shift-v`), each keystroke of a
@@ -159,8 +169,8 @@ fn key_binding(shortcut: &Shortcut, cx: &App) -> Result<KeyBinding, String> {
 pub fn normalize(keys: &str) -> Result<String, String> {
     keys.split_whitespace()
         .map(|stroke| {
-            Keystroke::parse(stroke)
-                .map(|keystroke| keystroke.unparse())
+            parse_keystroke(stroke)
+                .map(|keystroke| keystroke.unparse(HOST_OS))
                 .map_err(|err| err.to_string())
         })
         .collect::<Result<Vec<_>, _>>()

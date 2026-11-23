@@ -36,7 +36,7 @@ fn actions_in(cx: &mut TestAppContext, contexts: &[&str], keys: &str) -> Vec<&'s
             .iter()
             .map(|context| KeyContext::parse(context).unwrap())
             .collect();
-        let input = [Keystroke::parse(keys).unwrap()];
+        let input = [parse_keystroke(keys).unwrap()];
         let (bindings, _) = cx
             .key_bindings()
             .borrow()
