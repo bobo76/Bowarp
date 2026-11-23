@@ -678,7 +678,10 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> io::Result<(Entity<TerminalView>, TabSubscriptions)> {
+        // Used up even when the start fails: the failed session's plugin folder is removed on
+        // another thread, which must not find the next session's folder there.
         let session_id = self.next_session_id;
+        self.next_session_id += 1;
         let mut launch = spec.clone();
         // First: a shell with integration also gets the agents' hooks.
         let typed_agents = settings_file::settings(cx).typed_agent_status.is_on();
@@ -712,7 +715,6 @@ impl WorkspaceView {
                 );
             });
         }
-        self.next_session_id += 1;
         let view_events = self.listen_to_tab(tab_id, &view, window, cx);
         Ok((view, view_events))
     }

@@ -13,7 +13,8 @@ omitted unless they affect how the app is used.
 - Saved tabs: after running an older version, a tab or color it doesn't know drops only that
   tab (or its color) at start-up; before, every saved tab was lost.
 - Links: a `file://` link naming another computer (`file://server/share/x`) is no longer a
-  link in the terminal, and a Markdown link in the file viewer opens only web and mail
+  link in the terminal (one naming this computer, as `ls --hyperlink` writes, still opens),
+  and a Markdown link in the file viewer opens only web and mail
   addresses; others (`smb:`, network shares, other registered handlers) show "Can't open".
 - File viewer: opening a FIFO, a device or a link to one (`notes.txt -> /dev/zero`) says
   "Only regular files can be shown." instead of hanging or running out of memory.

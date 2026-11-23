@@ -236,16 +236,21 @@ impl AgentHooks {
     }
 
     /// Remove a session's plugin after its process exits or its tab closes, on a thread of its
-    /// own: this runs on the UI thread, and the folder may be slow. Session ids are never
-    /// reused, so nothing waits for it.
-    pub fn remove_session(&self, session: u64) -> thread::JoinHandle<()> {
+    /// own: this runs on the UI thread, and the folder may be slow. Nothing waits for it:
+    /// session ids are never reused, also after a failed start. `None` (the folder is left)
+    /// when no thread could start.
+    pub fn remove_session(&self, session: u64) -> Option<thread::JoinHandle<()>> {
         let plugins: Vec<PathBuf> = self
             .artifacts
             .iter()
             .filter(|(agent, _)| agent.hook_artifact_kind() == HookArtifactKind::PluginDirectory)
             .map(|(_, path)| path.join(session.to_string()))
             .collect();
-        thread::spawn(move || plugins.iter().for_each(|plugin| remove_artifact(plugin)))
+        thread::Builder::new()
+            .name("agentws-remove-plugin".into())
+            .spawn(move || plugins.iter().for_each(|plugin| remove_artifact(plugin)))
+            .inspect_err(|err| log::warn!("no thread to remove plugin directory: {err}"))
+            .ok()
     }
 
     /// Delete the app-owned settings and plugins when all sessions are shutting down.

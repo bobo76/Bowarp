@@ -596,9 +596,9 @@ impl Decoder<'_> {
 
     fn list<T>(&mut self, item: impl Fn(&mut Self) -> io::Result<T>) -> io::Result<Vec<T>> {
         let count = self.u32()? as usize;
-        // Reserve at most one item per 4 bytes left (a string's length prefix): a bogus count
-        // must not reserve `size_of::<T>()` bytes for every byte of the frame.
-        let mut items = Vec::with_capacity(count.min(self.0.len() / 4));
+        // Reserve at most one item per 4 bytes left (a string's length prefix), and a few: a
+        // bogus count must not reserve `size_of::<T>()` bytes for every byte of the frame.
+        let mut items = Vec::with_capacity(count.min(self.0.len() / 4).min(1024));
         for _ in 0..count {
             items.push(item(self)?);
         }
@@ -606,13 +606,16 @@ impl Decoder<'_> {
     }
 
     /// Columns and lines are clamped: alacritty crashes the whole process on a 0-column or
-    /// 0-line terminal, and a huge one exhausts memory.
+    /// 0-line terminal, and a huge one exhausts memory. Cell sizes too: alacritty computes the
+    /// window's pixel size (columns × cell width) in a u16.
     fn size(&mut self) -> io::Result<TermDimensions> {
+        let columns = self.u16()?.clamp(MIN_COLUMNS, MAX_COLUMNS);
+        let lines = self.u16()?.clamp(MIN_LINES, MAX_LINES);
         Ok(TermDimensions {
-            columns: self.u16()?.clamp(MIN_COLUMNS, MAX_COLUMNS),
-            lines: self.u16()?.clamp(MIN_LINES, MAX_LINES),
-            cell_width: self.u16()?,
-            cell_height: self.u16()?,
+            columns,
+            lines,
+            cell_width: self.u16()?.min(u16::MAX / columns),
+            cell_height: self.u16()?.min(u16::MAX / lines),
         })
     }
 

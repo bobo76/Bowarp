@@ -12,8 +12,8 @@ use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Sizable};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, App, Axis, Div, InteractiveElement, IntoElement, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, Window, div,
+    AnyElement, App, Axis, Div, Entity, InteractiveElement, IntoElement, ParentElement,
+    SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use workspace_model::{RemoteHost, RemoteHostField};
 
@@ -94,6 +94,14 @@ fn host_fields(index: usize, window: &mut Window, cx: &mut App) -> AnyElement {
     else {
         return div().into_any_element();
     };
+    // The host as it is now, for the fields' bindings: an input keeps the binding of its first
+    // render, and an edit must find the host as the other fields' edits left it.
+    let shown = window.use_keyed_state(
+        SharedString::from(format!("remote-host-{index}-shown")),
+        cx,
+        |_, _| host.clone(),
+    );
+    shown.update(cx, |shown, _| shown.clone_from(&host));
     let muted = cx.theme().muted_foreground;
     let mut column = div().flex().flex_col().gap_2().w_full();
     if let Some(target) = remote_hosts::host_target(&host) {
@@ -102,7 +110,7 @@ fn host_fields(index: usize, window: &mut Window, cx: &mut App) -> AnyElement {
     for (field, caption, placeholder) in FIELDS {
         let input = text_field(
             host.field(field).to_owned(),
-            &field_binding(index, &host, field),
+            &field_binding(index, &shown, field),
             placeholder.into(),
             window,
             cx,
@@ -204,19 +212,31 @@ fn status_text(index: usize, line: StatusLine, cx: &App) -> AnyElement {
     .into_any_element()
 }
 
-/// Edits field `field` of `host`, shown at `index`; nothing once that host is gone.
-fn field_binding(index: usize, host: &RemoteHost, field: RemoteHostField) -> Binding<String> {
-    let host = host.clone();
-    let set = Rc::new(
-        move |settings: &mut workspace_model::Settings, value: String| {
+/// Edits field `field` of the host `shown` holds, shown at `index`; nothing once that host is
+/// gone. `shown` is read at each edit: it follows the host's other fields as they are saved.
+fn field_binding(
+    index: usize,
+    shown: &Entity<RemoteHost>,
+    field: RemoteHostField,
+) -> Binding<String> {
+    let shown = shown.clone();
+    let edit = Rc::new(move |value: String, cx: &App| {
+        let host = shown.read(cx).clone();
+        move |settings: &mut workspace_model::Settings| {
             settings.remote_hosts.set_field(index, &host, field, value);
-        },
-    );
-    let apply = set.clone();
+        }
+    });
+    let preview = edit.clone();
     Binding {
         key: format!("remote-host-{index}-{field:?}").into(),
-        apply: Rc::new(move |value, cx| settings_file::preview(cx, |s| apply(s, value))),
-        save: Rc::new(move |value, cx| settings_file::update(cx, |s| set(s, value))),
+        apply: Rc::new(move |value, cx| {
+            let change = preview(value, cx);
+            settings_file::preview(cx, change);
+        }),
+        save: Rc::new(move |value, cx| {
+            let change = edit(value, cx);
+            settings_file::update(cx, change);
+        }),
     }
 }
 
@@ -240,7 +260,91 @@ fn add_row() -> SettingItem {
 
 #[cfg(test)]
 mod tests {
+    use gpui_kit::component::Root;
+    use gpui_kit::component::input::InputState;
+    use gpui_kit::{
+        AppContext, Context, FocusHandle, Focusable, Render, TestAppContext, VisualTestContext,
+    };
+
+    use super::super::TextField;
     use super::*;
+
+    struct HostPage {
+        focus: FocusHandle,
+        inputs: Vec<Entity<InputState>>,
+    }
+
+    impl Render for HostPage {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let fields = host_fields(0, window, cx);
+            self.inputs = FIELDS
+                .iter()
+                .map(|(field, _, _)| {
+                    let key = SharedString::from(format!("remote-host-0-{field:?}-input"));
+                    let state: Entity<TextField> = window.use_keyed_state(key, cx, |_, _| {
+                        unreachable!("text_field created the state")
+                    });
+                    state.read(cx).input.clone()
+                })
+                .collect();
+            div().track_focus(&self.focus).child(fields)
+        }
+    }
+
+    /// Focus the input of `FIELDS[index]` (`None`: none), letting the one left save.
+    fn focus(cx: &mut VisualTestContext, page: &Entity<HostPage>, index: Option<usize>) {
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let handle = match index {
+                Some(index) => page.read(cx).inputs[index].focus_handle(cx),
+                None => page.read(cx).focus.clone(),
+            };
+            window.focus(&handle, cx);
+            window.draw(cx).clear(cx);
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn editing_one_field_then_another_keeps_both_edits(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            settings_file::init_in_memory(cx);
+            settings_file::update(cx, |settings| settings.remote_hosts.add());
+        });
+        let captured = std::cell::OnceCell::new();
+        let window = cx.add_window(|window, cx| {
+            let page = cx.new(|cx| {
+                cx.observe_global::<settings_file::AppSettings>(|_, cx| cx.notify())
+                    .detach();
+                HostPage {
+                    focus: cx.focus_handle(),
+                    inputs: Vec::new(),
+                }
+            });
+            captured.set(page.clone()).ok().unwrap();
+            Root::new(page, window, cx)
+        });
+        let page = captured.into_inner().unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+
+        focus(&mut cx, &page, Some(1));
+        cx.simulate_input("me@box");
+        // Leaving Destination for Name saves the destination.
+        focus(&mut cx, &page, Some(0));
+        cx.simulate_input("Box");
+        focus(&mut cx, &page, None);
+        cx.update(|_, cx| {
+            let hosts = settings_file::settings(cx).remote_hosts.all();
+            assert_eq!(hosts.len(), 1);
+            assert_eq!(
+                (hosts[0].name.as_str(), hosts[0].destination.as_str()),
+                ("Box", "me@box")
+            );
+        });
+    }
 
     #[test]
     fn a_host_row_names_what_connecting_runs_or_what_it_lacks() {

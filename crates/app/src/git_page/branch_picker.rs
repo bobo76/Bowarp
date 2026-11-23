@@ -317,7 +317,11 @@ impl GitPage {
     /// The picker closes on a choice: the keyboard goes back at once, not on the popover's
     /// closing redraw, which a question opened meanwhile could overtake (it would record the
     /// closed filter as the focus to restore).
-    fn close_branch_picker_with_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn close_branch_picker_with_focus(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let back = self
             .picker_return
             .take()
@@ -339,8 +343,9 @@ impl GitPage {
         });
     }
 
-    /// A branch was chosen: the picker closes; a dirty working tree (as shown) or a refused
-    /// plan shows why, where op errors show; otherwise the workspace is asked to go on.
+    /// A branch was chosen: the picker closes; the current branch does nothing; a dirty working
+    /// tree (as shown) or a refused plan shows why, where op errors show; otherwise the
+    /// workspace is asked to go on.
     fn pick_branch(
         &mut self,
         branch: String,
@@ -349,6 +354,9 @@ impl GitPage {
         cx: &mut Context<Self>,
     ) {
         self.close_branch_picker_with_focus(window, cx);
+        if matches!(plan, SwitchPlan::Nothing) {
+            return;
+        }
         if let Some(reason) = self.switch_blocker() {
             window.push_notification(Notification::error(reason), cx);
             return;

@@ -39,6 +39,10 @@ entry when the limitation is lifted.
   default shell changed meanwhile in Settings is not picked up by Retry (the launcher buttons
   and Ctrl+Shift+T use it). A folder named with `--remote` is not checked before connecting.
   Only start-up shows the error in the empty state; a tab that fails to open later toasts.
+- Remote tabs: attaching to a running session (opening it, a reconnect) doesn't bring back
+  its scroll region (DECSTBM), tab stops, charsets, colors changed by OSC 4/10/11, or the
+  primary screen behind a full-screen program; they come back when the program sets or
+  redraws them.
 - Remote daemon on a Windows server: `agentws-server proxy` doesn't check which user owns the
   named pipe it connects to (Linux does). Another user can't open our pipe read/write, but
   could create the machine-wide name first while no daemon of ours runs.

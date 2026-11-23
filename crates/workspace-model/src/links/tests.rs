@@ -169,25 +169,25 @@ fn paths_resolve_from_the_folder_or_home() {
 fn local_links_in_documents() {
     let folder = Path::new("/repo/docs");
     assert_eq!(
-        local_link("FEATURES.md", folder),
+        local_link("FEATURES.md", folder, None),
         Some(PathBuf::from("/repo/docs/FEATURES.md"))
     );
     assert_eq!(
-        local_link("../README.md#design-decisions", folder),
+        local_link("../README.md#design-decisions", folder, None),
         Some(PathBuf::from("/repo/docs/../README.md"))
     );
     assert_eq!(
-        local_link("my%20notes.md?x=1", folder),
+        local_link("my%20notes.md?x=1", folder, None),
         Some(PathBuf::from("/repo/docs/my notes.md"))
     );
     assert_eq!(
-        local_link("file:///tmp/a.md", folder),
+        local_link("file:///tmp/a.md", folder, None),
         Some(PathBuf::from("/tmp/a.md"))
     );
-    assert_eq!(local_link("https://example.com/a.md", folder), None);
-    assert_eq!(local_link("mailto:me@example.com", folder), None);
-    assert_eq!(local_link("#section", folder), None);
-    assert_eq!(local_link("", folder), None);
+    assert_eq!(local_link("https://example.com/a.md", folder, None), None);
+    assert_eq!(local_link("mailto:me@example.com", folder, None), None);
+    assert_eq!(local_link("#section", folder, None), None);
+    assert_eq!(local_link("", folder, None), None);
 }
 
 #[test]
@@ -252,15 +252,18 @@ fn network_paths_in_output_or_links_are_not_files_to_check() {
         None
     );
     assert_eq!(resolve_path("//host/share/x", Some(folder), None), None);
-    assert_eq!(local_link("file:////host/share/x", folder), None);
-    assert_eq!(local_link("file://evil-host/share/x.exe", folder), None);
-    assert_eq!(local_link("file://localhostfoo/x", folder), None);
-    assert_eq!(local_link("file://localhost", folder), None);
+    assert_eq!(local_link("file:////host/share/x", folder, None), None);
     assert_eq!(
-        local_link("file://LocalHost/tmp/a.md", folder),
+        local_link("file://evil-host/share/x.exe", folder, None),
+        None
+    );
+    assert_eq!(local_link("file://localhostfoo/x", folder, None), None);
+    assert_eq!(local_link("file://localhost", folder, None), None);
+    assert_eq!(
+        local_link("file://LocalHost/tmp/a.md", folder, None),
         Some(PathBuf::from("/tmp/a.md"))
     );
-    assert_eq!(local_link("//host/share/x.md", folder), None);
+    assert_eq!(local_link("//host/share/x.md", folder, None), None);
     assert_eq!(
         resolve_path(r"C:\x.txt", Some(folder), None),
         Some(PathBuf::from(r"C:\x.txt"))
@@ -305,4 +308,25 @@ fn paths_with_wide_characters_read_one_char_per_cell() {
         assert_eq!(path.path, "docs/数据.md");
         assert_eq!(path.line, Some(3));
     }
+}
+
+#[test]
+fn file_urls_naming_this_machine_or_a_windows_drive_are_local() {
+    let local = |rest, this_host, windows| file_url_local_path(rest, this_host, windows);
+    assert_eq!(local("/home/x", None, false), Some("/home/x"));
+    assert_eq!(local("LocalHost/x", None, false), Some("/x"));
+    assert_eq!(
+        local("mybox/home/u/x.rs", Some("MyBox"), false),
+        Some("/home/u/x.rs")
+    );
+    assert_eq!(local("other/home/u/x.rs", Some("mybox"), false), None);
+    assert_eq!(local("mybox/x", None, false), None);
+    assert_eq!(local("x/y", Some(""), false), None);
+    assert_eq!(local("C:/x", None, true), Some("C:/x"));
+    assert_eq!(local("C:/x", None, false), None);
+    assert_eq!(local("CD/x", None, true), None);
+    assert_eq!(
+        local_link("file://mybox/tmp/a.md", Path::new("/"), Some("mybox")),
+        Some(PathBuf::from("/tmp/a.md"))
+    );
 }

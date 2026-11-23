@@ -439,6 +439,10 @@ impl GitPage {
         self.reselect_near(old_row);
         self.sync_watches();
         self.sync_placeholder(window, cx);
+        // The header that holds the picker shows no branch without a status.
+        if self.picker_open && self.status().is_none() {
+            self.close_branch_picker_with_focus(window, cx);
+        }
     }
 
     /// Show the diff an op read, unless its file is no longer selected (a late read).
@@ -609,7 +613,6 @@ impl GitPage {
         cx.notify();
     }
 
-    /// Stage a file of the Changes group, or unstage one of the Staged group.
     /// Where the file at `path` is in the current status.
     fn file_index(&self, path: &str) -> Option<usize> {
         self.status()?
@@ -618,6 +621,7 @@ impl GitPage {
             .position(|file| file.path == path)
     }
 
+    /// Stage a file of the Changes group, or unstage one of the Staged group.
     fn toggle_file(
         &mut self,
         side: DiffSide,

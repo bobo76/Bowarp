@@ -4,6 +4,7 @@
 //! on a background thread.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use term_core::Session;
 use term_core::alacritty_terminal::grid::{Dimensions, Grid};
@@ -237,6 +238,12 @@ fn path_target(path_ref: PathRef, folder: Option<&Path>, home: Option<&Path>) ->
     })
 }
 
+/// This machine's name, read once: a `file://` link naming it is local (`links::local_link`).
+pub fn this_host() -> Option<&'static str> {
+    static HOST: OnceLock<Option<String>> = OnceLock::new();
+    HOST.get_or_init(agentws_remote::host_name).as_deref()
+}
+
 /// A URL link: a local `file:` one opens in the viewer, any other in the browser. `None` (not
 /// a link) for schemes not to open (`links::opens_in_browser`) and for a `file:` URL naming
 /// another host, which the system's handler would reach over the network.
@@ -247,7 +254,7 @@ fn hyperlink_target(uri: String, folder: Option<&Path>) -> Option<Unchecked> {
     if !links::is_openable_hyperlink(&uri) {
         return None;
     }
-    let path = links::local_link(&uri, folder.unwrap_or(Path::new("/")))?;
+    let path = links::local_link(&uri, folder.unwrap_or(Path::new("/")), this_host())?;
     Some(Unchecked::FileUrl { uri, path })
 }
 

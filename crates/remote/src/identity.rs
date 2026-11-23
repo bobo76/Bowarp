@@ -109,13 +109,14 @@ fn tidy_machine_name(raw: Option<String>) -> String {
         .unwrap_or_else(|| UNKNOWN_MACHINE.to_owned())
 }
 
+/// This machine's name (`gethostname`, `COMPUTERNAME` on Windows), when it has one.
 #[cfg(windows)]
-fn host_name() -> Option<String> {
+pub fn host_name() -> Option<String> {
     std::env::var("COMPUTERNAME").ok()
 }
 
 #[cfg(unix)]
-fn host_name() -> Option<String> {
+pub fn host_name() -> Option<String> {
     let mut buffer = [0u8; 256];
     // SAFETY: the buffer is valid for its length; a name that fills it may be unterminated,
     // which the search for the end below allows.
@@ -131,7 +132,7 @@ fn host_name() -> Option<String> {
 }
 
 #[cfg(not(any(windows, unix)))]
-fn host_name() -> Option<String> {
+pub fn host_name() -> Option<String> {
     None
 }
 
