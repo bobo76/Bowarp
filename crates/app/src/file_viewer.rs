@@ -6,7 +6,7 @@
 //! or WSL file could freeze the window.
 
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -716,7 +716,9 @@ impl FileViewer {
     /// the explorer, a web page with the system's handler.
     fn open_link(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
         let folder = self.path.as_ref().and_then(|path| path.parent());
-        match folder.and_then(|folder| links::local_link(url, folder)) {
+        match folder
+            .and_then(|folder| links::local_link(url, folder, crate::terminal_links::this_host()))
+        {
             Some(path) if path.is_file() => self.open(path, window, cx),
             Some(path) if path.is_dir() => cx.emit(ViewerEvent::RevealFolder(path)),
             // Nothing local goes to the system's handler: a device or a pipe is not opened.
@@ -1231,17 +1233,24 @@ fn render_json(
 /// wider or taller than a GPU texture. Only the file's header is read. Whether it decodes is
 /// known once it is drawn.
 fn check_image(path: &Path) -> Result<(), String> {
-    let size = regular_file_size(path)?;
+    let (file, size) = open_regular_file(path)?;
     let mut header = Vec::with_capacity(file_view::IMAGE_HEADER_LEN);
-    File::open(path)
-        .and_then(|file| {
-            file.take(file_view::IMAGE_HEADER_LEN as u64)
-                .read_to_end(&mut header)
-        })
+    (&file)
+        .take(file_view::IMAGE_HEADER_LEN as u64)
+        .read_to_end(&mut header)
         .map_err(|err| err.to_string())?;
     file_view::check_image_size(size, &header).map_err(|reason| reason.to_string())?;
     // A header `image` can't read is left to GPUI, which shows its own error when drawing.
-    let Ok((width, height)) = ImageReader::open(path)
+    let mut reader = BufReader::new(file);
+    let Ok((width, height)) = reader
+        .seek(SeekFrom::Start(0))
+        .map(|_| {
+            let mut image = ImageReader::new(reader);
+            if let Ok(format) = image::ImageFormat::from_path(path) {
+                image.set_format(format);
+            }
+            image
+        })
         .and_then(ImageReader::with_guessed_format)
         .map_err(ImageError::IoError)
         .and_then(ImageReader::into_dimensions)
@@ -1275,28 +1284,32 @@ fn write_file(save: &Save, saved: &str, check: DiskCheck) -> SaveOutcome {
 
 /// The file's text, or why it is not shown.
 fn read_text(path: &Path) -> Result<String, String> {
-    let size = regular_file_size(path)?;
+    let (file, size) = open_regular_file(path)?;
     file_view::check_size(size).map_err(|reason| reason.to_string())?;
     // Read at most one byte past the limit: the file may have grown since.
     let mut bytes = Vec::new();
-    File::open(path)
-        .and_then(|file| {
-            file.take(file_view::MAX_VIEW_BYTES + 1)
-                .read_to_end(&mut bytes)
-        })
+    file.take(file_view::MAX_VIEW_BYTES + 1)
+        .read_to_end(&mut bytes)
         .map_err(|err| err.to_string())?;
     file_view::check_size(bytes.len() as u64).map_err(|reason| reason.to_string())?;
     file_view::decode_text(bytes).map_err(|reason| reason.to_string())
 }
 
-/// The size of the file at `path` (following symlinks), or why it is not read: a FIFO would
-/// block the read forever and a device such as `/dev/zero` never ends; both report size 0.
-fn regular_file_size(path: &Path) -> Result<u64, String> {
-    let metadata = fs::metadata(path).map_err(|err| err.to_string())?;
+/// The file at `path` (following symlinks), opened, and its size; or why it is not read: a
+/// FIFO would block the read forever and a device such as `/dev/zero` never ends; both
+/// report size 0. Checked on the opened file, so a path swapped meanwhile is checked too; on
+/// Unix it opens without waiting, which opening a FIFO would.
+fn open_regular_file(path: &Path) -> Result<(File, u64), String> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+    let file = options.open(path).map_err(|err| err.to_string())?;
+    let metadata = file.metadata().map_err(|err| err.to_string())?;
     if !metadata.is_file() {
         return Err("Only regular files can be shown.".to_owned());
     }
-    Ok(metadata.len())
+    Ok((file, metadata.len()))
 }
 
 impl Render for FileViewer {

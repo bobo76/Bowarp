@@ -152,14 +152,29 @@ fn the_branch_picker_filters_and_switches_only_a_clean_tree(cx: &mut gpui_kit::T
     assert_eq!(branch(&mut cx).as_deref(), Some("topic"));
     assert!(notifications(&mut cx) > before);
 
+    let before = notifications(&mut cx);
     cx.update(|window, cx| {
         page.update(cx, |page, cx| {
-            page.pick_branch("main".into(), SwitchPlan::Nothing, window, cx);
+            let plan = SwitchPlan::Run(vec!["switch".into(), "main".into()]);
+            page.pick_branch("main".into(), plan, window, cx);
         })
     });
     assert!(
         events.borrow().is_empty(),
         "a dirty shown status asks nothing"
+    );
+    assert!(notifications(&mut cx) > before, "and says why");
+    let before = notifications(&mut cx);
+    cx.update(|window, cx| {
+        page.update(cx, |page, cx| {
+            page.pick_branch("topic".into(), SwitchPlan::Nothing, window, cx);
+        })
+    });
+    assert!(events.borrow().is_empty());
+    assert_eq!(
+        notifications(&mut cx),
+        before,
+        "the current branch: nothing to block"
     );
 
     page.update(&mut cx, |page, cx| page.hide(cx));

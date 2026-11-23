@@ -65,7 +65,7 @@ impl WorkspaceView {
         }));
     }
 
-    /// The busy local tabs (not remote ones) and the files with unsaved edits, with the folder
+    /// The busy local tabs and their files with unsaved edits (not remote tabs'), with the folder
     /// each is in.
     fn in_use(&self, cx: &App) -> Vec<(PathBuf, InUse)> {
         let mut in_use = Vec::new();
@@ -76,7 +76,9 @@ impl WorkspaceView {
             {
                 in_use.push((folder, InUse::Tab(busy)));
             }
-            let viewer = tab.viewer.as_ref().map(|viewer| viewer.view.read(cx));
+            let viewer = (tab.viewer.as_ref())
+                .filter(|_| tab.spec.host.is_none())
+                .map(|viewer| viewer.view.read(cx));
             let unsaved = viewer.filter(|viewer| viewer.is_dirty());
             if let Some((viewer, folder)) =
                 unsaved.and_then(|viewer| Some((viewer, viewer.path()?.parent()?)))

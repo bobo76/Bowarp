@@ -169,11 +169,9 @@ impl Client {
             .into_inner()
             .unwrap_or_else(PoisonError::into_inner);
         match connected {
-            Ok(client) => {
-                *client.inner.child.lock().unwrap() = Some(child);
-                Ok(client)
-            }
-            Err(_) if timed_out => {
+            // Also when the handshake ended just as the watchdog killed ssh: that connection
+            // is dead.
+            _ if timed_out => {
                 let _ = child.wait();
                 Err(io::Error::new(
                     ErrorKind::TimedOut,
@@ -182,6 +180,10 @@ impl Client {
                         HANDSHAKE_TIMEOUT.as_secs()
                     ),
                 ))
+            }
+            Ok(client) => {
+                *client.inner.child.lock().unwrap() = Some(child);
+                Ok(client)
             }
             Err(err) => {
                 let _ = child.kill();

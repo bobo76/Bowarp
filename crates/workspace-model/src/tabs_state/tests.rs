@@ -203,6 +203,18 @@ fn tabs_from_a_newer_version_drop_only_what_is_unknown() {
     );
     assert_eq!(state.layout.items.len(), 2);
 
+    // A group that doesn't read drops its tabs, which still count for the selected one.
+    let text = r#"{
+        "layout": {"items": [
+            {"group": {"name": 5, "tabs": [{"kind": "shell"}, {"kind": "shell"}]}},
+            {"tab": {"kind": "shell", "folder": "/e"}}
+        ]},
+        "selected": 2
+    }"#;
+    let state = TabsState::from_json(text).unwrap();
+    assert_eq!(state.layout.tabs().len(), 1);
+    assert_eq!(state.selected, Some(0));
+
     // The selected tab itself dropped: nothing is selected.
     let text = r#"{"layout": {"pinned": [{"kind": "vim"}]}, "selected": 0}"#;
     assert_eq!(TabsState::from_json(text).unwrap().selected, None);

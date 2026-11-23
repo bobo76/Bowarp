@@ -20,6 +20,7 @@ pub mod status;
 pub mod transport;
 
 pub use client::{Client, DisconnectCallback, LocalView, RemoteSession};
+pub use identity::host_name;
 pub use protocol::{ClientIdentity, SessionInfo, SpawnSpec};
 pub use server::Server;
 pub use transport::ssh_command;

@@ -15,7 +15,7 @@ use std::io;
 use std::mem;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -297,6 +297,9 @@ pub struct TerminalView {
     cd_file: Option<PathBuf>,
     /// Writing `cd_file` before sending the hidden cd keys.
     cd_task: Option<Task<()>>,
+    /// Held while `cd_file` is written or removed; true once it was removed (the view is
+    /// gone), so a write that had not started yet doesn't leave the file behind.
+    cd_removed: Arc<Mutex<bool>>,
     pointer: PointerState,
     /// The right-click menu (`context_menu.rs`).
     context_menu: TerminalMenu,
@@ -518,6 +521,7 @@ impl TerminalView {
                 .get(shell_integration::CD_FILE_ENV)
                 .map(PathBuf::from),
             cd_task: None,
+            cd_removed: Arc::default(),
             pointer: PointerState::default(),
             context_menu: TerminalMenu::default(),
             scrollbar: ScrollbarState::default(),
@@ -612,13 +616,21 @@ impl TerminalView {
         {
             let text = file_tree::typeable(folder)?.to_owned();
             let folder = folder.to_path_buf();
+            let removed = self.cd_removed.clone();
             // Written off the UI thread (the config folder may be slow); the keys go once it is.
             // A newer change replaces this one.
             self.cd_task = Some(cx.spawn(async move |this, cx| {
                 let written = cx
-                    .background_spawn(async move { fs::write(&file, text).is_ok() })
+                    .background_spawn(async move {
+                        let removed = removed.lock().unwrap_or_else(PoisonError::into_inner);
+                        !*removed && fs::write(&file, text).is_ok()
+                    })
                     .await;
                 let _ = this.update(cx, |view, cx| {
+                    // A command started meanwhile would get the keys (or the `cd` line).
+                    if view.session.prompt_input().is_none() {
+                        return;
+                    }
                     if written {
                         view.send_input(Cow::Borrowed(HIDDEN_CD_KEYS), cx);
                     } else if let Ok(command) = cd_command(&folder, view.shell) {
@@ -1502,8 +1514,16 @@ impl Drop for TerminalView {
         drop(mem::replace(&mut self._session_events, Task::ready(())));
         // Left behind when the shell never read it. Off the UI thread: the config folder may
         // be slow.
+        // After a write already running, which holds the lock.
         if let Some(file) = self.cd_file.take() {
-            thread::spawn(move || fs::remove_file(file));
+            let removed = self.cd_removed.clone();
+            let _ = thread::Builder::new()
+                .name("agentws-remove-cd-file".into())
+                .spawn(move || {
+                    let mut removed = removed.lock().unwrap_or_else(PoisonError::into_inner);
+                    *removed = true;
+                    fs::remove_file(file)
+                });
         }
     }
 }

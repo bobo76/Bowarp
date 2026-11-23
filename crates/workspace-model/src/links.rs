@@ -321,19 +321,14 @@ pub fn link_rows(range: Range<usize>, columns: usize) -> Vec<RowSpan> {
 }
 
 /// The local file a link written in a document points to, resolved from the document's
-/// `folder`: a relative or absolute path, or a `file://` URL, without its `#fragment` or
-/// `?query`. `None` for links to elsewhere (`https:`, `mailto:`, a network share) and in-page
-/// anchors.
-pub fn local_link(url: &str, folder: &Path) -> Option<PathBuf> {
+/// `folder`: a relative or absolute path, or a `file://` URL (see [`file_url_local_path`];
+/// `this_host` is this machine's name), without its `#fragment` or `?query`. `None` for links
+/// to elsewhere (`https:`, `mailto:`, a network share) and in-page anchors.
+pub fn local_link(url: &str, folder: &Path, this_host: Option<&str>) -> Option<PathBuf> {
     let url = url.trim();
     let without_fragment = url.split('#').next().unwrap_or_default();
     if let Some(rest) = strip_prefix_ignore_case(without_fragment, "file://") {
-        // `file:///home/x` and `file://localhost/home/x`; another host is a network share.
-        let host = &rest[..rest.find('/').unwrap_or(rest.len())];
-        if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
-            return None;
-        }
-        let path = &rest[host.len()..];
+        let path = file_url_local_path(rest, this_host, cfg!(windows))?;
         let path = percent_decode(path.split('?').next().unwrap_or_default())?;
         let local = !path.is_empty() && !is_network_path(&path, cfg!(windows));
         return local.then(|| file_url_path(&path));
@@ -347,6 +342,27 @@ pub fn local_link(url: &str, folder: &Path) -> Option<PathBuf> {
     }
     let path = percent_decode(path)?;
     (!is_network_path(&path, cfg!(windows))).then(|| folder.join(path))
+}
+
+/// The path part of a `file://` URL (`rest` follows `file://`) naming this machine: no host,
+/// `localhost` or `this_host` (the OSC 8 spec and `ls --hyperlink` write the machine's name).
+/// On Windows a drive (`file://C:/x`) is a path, not a host. `None` for another host, which
+/// is a network share.
+fn file_url_local_path<'a>(
+    rest: &'a str,
+    this_host: Option<&str>,
+    windows: bool,
+) -> Option<&'a str> {
+    let host = &rest[..rest.find('/').unwrap_or(rest.len())];
+    let drive =
+        host.len() == 2 && host.as_bytes()[0].is_ascii_alphabetic() && host.as_bytes()[1] == b':';
+    if windows && drive {
+        return Some(rest);
+    }
+    let local = host.is_empty()
+        || host.eq_ignore_ascii_case("localhost")
+        || this_host.is_some_and(|name| !name.is_empty() && host.eq_ignore_ascii_case(name));
+    local.then(|| &rest[host.len()..])
 }
 
 /// The path of a `file://` URL's path part: `/C:/x` is `C:/x` on Windows.

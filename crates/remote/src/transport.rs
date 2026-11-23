@@ -60,11 +60,11 @@ pub fn serve(name: &str, idle_exit: Option<Duration>) -> io::Result<()> {
                         continue;
                     }
                 };
-                accepting.connection_accepted();
                 if !from_same_user(&stream) {
                     log::warn!("connection from another user refused");
                     continue;
                 }
+                accepting.connection_accepted();
                 let server = accepting.clone();
                 let spawned = thread::Builder::new()
                     .name("agentws-connection".into())

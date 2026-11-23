@@ -251,8 +251,14 @@ impl TabReader {
         {
             group.remove("color");
         }
-        let mut group: SavedGroup<SavedTab> =
-            serde_json::from_value(Value::Object(std::mem::take(group))).ok()?;
+        let Ok(mut group) =
+            serde_json::from_value::<SavedGroup<SavedTab>>(Value::Object(std::mem::take(group)))
+        else {
+            // Its tabs are dropped too, but still count: the selected tab is counted from the
+            // file's start.
+            self.seen += tabs.len();
+            return None;
+        };
         group.tabs = tabs.into_iter().filter_map(|tab| self.read(tab)).collect();
         Some(SavedItem::Group(group))
     }

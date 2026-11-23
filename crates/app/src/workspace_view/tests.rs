@@ -2740,6 +2740,11 @@ fn a_failed_start_shows_the_error_until_a_tab_opens(cx: &mut gpui_kit::TestAppCo
                 .map(|failure| (failure.error.heading(), failure.error.details()))
         })
     };
+    let next_session = |h: &mut PanesHarness| {
+        h.workspace
+            .read_with(&h.cx, |workspace, _| workspace.next_session_id)
+    };
+    let before = next_session(&mut h);
     h.cx.update(|window, cx| {
         workspace.update(cx, |workspace, cx| {
             workspace.close_tab(0, window, cx);
@@ -2747,6 +2752,12 @@ fn a_failed_start_shows_the_error_until_a_tab_opens(cx: &mut gpui_kit::TestAppCo
         })
     });
     h.cx.run_until_parked();
+    // Its plugin folder is removed on another thread: the next session must not reuse its id.
+    assert_eq!(
+        next_session(&mut h),
+        before + 1,
+        "a failed start uses up its id"
+    );
     let (heading, lines) = details(&mut h).expect("the error shows");
     assert_eq!(heading, "Could not start /nonexistent/agentws-missing");
     assert_eq!(lines.len(), 1, "no attempt count yet: {lines:?}");

@@ -210,6 +210,29 @@ fn sizes_out_of_range_are_clamped() {
 }
 
 #[test]
+fn cell_sizes_keep_the_pixel_size_within_a_u16() {
+    let size = TermDimensions {
+        columns: 1000,
+        lines: 500,
+        cell_width: 66,
+        cell_height: 200,
+    };
+    let message = ClientMessage::Resize { session: 3, size };
+    match ClientMessage::decode(&message.encode()).unwrap() {
+        ClientMessage::Resize { size, .. } => {
+            assert_eq!((size.cell_width, size.cell_height), (65, 131));
+        }
+        other => panic!("{other:?}"),
+    }
+    let size = TermDimensions::new(80, 24);
+    let message = ClientMessage::Resize { session: 3, size };
+    assert_eq!(
+        ClientMessage::decode(&message.encode()).unwrap(),
+        ClientMessage::Resize { session: 3, size }
+    );
+}
+
+#[test]
 fn a_huge_list_count_does_not_allocate_it() {
     let frame = [tag::SESSIONS, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff];
     assert!(ServerMessage::decode(&frame).is_err());
