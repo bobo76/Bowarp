@@ -73,7 +73,8 @@ fn restored_command_is_one_shot_and_never_accepted_by_tab_or_enter(
             view.close_history_popup(cx);
             view.restore_last_command(Some("git push".into()), cx);
             assert_eq!(view.history_suggestion(cx), Some("git push".into()));
-            let consumed = view.handle_history_key(&Keystroke::parse(key).unwrap(), cx);
+            let consumed =
+                view.handle_history_key(&crate::keymap::parse_keystroke(key).unwrap(), cx);
             assert_eq!(consumed, key == "up", "{key}");
             assert!(view.restored_suggestion(cx).is_none(), "{key}");
             assert!(!view.session.awaiting_echo(), "{key} sent the command");
@@ -330,7 +331,7 @@ fn history_switches_apply_live_pass_keys_through_and_keep_data(cx: &mut gpui_kit
 }
 
 fn key(source: &str) -> PopupKey {
-    popup_key(&Keystroke::parse(source).unwrap())
+    popup_key(&crate::keymap::parse_keystroke(source).unwrap())
 }
 
 #[test]
@@ -643,7 +644,7 @@ fn popup_lists_and_forgets_per_shell_and_alt_letter_switches_chips(
     }
     let press = |cx: &mut gpui_kit::TestAppContext, key: &str| {
         view.update(cx, |view, cx| {
-            view.handle_history_key(&Keystroke::parse(key).unwrap(), cx)
+            view.handle_history_key(&crate::keymap::parse_keystroke(key).unwrap(), cx)
         })
     };
     let listed = |cx: &mut gpui_kit::TestAppContext| {

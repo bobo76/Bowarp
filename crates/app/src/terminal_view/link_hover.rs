@@ -3,8 +3,8 @@
 //! (`terminal_links::LinkCandidate`).
 
 use gpui_kit::{
-    AppContext, Context, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, Pixels,
-    Point, Task, Window,
+    App, AppContext, Context, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    Pixels, Point, Task, Window,
 };
 
 use super::{OpenFileRequest, TerminalView};
@@ -118,7 +118,7 @@ impl TerminalView {
         modifiers: &Modifiers,
         cx: &mut Context<Self>,
     ) {
-        if !is_link_modifier(modifiers) || !self.visible {
+        if !is_link_modifier(modifiers, cx) || !self.visible {
             self.link_hover.pointer = None;
             self.link_hover.cell = None;
             self.link_hover.check = None;
@@ -167,7 +167,7 @@ impl TerminalView {
         event: &MouseDownEvent,
         cx: &mut Context<Self>,
     ) -> bool {
-        if event.button != MouseButton::Left || !is_link_modifier(&event.modifiers) {
+        if event.button != MouseButton::Left || !is_link_modifier(&event.modifiers, cx) {
             return false;
         }
         let Some(candidate) = self.link_candidate(event.position) else {
@@ -211,6 +211,6 @@ impl TerminalView {
 }
 
 /// Ctrl (Cmd on macOS) alone: held over a link, it shows and opens the link.
-fn is_link_modifier(modifiers: &Modifiers) -> bool {
-    modifiers.secondary() && !modifiers.shift && !modifiers.alt
+fn is_link_modifier(modifiers: &Modifiers, cx: &App) -> bool {
+    modifiers.secondary(cx) && !modifiers.shift && !modifiers.alt
 }

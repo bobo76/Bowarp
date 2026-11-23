@@ -3,7 +3,7 @@
 
 use gpui_kit::{
     Context, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    ScrollDelta, ScrollWheelEvent, Window,
+    ScrollDelta, ScrollEvent, Window,
 };
 use term_core::alacritty_terminal::grid::Scroll;
 use term_core::alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
@@ -27,7 +27,7 @@ pub(super) struct PointerState {
 impl TerminalView {
     pub(super) fn on_scroll(
         &mut self,
-        event: &ScrollWheelEvent,
+        event: &ScrollEvent,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {

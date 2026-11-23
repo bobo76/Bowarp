@@ -240,12 +240,12 @@ impl GitPage {
         window.focus(&self.diff_focus, cx);
         if modifiers.shift {
             self.lines.shift_click(line, diff.changed_lines());
-        } else if modifiers.secondary() {
+        } else if modifiers.secondary(cx) {
             self.lines.toggle(line);
         } else {
             self.lines.click(line);
         }
-        self.dragging = !modifiers.secondary();
+        self.dragging = !modifiers.secondary(cx);
         cx.notify();
     }
 

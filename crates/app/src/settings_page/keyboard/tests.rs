@@ -2,9 +2,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui_kit::component::Root;
-use gpui_kit::{
-    AppContext, Context, KeyContext, Keystroke, Render, TestAppContext, VisualTestContext,
-};
+use gpui_kit::{AppContext, Context, KeyContext, Render, TestAppContext, VisualTestContext};
 use serde_json::{Value, json};
 
 use super::*;
@@ -90,7 +88,7 @@ fn actions_for(cx: &mut VisualTestContext, keys: &str) -> Vec<&'static str> {
             KeyContext::parse("Root").unwrap(),
             KeyContext::parse("Workspace").unwrap(),
         ];
-        let input = [Keystroke::parse(keys).unwrap()];
+        let input = [keymap::parse_keystroke(keys).unwrap()];
         let (bindings, _) = cx
             .key_bindings()
             .borrow()
