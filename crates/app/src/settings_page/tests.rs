@@ -273,3 +273,69 @@ fn card_rows_for_changes_need_git_status_after_the_card() {
         Some("Needs \"Tab hover card\" to be on.".to_string())
     );
 }
+
+/// A slider row's control beside a title, laid out as gpui-kit lays out a setting row.
+struct SliderPage {
+    binding: Binding<f32>,
+    slider: Option<Entity<SliderState>>,
+}
+
+impl Render for SliderPage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let control = slider_field(
+            OPACITY_SLIDER.max,
+            OPACITY_SLIDER,
+            &self.binding,
+            window,
+            cx,
+        );
+        let field: Entity<SliderField> =
+            window.use_keyed_state(self.binding.state_key("slider"), cx, |_, _| {
+                unreachable!("slider_field created the state")
+            });
+        self.slider = Some(field.read(cx).slider.clone());
+        div()
+            .w(px(800.))
+            .flex()
+            .justify_between()
+            .items_center()
+            .gap_3()
+            .child(div().flex_1().max_w_3_5().child("Opacity ".repeat(40)))
+            .child(
+                div()
+                    .id("field")
+                    .child(div().flex().flex_col().items_end().gap_1().child(control)),
+            )
+    }
+}
+
+#[gpui::test]
+fn a_slider_keeps_its_track_width_in_a_setting_row(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let binding = Binding {
+        key: "test-slider".into(),
+        apply: Rc::new(|_, _| {}),
+        save: Rc::new(|_, _| {}),
+    };
+    let captured = std::cell::OnceCell::new();
+    let window = cx.add_window(|window, cx| {
+        let page = cx.new(|_| SliderPage {
+            binding,
+            slider: None,
+        });
+        captured.set(page.clone()).ok().unwrap();
+        Root::new(page, window, cx)
+    });
+    let page = captured.into_inner().unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        window.draw(cx).clear(cx);
+    });
+    let width = cx.update(|_, cx| {
+        let slider = page.read(cx).slider.clone().unwrap();
+        slider.read(cx).bounds().size.width
+    });
+    // `w_48`: 12 rem.
+    assert_eq!(width, px(192.));
+}

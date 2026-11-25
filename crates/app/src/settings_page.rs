@@ -1389,7 +1389,9 @@ fn slider_field(
         .flex()
         .items_center()
         .gap_3()
-        .child(Slider::new(&slider).w_48())
+        // `Slider` is `flex_1` (zero basis): in the row's content-sized `items_end` column
+        // that collapses it to its thumb (since gpui-kit 0.10), so it keeps its fixed width.
+        .child(Slider::new(&slider).flex_none().w_48())
         .child(
             div()
                 .map(|label| {
