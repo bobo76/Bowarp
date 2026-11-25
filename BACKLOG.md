@@ -408,6 +408,12 @@ behavior"); items below name their switch where they need one.
 
 ### General
 
+- Performance overlay, "Show performance overlay" (off, Settings → Advanced or a shortcut): a
+  small panel in a corner showing frames per second, frame time and the app's own CPU and
+  memory. Count frames where `workspace_view` renders; read CPU and memory on a background
+  thread about once a second. Off costs nothing; on refreshes once a second (an accepted
+  exception to "no work when idle"), and helps catch idle-redraw bugs like the tab-search one
+  below.
 - Agent status switch for agent tabs, "Agent status" (on), the parent of "Agent status for
   agents typed at the prompt" (shown disabled under it). Off: new Claude Code and Copilot
   tabs start without the generated `--settings` hooks and the plugin, and show "Recent
