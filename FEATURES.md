@@ -205,9 +205,9 @@ directly to model APIs.
 ## Optional Behavior
 
 - Make each major optional behavior switchable, rather than adding a switch for every
-  action. Defaults keep today's behavior (a new feature's switch starts on, notification
-  sound starts off). Theme, color schemes, opacity, blur, shell and icon choices are pickers
-  or sliders, not extra switches.
+  action. Defaults keep today's behavior (a new feature's switch starts on; notification
+  sound and diagnostic displays such as the performance readout start off). Theme, color
+  schemes, opacity, blur, shell and icon choices are pickers or sliders, not extra switches.
 - Switches are saved in the settings file (a missing or mistyped value uses its default) and
   apply live unless stated. A setting that needs another is shown disabled, keeping its value,
   with a caption naming the setting it needs.
@@ -230,6 +230,9 @@ directly to model APIs.
   multiple agents produce output.
 - Minimize startup time, idle CPU usage, and memory overhead.
 - Avoid unnecessary background polling and expensive output processing.
+- Offer an optional performance readout in the title bar (frames per second, the slowest
+  frame, the app's own CPU and memory); while on, it refreshes once a second, the one
+  accepted exception to no work when idle.
 - Keep the interface focused on terminals, organization, and session visibility.
 - Show the version and build in an About dialog.
 - Do not require an application account or a separate AI subscription beyond

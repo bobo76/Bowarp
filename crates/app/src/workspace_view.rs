@@ -16,6 +16,7 @@ use std::collections::HashSet;
 use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::Instant;
 
 use agent_status::{HookMessage, WaitReason};
 use futures::StreamExt;
@@ -59,6 +60,7 @@ use crate::hooks::AgentHooks;
 use crate::keymap;
 use crate::launcher::{self, Launcher, launch_name};
 use crate::open_menu::OpenMenu;
+use crate::perf_readout::PerfReadoutHandle;
 use crate::settings_file;
 use crate::settings_page::{self, SettingsFileButton};
 use crate::shell_integration;
@@ -105,6 +107,7 @@ actions!(
         SelectTab7,
         SelectTab8,
         SelectTab9,
+        TogglePerformanceReadout,
     ]
 );
 
@@ -128,6 +131,10 @@ pub fn init(cx: &mut App) {
         cx.defer(move |cx| {
             let _ = window.update(cx, |_, window, _| window.toggle_fullscreen());
         });
+    });
+    // Global too: it changes a setting, whichever pane has the keyboard.
+    cx.on_action(|_: &TogglePerformanceReadout, cx| {
+        settings_file::toggle_performance_readout(cx);
     });
 }
 
@@ -174,6 +181,8 @@ fn default_bindings() -> Vec<Shortcut> {
         RenameTab.name(),
         Some(tab_list::KEY_CONTEXT),
     ));
+    // No key by default: a diagnostic, and every free key is one a program may want.
+    bindings.push(Shortcut::unbound(TogglePerformanceReadout.name(), None));
     bindings
 }
 
@@ -293,6 +302,9 @@ pub struct WorkspaceView {
     /// then, in case a platform still draws a hidden window.
     window_visible: bool,
     spinner_clock: SpinnerClock,
+    /// The title bar's performance readout while its switch is on (`apply_perf_readout_setting`).
+    perf_readout: Option<PerfReadoutHandle>,
+    _perf_readout_observer: Subscription,
     /// Tabs whose subagent list the user folded in; others show it (not saved).
     folded_subagents: HashSet<u64>,
     explorer: Entity<FileExplorer>,
@@ -446,6 +458,8 @@ impl WorkspaceView {
             window,
             Self::apply_file_panes_setting,
         );
+        let perf_readout_observer =
+            cx.observe_global::<settings_file::AppSettings>(Self::apply_perf_readout_setting);
         let history_seen = history_counts(cx);
         let history_observer = cx.observe_global::<history::History>(Self::scrub_retained_commands);
         let visibility_observer =
@@ -462,6 +476,9 @@ impl WorkspaceView {
             pulse_running: sidebar::pulse_allowed(window),
             window_visible: window.is_visible(),
             spinner_clock: SpinnerClock::default(),
+            perf_readout: settings_file::performance_readout(cx)
+                .then(|| PerfReadoutHandle::new(cx)),
+            _perf_readout_observer: perf_readout_observer,
             folded_subagents: HashSet::new(),
             explorer,
             close_question_open: false,
@@ -2081,6 +2098,17 @@ impl WorkspaceView {
             .collect()
     }
 
+    /// Shows or drops the performance readout as its switch says; dropping it ends its
+    /// refreshes (and the process's sampler with the last readout).
+    fn apply_perf_readout_setting(&mut self, cx: &mut Context<Self>) {
+        let wanted = settings_file::performance_readout(cx);
+        if wanted == self.perf_readout.is_some() {
+            return;
+        }
+        self.perf_readout = wanted.then(|| PerfReadoutHandle::new(cx));
+        cx.notify();
+    }
+
     /// Settings changed: show or drop the file panes to match the switch. Turning it off with
     /// unsaved edits puts the switch back on and asks (see `refuse_file_panes_off`).
     fn apply_file_panes_setting(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2515,6 +2543,10 @@ impl Focusable for WorkspaceView {
 impl Render for WorkspaceView {
     #[expect(clippy::too_many_lines, reason = "split when next changed")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let frame_probe = self
+            .perf_readout
+            .as_ref()
+            .map(|readout| readout.frame_probe(Instant::now()));
         self.hold_hover_cards(window, cx);
         let active = self
             .active_tab()
@@ -2666,7 +2698,8 @@ impl Render for WorkspaceView {
                                 buttons.child(self.git_button(cx))
                             })
                             .child(self.settings_button(cx)),
-                    ),
+                    )
+                    .children(self.perf_readout.as_ref().map(PerfReadoutHandle::view)),
             )
             .child(
                 div()
@@ -2722,6 +2755,7 @@ impl Render for WorkspaceView {
                         )
                     }),
             )
+            .children(frame_probe)
     }
 }
 

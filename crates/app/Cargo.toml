@@ -63,6 +63,7 @@ windows-registry = "0.6"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
+    "Win32_System_ProcessStatus",
     "Win32_System_Threading",
     "Win32_UI_Controls",
 ] }

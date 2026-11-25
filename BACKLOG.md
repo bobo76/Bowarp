@@ -10,6 +10,16 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Performance readout (Windows and Linux): Settings → About → Diagnostics → "Performance
+  readout" on shows placeholders (`– fps`) at the right of the title bar at once, filled
+  about a second later; off removes it. Bind `TogglePerformanceReadout` to a key in
+  `"keybindings"`: the key turns it on and off, and the About switch follows. An idle window
+  reads 0 fps; typing, scrolling output and dragging a divider raise it; the slowest frame is
+  plausible. CPU and MB match Task Manager's (Details: CPU per core × cores, working set) /
+  `top` (%CPU, RES) for the app process. The title bar still drags and double-clicks over
+  the readout; the numbers don't shift sideways as they change; a minimized window costs
+  nothing visible (no CPU climb) and reads sensibly when restored; a second window counts its
+  own frames.
 - Windows: with a tab in a git repository and the explorer open, turn Settings → Git → "Git
   status in tabs and explorer" off: the tab shows its folder, the explorer's colors and
   dimming go, the hover card has no `+N`; on again brings them back.
@@ -408,12 +418,6 @@ behavior"); items below name their switch where they need one.
 
 ### General
 
-- Performance overlay, "Show performance overlay" (off, Settings → Advanced or a shortcut): a
-  small panel in a corner showing frames per second, frame time and the app's own CPU and
-  memory. Count frames where `workspace_view` renders; read CPU and memory on a background
-  thread about once a second. Off costs nothing; on refreshes once a second (an accepted
-  exception to "no work when idle"), and helps catch idle-redraw bugs like the tab-search one
-  below.
 - Agent status switch for agent tabs, "Agent status" (on), the parent of "Agent status for
   agents typed at the prompt" (shown disabled under it). Off: new Claude Code and Copilot
   tabs start without the generated `--settings` hooks and the plugin, and show "Recent

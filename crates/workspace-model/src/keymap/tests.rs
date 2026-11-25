@@ -472,5 +472,9 @@ fn actions_have_readable_labels() {
     assert_eq!(action_label("terminal::Paste"), "Paste");
     assert_eq!(action_label("workspace::SelectTab3"), "Select tab 3");
     assert_eq!(action_label("workspace::RenameTab"), "Rename tab");
+    assert_eq!(
+        action_label("workspace::TogglePerformanceReadout"),
+        "Show or hide the performance readout"
+    );
     assert_eq!(action_label("workspace::SomethingElse"), "Something else");
 }

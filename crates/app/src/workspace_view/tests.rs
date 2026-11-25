@@ -17,7 +17,7 @@ fn wait_for_exit(session: &term_core::Session) {
 #[test]
 fn default_bindings_name_workspace_actions() {
     let bindings = default_bindings();
-    assert_eq!(bindings.len(), 24);
+    assert_eq!(bindings.len(), 25);
     assert!(
         bindings
             .iter()
@@ -2124,6 +2124,41 @@ fn restoring_no_tab_keeps_the_saved_groups(cx: &mut gpui_kit::TestAppContext) {
             .collect();
         assert_eq!(groups, vec![("Kept".into(), Some(TabColor::Blue), true)]);
     });
+}
+
+#[gpui::test]
+fn performance_readout_follows_its_switch_and_action_live(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("perf-readout", cx);
+    let workspace = h.workspace.clone();
+    let shown = |h: &mut PanesHarness| {
+        workspace.read_with(&h.cx, |workspace, _| workspace.perf_readout.is_some())
+    };
+    let switch_to = |h: &mut PanesHarness, on: bool| {
+        h.cx.update(|_, cx| {
+            settings_file::update(cx, |settings| {
+                settings.performance_readout = FeatureSwitch::new(on);
+            });
+        });
+        h.cx.run_until_parked();
+    };
+    assert!(!shown(&mut h), "off by default");
+    switch_to(&mut h, true);
+    assert!(shown(&mut h));
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    let counted = workspace.read_with(&h.cx, |workspace, _| {
+        workspace.perf_readout.as_ref().unwrap().frames_counted()
+    });
+    assert!(counted >= 1, "a drawn frame counts");
+    switch_to(&mut h, false);
+    assert!(!shown(&mut h), "off drops the readout");
+
+    h.cx.dispatch_action(TogglePerformanceReadout);
+    h.cx.run_until_parked();
+    assert!(shown(&mut h), "the action turns it on");
+    assert!(h.cx.update(|_, cx| settings_file::performance_readout(cx)));
+    h.cx.dispatch_action(TogglePerformanceReadout);
+    h.cx.run_until_parked();
+    assert!(!shown(&mut h), "and off again");
 }
 
 #[gpui::test]

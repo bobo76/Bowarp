@@ -5,6 +5,10 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Performance readout: Settings → About → Diagnostics → "Performance readout" (off by
+  default) shows the window's frames per second, its slowest frame, and the app's CPU and
+  memory at the right of the title bar, refreshed every second. A key can be bound to
+  `TogglePerformanceReadout` on the Keyboard page.
 - Terminal links: paths holding CJK characters or emoji are now detected (Ctrl+click).
 - Remote tabs: a paste over 16 MB arrives whole; before, it silently stopped all typing in
   the tab until the connection dropped about 45 s later.

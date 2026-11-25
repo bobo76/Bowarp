@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use gpui_kit::component::{ActiveTheme, Theme, ThemeMode, ThemeRegistry};
 use gpui_kit::{App, Global};
 use workspace_model::{
-    FilePaneFeatures, HistoryFeatures, KeybindingOverlay, NotificationFeatures, Settings,
-    SettingsFile, TabCardFields, UiTheme, WindowOpacity, WorkspaceFeatures,
+    FeatureSwitch, FilePaneFeatures, HistoryFeatures, KeybindingOverlay, NotificationFeatures,
+    Settings, SettingsFile, TabCardFields, UiTheme, WindowOpacity, WorkspaceFeatures,
 };
 
 use term_core::Palette;
@@ -75,6 +75,21 @@ pub fn settings(cx: &App) -> &Settings {
 /// asks this at draw time and starts no timer or animation while it is false.
 pub fn activity_animations(cx: &App) -> bool {
     settings(cx).activity_animations.is_on()
+}
+
+/// Whether the title bar shows the performance readout (the "Performance readout" switch).
+/// Off while settings aren't loaded (unit tests).
+pub fn performance_readout(cx: &App) -> bool {
+    cx.try_global::<AppSettings>()
+        .is_some_and(|settings| settings.0.settings().performance_readout.is_on())
+}
+
+/// Turns the performance readout on or off and saves it (the readout's action).
+pub fn toggle_performance_readout(cx: &mut App) {
+    update(cx, |settings| {
+        let on = settings.performance_readout.is_on();
+        settings.performance_readout = FeatureSwitch::new(!on);
+    });
 }
 
 /// Default settings that touch no file, for tests that change switches with `preview`.
@@ -308,5 +323,17 @@ mod tests {
             assert!(!settings(cx).group_hover_cards.is_on());
         });
         assert_eq!(notified.get(), 2);
+    }
+
+    #[gpui::test]
+    fn the_readout_action_flips_the_saved_switch(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(AppSettings(SettingsFile::default()));
+            assert!(!performance_readout(cx));
+            toggle_performance_readout(cx);
+            assert!(performance_readout(cx));
+            toggle_performance_readout(cx);
+            assert!(!performance_readout(cx));
+        });
     }
 }

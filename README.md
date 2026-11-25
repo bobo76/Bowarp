@@ -699,7 +699,14 @@ open it is disabled: there is no viewer to show it in); opening a
 file from the explorer while the page shows also goes back to the tab. A banner on the page says
 when the file can't be read (the defaults apply until it is fixed or a change moves it to
 `settings.json.bak`) or a change couldn't be saved. The About page shows the version and the
-config folder.
+config folder. Its Diagnostics group has the **Performance readout** switch (off by default,
+`"performance_readout"`; also the `TogglePerformanceReadout` action, which has no default
+key): one line of muted text at the right of the title bar, before the window buttons,
+`0 fps · – ms max · 0.3% CPU · 182 MB`. That is this window's frames in the last second
+(the readout's own refresh is not counted, so an idle window reads 0), the slowest of them,
+this app's CPU as a percent of one core (above 100 % when it uses several) and its resident
+memory (working set on Windows), not counting its shells and agents. It refreshes every
+second; off, it does nothing.
 
 The Appearance page's Theme dropdown (Dark / Light / Sepia) changes the UI live and persists
 the choice (`"ui_theme": "dark"`, `"light"` or `"sepia"` in `settings.json`, default dark).
@@ -900,7 +907,8 @@ adds Shift: `ctrl-V` is `ctrl-shift-v`); a space separates the keystrokes of a s
 two have no default key); `NewTab`, `DuplicateTab`, `CloseTab`, `NextTab`, `PreviousTab`,
 `SelectTab1` to
 `SelectTab9`, `ToggleSidebar`, `ToggleExplorer`, `SearchTabs`, `NextAttention`,
-`ToggleFullScreen` (anywhere in the window); `RenameTab` (only while the tab list has the
+`ToggleFullScreen`, `TogglePerformanceReadout` (anywhere in the window; the last has no
+default key); `RenameTab` (only while the tab list has the
 keyboard). `terminal::Paste` and `workspace::NewTab` also
 work. An entry that can't be used (an unknown action, a key that can't be read, a value that
 is neither a name nor `null`, `null` for a key with no default) is skipped and named in a

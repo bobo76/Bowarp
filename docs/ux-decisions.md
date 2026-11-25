@@ -391,3 +391,29 @@ never white. Dim blends toward the background on light palettes; Sepia gets its 
 colors (the default ones clash with its selection). Values: `term-core/src/palette.rs`. New
 tabs get `COLORFGBG`; it goes stale if the setting changes while a tab runs (known
 limitation). [UX agent]
+
+## Performance readout
+
+- **In the title bar, not a floating panel**: right-aligned before the window buttons, one
+  line of muted text with no colors for "bad" values. It covers no terminal text (agent status
+  lines sit at the bottom, right prompts at the right), shows on every page, in the viewer and
+  in full screen, keeps the opaque title bar (no opacity or blur question) and stays part of
+  the drag area (no pointer events, no tooltip). Its own cached entity so a refresh re-renders
+  only it. Rejected: a corner panel over the terminal (hides output, needs click-through and
+  a rule per page). [UX agent]
+- **Switch on the About page**, in a "Diagnostics" group under the version info (the page
+  already holds what bug reports quote); no "Advanced" page for one row. A Keyboard-page action
+  toggles the same saved setting and has **no default key**: every free Ctrl+Shift+letter
+  belongs to terminal programs, and this is a diagnostic. [UX agent]
+- **Off by default**, an exception to "a new feature's switch starts on" like the notification
+  sound: it is a diagnostic that does work while idle by design. [user: step text]
+- **Contents**: frames in the last second, the slowest frame of that second, CPU as a percent
+  of one core (idle-redraw bugs are a few percent of one core, invisible divided by the core
+  count; `top` reads the same way), and resident memory (Windows working set, Linux RSS), all
+  of this process only, not its shells or agents. Idle reads 0 fps: the readout's own refresh
+  frame is not counted. Placeholders show at once when turned on, filled by the first sample
+  about a second later; a platform without CPU/memory code shows placeholders for those. Fixed
+  field widths so the numbers don't jitter. [UX agent]
+- **App-wide, saved in settings.json, applies live** like other switches. Frames are per
+  window; CPU and memory per process (one sampler however many windows). No pause while
+  minimized unless a minimized window turns out to draw on each refresh. [UX agent]

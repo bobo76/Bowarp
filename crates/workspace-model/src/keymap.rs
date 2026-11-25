@@ -397,6 +397,7 @@ pub fn action_label(action: &str) -> String {
         "GoBack" => "Back to the tab selected before",
         "GoForward" => "Forward to the tab left with Back",
         "LastTab" => "Switch with the last tab",
+        "TogglePerformanceReadout" => "Show or hide the performance readout",
         short => {
             if let Some(number) = short.strip_prefix("SelectTab") {
                 return format!("Select tab {number}");

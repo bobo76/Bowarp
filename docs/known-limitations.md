@@ -35,6 +35,12 @@ entry when the limitation is lifted.
   tabs: X11 and Windows ignore a request from the active window. Windows flashes the taskbar
   button once. Programs that ring the bell in the selected tab, or a tab whose status is
   already Needs attention, ask nothing new.
+- The performance readout's CPU and memory are read on Windows and Linux only: other
+  platforms (macOS) show `–` for them, frames still count. Its frame time is the UI thread's
+  work for the window (render, layout, paint), not the GPU's, and leaves out the popups drawn
+  on top (history popup, terminal context menu); a frame drawn together with the readout's own
+  refresh is not counted (at most one a second), nor is the first frame after a minimized
+  window comes back.
 - Start failures: Retry in the empty state re-runs the launch as resolved at start, so a
   default shell changed meanwhile in Settings is not picked up by Retry (the launcher buttons
   and Ctrl+Shift+T use it). A folder named with `--remote` is not checked before connecting.
