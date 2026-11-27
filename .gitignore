@@ -4,3 +4,4 @@ pipeline/
 crates/app/shell-integration/zsh/.zcompdump*
 docs/retros/
 REVIEW.md
+.idea/
