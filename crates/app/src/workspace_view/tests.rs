@@ -2751,6 +2751,114 @@ fn window_title_and_attention_follow_the_tabs(cx: &mut gpui_kit::TestAppContext)
     assert_eq!(requests(&mut h), 1);
 }
 
+/// "Mark as ready for review": offered only on an idle agent tab, it shows Ready for review on
+/// the selected tab too, joins the attention pass and clears when the tab is selected again;
+/// marking asks the OS for no attention.
+#[cfg(unix)]
+#[gpui::test]
+fn mark_as_ready_for_review_lasts_until_the_tab_is_selected_again(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use agent_status::AgentReport;
+    use term_core::SessionEvent;
+    use workspace_model::agents::CLAUDE;
+
+    let mut h = PanesHarness::new("mark-ready", cx);
+    let workspace = h.workspace.clone();
+    // A second tab, selected, with Claude's hooks, running Claude in place.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let mut spec = workspace.tabs[0].spec.clone();
+            let shell_env = CLAUDE.hook_artifact_plan().shell_env;
+            spec.env.insert(shell_env.into(), "artifact".into());
+            workspace.open_tab(spec, window, cx).unwrap();
+            wait_for_exit(&workspace.tabs[1].view.read(cx).session);
+        })
+    });
+    h.cx.run_until_parked();
+    let ids: Vec<u64> = workspace.read_with(&h.cx, |w, _| w.tabs.iter().map(|t| t.id).collect());
+    let agent = workspace.read_with(&h.cx, |w, _| w.tabs[1].view.clone());
+    let report = |h: &mut PanesHarness, name: &str| {
+        let report = AgentReport {
+            event_name: name.into(),
+            ..AgentReport::default()
+        };
+        h.cx.update(|_, cx| agent.update(cx, |view, cx| view.apply_report(&report, 1, cx)));
+        h.cx.run_until_parked();
+    };
+    let offered = |h: &mut PanesHarness, id: u64| {
+        h.workspace.read_with(&h.cx, |workspace, cx| {
+            workspace.tab_menu_state(id, cx).unwrap().can_mark_ready
+        })
+    };
+    let status = |h: &mut PanesHarness| h.cx.update(|_, cx| agent.read(cx).tab_status());
+    h.cx.update(|_, cx| {
+        agent.update(cx, |view, cx| {
+            view.revive_for_test();
+            view.dispatch_test_event(SessionEvent::CommandStarted(Some("claude".into())), cx);
+            view.dispatch_test_event(SessionEvent::AgentStarted(CLAUDE), cx);
+        })
+    });
+    report(&mut h, "UserPromptSubmit");
+    assert_eq!(status(&mut h), TabStatus::Working);
+    assert!(!offered(&mut h, ids[1]), "not while Working");
+    assert!(!offered(&mut h, ids[0]), "not on a shell tab");
+    report(&mut h, "Stop");
+    assert_eq!(status(&mut h), TabStatus::Idle, "seen: the tab is selected");
+    assert!(offered(&mut h, ids[1]));
+
+    let requests = |h: &mut PanesHarness| {
+        h.workspace
+            .read_with(&h.cx, |workspace, _| workspace.attention_requests)
+    };
+    let before = requests(&mut h);
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |w, cx| {
+            w.run_tab_command(ids[1], TabCommand::MarkReady, window, cx)
+        })
+    });
+    h.cx.run_until_parked();
+    assert_eq!(
+        status(&mut h),
+        TabStatus::ReadyForReview,
+        "kept on the selected tab"
+    );
+    assert!(
+        !offered(&mut h, ids[1]),
+        "not when already Ready for review"
+    );
+    assert_eq!(requests(&mut h), before, "marking asks for no attention");
+
+    // Ctrl+Shift+A from the other tab finds it, and selecting it clears the mark.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |w, cx| {
+            w.activate(0, window, cx);
+            w.jump_to_attention(window, cx);
+        })
+    });
+    h.cx.run_until_parked();
+    assert_eq!(workspace.read_with(&h.cx, |w, _| w.active), 1);
+    assert_eq!(status(&mut h), TabStatus::Idle, "cleared by the selection");
+    assert!(offered(&mut h, ids[1]), "offered again");
+
+    // A new turn ends the mark: the selected tab is seen, so it ends Idle.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |w, cx| {
+            w.run_tab_command(ids[1], TabCommand::MarkReady, window, cx)
+        })
+    });
+    h.cx.run_until_parked();
+    assert_eq!(status(&mut h), TabStatus::ReadyForReview);
+    report(&mut h, "UserPromptSubmit");
+    assert_eq!(
+        status(&mut h),
+        TabStatus::Working,
+        "the mark ends with the next turn"
+    );
+    report(&mut h, "Stop");
+    assert_eq!(status(&mut h), TabStatus::Idle);
+}
+
 /// A first tab that would not start leaves the window open with the error in the empty state:
 /// the launchers start in its folder, a failed Retry counts, and a new tab clears the error.
 #[cfg(unix)]

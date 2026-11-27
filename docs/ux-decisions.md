@@ -417,3 +417,12 @@ limitation). [UX agent]
 - **App-wide, saved in settings.json, applies live** like other switches. Frames are per
   window; CPU and memory per process (one sampler however many windows). No pause while
   minimized unless a minimized window turns out to draw on each refresh. [UX agent]
+
+## Mark as ready for review
+
+- **Tab menu item "Mark as ready for review"**, after Reconnect/Restart and before Duplicate, no
+  shortcut; shown only on an Idle Claude Code or Copilot tab (in place too) that is not already
+  Ready for review. It is offered on the selected tab as well: the mark stays until the tab is
+  selected again (switching away and back, or re-clicking its row). Marking sends no toast,
+  sound or window-attention request; an in-place agent exiting keeps the mark. Not saved in
+  tabs.json. [pipeline]

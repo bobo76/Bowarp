@@ -10,6 +10,12 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- "Mark as ready for review" (Windows, Linux) with a real Claude Code and a real Copilot tab,
+  and with `claude` run in place in a bash tab: after a finished turn, right-click the tab:
+  the item shows only while it is Idle (not Working, Waiting, already Ready for review, on a
+  shell tab). Choosing it gives the green check with no toast, sound or taskbar flash; the
+  group card's Ready for review count goes up; Ctrl+Shift+A from another tab reaches it;
+  selecting it clears it. Marked in place, then `/exit`: the check stays until selected.
 - Performance readout (Windows and Linux): Settings → About → Diagnostics → "Performance
   readout" on shows placeholders (`– fps`) at the right of the title bar at once, filled
   about a second later; off removes it. Bind `TogglePerformanceReadout` to a key in
@@ -418,11 +424,6 @@ behavior"); items below name their switch where they need one.
 
 ### General
 
-- Tab menu "Mark as ready for review", like an email's "mark as unread": puts back the
-  green check that selecting the tab cleared, so a finished turn you glanced at but haven't
-  reviewed keeps its place in Ctrl+Shift+A's Ready for review pass and in the group card's
-  count. Offered only on an Idle Claude Code or Copilot tab that isn't already Ready for
-  review; it clears again the next time you select the tab (`tab_menu.rs`).
 - Subagent count without its ring: the subagent chip next to an agent tab's name (chevron +
   count) draws the count inside a blue circle; drop the circle and show the bare number, the
   same whether the subagent list is expanded or collapsed (`sidebar.rs`, the count element

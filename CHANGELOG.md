@@ -5,6 +5,10 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Tab menu: "Mark as ready for review" on an Idle Claude Code or Copilot tab puts back the
+  green check, so a finished turn you only glanced at stays in Ctrl+Shift+A's Ready for
+  review pass and the group card's count until you select the tab again.
+
 - Performance readout: Settings → About → Diagnostics → "Performance readout" (off by
   default) shows the window's frames per second, its slowest frame, and the app's CPU and
   memory at the right of the title bar, refreshed every second. A key can be bound to

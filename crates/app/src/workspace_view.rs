@@ -1584,6 +1584,7 @@ impl WorkspaceView {
         Some(TabMenuState {
             can_reconnect: self.can_reconnect(id, cx),
             can_restart: self.can_restart(id, cx),
+            can_mark_ready: tab.view.read(cx).can_mark_ready(),
             pinned: self.layout.is_pinned(id),
             has_custom_name: tab.meta.custom_name.is_some(),
             other_groups: self
@@ -1621,6 +1622,7 @@ impl WorkspaceView {
             TabCommand::Restart => cx.defer_in(window, move |workspace, window, cx| {
                 workspace.restart_tab(id, window, cx);
             }),
+            TabCommand::MarkReady => self.mark_ready(index, cx),
             TabCommand::Duplicate => self.duplicate_tab(index, window, cx),
             TabCommand::TogglePin => {
                 self.layout.toggle_pin(id);
@@ -1688,6 +1690,22 @@ impl WorkspaceView {
                 self.save_tabs(cx);
                 cx.notify();
             }
+        }
+    }
+
+    /// Mark a tab Ready for review again. The user asked for it, so the window does not ask
+    /// for attention: the tab's status is recorded as already seen by `sync_window`.
+    fn mark_ready(&mut self, index: usize, cx: &mut Context<Self>) {
+        let tab = &self.tabs[index];
+        tab.view
+            .update(cx, |view, cx| view.mark_ready_for_review(cx));
+        let status = tab.view.read(cx).tab_status();
+        let seen = self
+            .window_statuses
+            .iter_mut()
+            .find(|(id, _)| *id == tab.id);
+        if let Some((_, recorded)) = seen {
+            *recorded = status;
         }
     }
 

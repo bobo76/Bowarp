@@ -391,7 +391,9 @@ Run the extension's tests with `node --test .\crates\app\copilot-extension\bridg
 
 Ready for review marks an unread Working-to-Idle transition, not confirmation that the
 agent's work is correct. Selecting the tab acknowledges it and restores Idle; a turn that
-finishes in the selected tab stays Idle. New Working or Needs attention reports replace
+finishes in the selected tab stays Idle. The tab menu's "Mark as ready for review" puts it
+back on an Idle agent tab you glanced at, the selected one included, without a notification;
+it lasts until you next select the tab. New Working or Needs attention reports replace
 the unread status. The sidebar, tab hover card, group totals and completion toast use the
 same status; there is no extra completion notice. When an agent running in place in a shell
 tab exits, a pending Ready for review stays until you select the tab.
@@ -456,7 +458,9 @@ shows), "Settings — Agent Workspace" or "Git — Agent Workspace" while those 
 "Agent Workspace" with no tab open. While N tabs need attention (the selected one included,
 Ready for review not counted) it starts with "(N) ", whatever the notifications switch says.
 
-Right-click a row or use its `⋮` button for the tab menu: duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
+Right-click a row or use its `⋮` button for the tab menu: "Mark as ready for review" (only on an
+Idle Claude Code or Copilot tab, also one running in place: puts back the green check, like an
+email's "mark as unread", until you next select the tab), duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
 and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working
 directory, rename (F2 in the tab list; Enter keeps, Escape cancels, an empty name goes back to
 the program's title), "Reset name" (only on a renamed tab: back to the program's title, such

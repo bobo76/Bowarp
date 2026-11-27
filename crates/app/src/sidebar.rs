@@ -166,8 +166,8 @@ impl TabStatus {
     }
 
     /// Whether a tab going from `before` to this status asks for the user's eye: it turned
-    /// Needs attention or Ready for review, or, as the selected tab (which never shows Ready
-    /// for review), its agent finished a turn.
+    /// Needs attention or Ready for review, or, as the selected tab (which shows Ready for
+    /// review only when marked from the tab menu), its agent finished a turn.
     pub fn wants_user_after(self, before: Self) -> bool {
         before != self
             && (matches!(self, Self::NeedsAttention | Self::ReadyForReview)
