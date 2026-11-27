@@ -5,6 +5,8 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.4.9
+
 - Claude Code tabs: interrupting a turn with Esc or Ctrl+C shows the tab Idle at once; before,
   it stayed Working, since Claude Code reports nothing on an interrupt.
 
