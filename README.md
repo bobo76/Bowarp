@@ -284,11 +284,11 @@ No card opens while a tab
 is dragged, a name is edited, or a menu or dialog is open; a card hidden that way comes back
 after the pointer leaves the row and hovers it again.
 
-While a Claude Code or Copilot CLI agent runs subagents, its row shows their count in a ring
-after the name: in the Working color, turning only while the list is folded in, or a still
-orange circle while one waits for you. Their list shows under the row: each subagent's
-description (or its type) with a spinner, or a warning mark while it waits for a permission or
-an answer. Click the chevron and ring to fold the list in or out (per tab, not saved). A
+While a Claude Code or Copilot CLI agent runs subagents, its row shows their count after the
+name: a blue number, orange while one waits for you, the same with the list out or folded in.
+Their list shows under the row: each subagent's description (or its type) with a spinner, or a
+warning mark while it waits for a permission or an answer. Click the chevron or the number to
+fold the list in or out (per tab, not saved). A
 subagent shows from its `SubagentStart` hook to its `SubagentStop`; the tab keeps its own status
 (Idle once the main turn ends, even while background subagents work).
 

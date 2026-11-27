@@ -39,12 +39,10 @@ const SESSION_ICON_SIZE: f32 = 18.;
 const DETAIL_ICON_SIZE: f32 = 11.;
 const KIND_ICON_SIZE: f32 = 12.;
 const ATTENTION_ICON_SIZE: f32 = 13.;
-/// The ring around a tab's subagent count.
-const SUBAGENT_RING_SIZE: f32 = 16.;
-const SUBAGENT_RING_BORDER: f32 = 1.5;
-/// The count in the ring: one digit, or the smaller two-digit size.
-const SUBAGENT_COUNT_SIZE: f32 = 10.;
-const SUBAGENT_LONG_COUNT_SIZE: f32 = 8.;
+/// A tab's subagent count: the detail line's text size, in a box two digits wide so a second
+/// digit doesn't move the name.
+const SUBAGENT_COUNT_SIZE: f32 = 12.;
+const SUBAGENT_COUNT_WIDTH: f32 = 16.;
 const SUBAGENT_ROW_HEIGHT: f32 = 22.;
 /// Subagent rows start under the tab's name: the row's left padding, icon tile and gap.
 const SUBAGENT_LIST_INSET: f32 = 12. + ICON_TILE_SIZE + 12.;
@@ -265,7 +263,7 @@ pub struct TabRow {
     /// The spinner left of the name, at its step out of `WORKING_SPIN_STEPS` (0 when still);
     /// see [`working_spinner`].
     pub spinner: Option<u8>,
-    /// The tab's running subagents, when it has any: their count in a ring after the name,
+    /// The tab's running subagents, when it has any: their count after the name,
     /// which folds their list in and out.
     pub subagents: Option<SubagentChip>,
     pub selected: bool,
@@ -283,9 +281,6 @@ pub struct SubagentChip {
     pub count: usize,
     /// How many wait for the user.
     pub waiting: usize,
-    /// The ring's step while it turns (0 when still); unused while one waits or the list
-    /// is out.
-    pub step: u8,
     pub expanded: bool,
     pub on_toggle: ToggleSubagents,
 }
@@ -503,55 +498,25 @@ fn spinner_icon(step: u8, cx: &App) -> Icon {
         .transform(Transformation::rotate(percentage(turn)))
 }
 
-/// The ring around the subagent count: a closed orange circle while one waits for the user,
-/// else in the Working color, turning only while the list is folded in (the list's own
-/// spinners show the activity when it is out).
-fn subagent_ring(chip: &SubagentChip, cx: &App) -> impl IntoElement {
-    let waiting = chip.waiting > 0;
-    let color = if waiting {
+/// The subagent count, a bare number: orange while one waits for the user, else in the Working
+/// color. Still, and the same whether the list is out or folded in.
+fn subagent_count(chip: &SubagentChip, cx: &App) -> impl IntoElement {
+    let color = if chip.waiting > 0 {
         attention_color(cx)
     } else {
         TabStatus::Working.color(cx)
     };
-    let ring = if waiting || chip.expanded {
-        div()
-            .absolute()
-            .inset_0()
-            .rounded_full()
-            .border(px(SUBAGENT_RING_BORDER))
-            .border_color(color)
-            .into_any_element()
-    } else {
-        div()
-            .absolute()
-            .inset_0()
-            .child(spinner_icon(chip.step, cx).size(px(SUBAGENT_RING_SIZE)))
-            .into_any_element()
-    };
-    let count_size = if chip.count < 10 {
-        SUBAGENT_COUNT_SIZE
-    } else {
-        SUBAGENT_LONG_COUNT_SIZE
-    };
     div()
-        .relative()
-        .flex()
         .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(SUBAGENT_RING_SIZE))
-        .child(ring)
-        .child(
-            div()
-                .text_size(px(count_size))
-                .line_height(px(count_size))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(color)
-                .child(chip.count.to_string()),
-        )
+        .min_w(px(SUBAGENT_COUNT_WIDTH))
+        .text_size(px(SUBAGENT_COUNT_SIZE))
+        .line_height(px(SUBAGENT_COUNT_SIZE))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(color)
+        .child(chip.count.to_string())
 }
 
-/// The chevron and the count in its ring: folds the tab's subagent list in or out.
+/// The chevron and the count: folds the tab's subagent list in or out.
 fn subagent_chip(chip: &SubagentChip, index: usize, muted: Hsla, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
     let chevron = if chip.expanded {
@@ -593,7 +558,7 @@ fn subagent_chip(chip: &SubagentChip, index: usize, muted: Hsla, cx: &App) -> im
                 .size(px(DETAIL_ICON_SIZE))
                 .text_color(chevron_color),
         )
-        .child(subagent_ring(chip, cx))
+        .child(subagent_count(chip, cx))
         .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
         .on_click(move |_, window, cx| {
             cx.stop_propagation();

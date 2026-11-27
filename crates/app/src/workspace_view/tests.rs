@@ -2859,6 +2859,98 @@ fn mark_as_ready_for_review_lasts_until_the_tab_is_selected_again(
     assert_eq!(status(&mut h), TabStatus::Idle);
 }
 
+/// The subagent count is a bare, still number: folding the list in leaves no spinner turning
+/// (the shared clock stops), and the chip keeps its width whether the list is out or folded in
+/// and from one digit to two.
+#[cfg(unix)]
+#[gpui::test]
+fn the_subagent_count_is_still_and_keeps_its_width(cx: &mut gpui_kit::TestAppContext) {
+    use agent_status::AgentReport;
+    use term_core::SessionEvent;
+    use workspace_model::agents::CLAUDE;
+
+    let mut h = PanesHarness::new("subagent-count", cx);
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let mut spec = workspace.tabs[0].spec.clone();
+            let shell_env = CLAUDE.hook_artifact_plan().shell_env;
+            spec.env.insert(shell_env.into(), "artifact".into());
+            workspace.open_tab(spec, window, cx).unwrap();
+            wait_for_exit(&workspace.tabs[1].view.read(cx).session);
+            // Animations on, as on a hardware-rendered, visible window.
+            workspace.pulse_running = true;
+            workspace.window_visible = true;
+        })
+    });
+    h.cx.run_until_parked();
+    let id = workspace.read_with(&h.cx, |w, _| w.tabs[1].id);
+    let agent = workspace.read_with(&h.cx, |w, _| w.tabs[1].view.clone());
+    h.cx.update(|_, cx| {
+        agent.update(cx, |view, cx| {
+            view.revive_for_test();
+            view.dispatch_test_event(SessionEvent::CommandStarted(Some("claude".into())), cx);
+            view.dispatch_test_event(SessionEvent::AgentStarted(CLAUDE), cx);
+        })
+    });
+    let start = |h: &mut PanesHarness, from: usize, to: usize| {
+        h.cx.update(|_, cx| {
+            agent.update(cx, |view, cx| {
+                for n in from..to {
+                    let report = AgentReport {
+                        event_name: "SubagentStart".into(),
+                        subagent: Some(format!("a{n}")),
+                        ..AgentReport::default()
+                    };
+                    view.apply_report(&report, n as u64 + 1, cx);
+                }
+            })
+        });
+        h.cx.run_until_parked();
+    };
+    let set_folded = |h: &mut PanesHarness, folded: bool| {
+        h.workspace.update(&mut h.cx, |workspace, cx| {
+            if folded {
+                workspace.folded_subagents.insert(id);
+            } else {
+                workspace.folded_subagents.remove(&id);
+            }
+            cx.notify();
+        });
+        h.cx.run_until_parked();
+        h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    };
+    let ticking = |h: &mut PanesHarness| {
+        h.workspace
+            .read_with(&h.cx, |workspace, _| workspace.spinner_clock.ticking())
+    };
+    let chip_width = |h: &mut PanesHarness| {
+        h.cx.debug_bounds("sidebar-subagents-1")
+            .expect("the chip is drawn")
+            .size
+            .width
+    };
+
+    start(&mut h, 0, 1);
+    set_folded(&mut h, false);
+    assert!(ticking(&mut h), "the list's spinners turn");
+    let expanded = cfg!(debug_assertions).then(|| chip_width(&mut h));
+    set_folded(&mut h, true);
+    assert!(
+        !ticking(&mut h),
+        "folded in, nothing turns: the count stands still"
+    );
+    if let Some(expanded) = expanded {
+        assert_eq!(chip_width(&mut h), expanded, "nothing moves on toggle");
+    }
+    start(&mut h, 1, 12);
+    set_folded(&mut h, true);
+    assert!(!ticking(&mut h));
+    if let Some(expanded) = expanded {
+        assert_eq!(chip_width(&mut h), expanded, "a second digit keeps the box");
+    }
+}
+
 /// A first tab that would not start leaves the window open with the error in the empty state:
 /// the launchers start in its folder, a failed Retry counts, and a new tab clears the error.
 #[cfg(unix)]

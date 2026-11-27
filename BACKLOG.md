@@ -232,12 +232,15 @@ Subagent list (Claude Code 2.1.316, Copilot CLI 1.0.105):
 
 - Real Claude Code: a background subagent (`run_in_background`) shows under the tab with its
   description while the main tab goes Idle, and goes away when it finishes; a subagent's
-  permission prompt turns its row and the count ring orange. Killing a background agent from the
-  task panel removes it (else note it in docs/known-limitations.md).
+  permission prompt turns its row and the subagent count orange. Killing a background agent
+  from the task panel removes it (else note it in docs/known-limitations.md).
 - Real Copilot CLI: a sync and a background `task` subagent show and go away; under
   `--autopilot` its permission requests do not mark it waiting.
-- Windows: the same, with the turning count ring (its digit centered) and the list under the
-  row, folded in and out by clicking the ring.
+- Windows: the same, with the bare count after the name (blue, orange while one waits; no
+  ring, still whether the list is out or folded in, a second digit not moving the name) and
+  the list under the row, folded in and out by clicking the chevron or the number.
+- Real Claude Code on Linux: with the list folded in and only background subagents running
+  (tab Idle), the bare count shows and nothing animates (CPU stays at idle).
 
 Agent running in place in a shell tab (from its `N` mark until the command's `D`):
 
@@ -424,10 +427,6 @@ behavior"); items below name their switch where they need one.
 
 ### General
 
-- Subagent count without its ring: the subagent chip next to an agent tab's name (chevron +
-  count) draws the count inside a blue circle; drop the circle and show the bare number, the
-  same whether the subagent list is expanded or collapsed (`sidebar.rs`, the count element
-  built around `SUBAGENT_RING_SIZE`).
 - Agent status switch for agent tabs, "Agent status" (on), the parent of "Agent status for
   agents typed at the prompt" (shown disabled under it). Off: new Claude Code and Copilot
   tabs start without the generated `--settings` hooks and the plugin, and show "Recent

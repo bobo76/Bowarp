@@ -5,6 +5,10 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Subagents: an agent tab's subagent count is a bare number after the name (blue, orange
+  while one waits for you), no longer in a ring, and it stands still whether the list is out
+  or folded in; a folded list no longer redraws the window several times a second.
+
 - Tab menu: "Mark as ready for review" on an Idle Claude Code or Copilot tab puts back the
   green check, so a finished turn you only glanced at stays in Ctrl+Shift+A's Ready for
   review pass and the group card's count until you select the tab again.
