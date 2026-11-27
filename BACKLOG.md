@@ -418,6 +418,15 @@ behavior"); items below name their switch where they need one.
 
 ### General
 
+- Tab menu "Mark as ready for review", like an email's "mark as unread": puts back the
+  green check that selecting the tab cleared, so a finished turn you glanced at but haven't
+  reviewed keeps its place in Ctrl+Shift+A's Ready for review pass and in the group card's
+  count. Offered only on an Idle Claude Code or Copilot tab that isn't already Ready for
+  review; it clears again the next time you select the tab (`tab_menu.rs`).
+- Subagent count without its ring: the subagent chip next to an agent tab's name (chevron +
+  count) draws the count inside a blue circle; drop the circle and show the bare number, the
+  same whether the subagent list is expanded or collapsed (`sidebar.rs`, the count element
+  built around `SUBAGENT_RING_SIZE`).
 - Agent status switch for agent tabs, "Agent status" (on), the parent of "Agent status for
   agents typed at the prompt" (shown disabled under it). Off: new Claude Code and Copilot
   tabs start without the generated `--settings` hooks and the plugin, and show "Recent
