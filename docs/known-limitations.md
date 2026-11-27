@@ -52,6 +52,14 @@ entry when the limitation is lifted.
 - Remote daemon on a Windows server: `agentws-server proxy` doesn't check which user owns the
   named pipe it connects to (Linux does). Another user can't open our pipe read/write, but
   could create the machine-wide name first while no daemon of ours runs.
+- Claude Code runs no hook on an interrupt (checked with 2.1.332: Esc or Ctrl+C mid-thinking,
+  mid-tool or on a permission prompt fires nothing, and no `idle_prompt` follows within
+  90 s), so the app reads the key itself: a bare Esc or Ctrl+C sent to a Working or Waiting
+  Claude Code tab shows Idle. An Esc that only closes one of Claude Code's own menus mid-turn
+  shows Idle too, until the next hook (the next tool call, prompt or notification) sets
+  Working again; a turn that ends without another hook stays Idle, which is then right. Keys
+  the app keeps (Esc closing the find bar or the history popup) change nothing. Copilot CLI
+  is left to its progress reports.
 - Agent status off (`agentws-hook` missing or the status listener could not start): Claude
   Code tabs fall back to output activity ("Status unavailable" when quiet) and a bell asks for
   attention as in a shell; a Copilot CLI permission prompt reads Working, not Needs attention,

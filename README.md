@@ -398,6 +398,10 @@ the unread status. The sidebar, tab hover card, group totals and completion toas
 same status; there is no extra completion notice. When an agent running in place in a shell
 tab exits, a pending Ready for review stays until you select the tab.
 
+Claude Code runs no hook when you interrupt it, so Esc or Ctrl+C sent to a Working or Waiting
+Claude Code tab (spawned or run in place) shows Idle at once, without a toast or Ready for
+review; its next hook sets the status again.
+
 A tab whose program rings the bell (BEL: Copilot, scripts, anything without status hooks)
 while you are on another tab shows Needs attention until you select it. Claude Code tabs with
 hooks, and Claude Code running in place in a shell tab, ignore the bell, since their hooks

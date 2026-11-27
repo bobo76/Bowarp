@@ -216,6 +216,10 @@ pub struct OpenFileRequest {
 
 pub struct LastCommandChanged;
 
+/// The user changed the agent status from this tab (an interrupt key): the window must not
+/// ask for attention over it.
+pub struct StatusSeen;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StatusReporting {
     Hooks,
@@ -1460,7 +1464,26 @@ impl TerminalView {
             return false;
         };
         self.send_input(bytes, cx);
+        if keys::is_interrupt_key(keystroke) {
+            self.on_interrupt_key(cx);
+        }
         true
+    }
+
+    /// Claude Code runs no hook when Esc or Ctrl+C interrupts its turn, so the forwarded key
+    /// ends a working or waiting turn here. The user is looking at the tab: no notice, no
+    /// Ready for review, and the workspace records the change as seen (`StatusSeen`).
+    fn on_interrupt_key(&mut self, cx: &mut Context<Self>) {
+        if !self.visible || self.process != ProcessState::Running {
+            return;
+        }
+        let Some(agent_id) = self.status_kind().agent() else {
+            return;
+        };
+        let at = agent_status::now_micros();
+        if self.update_agent(|agent| agent.interrupt(at, agent_id.activity()), cx) {
+            cx.emit(StatusSeen);
+        }
     }
 
     fn on_paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
@@ -1517,6 +1540,7 @@ impl EventEmitter<RemoteAction> for TerminalView {}
 impl EventEmitter<ResumeConversation> for TerminalView {}
 impl EventEmitter<ResumeFailed> for TerminalView {}
 impl EventEmitter<RestartTab> for TerminalView {}
+impl EventEmitter<StatusSeen> for TerminalView {}
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {

@@ -73,7 +73,7 @@ use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
 use crate::tabs_file;
 use crate::terminal_view::{
     AgentExited, AgentNotice, LastCommandChanged, OpenFileRequest, RemoteAction, RestartTab,
-    ResumeConversation, ResumeFailed, StatusReporting, TabChanged, TerminalView,
+    ResumeConversation, ResumeFailed, StatusReporting, StatusSeen, TabChanged, TerminalView,
 };
 use crate::window_bounds;
 
@@ -213,7 +213,7 @@ pub enum TabOwnership {
 }
 
 /// What the workspace follows of a tab's session view (`listen_to_tab`).
-type TabSubscriptions = [Subscription; 9];
+type TabSubscriptions = [Subscription; 10];
 
 struct Tab {
     /// The first session's id, which stays with the tab when tabs move (and when an agent's
@@ -737,7 +737,8 @@ impl WorkspaceView {
     }
 
     /// Follow tab `tab_id`'s session view: what it shows, its agent exiting, files it opens,
-    /// agent notices, its last command, a remote tab's Reconnect or Start new and Restart.
+    /// agent notices, its last command, a remote tab's Reconnect or Start new and Restart, and
+    /// status changes the user made there.
     fn listen_to_tab(
         &mut self,
         tab_id: u64,
@@ -770,6 +771,9 @@ impl WorkspaceView {
                 workspace.notify_agent(tab_id, *notice, window, cx);
             },
         );
+        let seen = cx.subscribe(view, move |workspace, _, _: &StatusSeen, cx| {
+            workspace.record_status_seen(tab_id, cx);
+        });
         let last_command = cx.subscribe(view, |workspace, _, _: &LastCommandChanged, cx| {
             workspace.save_tabs(cx);
         });
@@ -811,6 +815,7 @@ impl WorkspaceView {
             resume,
             resume_failed,
             restart,
+            seen,
         ]
     }
 
@@ -1697,13 +1702,23 @@ impl WorkspaceView {
     /// for attention: the tab's status is recorded as already seen by `sync_window`.
     fn mark_ready(&mut self, index: usize, cx: &mut Context<Self>) {
         let tab = &self.tabs[index];
+        let id = tab.id;
         tab.view
             .update(cx, |view, cx| view.mark_ready_for_review(cx));
+        self.record_status_seen(id, cx);
+    }
+
+    /// Record tab `tab_id`'s status as already seen by `sync_window`, which then asks the OS
+    /// for no attention over a change the user made.
+    fn record_status_seen(&mut self, tab_id: u64, cx: &App) {
+        let Some(tab) = self.tabs.iter().find(|tab| tab.id == tab_id) else {
+            return;
+        };
         let status = tab.view.read(cx).tab_status();
         let seen = self
             .window_statuses
             .iter_mut()
-            .find(|(id, _)| *id == tab.id);
+            .find(|(id, _)| *id == tab_id);
         if let Some((_, recorded)) = seen {
             *recorded = status;
         }

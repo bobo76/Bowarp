@@ -10,6 +10,11 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Interrupting Claude Code (Windows, Linux), in a spawned Claude Code tab and with `claude`
+  run in place in a bash tab: Esc and Ctrl+C mid-thinking and during `Bash(sleep 20)`, and
+  Esc on a permission prompt, turn the tab Idle at once, with no toast, sound, taskbar flash
+  or Ready for review, and the hover card's "Working · …" lap ends; the next prompt shows
+  Working again. Esc with the find bar open only closes it (the tab stays Working).
 - "Mark as ready for review" (Windows, Linux) with a real Claude Code and a real Copilot tab,
   and with `claude` run in place in a bash tab: after a finished turn, right-click the tab:
   the item shows only while it is Idle (not Working, Waiting, already Ready for review, on a
@@ -465,8 +470,6 @@ its items), regrouped into steps, in order:
   keyboard leaves focus on an element no longer drawn (only the tab list itself hands the
   keyboard back, `toggle_sidebar` checks `is_focused`): check the whole sidebar
   (`contains_focused` plus the search input's focus handle) and focus the terminal.
-- Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
-  (~60 s); no hook fires on interrupt.
 - Long durations on the sidebar and hover card ("Running for", lap times such as "Working · 2m 14s"):
   - Under a day: as today (seconds kept).
   - A day or more: drop the seconds, add days ("1d 3h 12m").

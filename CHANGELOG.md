@@ -5,6 +5,9 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Claude Code tabs: interrupting a turn with Esc or Ctrl+C shows the tab Idle at once; before,
+  it stayed Working, since Claude Code reports nothing on an interrupt.
+
 - Subagents: an agent tab's subagent count is a bare number after the name (blue, orange
   while one waits for you), no longer in a ring, and it stands still whether the list is out
   or folded in; a folded list no longer redraws the window several times a second.

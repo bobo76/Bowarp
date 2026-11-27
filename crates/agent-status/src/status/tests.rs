@@ -193,6 +193,46 @@ fn queued_progress_does_not_hide_a_newer_permission_request() {
 }
 
 #[test]
+fn an_interrupt_key_ends_a_working_or_waiting_turn_until_the_next_hook() {
+    use HookEvent::*;
+    for busy in [PromptSubmitted, ToolStarted, PERMISSION] {
+        let mut state = AgentState::default();
+        state.apply(busy, 1);
+        state.interrupt(5, ActivityPolicy::FullHooks);
+        assert_eq!(state.status(), AgentStatus::Idle, "after {busy:?}");
+        assert_eq!(state.wait_reason(), None);
+        // A hook that started before the key no longer applies; a later one does.
+        state.apply(ToolFinished, 4);
+        assert_eq!(state.status(), AgentStatus::Idle);
+        state.apply(ToolStarted, 6);
+        assert_eq!(state.status(), AgentStatus::Working);
+    }
+}
+
+#[test]
+fn an_interrupt_key_leaves_idle_exited_and_progress_reported_agents_alone() {
+    let mut idle = AgentState::default();
+    idle.interrupt(5, ActivityPolicy::FullHooks);
+    idle.apply(HookEvent::PromptSubmitted, 2);
+    assert_eq!(
+        idle.status(),
+        AgentStatus::Working,
+        "an idle agent keeps no key time"
+    );
+
+    let mut exited = AgentState::default();
+    exited.apply(HookEvent::PromptSubmitted, 1);
+    exited.exit();
+    exited.interrupt(5, ActivityPolicy::FullHooks);
+    assert_eq!(exited.status(), AgentStatus::Exited);
+
+    let mut copilot = AgentState::default();
+    copilot.apply_progress(ProgressState::Indeterminate, 1);
+    copilot.interrupt(5, ActivityPolicy::ProgressWithAttentionHooks);
+    assert_eq!(copilot.status(), AgentStatus::Working);
+}
+
+#[test]
 fn maps_hook_names() {
     let cases = [
         ("UserPromptSubmit", None, Some(HookEvent::PromptSubmitted)),
