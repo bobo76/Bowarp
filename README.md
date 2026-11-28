@@ -569,6 +569,8 @@ follows tab switches and `cd` (off Linux, in bash, zsh and PowerShell tabs only:
 reports the folder at each prompt). Folders come first, then files, sorted by name, dotfiles
 included. Click a folder to expand or collapse it (each root keeps its own expanded folders);
 click a file to open it in the file viewer. Expanded folders refresh when their content changes.
+Folders are read in the background: one that takes a moment (a large folder, a network share
+or a WSL path) shows a "Loading…" row until its entries come.
 In a git repository, entries git ignores (such as `target/` or `*.log` in `.gitignore`) and the
 `.git` folder are dimmed, as is everything inside an ignored folder; they dim a moment after
 the folder shows, once git answers. The order doesn't change, and nothing is dimmed outside a

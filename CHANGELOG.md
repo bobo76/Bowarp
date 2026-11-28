@@ -12,6 +12,9 @@ omitted unless they affect how the app is used.
   Restart, Close other tabs...) are listed too, when its menu would offer them.
 - File viewer: fixing a file in the "Not valid JSON" view and saving it shows it laid out at
   once, with the keyboard still in the viewer; before, the error stayed until reopened.
+- File explorer: a folder that is slow to read (a network share, a WSL path) shows "Loading…"
+  under it until its entries come; revealing a folder from the viewer no longer waits on the
+  disk.
 
 ## 0.4.9
 

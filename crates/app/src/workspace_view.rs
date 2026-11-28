@@ -2323,6 +2323,10 @@ impl WorkspaceView {
                 self.open_launcher_in(agent, Some(folder.clone()), window, cx);
             }
             ExplorerEvent::EditEnded => self.focus_active(window, cx),
+            ExplorerEvent::RevealOutside(folder) => {
+                let message = format!("{} is outside the explorer's folder", folder.display());
+                window.push_notification(Notification::info(message), cx);
+            }
             ExplorerEvent::OpenFile(path) => {
                 if let Some(id) = self.active_tab().map(|tab| tab.id) {
                     self.open_file_in(id, path.clone(), FilePlace::default(), window, cx);
@@ -2368,13 +2372,9 @@ impl WorkspaceView {
             ViewerEvent::Saved(_) => {}
             ViewerEvent::RevealFolder(folder) => {
                 self.show_explorer(window, cx);
-                let shown = self
-                    .explorer
+                let folder = folder.clone();
+                self.explorer
                     .update(cx, |explorer, cx| explorer.reveal(folder, cx));
-                if !shown {
-                    let message = format!("{} is outside the explorer's folder", folder.display());
-                    window.push_notification(Notification::info(message), cx);
-                }
             }
             ViewerEvent::Closed => {
                 // Only this tab's viewer closes; the next file opened gets a new one.

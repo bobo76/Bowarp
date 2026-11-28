@@ -10,6 +10,13 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- File explorer loading (Windows, Linux): expand a folder of 50,000 entries and a folder on a
+  slow network share or a WSL path (`\\wsl.localhost\...` from Windows): after a moment a
+  muted italic "Loading…" row shows under it until the entries come, and the window (terminal,
+  sidebar) stays responsive meanwhile; a fast local folder shows no row (no flash). Collapse
+  the folder while it loads: the row goes. A watched folder that changes keeps its entries
+  while read again. Reveal a folder from a Markdown link in the viewer on a slow share: the
+  tree expands and selects it once resolved; a folder outside the tree says so in a toast.
 - Command palette (Windows, Linux): Ctrl+Shift+P opens it under the title bar, centered over
   the sidebar and terminal, about ten rows tall, scrolling past that; a narrow window shrinks
   it. Tab rows show the sidebar's icon, the name, the group muted, the triangle on a tab
@@ -453,9 +460,6 @@ behavior"); items below name their switch where they need one.
 
 ### General
 
-- File explorer: read folders off the UI thread (a "Loading..." row, results applied per
-  root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
-  the window; Delete already runs in the background.
 - Cache the active TerminalView (`.cached(...)`) so sidebar animation frames and other
   WorkspaceView re-renders don't re-render the terminal; every input the view shows (focus,
   resize, selection, session wakeup) must notify it; check with Xvfb.

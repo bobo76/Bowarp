@@ -1629,6 +1629,36 @@ fn settings_page_hides_the_viewer_and_opening_a_file_shows_the_tab(
     assert_eq!(shown(&mut h), (false, true), "the file opens in sight");
 }
 
+/// A reveal outside the explorer's folder is resolved off the UI thread; the workspace turns
+/// the explorer's `RevealOutside` event into a toast, and a reveal inside shows none.
+#[gpui::test]
+fn revealing_outside_the_explorer_folder_toasts(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("reveal-toast", cx);
+    let inside = h.folder.join("inside");
+    let outside =
+        std::env::temp_dir().join(format!("agentws-reveal-toast-out-{}", std::process::id()));
+    std::fs::create_dir_all(&inside).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    h.toggle_explorer();
+    h.cx.run_until_parked();
+    let workspace = h.workspace.clone();
+    let reveal = |h: &mut PanesHarness, folder: PathBuf| {
+        h.cx.update(|_, cx| {
+            let explorer = workspace.read(cx).explorer.clone();
+            explorer.update(cx, |explorer, cx| explorer.reveal(folder, cx));
+        });
+        h.cx.run_until_parked();
+        h.cx.update(|window, cx| window.notifications(cx).len())
+    };
+    assert_eq!(reveal(&mut h, inside), 0, "inside the root: no toast");
+    assert_eq!(
+        reveal(&mut h, outside.clone()),
+        1,
+        "outside the root: one toast"
+    );
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
 #[gpui::test]
 fn settings_page_hides_the_explorer_and_keeps_it_as_it_was(cx: &mut gpui_kit::TestAppContext) {
     let mut h = PanesHarness::new("settings-explorer", cx);
@@ -1640,7 +1670,7 @@ fn settings_page_hides_the_explorer_and_keeps_it_as_it_was(cx: &mut gpui_kit::Te
     let workspace = h.workspace.clone();
     h.cx.update(|_, cx| {
         let explorer = workspace.read(cx).explorer.clone();
-        assert!(explorer.update(cx, |explorer, cx| explorer.reveal(&sub, cx)));
+        explorer.update(cx, |explorer, cx| explorer.reveal(sub.clone(), cx));
     });
     // Folders are read off the UI thread.
     h.cx.run_until_parked();
@@ -1752,7 +1782,7 @@ fn explorer_dims_what_git_ignores_until_it_hides(cx: &mut gpui_kit::TestAppConte
     let workspace = h.workspace.clone();
     h.cx.update(|_, cx| {
         let explorer = workspace.read(cx).explorer.clone();
-        assert!(explorer.update(cx, |explorer, cx| explorer.reveal(&debug, cx)));
+        explorer.update(cx, |explorer, cx| explorer.reveal(debug.clone(), cx));
     });
     assert_eq!(
         dimmed(&mut h),

@@ -479,3 +479,44 @@ fn windows_names_refuse_drive_and_reserved_characters() {
         Ok("notes.md")
     );
 }
+
+#[test]
+fn a_slow_first_read_shows_loading_until_it_ends() {
+    let mut reads = FirstReads::default();
+    let folder = Path::new("/root/src");
+    reads.start(folder.to_path_buf(), "timer");
+    assert!(reads.is_pending(folder));
+    assert!(
+        !reads.is_loading(folder),
+        "nothing shows before the timer fires"
+    );
+    assert!(reads.show_loading(folder));
+    assert!(reads.is_loading(folder));
+    assert!(!reads.show_loading(folder), "shown once");
+    reads.finish(folder);
+    assert!(!reads.is_pending(folder) && !reads.is_loading(folder));
+}
+
+#[test]
+fn a_timer_firing_after_the_read_ended_shows_nothing() {
+    let mut reads = FirstReads::default();
+    let folder = Path::new("/root");
+    reads.start(folder.to_path_buf(), ());
+    reads.finish(folder);
+    assert!(!reads.show_loading(folder));
+    assert!(!reads.is_loading(folder));
+}
+
+#[test]
+fn collapsed_folders_and_a_new_root_drop_their_reads() {
+    let mut reads = FirstReads::default();
+    let (kept, collapsed) = (Path::new("/root"), Path::new("/root/sub"));
+    reads.start(kept.to_path_buf(), ());
+    reads.start(collapsed.to_path_buf(), ());
+    reads.show_loading(collapsed);
+    reads.retain(|folder| folder == kept);
+    assert!(reads.is_pending(kept));
+    assert!(!reads.is_pending(collapsed) && !reads.is_loading(collapsed));
+    reads.clear();
+    assert!(!reads.is_pending(kept));
+}

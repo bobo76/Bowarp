@@ -31,7 +31,6 @@ already has an item for caching the active `TerminalView`.
 
 ### Problem 6: [Low] small path checks on user actions
 
-- Explorer "reveal": `fs::canonicalize` twice (`file_explorer.rs:272`).
 - Markdown link click: `is_file` / `is_dir` / `exists` (`FileViewer::open_link`).
 - Settings save: `settings_file::is_file` canonicalizes two paths (`settings_file.rs:201`).
 

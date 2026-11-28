@@ -244,6 +244,10 @@ entry when the limitation is lifted.
   asks, and Resume restarts it (the new one, still empty, is dropped). The bar has no keyboard
   shortcut. The conversation is saved with the tab's next layout change, last command or the
   window closing, so after a crash an earlier conversation may be offered. Copilot CLI tabs can't resume.
+- File explorer loading: the "Loading…" row shows only for a folder's first read (expanded,
+  or shown after another root), 300 ms after it starts. A folder read again after a change keeps
+  showing its old entries, with no sign of the read, until the new ones come. A read is never
+  given up: a folder on a share that stopped answering shows "Loading…" until it is collapsed.
 - File explorer colors of changed files: git is asked again when an open folder's entries or
   files change, or the tab's folder changes; a commit, checkout or stash made while nothing
   in the open folders is written shows once something is, or the tab is selected again. A file
