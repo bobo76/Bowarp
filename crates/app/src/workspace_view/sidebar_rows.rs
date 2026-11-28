@@ -481,13 +481,6 @@ impl WorkspaceView {
         Some(SubagentChip {
             count,
             waiting,
-            // Only a turning ring keeps the clock running: not while one waits or the list is
-            // out.
-            step: if waiting == 0 && !expanded {
-                self.subagent_step(cx)
-            } else {
-                0
-            },
             expanded,
             on_toggle: Rc::new(move |_, cx| {
                 let _ = workspace.update(cx, |workspace, cx| workspace.toggle_subagents(id, cx));

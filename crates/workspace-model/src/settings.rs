@@ -80,6 +80,10 @@ pub struct Settings {
     /// working animation); off gives static indicators and no animation timers.
     #[serde(deserialize_with = "lenient")]
     pub activity_animations: FeatureSwitch<true>,
+    /// The title bar's performance readout (frames per second, slowest frame, this app's CPU
+    /// and memory). Off by default: it refreshes every second, even while idle.
+    #[serde(deserialize_with = "lenient")]
+    pub performance_readout: FeatureSwitch<false>,
     /// Master switch for Bowarp's command history: off stops collecting commands (memory and
     /// disk) and turns off the popup, inline suggestions and last-command capture and
     /// restoration. Stored data is kept. See [`crate::HistoryFeatures`].

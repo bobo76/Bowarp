@@ -35,6 +35,12 @@ entry when the limitation is lifted.
   tabs: X11 and Windows ignore a request from the active window. Windows flashes the taskbar
   button once. Programs that ring the bell in the selected tab, or a tab whose status is
   already Needs attention, ask nothing new.
+- The performance readout's CPU and memory are read on Windows and Linux only: other
+  platforms (macOS) show `–` for them, frames still count. Its frame time is the UI thread's
+  work for the window (render, layout, paint), not the GPU's, and leaves out the popups drawn
+  on top (history popup, terminal context menu); a frame drawn together with the readout's own
+  refresh is not counted (at most one a second), nor is the first frame after a minimized
+  window comes back.
 - Start failures: Retry in the empty state re-runs the launch as resolved at start, so a
   default shell changed meanwhile in Settings is not picked up by Retry (the launcher buttons
   and Ctrl+Shift+T use it). A folder named with `--remote` is not checked before connecting.
@@ -46,6 +52,14 @@ entry when the limitation is lifted.
 - Remote daemon on a Windows server: `agentws-server proxy` doesn't check which user owns the
   named pipe it connects to (Linux does). Another user can't open our pipe read/write, but
   could create the machine-wide name first while no daemon of ours runs.
+- Claude Code runs no hook on an interrupt (checked with 2.1.332: Esc or Ctrl+C mid-thinking,
+  mid-tool or on a permission prompt fires nothing, and no `idle_prompt` follows within
+  90 s), so the app reads the key itself: a bare Esc or Ctrl+C sent to a Working or Waiting
+  Claude Code tab shows Idle. An Esc that only closes one of Claude Code's own menus mid-turn
+  shows Idle too, until the next hook (the next tool call, prompt or notification) sets
+  Working again; a turn that ends without another hook stays Idle, which is then right. Keys
+  the app keeps (Esc closing the find bar or the history popup) change nothing. Copilot CLI
+  is left to its progress reports.
 - Agent status off (`agentws-hook` missing or the status listener could not start): Claude
   Code tabs fall back to output activity ("Status unavailable" when quiet) and a bell asks for
   attention as in a shell; a Copilot CLI permission prompt reads Working, not Needs attention,

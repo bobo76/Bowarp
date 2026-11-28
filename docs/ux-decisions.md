@@ -72,7 +72,7 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   title glyph, so never two animations): a rotating Lucide `LoaderCircle` in the attention
   triangle's slot, Working color, row only (cards, drag preview and collapsed groups stay
   static); the title shifts like it does for the triangle. Two animations in one row are
-  allowed (e.g. the working spinner and the subagent ring) [user, 2026-11-01, less annimations is better]. With "Activity animations" off it
+  allowed (e.g. the working spinner and the subagent list's spinners) [user, 2026-11-01, less annimations is better]. With "Activity animations" off it
   is the same icon, still. One shared `SpinnerClock` (`workspace_view/spinner_clock.rs`)
   steps it, and only while a turning spinner is drawn. [user: redraw rate and shared clock]
 - **"Status unavailable"** (agent hooks failed): Claude tabs only, replacing "No recent
@@ -119,21 +119,22 @@ Rejected: whole-window glass (contrast loss), translucent cell colors (agent UIs
   file) is rare and its wrong status ends with the run. Rejected: parsing the command line
   from the invocation (only the current line is available, multi-line and nested captures
   defeat it) for a near-empty case. [UX agent]
-- **Running subagents** show as their count inside a ring after the name (and after the pin),
-  where the "▸ N" chip was. The spinner before the name is gone, so the space left of the name
-  is only for the tab's own status (working spinner, attention triangle). The ring turns with
-  the shared spinner clock, in the same direction as the working spinner, in the Working color.
-  When any subagent waits for the user it becomes a closed, still circle in the attention color:
-  a different shape, not only a different color. While the list is out the ring is a closed,
-  still circle in the Working color: the list's spinners show the activity [user]. With
-  animations off the ring stands still, keeping its gap. A muted chevron before the ring folds
-  the indented list under the row (open by default, as group chevrons do); the ring itself is
-  part of the same click target, and its tooltip gives the counts. Ring and count look the same
-  whether the list is open or folded except for turning, so nothing moves when it is toggled.
-  List rows keep a small spinner or attention triangle per subagent, at the detail icon size.
-  Rows only, like the working spinner. Rejected: a badge on the icon tile (too small for a
-  digit, and it clashes with the status badge); a still count pill (it shows nothing moving when
-  subagents run in the background while the agent is idle). [UX agent, from user feedback]
+- **Running subagents** show as their bare count after the name (and after the pin), where the
+  "▸ N" chip was: no ring or circle around it, and no spinner, whether the list is out or folded
+  in [user, 2026-11-27]. The spinner before the name is gone, so the space left of the name is
+  only for the tab's own status (working spinner, attention triangle). The number is semibold
+  at the detail line's size (12 px), in the Working color, or in the attention color while any
+  subagent waits for the user (the chevron turns orange too). It sits left-aligned in a box two
+  digits wide, so a second digit does not move the name. A muted chevron before it folds the
+  indented list under the row (open by default, as group chevrons do); chevron and number are
+  one click target, and its tooltip gives the counts. Chevron and number look the same whether
+  the list is open or folded, so nothing moves when it is toggled. List rows keep a small
+  spinner or attention triangle per subagent, at the detail icon size: they are the only
+  subagent animation, so a folded list (or every subagent waiting) keeps no spinner clock
+  ticking. Rows only, like the working spinner. Rejected: a badge on the icon tile (too small
+  for a digit, and it clashes with the status badge). The earlier rejection of a still count
+  (it shows nothing moving when subagents run in the background while the agent is idle) and
+  the turning ring that replaced it are reversed by the user. [user, 2026-11-27]
 - **Hover card under the cursor when a hold ends** (rename, menu, dialog, drag) stays hidden
   until the pointer leaves the row, like Windows/VS Code tooltips. [UX agent]
 
@@ -391,3 +392,38 @@ never white. Dim blends toward the background on light palettes; Sepia gets its 
 colors (the default ones clash with its selection). Values: `term-core/src/palette.rs`. New
 tabs get `COLORFGBG`; it goes stale if the setting changes while a tab runs (known
 limitation). [UX agent]
+
+## Performance readout
+
+- **In the title bar, not a floating panel**: right-aligned before the window buttons, one
+  line of muted text with no colors for "bad" values. It covers no terminal text (agent status
+  lines sit at the bottom, right prompts at the right), shows on every page, in the viewer and
+  in full screen, keeps the opaque title bar (no opacity or blur question) and stays part of
+  the drag area (no pointer events, no tooltip). Its own cached entity so a refresh re-renders
+  only it. Rejected: a corner panel over the terminal (hides output, needs click-through and
+  a rule per page). [UX agent]
+- **Switch on the About page**, in a "Diagnostics" group under the version info (the page
+  already holds what bug reports quote); no "Advanced" page for one row. A Keyboard-page action
+  toggles the same saved setting and has **no default key**: every free Ctrl+Shift+letter
+  belongs to terminal programs, and this is a diagnostic. [UX agent]
+- **Off by default**, an exception to "a new feature's switch starts on" like the notification
+  sound: it is a diagnostic that does work while idle by design. [user: step text]
+- **Contents**: frames in the last second, the slowest frame of that second, CPU as a percent
+  of one core (idle-redraw bugs are a few percent of one core, invisible divided by the core
+  count; `top` reads the same way), and resident memory (Windows working set, Linux RSS), all
+  of this process only, not its shells or agents. Idle reads 0 fps: the readout's own refresh
+  frame is not counted. Placeholders show at once when turned on, filled by the first sample
+  about a second later; a platform without CPU/memory code shows placeholders for those. Fixed
+  field widths so the numbers don't jitter. [UX agent]
+- **App-wide, saved in settings.json, applies live** like other switches. Frames are per
+  window; CPU and memory per process (one sampler however many windows). No pause while
+  minimized unless a minimized window turns out to draw on each refresh. [UX agent]
+
+## Mark as ready for review
+
+- **Tab menu item "Mark as ready for review"**, after Reconnect/Restart and before Duplicate, no
+  shortcut; shown only on an Idle Claude Code or Copilot tab (in place too) that is not already
+  Ready for review. It is offered on the selected tab as well: the mark stays until the tab is
+  selected again (switching away and back, or re-clicking its row). Marking sends no toast,
+  sound or window-attention request; an in-place agent exiting keeps the mark. Not saved in
+  tabs.json. [pipeline]

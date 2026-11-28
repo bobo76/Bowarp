@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use gpui_kit::Keystroke;
+use gpui_kit::{Keystroke, Modifiers};
 use term_core::alacritty_terminal::term::TermMode;
 
 /// xterm modifier parameter when no modifier is held.
@@ -144,6 +144,19 @@ fn low_function_key_letter(key: &str) -> Option<char> {
         "f4" => 'S',
         _ => return None,
     })
+}
+
+/// Whether a keystroke is an agent's interrupt key: a bare Esc or Ctrl+C.
+pub fn is_interrupt_key(keystroke: &Keystroke) -> bool {
+    let ctrl_only = Modifiers {
+        control: true,
+        ..Modifiers::default()
+    };
+    match keystroke.key.as_str() {
+        "escape" => keystroke.modifiers == Modifiers::default(),
+        "c" => keystroke.modifiers == ctrl_only,
+        _ => false,
+    }
 }
 
 /// The C0 control byte for Ctrl+key, following xterm's conventions.

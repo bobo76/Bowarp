@@ -140,6 +140,20 @@ impl AgentState {
         }
     }
 
+    /// The user sent the agent its interrupt key (Esc or Ctrl+C) at `at`. Claude Code runs no
+    /// hook when that ends a turn, so with full activity hooks a working or waiting agent is
+    /// idle from then on, and hooks that started earlier no longer apply; the next hook sets
+    /// the status as usual. Progress-reporting providers are left to their progress.
+    pub fn interrupt(&mut self, at: u64, policy: ActivityPolicy) {
+        let busy = matches!(
+            self.status,
+            AgentStatus::Working | AgentStatus::NeedsAttention
+        );
+        if busy && policy == ActivityPolicy::FullHooks {
+            self.apply(HookEvent::Stopped, at);
+        }
+    }
+
     /// Apply Copilot's progress: it works while progress is shown, and is idle once removed.
     /// Copilot keeps reporting progress every 5 s while it waits for the user, so shown
     /// progress leaves Waiting in place; removed progress (the turn ended) clears it. Delayed

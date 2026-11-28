@@ -216,6 +216,10 @@ pub struct OpenFileRequest {
 
 pub struct LastCommandChanged;
 
+/// The user changed the agent status from this tab (an interrupt key): the window must not
+/// ask for attention over it.
+pub struct StatusSeen;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StatusReporting {
     Hooks,
@@ -244,8 +248,9 @@ pub struct TerminalView {
     /// The agent's conversation, saved with the tab to resume it at the next start.
     conversation: Conversation,
     mode: AgentModeState,
-    /// The agent finished a turn while the tab was hidden; cleared when it is shown. Kept
-    /// after an in-place agent's run ends (the shell tab shows Ready for review).
+    /// The agent finished a turn while the tab was hidden, or the user marked it Ready for
+    /// review (tab menu); cleared when it is shown. Kept after an in-place agent's run ends
+    /// (the shell tab shows Ready for review).
     finished_unseen: bool,
     /// An agent running in place in this shell tab (its `N` mark until its `X` end mark, else
     /// the command's `D`).
@@ -751,6 +756,23 @@ impl TerminalView {
     /// working. Tool calls keep the lap running; waiting for a permission decision ends it.
     pub fn working_for(&self, now: Instant) -> Option<Duration> {
         self.agent.as_ref()?.working_for(now)
+    }
+
+    /// Whether "Mark as ready for review" applies: an agent (spawned or in place) whose turn
+    /// ended. Only an agent with a status shows Idle; Ready for review is another status.
+    pub fn can_mark_ready(&self) -> bool {
+        self.tab_status() == TabStatus::Idle
+    }
+
+    /// Put back the Ready for review that selecting the tab cleared. It lasts until the tab is
+    /// selected again (`show`), the agent's status changes (`update_agent`) or its in-place
+    /// run starts over or the shell exits.
+    pub fn mark_ready_for_review(&mut self, cx: &mut Context<Self>) {
+        if !self.can_mark_ready() {
+            return;
+        }
+        self.finished_unseen = true;
+        cx.emit(TabChanged);
     }
 
     /// Stop painting the view; only the selected tab is painted.
@@ -1442,7 +1464,26 @@ impl TerminalView {
             return false;
         };
         self.send_input(bytes, cx);
+        if keys::is_interrupt_key(keystroke) {
+            self.on_interrupt_key(cx);
+        }
         true
+    }
+
+    /// Claude Code runs no hook when Esc or Ctrl+C interrupts its turn, so the forwarded key
+    /// ends a working or waiting turn here. The user is looking at the tab: no notice, no
+    /// Ready for review, and the workspace records the change as seen (`StatusSeen`).
+    fn on_interrupt_key(&mut self, cx: &mut Context<Self>) {
+        if !self.visible || self.process != ProcessState::Running {
+            return;
+        }
+        let Some(agent_id) = self.status_kind().agent() else {
+            return;
+        };
+        let at = agent_status::now_micros();
+        if self.update_agent(|agent| agent.interrupt(at, agent_id.activity()), cx) {
+            cx.emit(StatusSeen);
+        }
     }
 
     fn on_paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
@@ -1499,6 +1540,7 @@ impl EventEmitter<RemoteAction> for TerminalView {}
 impl EventEmitter<ResumeConversation> for TerminalView {}
 impl EventEmitter<ResumeFailed> for TerminalView {}
 impl EventEmitter<RestartTab> for TerminalView {}
+impl EventEmitter<StatusSeen> for TerminalView {}
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {

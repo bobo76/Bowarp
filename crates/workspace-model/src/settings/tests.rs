@@ -879,6 +879,25 @@ fn feature_switches_with_a_wrong_type_use_their_default() {
 }
 
 #[test]
+fn performance_readout_defaults_off_and_round_trips() {
+    assert!(!Settings::default().performance_readout.is_on());
+    assert!(
+        !Settings::from_json(r#"{"performance_readout": "yes"}"#)
+            .unwrap()
+            .performance_readout
+            .is_on()
+    );
+    let on = Settings {
+        performance_readout: FeatureSwitch::new(true),
+        ..Settings::default()
+    };
+    let json = on.to_json().unwrap();
+    let value: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["performance_readout"], Value::Bool(true));
+    assert_eq!(Settings::from_json(&json).unwrap(), on);
+}
+
+#[test]
 fn a_switch_defaulting_off_reads_missing_or_wrong_typed_as_off() {
     #[derive(Debug, Default, PartialEq, Deserialize)]
     #[serde(default)]

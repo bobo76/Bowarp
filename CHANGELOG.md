@@ -5,6 +5,20 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+## 0.4.9
+
+- Claude Code tabs: interrupting a turn with Esc or Ctrl+C shows the tab Idle at once; before,
+  it stayed Working, since Claude Code reports nothing on an interrupt.
+- Subagents: an agent tab's subagent count is a bare number after the name (blue, orange
+  while one waits for you), no longer in a ring, and it stands still whether the list is out
+  or folded in; a folded list no longer redraws the window several times a second.
+- Tab menu: "Mark as ready for review" on an Idle Claude Code or Copilot tab puts back the
+  green check, so a finished turn you only glanced at stays in Ctrl+Shift+A's Ready for
+  review pass and the group card's count until you select the tab again.
+- Performance readout: Settings → About → Diagnostics → "Performance readout" (off by
+  default) shows the window's frames per second, its slowest frame, and the app's CPU and
+  memory at the right of the title bar, refreshed every second. A key can be bound to
+  `TogglePerformanceReadout` on the Keyboard page.
 - Terminal links: paths holding CJK characters or emoji are now detected (Ctrl+click).
 - Remote tabs: a paste over 16 MB arrives whole; before, it silently stopped all typing in
   the tab until the connection dropped about 45 s later.

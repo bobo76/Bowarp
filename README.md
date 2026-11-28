@@ -284,11 +284,11 @@ No card opens while a tab
 is dragged, a name is edited, or a menu or dialog is open; a card hidden that way comes back
 after the pointer leaves the row and hovers it again.
 
-While a Claude Code or Copilot CLI agent runs subagents, its row shows their count in a ring
-after the name: in the Working color, turning only while the list is folded in, or a still
-orange circle while one waits for you. Their list shows under the row: each subagent's
-description (or its type) with a spinner, or a warning mark while it waits for a permission or
-an answer. Click the chevron and ring to fold the list in or out (per tab, not saved). A
+While a Claude Code or Copilot CLI agent runs subagents, its row shows their count after the
+name: a blue number, orange while one waits for you, the same with the list out or folded in.
+Their list shows under the row: each subagent's description (or its type) with a spinner, or a
+warning mark while it waits for a permission or an answer. Click the chevron or the number to
+fold the list in or out (per tab, not saved). A
 subagent shows from its `SubagentStart` hook to its `SubagentStop`; the tab keeps its own status
 (Idle once the main turn ends, even while background subagents work).
 
@@ -391,10 +391,16 @@ Run the extension's tests with `node --test .\crates\app\copilot-extension\bridg
 
 Ready for review marks an unread Working-to-Idle transition, not confirmation that the
 agent's work is correct. Selecting the tab acknowledges it and restores Idle; a turn that
-finishes in the selected tab stays Idle. New Working or Needs attention reports replace
+finishes in the selected tab stays Idle. The tab menu's "Mark as ready for review" puts it
+back on an Idle agent tab you glanced at, the selected one included, without a notification;
+it lasts until you next select the tab. New Working or Needs attention reports replace
 the unread status. The sidebar, tab hover card, group totals and completion toast use the
 same status; there is no extra completion notice. When an agent running in place in a shell
 tab exits, a pending Ready for review stays until you select the tab.
+
+Claude Code runs no hook when you interrupt it, so Esc or Ctrl+C sent to a Working or Waiting
+Claude Code tab (spawned or run in place) shows Idle at once, without a toast or Ready for
+review; its next hook sets the status again.
 
 A tab whose program rings the bell (BEL: Copilot, scripts, anything without status hooks)
 while you are on another tab shows Needs attention until you select it. Claude Code tabs with
@@ -456,7 +462,9 @@ shows), "Settings — Agent Workspace" or "Git — Agent Workspace" while those 
 "Agent Workspace" with no tab open. While N tabs need attention (the selected one included,
 Ready for review not counted) it starts with "(N) ", whatever the notifications switch says.
 
-Right-click a row or use its `⋮` button for the tab menu: duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
+Right-click a row or use its `⋮` button for the tab menu: "Mark as ready for review" (only on an
+Idle Claude Code or Copilot tab, also one running in place: puts back the green check, like an
+email's "mark as unread", until you next select the tab), duplicate (Ctrl+Shift+D), pin (pinned tabs stay at the top
 and are spared by "Close other tabs" / "Close tabs below"), copy branch name / pane title / working
 directory, rename (F2 in the tab list; Enter keeps, Escape cancels, an empty name goes back to
 the program's title), "Reset name" (only on a renamed tab: back to the program's title, such
@@ -699,7 +707,14 @@ open it is disabled: there is no viewer to show it in); opening a
 file from the explorer while the page shows also goes back to the tab. A banner on the page says
 when the file can't be read (the defaults apply until it is fixed or a change moves it to
 `settings.json.bak`) or a change couldn't be saved. The About page shows the version and the
-config folder.
+config folder. Its Diagnostics group has the **Performance readout** switch (off by default,
+`"performance_readout"`; also the `TogglePerformanceReadout` action, which has no default
+key): one line of muted text at the right of the title bar, before the window buttons,
+`0 fps · – ms max · 0.3% CPU · 182 MB`. That is this window's frames in the last second
+(the readout's own refresh is not counted, so an idle window reads 0), the slowest of them,
+this app's CPU as a percent of one core (above 100 % when it uses several) and its resident
+memory (working set on Windows), not counting its shells and agents. It refreshes every
+second; off, it does nothing.
 
 The Appearance page's Theme dropdown (Dark / Light / Sepia) changes the UI live and persists
 the choice (`"ui_theme": "dark"`, `"light"` or `"sepia"` in `settings.json`, default dark).
@@ -900,7 +915,8 @@ adds Shift: `ctrl-V` is `ctrl-shift-v`); a space separates the keystrokes of a s
 two have no default key); `NewTab`, `DuplicateTab`, `CloseTab`, `NextTab`, `PreviousTab`,
 `SelectTab1` to
 `SelectTab9`, `ToggleSidebar`, `ToggleExplorer`, `SearchTabs`, `NextAttention`,
-`ToggleFullScreen` (anywhere in the window); `RenameTab` (only while the tab list has the
+`ToggleFullScreen`, `TogglePerformanceReadout` (anywhere in the window; the last has no
+default key); `RenameTab` (only while the tab list has the
 keyboard). `terminal::Paste` and `workspace::NewTab` also
 work. An entry that can't be used (an unknown action, a key that can't be read, a value that
 is neither a name nor `null`, `null` for a key with no default) is skipped and named in a

@@ -10,6 +10,27 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Interrupting Claude Code (Windows, Linux), in a spawned Claude Code tab and with `claude`
+  run in place in a bash tab: Esc and Ctrl+C mid-thinking and during `Bash(sleep 20)`, and
+  Esc on a permission prompt, turn the tab Idle at once, with no toast, sound, taskbar flash
+  or Ready for review, and the hover card's "Working · …" lap ends; the next prompt shows
+  Working again. Esc with the find bar open only closes it (the tab stays Working).
+- "Mark as ready for review" (Windows, Linux) with a real Claude Code and a real Copilot tab,
+  and with `claude` run in place in a bash tab: after a finished turn, right-click the tab:
+  the item shows only while it is Idle (not Working, Waiting, already Ready for review, on a
+  shell tab). Choosing it gives the green check with no toast, sound or taskbar flash; the
+  group card's Ready for review count goes up; Ctrl+Shift+A from another tab reaches it;
+  selecting it clears it. Marked in place, then `/exit`: the check stays until selected.
+- Performance readout (Windows and Linux): Settings → About → Diagnostics → "Performance
+  readout" on shows placeholders (`– fps`) at the right of the title bar at once, filled
+  about a second later; off removes it. Bind `TogglePerformanceReadout` to a key in
+  `"keybindings"`: the key turns it on and off, and the About switch follows. An idle window
+  reads 0 fps; typing, scrolling output and dragging a divider raise it; the slowest frame is
+  plausible. CPU and MB match Task Manager's (Details: CPU per core × cores, working set) /
+  `top` (%CPU, RES) for the app process. The title bar still drags and double-clicks over
+  the readout; the numbers don't shift sideways as they change; a minimized window costs
+  nothing visible (no CPU climb) and reads sensibly when restored; a second window counts its
+  own frames.
 - Windows: with a tab in a git repository and the explorer open, turn Settings → Git → "Git
   status in tabs and explorer" off: the tab shows its folder, the explorer's colors and
   dimming go, the hover card has no `+N`; on again brings them back.
@@ -216,12 +237,15 @@ Subagent list (Claude Code 2.1.316, Copilot CLI 1.0.105):
 
 - Real Claude Code: a background subagent (`run_in_background`) shows under the tab with its
   description while the main tab goes Idle, and goes away when it finishes; a subagent's
-  permission prompt turns its row and the count ring orange. Killing a background agent from the
-  task panel removes it (else note it in docs/known-limitations.md).
+  permission prompt turns its row and the subagent count orange. Killing a background agent
+  from the task panel removes it (else note it in docs/known-limitations.md).
 - Real Copilot CLI: a sync and a background `task` subagent show and go away; under
   `--autopilot` its permission requests do not mark it waiting.
-- Windows: the same, with the turning count ring (its digit centered) and the list under the
-  row, folded in and out by clicking the ring.
+- Windows: the same, with the bare count after the name (blue, orange while one waits; no
+  ring, still whether the list is out or folded in, a second digit not moving the name) and
+  the list under the row, folded in and out by clicking the chevron or the number.
+- Real Claude Code on Linux: with the list folded in and only background subagents running
+  (tab Idle), the bare count shows and nothing animates (CPU stays at idle).
 
 Agent running in place in a shell tab (from its `N` mark until the command's `D`):
 
@@ -446,8 +470,6 @@ its items), regrouped into steps, in order:
   keyboard leaves focus on an element no longer drawn (only the tab list itself hands the
   keyboard back, `toggle_sidebar` checks `is_focused`): check the whole sidebar
   (`contains_focused` plus the search input's focus handle) and focus the terminal.
-- Interrupting Claude Code (Esc) leaves the tab Working until the `idle_prompt` notification
-  (~60 s); no hook fires on interrupt.
 - Long durations on the sidebar and hover card ("Running for", lap times such as "Working · 2m 14s"):
   - Under a day: as today (seconds kept).
   - A day or more: drop the seconds, add days ("1d 3h 12m").

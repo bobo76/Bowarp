@@ -36,7 +36,8 @@ pub enum RunEnd {
 pub struct TabAtEnd {
     /// The tab is the selected one, on screen.
     pub visible: bool,
-    /// The agent finished a turn while the tab was hidden (Ready for review).
+    /// The agent finished a turn while the tab was hidden, or the tab was marked (Ready for
+    /// review).
     pub finished_unseen: bool,
 }
 

@@ -23,6 +23,8 @@ pub enum TabCommand {
     Reconnect,
     /// Start an exited tab's program again.
     Restart,
+    /// Show an idle agent tab as Ready for review again, until it is selected next.
+    MarkReady,
     Duplicate,
     TogglePin,
     NewGroup,
@@ -47,6 +49,8 @@ pub struct TabMenuState {
     pub can_reconnect: bool,
     /// The tab's program exited: "Restart" comes first.
     pub can_restart: bool,
+    /// An idle agent tab not Ready for review: "Mark as ready for review" is offered.
+    pub can_mark_ready: bool,
     pub pinned: bool,
     /// The tab has a custom name, so "Reset name" is offered.
     pub has_custom_name: bool,
@@ -89,6 +93,14 @@ pub fn build(
         .when(state.can_restart, |menu| {
             menu.item(item("Restart", TabCommand::Restart, true))
                 .separator()
+        })
+        .when(state.can_mark_ready, |menu| {
+            menu.item(item(
+                "Mark as ready for review",
+                TabCommand::MarkReady,
+                true,
+            ))
+            .separator()
         })
         .item(
             PopupMenuItem::element(|_, cx| {

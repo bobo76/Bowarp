@@ -974,6 +974,18 @@ fn about_groups(cx: &App) -> Vec<SettingGroup> {
             )
             .keywords(["source", "github", "website"]),
         ]),
+        SettingGroup::new().title("Diagnostics").item(
+            switch_row(
+                "Performance readout",
+                "Shows frames per second, the slowest frame, and this app's CPU and memory in \
+                 the title bar, refreshed every second. Does nothing when off.",
+                SettingsField::new(
+                    |settings| settings.performance_readout.is_on(),
+                    |settings, value| settings.performance_readout = FeatureSwitch::new(value),
+                ),
+            )
+            .keywords(["fps", "frames", "cpu", "memory", "performance", "debug"]),
+        ),
     ]
 }
 

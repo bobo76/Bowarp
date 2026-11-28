@@ -157,3 +157,20 @@ fn paste_uses_brackets_when_enabled() {
 fn paste_converts_newlines_without_brackets() {
     assert_eq!(paste_bytes("a\r\nb\nc", TermMode::empty()), b"a\rb\rc");
 }
+
+#[test]
+fn only_a_bare_esc_or_ctrl_c_is_an_interrupt_key() {
+    let none = Modifiers::default();
+    let interrupt = |key: &str, modifiers| is_interrupt_key(&keystroke(key, modifiers, None));
+    assert!(interrupt("escape", none));
+    assert!(interrupt("c", ctrl()));
+    assert!(!interrupt("escape", shift()));
+    assert!(!interrupt("escape", alt()));
+    assert!(!interrupt("c", none));
+    let ctrl_shift = Modifiers {
+        shift: true,
+        ..ctrl()
+    };
+    assert!(!interrupt("c", ctrl_shift), "Ctrl+Shift+C copies");
+    assert!(!interrupt("d", ctrl()));
+}

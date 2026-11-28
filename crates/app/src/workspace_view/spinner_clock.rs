@@ -54,6 +54,14 @@ impl SpinnerClock {
     }
 }
 
+#[cfg(test)]
+impl SpinnerClock {
+    /// Whether a tick is scheduled, i.e. the last frame drew a turning spinner.
+    pub(super) fn ticking(&self) -> bool {
+        self.tick.is_some()
+    }
+}
+
 fn next_step(step: u8) -> u8 {
     (step + 1) % WORKING_SPIN_STEPS
 }

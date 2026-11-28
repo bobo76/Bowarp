@@ -17,7 +17,7 @@ fn wait_for_exit(session: &term_core::Session) {
 #[test]
 fn default_bindings_name_workspace_actions() {
     let bindings = default_bindings();
-    assert_eq!(bindings.len(), 24);
+    assert_eq!(bindings.len(), 25);
     assert!(
         bindings
             .iter()
@@ -2127,6 +2127,41 @@ fn restoring_no_tab_keeps_the_saved_groups(cx: &mut gpui_kit::TestAppContext) {
 }
 
 #[gpui::test]
+fn performance_readout_follows_its_switch_and_action_live(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("perf-readout", cx);
+    let workspace = h.workspace.clone();
+    let shown = |h: &mut PanesHarness| {
+        workspace.read_with(&h.cx, |workspace, _| workspace.perf_readout.is_some())
+    };
+    let switch_to = |h: &mut PanesHarness, on: bool| {
+        h.cx.update(|_, cx| {
+            settings_file::update(cx, |settings| {
+                settings.performance_readout = FeatureSwitch::new(on);
+            });
+        });
+        h.cx.run_until_parked();
+    };
+    assert!(!shown(&mut h), "off by default");
+    switch_to(&mut h, true);
+    assert!(shown(&mut h));
+    h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    let counted = workspace.read_with(&h.cx, |workspace, _| {
+        workspace.perf_readout.as_ref().unwrap().frames_counted()
+    });
+    assert!(counted >= 1, "a drawn frame counts");
+    switch_to(&mut h, false);
+    assert!(!shown(&mut h), "off drops the readout");
+
+    h.cx.dispatch_action(TogglePerformanceReadout);
+    h.cx.run_until_parked();
+    assert!(shown(&mut h), "the action turns it on");
+    assert!(h.cx.update(|_, cx| settings_file::performance_readout(cx)));
+    h.cx.dispatch_action(TogglePerformanceReadout);
+    h.cx.run_until_parked();
+    assert!(!shown(&mut h), "and off again");
+}
+
+#[gpui::test]
 fn the_tab_list_takes_the_keyboard_from_the_search_field(cx: &mut gpui_kit::TestAppContext) {
     let mut h = PanesHarness::new("tab-list-keys", cx);
     let workspace = h.workspace.clone();
@@ -2714,6 +2749,318 @@ fn window_title_and_attention_follow_the_tabs(cx: &mut gpui_kit::TestAppContext)
     ring_first(&mut h);
     assert_eq!(title(&mut h), "(1) other \u{2014} Agent Workspace");
     assert_eq!(requests(&mut h), 1);
+}
+
+/// "Mark as ready for review": offered only on an idle agent tab, it shows Ready for review on
+/// the selected tab too, joins the attention pass and clears when the tab is selected again;
+/// marking asks the OS for no attention.
+#[cfg(unix)]
+#[gpui::test]
+fn mark_as_ready_for_review_lasts_until_the_tab_is_selected_again(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use agent_status::AgentReport;
+    use term_core::SessionEvent;
+    use workspace_model::agents::CLAUDE;
+
+    let mut h = PanesHarness::new("mark-ready", cx);
+    let workspace = h.workspace.clone();
+    // A second tab, selected, with Claude's hooks, running Claude in place.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let mut spec = workspace.tabs[0].spec.clone();
+            let shell_env = CLAUDE.hook_artifact_plan().shell_env;
+            spec.env.insert(shell_env.into(), "artifact".into());
+            workspace.open_tab(spec, window, cx).unwrap();
+            wait_for_exit(&workspace.tabs[1].view.read(cx).session);
+        })
+    });
+    h.cx.run_until_parked();
+    let ids: Vec<u64> = workspace.read_with(&h.cx, |w, _| w.tabs.iter().map(|t| t.id).collect());
+    let agent = workspace.read_with(&h.cx, |w, _| w.tabs[1].view.clone());
+    let report = |h: &mut PanesHarness, name: &str| {
+        let report = AgentReport {
+            event_name: name.into(),
+            ..AgentReport::default()
+        };
+        h.cx.update(|_, cx| agent.update(cx, |view, cx| view.apply_report(&report, 1, cx)));
+        h.cx.run_until_parked();
+    };
+    let offered = |h: &mut PanesHarness, id: u64| {
+        h.workspace.read_with(&h.cx, |workspace, cx| {
+            workspace.tab_menu_state(id, cx).unwrap().can_mark_ready
+        })
+    };
+    let status = |h: &mut PanesHarness| h.cx.update(|_, cx| agent.read(cx).tab_status());
+    h.cx.update(|_, cx| {
+        agent.update(cx, |view, cx| {
+            view.revive_for_test();
+            view.dispatch_test_event(SessionEvent::CommandStarted(Some("claude".into())), cx);
+            view.dispatch_test_event(SessionEvent::AgentStarted(CLAUDE), cx);
+        })
+    });
+    report(&mut h, "UserPromptSubmit");
+    assert_eq!(status(&mut h), TabStatus::Working);
+    assert!(!offered(&mut h, ids[1]), "not while Working");
+    assert!(!offered(&mut h, ids[0]), "not on a shell tab");
+    report(&mut h, "Stop");
+    assert_eq!(status(&mut h), TabStatus::Idle, "seen: the tab is selected");
+    assert!(offered(&mut h, ids[1]));
+
+    let requests = |h: &mut PanesHarness| {
+        h.workspace
+            .read_with(&h.cx, |workspace, _| workspace.attention_requests)
+    };
+    let before = requests(&mut h);
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |w, cx| {
+            w.run_tab_command(ids[1], TabCommand::MarkReady, window, cx)
+        })
+    });
+    h.cx.run_until_parked();
+    assert_eq!(
+        status(&mut h),
+        TabStatus::ReadyForReview,
+        "kept on the selected tab"
+    );
+    assert!(
+        !offered(&mut h, ids[1]),
+        "not when already Ready for review"
+    );
+    assert_eq!(requests(&mut h), before, "marking asks for no attention");
+
+    // Ctrl+Shift+A from the other tab finds it, and selecting it clears the mark.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |w, cx| {
+            w.activate(0, window, cx);
+            w.jump_to_attention(window, cx);
+        })
+    });
+    h.cx.run_until_parked();
+    assert_eq!(workspace.read_with(&h.cx, |w, _| w.active), 1);
+    assert_eq!(status(&mut h), TabStatus::Idle, "cleared by the selection");
+    assert!(offered(&mut h, ids[1]), "offered again");
+
+    // A new turn ends the mark: the selected tab is seen, so it ends Idle.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |w, cx| {
+            w.run_tab_command(ids[1], TabCommand::MarkReady, window, cx)
+        })
+    });
+    h.cx.run_until_parked();
+    assert_eq!(status(&mut h), TabStatus::ReadyForReview);
+    report(&mut h, "UserPromptSubmit");
+    assert_eq!(
+        status(&mut h),
+        TabStatus::Working,
+        "the mark ends with the next turn"
+    );
+    report(&mut h, "Stop");
+    assert_eq!(status(&mut h), TabStatus::Idle);
+}
+
+/// Claude Code runs no hook when Esc or Ctrl+C interrupts it: the key forwarded to it ends a
+/// working or waiting turn at once, without asking for attention or showing Ready for review,
+/// and the next hook sets the status again. An Esc the app keeps (closing the find bar) and
+/// any other key leave the status alone.
+#[cfg(unix)]
+#[gpui::test]
+fn an_interrupt_key_sent_to_claude_ends_its_turn_until_the_next_hook(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use agent_status::AgentReport;
+    use term_core::SessionEvent;
+    use workspace_model::agents::CLAUDE;
+
+    let mut h = PanesHarness::new("interrupt-key", cx);
+    let workspace = h.workspace.clone();
+    // A second tab, selected, with Claude's hooks, running Claude in place.
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let mut spec = workspace.tabs[0].spec.clone();
+            let shell_env = CLAUDE.hook_artifact_plan().shell_env;
+            spec.env.insert(shell_env.into(), "artifact".into());
+            workspace.open_tab(spec, window, cx).unwrap();
+            wait_for_exit(&workspace.tabs[1].view.read(cx).session);
+        })
+    });
+    h.cx.run_until_parked();
+    let agent = workspace.read_with(&h.cx, |w, _| w.tabs[1].view.clone());
+    h.cx.update(|window, cx| {
+        agent.update(cx, |view, cx| {
+            view.revive_for_test();
+            view.dispatch_test_event(SessionEvent::CommandStarted(Some("claude".into())), cx);
+            view.dispatch_test_event(SessionEvent::AgentStarted(CLAUDE), cx);
+        });
+        window.focus(&agent.focus_handle(cx), cx);
+    });
+    let report = |h: &mut PanesHarness, name: &str| {
+        let report = AgentReport {
+            event_name: name.into(),
+            ..AgentReport::default()
+        };
+        let at = agent_status::now_micros();
+        h.cx.update(|_, cx| agent.update(cx, |view, cx| view.apply_report(&report, at, cx)));
+        h.cx.run_until_parked();
+    };
+    let press = |h: &mut PanesHarness, keys: &str| {
+        h.cx.update(|window, cx| window.draw(cx).clear(cx));
+        h.cx.simulate_keystrokes(keys);
+        h.cx.run_until_parked();
+    };
+    let status = |h: &mut PanesHarness| h.cx.update(|_, cx| agent.read(cx).tab_status());
+    let requests = |h: &mut PanesHarness| {
+        h.workspace
+            .read_with(&h.cx, |workspace, _| workspace.attention_requests)
+    };
+
+    report(&mut h, "UserPromptSubmit");
+    assert_eq!(status(&mut h), TabStatus::Working);
+    let before = requests(&mut h);
+    press(&mut h, "x");
+    assert_eq!(
+        status(&mut h),
+        TabStatus::Working,
+        "other keys change nothing"
+    );
+    press(&mut h, "escape");
+    assert_eq!(
+        status(&mut h),
+        TabStatus::Idle,
+        "seen: not Ready for review"
+    );
+    assert_eq!(
+        requests(&mut h),
+        before,
+        "the user's own key asks for no attention"
+    );
+    let working_for =
+        h.cx.update(|_, cx| agent.read(cx).working_for(Instant::now()));
+    assert_eq!(working_for, None, "the lap ends as on Stop");
+    report(&mut h, "PreToolUse");
+    assert_eq!(
+        status(&mut h),
+        TabStatus::Working,
+        "the next hook sets it again"
+    );
+
+    press(&mut h, "ctrl-c");
+    assert_eq!(status(&mut h), TabStatus::Idle);
+    assert_eq!(requests(&mut h), before);
+    report(&mut h, "PermissionRequest");
+    assert_eq!(status(&mut h), TabStatus::NeedsAttention);
+    // The hook asks (a test window is never active); the key that answers it does not.
+    let before = requests(&mut h);
+    press(&mut h, "escape");
+    assert_eq!(
+        status(&mut h),
+        TabStatus::Idle,
+        "Esc denies and stops the turn"
+    );
+    press(&mut h, "escape");
+    assert_eq!(status(&mut h), TabStatus::Idle, "an idle agent stays idle");
+    assert_eq!(requests(&mut h), before);
+
+    report(&mut h, "UserPromptSubmit");
+    press(&mut h, "ctrl-shift-f");
+    press(&mut h, "escape");
+    assert_eq!(
+        status(&mut h),
+        TabStatus::Working,
+        "an Esc closing the find bar is not sent"
+    );
+}
+
+/// The subagent count is a bare, still number: folding the list in leaves no spinner turning
+/// (the shared clock stops), and the chip keeps its width whether the list is out or folded in
+/// and from one digit to two.
+#[cfg(unix)]
+#[gpui::test]
+fn the_subagent_count_is_still_and_keeps_its_width(cx: &mut gpui_kit::TestAppContext) {
+    use agent_status::AgentReport;
+    use term_core::SessionEvent;
+    use workspace_model::agents::CLAUDE;
+
+    let mut h = PanesHarness::new("subagent-count", cx);
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let mut spec = workspace.tabs[0].spec.clone();
+            let shell_env = CLAUDE.hook_artifact_plan().shell_env;
+            spec.env.insert(shell_env.into(), "artifact".into());
+            workspace.open_tab(spec, window, cx).unwrap();
+            wait_for_exit(&workspace.tabs[1].view.read(cx).session);
+            // Animations on, as on a hardware-rendered, visible window.
+            workspace.pulse_running = true;
+            workspace.window_visible = true;
+        })
+    });
+    h.cx.run_until_parked();
+    let id = workspace.read_with(&h.cx, |w, _| w.tabs[1].id);
+    let agent = workspace.read_with(&h.cx, |w, _| w.tabs[1].view.clone());
+    h.cx.update(|_, cx| {
+        agent.update(cx, |view, cx| {
+            view.revive_for_test();
+            view.dispatch_test_event(SessionEvent::CommandStarted(Some("claude".into())), cx);
+            view.dispatch_test_event(SessionEvent::AgentStarted(CLAUDE), cx);
+        })
+    });
+    let start = |h: &mut PanesHarness, from: usize, to: usize| {
+        h.cx.update(|_, cx| {
+            agent.update(cx, |view, cx| {
+                for n in from..to {
+                    let report = AgentReport {
+                        event_name: "SubagentStart".into(),
+                        subagent: Some(format!("a{n}")),
+                        ..AgentReport::default()
+                    };
+                    view.apply_report(&report, n as u64 + 1, cx);
+                }
+            })
+        });
+        h.cx.run_until_parked();
+    };
+    let set_folded = |h: &mut PanesHarness, folded: bool| {
+        h.workspace.update(&mut h.cx, |workspace, cx| {
+            if folded {
+                workspace.folded_subagents.insert(id);
+            } else {
+                workspace.folded_subagents.remove(&id);
+            }
+            cx.notify();
+        });
+        h.cx.run_until_parked();
+        h.cx.update(|window, cx| window.draw(cx).clear(cx));
+    };
+    let ticking = |h: &mut PanesHarness| {
+        h.workspace
+            .read_with(&h.cx, |workspace, _| workspace.spinner_clock.ticking())
+    };
+    let chip_width = |h: &mut PanesHarness| {
+        h.cx.debug_bounds("sidebar-subagents-1")
+            .expect("the chip is drawn")
+            .size
+            .width
+    };
+
+    start(&mut h, 0, 1);
+    set_folded(&mut h, false);
+    assert!(ticking(&mut h), "the list's spinners turn");
+    let expanded = cfg!(debug_assertions).then(|| chip_width(&mut h));
+    set_folded(&mut h, true);
+    assert!(
+        !ticking(&mut h),
+        "folded in, nothing turns: the count stands still"
+    );
+    if let Some(expanded) = expanded {
+        assert_eq!(chip_width(&mut h), expanded, "nothing moves on toggle");
+    }
+    start(&mut h, 1, 12);
+    set_folded(&mut h, true);
+    assert!(!ticking(&mut h));
+    if let Some(expanded) = expanded {
+        assert_eq!(chip_width(&mut h), expanded, "a second digit keeps the box");
+    }
 }
 
 /// A first tab that would not start leaves the window open with the error in the empty state:

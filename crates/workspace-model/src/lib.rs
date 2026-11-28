@@ -8,7 +8,7 @@
 //! shell commands run in the app (history), the shell integration marks (OSC 133) in a shell's
 //! output, the progress reports (OSC 9;4) in a program's output, how a running command is
 //! labeled and badged, which tabs closing would interrupt, which clipboard writes wait for the
-//! user, how far the mouse wheel scrolls,
+//! user, how far the mouse wheel scrolls, the performance readout's figures,
 //! the About dialog's version line, the user's settings file and keyboard shortcuts, and the
 //! window background's opacity and blur. No UI
 //! dependency.
@@ -44,6 +44,7 @@ mod notification_features;
 mod osc133;
 pub mod pane_width;
 mod paste_warning;
+mod perf_stats;
 mod platform;
 mod progress;
 mod remote_hosts;
@@ -117,6 +118,11 @@ pub use location::{Location, display_path};
 pub use notification_features::{NotificationFeatures, ToastKind, exit_toast_kind};
 pub use osc133::{CommandLine, Osc133Scanner, PromptMark, new_mark_token};
 pub use paste_warning::{PasteWarning, paste_warning};
+pub use perf_stats::{
+    CpuMeter, FrameSummary, FrameWindow, PERF_SAMPLE_INTERVAL, ProcessCounters, ProcessUsage,
+    cpu_percent, filetime_duration, proc_stat_cpu_ticks, proc_statm_resident_pages, readout_text,
+    ticks_duration,
+};
 pub use platform::Platform;
 pub use progress::{ProgressScanner, ProgressState};
 pub use remote_hosts::{

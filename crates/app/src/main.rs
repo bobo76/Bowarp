@@ -21,6 +21,7 @@ mod launcher;
 mod light_theme;
 mod mouse;
 mod open_menu;
+mod perf_readout;
 mod processes;
 mod remote_hosts;
 mod scrollbar;
