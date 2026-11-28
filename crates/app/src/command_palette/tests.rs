@@ -13,7 +13,7 @@ fn tab(id: u64, name: &str, group: Option<&str>) -> TabRow {
 
 fn action(action: &'static str, label: &str) -> ActionRow {
     ActionRow {
-        action,
+        choice: PaletteChoice::Action(action),
         label: label.into(),
         keys: None,
     }
@@ -96,6 +96,36 @@ fn a_query_ranks_one_untitled_list_matching_groups_and_settings_names() {
     delegate.sections = delegate.ranked("zzz");
     assert!(delegate.row_paths().is_empty());
     assert_eq!(delegate.first_row(), None);
+}
+
+#[test]
+fn a_tab_command_row_follows_the_actions_and_matches_by_its_label_only() {
+    let pin = ActionRow {
+        choice: PaletteChoice::TabCommand(TabCommand::TogglePin),
+        label: "Pin tab".into(),
+        keys: None,
+    };
+    let mut delegate = PaletteDelegate::new(
+        vec![tab(1, "server", None)],
+        vec![action("workspace::NewTab", "New tab"), pin],
+    );
+    assert_eq!(
+        choices(&delegate)[1..],
+        [
+            PaletteChoice::Action("workspace::NewTab"),
+            PaletteChoice::TabCommand(TabCommand::TogglePin),
+        ]
+    );
+    delegate.sections = delegate.ranked("pin");
+    assert_eq!(
+        choices(&delegate),
+        [PaletteChoice::TabCommand(TabCommand::TogglePin)]
+    );
+    delegate.sections = delegate.ranked("TogglePin");
+    assert!(
+        delegate.row_paths().is_empty(),
+        "no settings-file name to match"
+    );
 }
 
 #[test]

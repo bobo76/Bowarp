@@ -8,6 +8,8 @@ omitted unless they affect how the app is used.
 - Command palette: Ctrl+Shift+P opens a search over the app's actions, each with its
   shortcut, and over the tabs by name; Enter runs the best match (an action runs on the
   selected tab, a tab is selected). The key can be changed on the Keyboard page.
+- Command palette: the selected tab's menu commands (Pin, Move to group, Copy branch name,
+  Restart, Close other tabs...) are listed too, when its menu would offer them.
 
 ## 0.4.9
 

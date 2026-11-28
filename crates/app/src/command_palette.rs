@@ -1,5 +1,6 @@
 //! The command palette (Ctrl+Shift+P): an overlay under the title bar with a search field over
-//! the tabs (by name, "go to tab") and the Keyboard page's actions with their keys. The
+//! the tabs (by name, "go to tab"), the Keyboard page's actions with their keys, and the
+//! commands the selected tab's menu offers. The
 //! workspace builds the rows when it opens the palette and runs the chosen one
 //! (`workspace_view::palette`); the palette is its own entity, redrawn only while it is used.
 //!
@@ -21,6 +22,7 @@ use workspace_model::{
 
 use crate::shortcuts;
 use crate::sidebar::{self, attention_color};
+use crate::tab_menu::TabCommand;
 
 /// The palette's key context, around its list.
 const PALETTE_CONTEXT: &str = "CommandPalette";
@@ -65,6 +67,8 @@ pub enum PaletteChoice {
     Tab(u64),
     /// Run this action (its full keymap name).
     Action(&'static str),
+    /// Run this tab menu command on the selected tab, as its menu does.
+    TabCommand(TabCommand),
 }
 
 /// A tab's row, in sidebar order.
@@ -78,9 +82,11 @@ pub struct TabRow {
     pub selected: bool,
 }
 
-/// An action's row, in Keyboard page order.
+/// A row of the Actions section: an action, in Keyboard page order, or a tab menu command,
+/// in menu order after them.
 pub struct ActionRow {
-    pub action: &'static str,
+    /// `Action` or `TabCommand`.
+    pub choice: PaletteChoice,
     pub label: String,
     /// Its first key, shown as chips; `None` while it has none.
     pub keys: Option<Vec<Keystroke>>,
@@ -311,7 +317,10 @@ impl PaletteDelegate {
         });
         let actions = self.actions.iter().map(|action| Candidate {
             label: &action.label,
-            alias: Some(short_name(action.action)),
+            alias: match action.choice {
+                PaletteChoice::Action(name) => Some(short_name(name)),
+                _ => None,
+            },
         });
         let candidates: Vec<Candidate<'_>> = tabs.chain(actions).collect();
         let rows: Vec<Shown> = rank_matches(query, &candidates)
@@ -339,7 +348,7 @@ impl PaletteDelegate {
     fn choice(&self, ix: IndexPath) -> Option<PaletteChoice> {
         Some(match self.shown(ix)?.row {
             RowRef::Tab(index) => PaletteChoice::Tab(self.tabs.get(index)?.id),
-            RowRef::Action(index) => PaletteChoice::Action(self.actions.get(index)?.action),
+            RowRef::Action(index) => self.actions.get(index)?.choice,
         })
     }
 

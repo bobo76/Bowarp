@@ -477,3 +477,9 @@ limitation). [UX agent]
   search covers them). Shortcuts never match (`ctrl` would match every row). Matched letters
   in the label are drawn bold in the accent color; ties go to the shorter label, then list
   order. The scorer is pure logic for workspace-model. [UX agent]
+
+- [pipeline] Tab menu commands in the palette (2026-11-28): the selected tab's menu commands
+  are listed after the keyboard actions, in menu order and with the menu's labels, only when
+  its menu offers them (also over the Settings and Git pages); one "Move to group: <name>" row
+  per other group; commands that are already actions (Duplicate, Rename, Close) and colors are
+  not listed again; they match by label only and run as from the menu.

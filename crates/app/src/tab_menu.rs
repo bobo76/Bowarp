@@ -71,6 +71,101 @@ pub type Run<C> = Rc<dyn Fn(C, &mut Window, &mut App)>;
 
 pub type RunCommand = Run<TabCommand>;
 
+impl TabMenuState {
+    /// Whether the menu offers `command` to run: shown, and not greyed out.
+    pub fn offers(&self, command: TabCommand) -> bool {
+        match command {
+            TabCommand::Reconnect => self.can_reconnect,
+            TabCommand::Restart => self.can_restart,
+            TabCommand::MarkReady => self.can_mark_ready,
+            TabCommand::MoveToGroup(id) => self.other_groups.iter().any(|(group, _)| *group == id),
+            TabCommand::RemoveFromGroup => self.in_group,
+            TabCommand::CopyBranch => self.has_branch,
+            TabCommand::CopyFolder => self.has_folder,
+            TabCommand::ResetName => self.has_custom_name,
+            TabCommand::Move(Direction::Up) => self.can_move_up,
+            TabCommand::Move(Direction::Down) => self.can_move_down,
+            TabCommand::CloseOthers => self.has_others_to_close,
+            TabCommand::CloseBelow => self.has_below_to_close,
+            TabCommand::Duplicate
+            | TabCommand::TogglePin
+            | TabCommand::NewGroup
+            | TabCommand::CopyTitle
+            | TabCommand::Rename
+            | TabCommand::Close
+            | TabCommand::SetColor(_) => true,
+        }
+    }
+
+    /// The commands the menu offers, in its order (the "Move to group" submenu in place), the
+    /// color swatches left out.
+    pub fn offered(&self) -> Vec<TabCommand> {
+        let move_to_groups = self
+            .other_groups
+            .iter()
+            .map(|(id, _)| TabCommand::MoveToGroup(*id));
+        [
+            TabCommand::Reconnect,
+            TabCommand::Restart,
+            TabCommand::MarkReady,
+            TabCommand::Duplicate,
+            TabCommand::TogglePin,
+            TabCommand::NewGroup,
+        ]
+        .into_iter()
+        .chain(move_to_groups)
+        .chain([
+            TabCommand::RemoveFromGroup,
+            TabCommand::CopyBranch,
+            TabCommand::CopyTitle,
+            TabCommand::CopyFolder,
+            TabCommand::Rename,
+            TabCommand::ResetName,
+            TabCommand::Move(Direction::Up),
+            TabCommand::Move(Direction::Down),
+            TabCommand::Close,
+            TabCommand::CloseOthers,
+            TabCommand::CloseBelow,
+        ])
+        .filter(|command| self.offers(*command))
+        .collect()
+    }
+
+    /// The command's label in the menu; a group's name in the "Move to group" submenu.
+    pub fn label(&self, command: TabCommand) -> SharedString {
+        match command {
+            TabCommand::Reconnect => "Reconnect".into(),
+            TabCommand::Restart => "Restart".into(),
+            TabCommand::MarkReady => "Mark as ready for review".into(),
+            TabCommand::Duplicate => "Duplicate tab".into(),
+            TabCommand::TogglePin if self.pinned => "Unpin tab".into(),
+            TabCommand::TogglePin => "Pin tab".into(),
+            TabCommand::NewGroup => "New group with tab".into(),
+            TabCommand::MoveToGroup(id) => self.group_name(id),
+            TabCommand::RemoveFromGroup => "Remove from group".into(),
+            TabCommand::CopyBranch => "Copy branch name".into(),
+            TabCommand::CopyTitle => "Copy pane title".into(),
+            TabCommand::CopyFolder => "Copy working directory".into(),
+            TabCommand::Rename => "Rename tab".into(),
+            TabCommand::ResetName => "Reset name".into(),
+            TabCommand::Move(Direction::Up) => "Move tab up".into(),
+            TabCommand::Move(Direction::Down) => "Move tab down".into(),
+            TabCommand::Close => "Close tab".into(),
+            TabCommand::CloseOthers => "Close other tabs".into(),
+            TabCommand::CloseBelow => "Close tabs below".into(),
+            TabCommand::SetColor(color) => color.map_or("No color", TabColor::label).into(),
+        }
+    }
+
+    fn group_name(&self, id: GroupId) -> SharedString {
+        self.other_groups
+            .iter()
+            .find(|(group, _)| *group == id)
+            .map(|(_, name)| name.clone())
+            .unwrap_or_default()
+    }
+}
+
 pub fn build(
     menu: PopupMenu,
     state: TabMenuState,
@@ -78,80 +173,64 @@ pub fn build(
     window: &mut Window,
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
-    let item = |label: &'static str, command: TabCommand, enabled: bool| {
-        command_item(label, command, enabled, run.clone())
+    // Greyed out when not offered, except the ones shown only then (`when`).
+    let item = |command: TabCommand| {
+        command_item(
+            state.label(command),
+            command,
+            state.offers(command),
+            run.clone(),
+        )
     };
-    let pin_label = if state.pinned { "Unpin tab" } else { "Pin tab" };
-    let groups_menu = group_choices(state.other_groups, state.in_group, run.clone());
+    let with_leading_item = |menu: PopupMenu, command: TabCommand| {
+        menu.when(state.offers(command), |menu| {
+            menu.item(item(command)).separator()
+        })
+    };
+    let remove_from_group = (
+        state.label(TabCommand::RemoveFromGroup),
+        state.offers(TabCommand::RemoveFromGroup),
+    );
+    let groups_menu = group_choices(state.other_groups.clone(), remove_from_group, run.clone());
     let pick_color = run.clone();
     let duplicate = run.clone();
-    menu.min_w(px(crate::ui_dimensions::MENU_WIDTH))
-        .when(state.can_reconnect, |menu| {
-            menu.item(item("Reconnect", TabCommand::Reconnect, true))
-                .separator()
-        })
-        .when(state.can_restart, |menu| {
-            menu.item(item("Restart", TabCommand::Restart, true))
-                .separator()
-        })
-        .when(state.can_mark_ready, |menu| {
-            menu.item(item(
-                "Mark as ready for review",
-                TabCommand::MarkReady,
-                true,
-            ))
-            .separator()
-        })
+    let first = [
+        TabCommand::Reconnect,
+        TabCommand::Restart,
+        TabCommand::MarkReady,
+    ];
+    first
+        .into_iter()
+        .fold(
+            menu.min_w(px(crate::ui_dimensions::MENU_WIDTH)),
+            with_leading_item,
+        )
         .item(
             PopupMenuItem::element(|_, cx| {
                 shortcuts::menu_label_with_hint("duplicate-tab", "Duplicate tab", &DuplicateTab, cx)
             })
             .on_click(move |_, window, cx| duplicate(TabCommand::Duplicate, window, cx)),
         )
-        .item(item(pin_label, TabCommand::TogglePin, true))
-        .item(item("New group with tab", TabCommand::NewGroup, true))
+        .item(item(TabCommand::TogglePin))
+        .item(item(TabCommand::NewGroup))
         .submenu("Move to group", window, cx, move |menu, _, _| {
             groups_menu(menu)
         })
         .separator()
-        .item(item(
-            "Copy branch name",
-            TabCommand::CopyBranch,
-            state.has_branch,
-        ))
-        .item(item("Copy pane title", TabCommand::CopyTitle, true))
-        .item(item(
-            "Copy working directory",
-            TabCommand::CopyFolder,
-            state.has_folder,
-        ))
+        .item(item(TabCommand::CopyBranch))
+        .item(item(TabCommand::CopyTitle))
+        .item(item(TabCommand::CopyFolder))
         .separator()
-        .item(item("Rename tab", TabCommand::Rename, true))
-        .when(state.has_custom_name, |menu| {
-            menu.item(item("Reset name", TabCommand::ResetName, true))
+        .item(item(TabCommand::Rename))
+        .when(state.offers(TabCommand::ResetName), |menu| {
+            menu.item(item(TabCommand::ResetName))
         })
-        .item(item(
-            "Move tab up",
-            TabCommand::Move(Direction::Up),
-            state.can_move_up,
-        ))
-        .item(item(
-            "Move tab down",
-            TabCommand::Move(Direction::Down),
-            state.can_move_down,
-        ))
+        .item(item(TabCommand::Move(Direction::Up)))
+        .item(item(TabCommand::Move(Direction::Down)))
         .separator()
-        .item(item("Close tab", TabCommand::Close, true))
-        .item(item(
-            "Close other tabs",
-            TabCommand::CloseOthers,
-            state.has_others_to_close,
-        ))
-        .item(item(
-            "Close tabs below",
-            TabCommand::CloseBelow,
-            state.has_below_to_close,
-        ))
+        .item(item(TabCommand::Close))
+        .item(item(TabCommand::CloseOthers))
+        .item(item(TabCommand::CloseBelow))
         .separator()
         .item(color_swatches(
             state.color,
@@ -173,7 +252,7 @@ fn command_item<C: Copy + 'static>(
 /// The "Move to group" submenu: the other groups, then "Remove from group".
 fn group_choices(
     groups: Vec<(GroupId, SharedString)>,
-    in_group: bool,
+    remove_from_group: (SharedString, bool),
     run: RunCommand,
 ) -> impl Fn(PopupMenu) -> PopupMenu + 'static {
     move |mut menu| {
@@ -188,10 +267,11 @@ fn group_choices(
                 run.clone(),
             ));
         }
+        let (label, enabled) = remove_from_group.clone();
         menu.separator().item(command_item(
-            "Remove from group",
+            label,
             TabCommand::RemoveFromGroup,
-            in_group,
+            enabled,
             run.clone(),
         ))
     }
@@ -320,3 +400,6 @@ fn swatch(
                 }),
         )
 }
+
+#[cfg(test)]
+mod tests;

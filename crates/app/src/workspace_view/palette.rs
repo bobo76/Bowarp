@@ -1,6 +1,6 @@
 //! The command palette over the workspace (`command_palette`): opening it with the rows of the
-//! moment, closing it with the keyboard back where it was, and running the chosen tab or
-//! action there.
+//! moment, closing it with the keyboard back where it was, and running the chosen tab,
+//! action or tab menu command there.
 
 use gpui_kit::component::WindowExt;
 use gpui_kit::{Action, AppContext, Context, Entity, FocusHandle, Focusable, Subscription, Window};
@@ -11,7 +11,13 @@ use crate::command_palette::{ActionRow, CommandPalette, PaletteChoice, PaletteEv
 use crate::keymap;
 use crate::settings_file;
 use crate::sidebar::TabStatus;
+use crate::tab_menu::{TabCommand, TabMenuState};
 use crate::terminal_view;
+
+/// Tab menu commands the palette lists as actions already (Duplicate tab, Rename tab, Close
+/// tab), so not twice.
+const LISTED_AS_ACTIONS: [TabCommand; 3] =
+    [TabCommand::Duplicate, TabCommand::Rename, TabCommand::Close];
 
 /// The palette while it is open (`WorkspaceView::palette`).
 pub(super) struct OpenPalette {
@@ -46,7 +52,9 @@ impl WorkspaceView {
         // First: closing the branch picker gives the keyboard back to what it took it from.
         self.close_popups(window, cx);
         let return_focus = window.focused(cx);
-        let (tabs, actions) = (self.palette_tabs(cx), self.palette_actions(cx));
+        let tabs = self.palette_tabs(cx);
+        let mut actions = self.palette_actions(cx);
+        actions.extend(self.palette_tab_commands(cx));
         let view = cx.new(|cx| CommandPalette::new(tabs, actions, window, cx));
         let events = cx.subscribe_in(&view, window, |workspace, _, event, window, cx| {
             workspace.on_palette_event(*event, window, cx);
@@ -124,6 +132,30 @@ impl WorkspaceView {
                 self.rename_from_palette(back, window, cx);
             }
             PaletteChoice::Action(action) => self.run_palette_action(action, window, cx),
+            PaletteChoice::TabCommand(command) => {
+                self.run_palette_tab_command(command, back, window, cx);
+            }
+        }
+    }
+
+    /// Run a tab menu command on the selected tab as its menu does. "New group with tab"
+    /// then shows the tab in the sidebar, where the new group's name is edited (after the
+    /// command, so the tab's old group isn't expanded); the keyboard goes back to `back`
+    /// after, as for Rename tab.
+    fn run_palette_tab_command(
+        &mut self,
+        command: TabCommand,
+        back: Option<FocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.active_tab().map(|tab| tab.id) else {
+            return;
+        };
+        self.run_tab_command(id, command, window, cx);
+        if command == TabCommand::NewGroup {
+            self.show_in_sidebar(id, window, cx);
+            self.hand_rename_to_palette(back);
         }
     }
 
@@ -153,12 +185,25 @@ impl WorkspaceView {
         let Some(id) = self.active_tab().map(|tab| tab.id) else {
             return;
         };
+        self.show_in_sidebar(id, window, cx);
+        self.start_rename(RenameTarget::Tab(id), RenameOrigin::Palette, window, cx);
+        self.hand_rename_to_palette(back);
+    }
+
+    /// Show the sidebar if hidden and tab `id`'s row in it (revealed from a collapsed group or
+    /// a search, scrolled to).
+    fn show_in_sidebar(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_visible = true;
         self.layout.reveal(id);
         self.clear_search_hiding(id, window, cx);
         self.tab_list.scroll_to_selected.set(true);
-        self.start_rename(RenameTarget::Tab(id), RenameOrigin::Palette, window, cx);
+    }
+
+    /// The name editor the palette started (or the menu's New group, run from it) gives the
+    /// keyboard back to `back` when it closes.
+    fn hand_rename_to_palette(&mut self, back: Option<FocusHandle>) {
         if let Some(rename) = self.renaming.as_mut() {
+            rename.origin = RenameOrigin::Palette;
             rename.return_focus = back;
         }
     }
@@ -194,9 +239,30 @@ impl WorkspaceView {
                 palette_lists(action, *context == Some(terminal_view::KEY_CONTEXT), &state)
             })
             .map(|(action, _)| ActionRow {
-                action,
+                choice: PaletteChoice::Action(action),
                 label: action_label(action),
                 keys: keymap::hint(cx, action),
+            })
+            .collect()
+    }
+
+    /// The commands the selected tab's menu offers, in its order, but the ones listed as
+    /// actions. None has a key.
+    fn palette_tab_commands(&self, cx: &Context<Self>) -> Vec<ActionRow> {
+        let Some(state) = self
+            .active_tab()
+            .and_then(|tab| self.tab_menu_state(tab.id, cx))
+        else {
+            return Vec::new();
+        };
+        state
+            .offered()
+            .into_iter()
+            .filter(|command| !LISTED_AS_ACTIONS.contains(command))
+            .map(|command| ActionRow {
+                choice: PaletteChoice::TabCommand(command),
+                label: palette_label(&state, command),
+                keys: None,
             })
             .collect()
     }
@@ -217,6 +283,15 @@ impl WorkspaceView {
             file_panes_on: settings_file::file_panes(cx).panes_enabled(),
             git_page_on: self.git.enabled(),
         }
+    }
+}
+
+/// A tab menu command's label in the palette: the menu's, a group named after "Move to group".
+fn palette_label(state: &TabMenuState, command: TabCommand) -> String {
+    let label = state.label(command);
+    match command {
+        TabCommand::MoveToGroup(_) => format!("Move to group: {label}"),
+        _ => label.to_string(),
     }
 }
 

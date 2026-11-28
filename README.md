@@ -490,15 +490,21 @@ necessarily together ("nt" finds "New tab"), best match first: a tab by its name
 action by its label or its settings-file name (`ToggleExplorer`). Matched letters show bold.
 Actions that can't apply are left out: the terminal's while Settings, Git or no tab shows,
 Copy without a selection, Paste on an exited tab, Allow / Deny clipboard write without a held
-write, the explorer and Git rows while those features are off.
+write, the explorer and Git rows while those features are off. After the actions come the
+commands the selected tab's menu offers now, with the menu's labels (Pin tab or Unpin tab,
+"Move to group: Backend" for each other group, New group with tab, Remove from group, Copy
+branch name, Restart, Mark as ready for review, Close other tabs, ...); Duplicate, Rename and
+Close tab are among the actions already.
 
 Up / Down, PageUp / PageDown move the selection; Enter or a click runs it. The palette closes
 first and the keyboard goes back to what had it (the terminal, a page, the sidebar's search
 field), where the action runs; a terminal action runs on the selected tab's terminal. A tab
-is selected as a sidebar click would, keyboard on its terminal. Rename tab shows the sidebar if
-hidden and edits the selected tab's name. Esc or a click outside closes the palette with the
-keyboard back where it was. A dialog a shortcut opens over it (Ctrl+Shift+W on a busy tab) leaves
-the palette open, and the keyboard returns to its field when the dialog closes.
+is selected as a sidebar click would, keyboard on its terminal. A tab menu command runs as from
+the tab menu, with the same questions (Close other tabs on a busy tab). Rename tab and New
+group with tab show the sidebar if hidden and edit the name there. Esc or a click outside
+closes the palette with the keyboard back where it was. A dialog a shortcut opens over it
+(Ctrl+Shift+W on a busy tab) leaves the palette open, and the keyboard returns to its field
+when the dialog closes.
 
 ## Search and attention
 

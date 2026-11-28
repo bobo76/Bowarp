@@ -23,7 +23,11 @@ Built with automated coverage on Linux; the manual checks below are still to do.
   it. Rename tab with the sidebar hidden and with the tab in a collapsed group: the name
   editor shows in its row, Enter or Esc give the keyboard back. Switch to another app and back
   while it is open: it stays, the keyboard still in it. A screen reader reads each row's
-  name or label.
+  name or label. Tab menu commands from it, on a pinned, a grouped, a remote (Reconnect), an
+  exited (Restart) and an idle agent tab (Mark as ready for review): each listed only when the
+  tab menu offers it, with the menu's label; Copy branch name / pane title / working directory
+  fill the clipboard; New group with tab with the sidebar hidden edits the group's name, Enter
+  or Esc give the keyboard back; Close other tabs / below on a busy tab asks first.
 - Interrupting Claude Code (Windows, Linux), in a spawned Claude Code tab and with `claude`
   run in place in a bash tab: Esc and Ctrl+C mid-thinking and during `Bash(sleep 20)`, and
   Esc on a permission prompt, turn the tab Idle at once, with no toast, sound, taskbar flash
@@ -446,9 +450,6 @@ behavior"); items below name their switch where they need one.
 
 ### General
 
-- Command palette, tab menu commands: the menu-only ones (Pin, Move to group, Copy branch,
-  Copy title, Copy folder, Reset name, Restart, Mark as ready for review, Close others / below)
-  as palette entries on the selected tab, offered only when its tab menu would offer them.
 - File viewer: the rendered JSON view ("Not valid JSON") is only worked out when the file
   opens, so it stays stale after the file is fixed and saved in the viewer.
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
