@@ -74,7 +74,7 @@ Prompt contents:
   - for a field added to a view-model struct, the existing test that builds it and whether the field is asserted.
 - Not doable or not checkable here: stop before committing, revert its own changes, give the reason (see "Loop").
 - Rules beyond `CLAUDE.md`: no `to_owned()` of text handed to a background task (move an `Arc` or cheap handle in); each new function one concern and ~15 lines (the FM IPL pass flags longer ones).
-- Verify: clippy before the full test run (a lint-forced refactor after it costs a rerun). With UI: the touched crate's tests first, drive the app with `pipeline/tools/` (never set up a display by hand; say up front what the harness can't drive), then the full suite once.
+- Verify: clippy before the full test run (a lint-forced refactor after it costs a rerun). A popup or overlay: also test a dialog opened by a shortcut over it (where the keyboard goes when it closes). With UI: the touched crate's tests first, drive the app with `pipeline/tools/` (never set up a display by hand; say up front what the harness can't drive), then the full suite once.
 - Docs: remove the step from `BACKLOG.md` and add the checks the harness couldn't drive under "Fixed, not tested yet"; new limitations go to `docs/known-limitations.md`; update `README.md` where it describes changed behaviour, and grep README, docs and code comments for stale wording.
 - Commit code and those docs with an imperative summary of the step; write `pipeline/retros/<slug>/1-implement.md`.
 
