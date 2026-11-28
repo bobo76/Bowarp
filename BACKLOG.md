@@ -469,8 +469,13 @@ behavior"); items below name their switch where they need one.
   terminal types the quoted path (`file_tree::quote_path`) instead. Files dropped from the
   system file manager onto a folder are copied there. The tree and an open viewer follow the
   moved file; moves run in the background like Delete.
-- handle OpenAI Codex CLI like claude and copilot
-  
+- OpenAI Codex CLI as an agent like Claude Code and Copilot CLI (the other agents are under
+  "More agents" below): found on `PATH` with the id `codex`, an icon and a `+` menu entry, a
+  launch arguments setting, restored from `tabs.json`, and typed `codex` running in place in
+  shell tabs. Agent status (Working / Waiting / Ready for review) from Codex's hooks or its
+  `notify` program (turn complete only; look for newer hooks) through `agentws-hook`, set per
+  tab and never written into the user's `~/.codex/config.toml`; OSC 9;4 progress or the title
+  where events are missing, the gaps listed in docs/known-limitations.md.
 - Agent status switch for agent tabs, "Agent status" (on), the parent of "Agent status for
   agents typed at the prompt" (shown disabled under it). Off: new Claude Code and Copilot
   tabs start without the generated `--settings` hooks and the plugin, and show "Recent
@@ -607,19 +612,18 @@ its items), regrouped into steps, in order:
      command-block metadata recorded).
      Not planned from the screenshot: the separate input box with the folder chip (the prompt is
      the shell's own, in the grid) and the panel's "Configure" button.
-- More agents: OpenCode, OpenAI Codex CLI and Gemini CLI (plus Antigravity's CLI if it ships
-  as its own program), each integrated like Claude Code / Copilot CLI today. One agent per
-  step, each tested; add them to FEATURES.md when picked.
-  - Launcher: found on `PATH` (`launcher.rs`) with a stable id (`opencode`, `codex`,
-    `gemini`), an icon in `LauncherIcon`, a `+` menu entry, a launch arguments setting, and
-    restored from `tabs.json`.
+- More agents: OpenCode and Gemini CLI (plus Antigravity's CLI if it ships as its own program),
+  each integrated like Claude Code / Copilot CLI today (Codex is its own item above). One agent
+  per step, each tested; add them to FEATURES.md when picked.
+  - Launcher: found on `PATH` (`launcher.rs`) with a stable id (`opencode`, `gemini`), an icon
+    in `LauncherIcon`, a `+` menu entry, a launch arguments setting, and restored from
+    `tabs.json`.
   - Agent status: find each CLI's hook or event mechanism and map it to Working / Waiting /
     Ready for review through `agentws-hook` and the `HookServer`, set per tab (like Copilot's
     `--plugin-dir`), never written into the user's own config. To check against the installed
-    versions: OpenCode plugins (session idle, permission events), Codex's `notify` program
-    (turn complete only; look for newer hooks), Gemini CLI hooks. Where events are missing,
-    fall back to OSC 9;4 progress or the title, like Copilot, and list the gaps in
-    docs/known-limitations.md.
+    versions: OpenCode plugins (session idle, permission events), Gemini CLI hooks. Where
+    events are missing, fall back to OSC 9;4 progress or the title, like Copilot, and list the
+    gaps in docs/known-limitations.md.
 - Idle redraw after tab search (likely bug): once the "Search tabs..." field has had the
   keyboard, the idle window keeps redrawing (about 22 CPU ticks/s in Xvfb, even after going
   back to the terminal; a fresh start idles at 0-2). Find what keeps notifying (cursor blink of
