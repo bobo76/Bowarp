@@ -28,6 +28,9 @@ Built with automated coverage on Linux; the manual checks below are still to do.
   tab menu offers it, with the menu's label; Copy branch name / pane title / working directory
   fill the clipboard; New group with tab with the sidebar hidden edits the group's name, Enter
   or Esc give the keyboard back; Close other tabs / below on a busy tab asks first.
+- File viewer, rendered JSON (Windows, Linux): open a `.json` file with a syntax error, fix it
+  in the editor under "Not valid JSON" and save with Ctrl+S: the pretty-printed view replaces
+  the error at once.
 - Interrupting Claude Code (Windows, Linux), in a spawned Claude Code tab and with `claude`
   run in place in a bash tab: Esc and Ctrl+C mid-thinking and during `Bash(sleep 20)`, and
   Esc on a permission prompt, turn the tab Idle at once, with no toast, sound, taskbar flash
@@ -450,8 +453,6 @@ behavior"); items below name their switch where they need one.
 
 ### General
 
-- File viewer: the rendered JSON view ("Not valid JSON") is only worked out when the file
-  opens, so it stays stale after the file is fixed and saved in the viewer.
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per
   root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
   the window; Delete already runs in the background.

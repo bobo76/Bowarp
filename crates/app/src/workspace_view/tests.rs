@@ -924,6 +924,61 @@ fn edits_typed_while_a_save_writes_stay_unsaved(cx: &mut gpui_kit::TestAppContex
 }
 
 #[gpui::test]
+fn saving_fixed_json_in_the_rendered_view_shows_it_pretty(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("viewer-json-save", cx);
+    let file = h.folder.join("data.json");
+    std::fs::write(&file, "{\"a\": 1,}").unwrap();
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let id = workspace.tabs[0].id;
+            workspace.open_file_in(id, file.clone(), FilePlace::default(), window, cx);
+        });
+    });
+    h.cx.run_until_parked();
+    let viewer = h.state().2.expect("viewer").upgrade().unwrap();
+    let rendered = |h: &mut PanesHarness| {
+        h.cx.update(|_, cx| viewer.read(cx).rendered_json_for_test(cx))
+    };
+    assert!(
+        matches!(rendered(&mut h), Some(Err(_))),
+        "opens on the invalid JSON view"
+    );
+
+    // A save that leaves the JSON invalid replaces the error shown.
+    h.cx.update(|window, cx| {
+        viewer.update(cx, |viewer, cx| {
+            viewer.edit_for_test("{\"a\": 1,\n}", window, cx)
+        })
+    });
+    h.cx.update(|window, cx| viewer.update(cx, |viewer, cx| viewer.save_for_test(window, cx)));
+    h.cx.run_until_parked();
+    let Some(Err(err)) = rendered(&mut h) else {
+        panic!("still the invalid JSON view");
+    };
+    assert!(err.contains("2"), "the error of the saved text: {err}");
+
+    // The invalid view shows the editor: fix the text there and save.
+    h.cx.update(|window, _| window.activate_window());
+    h.cx.update(|window, cx| {
+        viewer.update(cx, |viewer, cx| viewer.focus_editor_for_test(window, cx))
+    });
+    h.cx.update(|window, cx| {
+        viewer.update(cx, |viewer, cx| {
+            viewer.edit_for_test("{\"a\": 1}", window, cx)
+        })
+    });
+    h.cx.update(|window, cx| viewer.update(cx, |viewer, cx| viewer.save_for_test(window, cx)));
+    h.cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "{\"a\": 1}");
+    assert_eq!(rendered(&mut h), Some(Ok("{\n  \"a\": 1\n}".to_owned())));
+    assert!(
+        h.cx.update(|window, cx| viewer.read(cx).pretty_json_focused_for_test(window, cx)),
+        "the pretty view takes the keyboard from the raw editor"
+    );
+}
+
+#[gpui::test]
 fn file_panes_switch_off_after_discarding_every_edit(cx: &mut gpui_kit::TestAppContext) {
     let mut h = PanesHarness::new("panes-discard", cx);
     let viewer = h.open_dirty_viewer();

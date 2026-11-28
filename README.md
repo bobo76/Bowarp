@@ -608,7 +608,8 @@ Markdown, JSON and SVG have two views, picked in the panel's header:
   panel (folders in the explorer, web links in the browser); JSON laid out one member per
   line, colored, with fold arrows by the line numbers (hover them) to collapse an object or
   array. Keys keep their order and values stay as written. JSON that doesn't parse shows the
-  error's line and column above the source. SVG drawn as an image.
+  error's line and column above the source, editable: once fixed and saved, it is laid out.
+  SVG drawn as an image.
 - **Raw**: the file as written, colored and editable.
 
 Other files open in the raw view only, colored for JSON, JavaScript, TypeScript (and TSX),

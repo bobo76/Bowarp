@@ -10,6 +10,8 @@ omitted unless they affect how the app is used.
   selected tab, a tab is selected). The key can be changed on the Keyboard page.
 - Command palette: the selected tab's menu commands (Pin, Move to group, Copy branch name,
   Restart, Close other tabs...) are listed too, when its menu would offer them.
+- File viewer: fixing a file in the "Not valid JSON" view and saving it shows it laid out at
+  once, with the keyboard still in the viewer; before, the error stayed until reopened.
 
 ## 0.4.9
 

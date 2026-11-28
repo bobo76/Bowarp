@@ -19,8 +19,8 @@ use gpui_kit::component::text::{TextView, TextViewState};
 use gpui_kit::component::{ActiveTheme, IconName, Selectable, Sizable, WindowExt};
 use gpui_kit::{
     AnyElement, App, AppContext, ClickEvent, Context, DevicePixels, Entity, EventEmitter,
-    ImgResourceLoader, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ObjectFit,
-    ParentElement, Render, RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR, ScrollHandle,
+    Focusable, ImgResourceLoader, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
+    ObjectFit, ParentElement, Render, RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR, ScrollHandle,
     SharedString, Size, StatefulInteractiveElement, Styled, StyledImage, Subscription, Task,
     WeakEntity, Window, div, img, px,
 };
@@ -289,6 +289,36 @@ impl FileViewer {
         Some(file.editor.read(cx).value().to_string())
     }
 
+    /// The rendered JSON view: the pretty text, or why it is not valid JSON; `None` when
+    /// no JSON view is shown.
+    #[cfg(test)]
+    pub(crate) fn rendered_json_for_test(&self, cx: &App) -> Option<Result<String, String>> {
+        match &self.open_file()?.rendered {
+            Some(Rendered::Json(pretty)) => Some(Ok(pretty.read(cx).value().to_string())),
+            Some(Rendered::InvalidJson(err)) => Some(Err(err.to_string())),
+            _ => None,
+        }
+    }
+
+    /// Whether the pretty JSON view holds the keyboard focus.
+    #[cfg(test)]
+    pub(crate) fn pretty_json_focused_for_test(&self, window: &Window, cx: &App) -> bool {
+        let Some(Rendered::Json(pretty)) = self.open_file().and_then(|f| f.rendered.as_ref())
+        else {
+            return false;
+        };
+        pretty.read(cx).focus_handle(cx).is_focused(window)
+    }
+
+    /// Focus the raw editor, as a click into it does.
+    #[cfg(test)]
+    pub(crate) fn focus_editor_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(file) = self.open_file() {
+            file.editor
+                .update(cx, |editor, cx| editor.focus(window, cx));
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn save_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save(window, cx);
@@ -525,6 +555,7 @@ impl FileViewer {
                     // Edits typed while the file was written are still unsaved.
                     file.dirty = file.editor.read(cx).value().as_str() != save.text;
                     file.saved = save.text;
+                    refresh_edited_rendered(file, window, cx);
                     cx.notify();
                 }
                 cx.emit(ViewerEvent::Saved(save.path));
@@ -1146,6 +1177,22 @@ fn refresh_rendered(
         previous => previous,
     };
     file.rendered = render_text(file.kind, text, previous, window, cx);
+}
+
+/// Render the editor's text again if the rendered view shows the editor, as the invalid JSON
+/// view does: the text may have been fixed there. Other rendered views can't be edited, and
+/// switching to them from the raw view renders them again. The editor held the keyboard
+/// when the text was typed there; the pretty view that replaces it takes it over.
+fn refresh_edited_rendered(file: &mut OpenFile, window: &mut Window, cx: &mut Context<FileViewer>) {
+    if file.mode != Mode::Rendered || !matches!(file.rendered, Some(Rendered::InvalidJson(_))) {
+        return;
+    }
+    let text = file.editor.read(cx).value();
+    let editor_focused = file.editor.read(cx).focus_handle(cx).is_focused(window);
+    refresh_rendered(file, &text, window, cx);
+    if editor_focused && let Some(Rendered::Json(pretty)) = &file.rendered {
+        pretty.update(cx, |pretty, cx| pretty.focus(window, cx));
+    }
 }
 
 /// Show `text` in `editor` where its view was: `set_value` scrolls back to the top. The
