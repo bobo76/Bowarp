@@ -432,6 +432,26 @@ behavior"); items below name their switch where they need one.
 
 ### General
 
+- Command palette: Ctrl+Shift+P opens a fuzzy search over every action (the ones with
+  shortcuts and the menu-only ones such as Duplicate, Move to group or Copy branch), showing
+  each one's shortcut, plus the tabs by name ("go to tab"). Enter runs the action on the
+  selected tab.
+- File viewer: the rendered JSON view ("Not valid JSON") is only worked out when the file
+  opens, so it stays stale after the file is fixed and saved in the viewer.
+- File explorer: read folders off the UI thread (a "Loading..." row, results applied per
+  root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
+  the window; Delete already runs in the background.
+- Cache the active TerminalView (`.cached(...)`) so sidebar animation frames and other
+  WorkspaceView re-renders don't re-render the terminal; every input the view shows (focus,
+  resize, selection, session wakeup) must notify it; check with Xvfb.
+- File explorer drag and drop: drag a file or folder onto another folder (or a root) to move
+  it there, with the drop target highlighted while hovered; a name clash asks before
+  replacing, and a folder can't be dropped into itself or its children. Dropping onto the
+  terminal types the quoted path (`file_tree::quote_path`) instead. Files dropped from the
+  system file manager onto a folder are copied there. The tree and an open viewer follow the
+  moved file; moves run in the background like Delete.
+- handle OpenAI Codex CLI like claude and copilot
+  
 - Agent status switch for agent tabs, "Agent status" (on), the parent of "Agent status for
   agents typed at the prompt" (shown disabled under it). Off: new Claude Code and Copilot
   tabs start without the generated `--settings` hooks and the plugin, and show "Recent
@@ -465,7 +485,6 @@ its items), regrouped into steps, in order:
   a max width on text inputs so the Font family field stays inside the content column.
 - "Hold Shift to select" hint (#19): on the first drag in a mouse-reporting tab per run, an
   info toast "Hold Shift to select text". One flag.
-
 - Hiding the sidebar (Ctrl+Shift+B) while the search field or a tab name editor has the
   keyboard leaves focus on an element no longer drawn (only the tab list itself hands the
   keyboard back, `toggle_sidebar` checks `is_focused`): check the whole sidebar
@@ -483,10 +502,6 @@ its items), regrouped into steps, in order:
   Switch "Long-command completion status" (Notifications page, on): off means no Done/failed
   marks or notifications; command tracking stays for busy-close protection and the threshold
   setting is kept.
-- Command palette: Ctrl+Shift+P opens a fuzzy search over every action (the ones with
-  shortcuts and the menu-only ones such as Duplicate, Move to group or Copy branch), showing
-  each one's shortcut, plus the tabs by name ("go to tab"). Enter runs the action on the
-  selected tab.
 - File viewer search and replace: the rendered Markdown view's Ctrl+F bar
   (`file_viewer/search.rs`) also in the raw/source editor and rendered JSON (a switch between
   two views that search keeps the bar and re-runs the query, docs/ux-decisions.md "File viewer
@@ -496,13 +511,6 @@ its items), regrouped into steps, in order:
 - File viewer close shortcut: Ctrl+Shift+X closes the selected tab's file viewer from
   either the terminal or the viewer, using the same unsaved-edit confirmation as its close
   button. Return focus to the terminal after closing; do nothing when no viewer is open.
-- File viewer: the rendered JSON view ("Not valid JSON") is only worked out when the file
-  opens, so it stays stale after the file is fixed and saved in the viewer.
-- Command history with zsh-autosuggestions (likely bug, unverified): Enter on a HISTORY row
-  sends Ctrl+E, which the plugin binds to accept the grey suggestion, but the reported line
-  (`$BUFFER`, `.zshenv` `__agentws_report_line`) excludes it, so the Backspaces leave the
-  accepted rest in front of the new command. Send a key that doesn't accept it, or clear
-  `POSTDISPLAY` first.
 - Zoom with Ctrl+scroll, like Windows Terminal: Ctrl+wheel up / down over the terminal makes
   the font bigger / smaller one point per notch (clamped, e.g. 6-48 pt), also Ctrl+= / Ctrl+-
   and Ctrl+0 to reset. Build on the existing terminal font-size setting, re-measuring cells
@@ -512,15 +520,6 @@ its items), regrouped into steps, in order:
   saved (Ctrl+0 and a restart go back to the settings size). Ctrl+wheel is never sent to the
   program, even with mouse reporting on.
 - New-tab folder picker (currently the selected tab's folder).
-- File explorer: read folders off the UI thread (a "Loading..." row, results applied per
-  root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
-  the window; Delete already runs in the background.
-- File explorer drag and drop: drag a file or folder onto another folder (or a root) to move
-  it there, with the drop target highlighted while hovered; a name clash asks before
-  replacing, and a folder can't be dropped into itself or its children. Dropping onto the
-  terminal types the quoted path (`file_tree::quote_path`) instead. Files dropped from the
-  system file manager onto a folder are copied there. The tree and an open viewer follow the
-  moved file; moves run in the background like Delete.
 - Sidebar search: the filter/sort button from the
   [reference screenshot](docs/ui-reference/sidebar-hover-card.png).
 - Configurable tab background color: a color picked per tab from the tab menu (a small
@@ -546,9 +545,7 @@ its items), regrouped into steps, in order:
 - Report drags that leave the terminal area (GPUI only delivers moves while hovered).
 - Working directory from OSC 7 (only useful for remote shells): `alacritty_terminal` does not
   parse it, but the pty reader wrapper (`term-core/src/prompt.rs`) could find it.
-- Cache the active TerminalView (`.cached(...)`) so sidebar animation frames and other
-  WorkspaceView re-renders don't re-render the terminal; every input the view shows (focus,
-  resize, selection, session wakeup) must notify it; check with Xvfb.
+
 - Dependency updates (checked 2026-10-20, toolchain 1.99.1):
   - Still behind (major versions): `gpui-kit`, `windows-registry`, `parking_lot` 0.13,
     `generic-array`.
