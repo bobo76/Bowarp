@@ -36,6 +36,13 @@ pub const GIT_PAGE_KEYS: &str = if cfg!(target_os = "macos") {
     "ctrl-shift-g"
 };
 
+/// Ctrl+Shift+P (Cmd+Shift+P on macOS): open or close the command palette.
+pub const COMMAND_PALETTE_KEYS: &str = if cfg!(target_os = "macos") {
+    "cmd-shift-p"
+} else {
+    "ctrl-shift-p"
+};
+
 /// `strokes` as text: `Ctrl+Shift+T`, a sequence as `Ctrl+K Ctrl+C`.
 pub fn keys_text(strokes: &[Keystroke]) -> String {
     strokes

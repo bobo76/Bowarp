@@ -5,6 +5,10 @@ omitted unless they affect how the app is used.
 
 ## Unreleased
 
+- Command palette: Ctrl+Shift+P opens a search over the app's actions, each with its
+  shortcut, and over the tabs by name; Enter runs the best match (an action runs on the
+  selected tab, a tab is selected). The key can be changed on the Keyboard page.
+
 ## 0.4.9
 
 - Claude Code tabs: interrupting a turn with Esc or Ctrl+C shows the tab Idle at once; before,

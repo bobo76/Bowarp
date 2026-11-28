@@ -4,6 +4,9 @@ How built features behave at their edges, decided on purpose or accepted for now
 to do is in [BACKLOG.md](../BACKLOG.md); the target spec is [FEATURES.md](../FEATURES.md). Remove an
 entry when the limitation is lifted.
 
+- The command palette's rows are read when it opens: a tab renamed, needing attention or
+  closed meanwhile, or a selection made in the terminal, shows as it was until it is opened
+  again. Action rows show an action's first key only, as tooltips and menus do.
 - Busy-close warnings know only what the shell integration marks and agent status report:
   a tab counts as busy while a command started at its prompt runs (OSC 133 `C` without `D`)
   or its agent is Working or Waiting. Never busy: cmd tabs (no `C` mark), shells without the

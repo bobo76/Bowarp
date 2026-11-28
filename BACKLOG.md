@@ -10,6 +10,20 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- Command palette (Windows, Linux): Ctrl+Shift+P opens it under the title bar, centered over
+  the sidebar and terminal, about ten rows tall, scrolling past that; a narrow window shrinks
+  it. Tab rows show the sidebar's icon, the name, the group muted, the triangle on a tab
+  needing attention, the check on the selected tab; action rows the Keyboard page label and
+  the key chips. Typing highlights the matched letters bold in the accent color (dark and light
+  themes). Hover highlights a row and a click runs it; a click outside closes it with the
+  keyboard back where it was (the terminal, the sidebar's search field with its query, the
+  file viewer, a page). From the Git page with the branch picker open and from a shell tab
+  with the history popup open, opening the palette closes them. Run Copy (with a selection),
+  Paste, Find, Allow / Deny clipboard write (with a held OSC 52 write) and Full screen from
+  it. Rename tab with the sidebar hidden and with the tab in a collapsed group: the name
+  editor shows in its row, Enter or Esc give the keyboard back. Switch to another app and back
+  while it is open: it stays, the keyboard still in it. A screen reader reads each row's
+  name or label.
 - Interrupting Claude Code (Windows, Linux), in a spawned Claude Code tab and with `claude`
   run in place in a bash tab: Esc and Ctrl+C mid-thinking and during `Bash(sleep 20)`, and
   Esc on a permission prompt, turn the tab Idle at once, with no toast, sound, taskbar flash
@@ -432,10 +446,9 @@ behavior"); items below name their switch where they need one.
 
 ### General
 
-- Command palette: Ctrl+Shift+P opens a fuzzy search over every action (the ones with
-  shortcuts and the menu-only ones such as Duplicate, Move to group or Copy branch), showing
-  each one's shortcut, plus the tabs by name ("go to tab"). Enter runs the action on the
-  selected tab.
+- Command palette, tab menu commands: the menu-only ones (Pin, Move to group, Copy branch,
+  Copy title, Copy folder, Reset name, Restart, Mark as ready for review, Close others / below)
+  as palette entries on the selected tab, offered only when its tab menu would offer them.
 - File viewer: the rendered JSON view ("Not valid JSON") is only worked out when the file
   opens, so it stays stale after the file is fixed and saved in the viewer.
 - File explorer: read folders off the UI thread (a "Loading..." row, results applied per

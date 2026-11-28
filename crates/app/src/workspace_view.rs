@@ -2,6 +2,7 @@ mod busy_close;
 mod empty_state;
 mod git_pane;
 mod open_in_folder;
+mod palette;
 mod reconnect;
 mod restart;
 mod settings_pane;
@@ -44,6 +45,7 @@ use workspace_model::{
 
 use self::git_pane::GitPane;
 use self::open_in_folder::OpenInFolder;
+use self::palette::OpenPalette;
 use self::settings_pane::SettingsPane;
 use self::spinner_clock::SpinnerClock;
 use self::start_failure::StartFailure;
@@ -52,6 +54,7 @@ use self::tab_list::TabList;
 use self::tab_search::TabSearch;
 use crate::about;
 use crate::assets::FILES_ICON;
+use crate::command_palette;
 use crate::divider_drag::{DIVIDER_WIDTH, DividerDrag};
 use crate::file_explorer::{CdAvailability, ExplorerEvent, FileExplorer};
 use crate::file_viewer::{FilePlace, FileViewer, ViewerEvent};
@@ -65,8 +68,8 @@ use crate::settings_file;
 use crate::settings_page::{self, SettingsFileButton};
 use crate::shell_integration;
 use crate::shortcuts::{
-    self, ATTENTION_KEY, CLOSE_TAB_KEY, DUPLICATE_TAB_KEY, EXPLORER_KEY, GIT_PAGE_KEYS,
-    NEW_TAB_KEY, SEARCH_KEY, SIDEBAR_KEY,
+    self, ATTENTION_KEY, CLOSE_TAB_KEY, COMMAND_PALETTE_KEYS, DUPLICATE_TAB_KEY, EXPLORER_KEY,
+    GIT_PAGE_KEYS, NEW_TAB_KEY, SEARCH_KEY, SIDEBAR_KEY,
 };
 use crate::sidebar::{self, SIDEBAR_WIDTH, TabStatus};
 use crate::tab_menu::{GroupCommand, GroupMenuState, TabCommand, TabMenuState};
@@ -92,6 +95,7 @@ actions!(
         ToggleSidebar,
         ToggleExplorer,
         ToggleGitPage,
+        ToggleCommandPalette,
         SearchTabs,
         NextAttention,
         GoBack,
@@ -116,6 +120,7 @@ pub fn init(cx: &mut App) {
     keymap::add_defaults(cx, default_bindings());
     tab_list::init(cx);
     crate::git_page::init(cx);
+    command_palette::init(cx);
     // A global listener, so F11 also works while a dialog or notification has the keyboard
     // (they are not inside the workspace view) or nothing does.
     cx.on_action(|_: &ToggleFullScreen, cx| {
@@ -156,6 +161,7 @@ fn default_bindings() -> Vec<Shortcut> {
         bind("ctrl-`", &LastTab),
         bind(&format!("ctrl-{EXPLORER_KEY}"), &ToggleExplorer),
         bind(GIT_PAGE_KEYS, &ToggleGitPage),
+        bind(COMMAND_PALETTE_KEYS, &ToggleCommandPalette),
         bind("ctrl-1", &SelectTab1),
         bind("ctrl-2", &SelectTab2),
         bind("ctrl-3", &SelectTab3),
@@ -277,6 +283,9 @@ enum RenameOrigin {
     Menu,
     /// F2 in the tab list: back to the list.
     TabList,
+    /// The command palette: back to what had the keyboard before it opened
+    /// ([`Rename::return_focus`]).
+    Palette,
 }
 
 /// A tab or group name being edited in the sidebar.
@@ -284,6 +293,8 @@ struct Rename {
     target: RenameTarget,
     origin: RenameOrigin,
     input: Entity<InputState>,
+    /// Where a rename the palette started gives the keyboard back (`None`: the selected tab).
+    return_focus: Option<FocusHandle>,
     _events: Subscription,
 }
 
@@ -324,6 +335,9 @@ pub struct WorkspaceView {
     /// The same for the explorer's width, in pixels (`explorer_width`).
     explorer_drag: DividerDrag<ExplorerWidth>,
     renaming: Option<Rename>,
+    /// The command palette while it is open: set by `toggle_command_palette`, cleared when it
+    /// closes (the key again, a choice, Esc, a click outside, the keyboard leaving it).
+    palette: Option<OpenPalette>,
     /// The keyboard's place while no tab is open (the empty state), kept for the window's
     /// life; Tab moves on to its buttons.
     empty_focus: FocusHandle,
@@ -488,6 +502,7 @@ impl WorkspaceView {
             viewer_drag: DividerDrag::new(Self::save_viewer_fraction),
             explorer_drag: DividerDrag::new(Self::save_explorer_width),
             renaming: None,
+            palette: None,
             empty_focus: cx.focus_handle(),
             focus_empty_default: false,
             last_closed_folder: None,
@@ -1819,6 +1834,7 @@ impl WorkspaceView {
             target,
             origin,
             input,
+            return_focus: None,
             _events: events,
         });
         cx.notify();
@@ -1859,6 +1875,13 @@ impl WorkspaceView {
         match rename.origin {
             RenameOrigin::Menu => {
                 self.focus_active(window, cx);
+                return;
+            }
+            RenameOrigin::Palette => {
+                match rename.return_focus.clone() {
+                    Some(focus) => window.focus(&focus, cx),
+                    None => self.focus_active(window, cx),
+                }
                 return;
             }
             RenameOrigin::TabList => {}
@@ -2644,6 +2667,12 @@ impl Render for WorkspaceView {
                 workspace.toggle_git_page(window, cx);
                 cx.stop_propagation();
             }))
+            .capture_action(
+                cx.listener(|workspace, _: &ToggleCommandPalette, window, cx| {
+                    workspace.toggle_command_palette(window, cx);
+                    cx.stop_propagation();
+                }),
+            )
             .capture_action(cx.listener(|workspace, _: &SearchTabs, window, cx| {
                 workspace.focus_search(window, cx);
                 cx.stop_propagation();
@@ -2736,6 +2765,7 @@ impl Render for WorkspaceView {
             )
             .child(
                 div()
+                    .relative()
                     .flex()
                     .flex_1()
                     .min_h_0()
@@ -2786,7 +2816,12 @@ impl Render for WorkspaceView {
                                 // terminal frame.
                                 .child(viewer.cached(StyleRefinement::default().size_full())),
                         )
-                    }),
+                    })
+                    .children(
+                        self.palette
+                            .as_ref()
+                            .map(|open| command_palette::overlay(open.view())),
+                    ),
             )
             .children(frame_probe)
     }

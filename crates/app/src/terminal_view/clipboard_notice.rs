@@ -68,7 +68,7 @@ impl TerminalView {
         self.clipboard = guard;
     }
 
-    #[cfg(test)]
+    /// A clipboard write waits for Allow or Deny.
     pub(crate) fn clipboard_pending(&self) -> bool {
         self.clipboard.pending().is_some()
     }

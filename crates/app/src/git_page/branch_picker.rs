@@ -314,6 +314,14 @@ impl GitPage {
         cx.notify();
     }
 
+    /// Close the picker if it is open, the keyboard back where it was before it opened (the
+    /// command palette opening over it).
+    pub(crate) fn dismiss_branch_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.picker_open {
+            self.close_branch_picker_with_focus(window, cx);
+        }
+    }
+
     /// The picker closes on a choice: the keyboard goes back at once, not on the popover's
     /// closing redraw, which a question opened meanwhile could overtake (it would record the
     /// closed filter as the focus to restore).

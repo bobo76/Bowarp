@@ -9,8 +9,8 @@
 //! output, the progress reports (OSC 9;4) in a program's output, how a running command is
 //! labeled and badged, which tabs closing would interrupt, which clipboard writes wait for the
 //! user, how far the mouse wheel scrolls, the performance readout's figures,
-//! the About dialog's version line, the user's settings file and keyboard shortcuts, and the
-//! window background's opacity and blur. No UI
+//! the About dialog's version line, the user's settings file and keyboard shortcuts, the
+//! command palette's matching, and the window background's opacity and blur. No UI
 //! dependency.
 
 // Long test scenarios are exempt from the function length limit (docs/code-quality.md).
@@ -21,6 +21,7 @@ pub mod agents;
 mod attention;
 mod clipboard_guard;
 mod close_warning;
+mod command_palette;
 mod conversation;
 mod diff_colors;
 mod exit_status;
@@ -81,6 +82,9 @@ pub use clipboard_guard::{
 pub use close_warning::{
     AgentActivity, BusyReason, BusyTab, CloseTarget, CloseWarning, TabActivity, close_warning,
     switch_warning, unsaved_edits_warning,
+};
+pub use command_palette::{
+    Candidate, FuzzyMatch, PaletteState, fuzzy_match, highlight_ranges, palette_lists, rank_matches,
 };
 pub use conversation::Conversation;
 pub use diff_colors::{DiffColors, RgbaColor};

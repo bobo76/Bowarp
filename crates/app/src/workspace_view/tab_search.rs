@@ -51,6 +51,12 @@ impl TabSearch {
         TabQuery::parse(&self.input.read(cx).value())
     }
 
+    /// Whether the field has the keyboard.
+    #[cfg(test)]
+    pub fn has_focus(&self, window: &Window, cx: &App) -> bool {
+        gpui_kit::Focusable::focus_handle(self.input.read(cx), cx).is_focused(window)
+    }
+
     /// Tab `id` was selected from the tab list: Up/Down and Enter in the field go on from it.
     pub fn set_cursor(&mut self, id: u64) {
         self.cursor = Some(id);

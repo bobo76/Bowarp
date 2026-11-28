@@ -6,7 +6,7 @@ use workspace_model::RemoteHosts;
 
 /// Let the PTY reader finish before GPUI's deterministic executor polls the event receiver; a
 /// later wake from that thread fails the test.
-fn wait_for_exit(session: &term_core::Session) {
+pub(super) fn wait_for_exit(session: &term_core::Session) {
     let deadline = Instant::now() + Duration::from_secs(30);
     while !session.has_exited() {
         assert!(Instant::now() < deadline, "test child did not exit");
@@ -17,7 +17,7 @@ fn wait_for_exit(session: &term_core::Session) {
 #[test]
 fn default_bindings_name_workspace_actions() {
     let bindings = default_bindings();
-    assert_eq!(bindings.len(), 25);
+    assert_eq!(bindings.len(), 26);
     assert!(
         bindings
             .iter()
@@ -370,7 +370,7 @@ impl PanesHarness {
         self.widths()
     }
 
-    fn set_panes(&mut self, on: bool) {
+    pub(super) fn set_panes(&mut self, on: bool) {
         self.cx.update(|_, cx| {
             settings_file::update(cx, |settings| {
                 settings.file_panes = FeatureSwitch::new(on);

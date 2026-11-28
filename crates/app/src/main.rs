@@ -6,6 +6,7 @@
 mod about;
 mod assets;
 mod color;
+mod command_palette;
 mod divider_drag;
 mod file_explorer;
 mod file_viewer;

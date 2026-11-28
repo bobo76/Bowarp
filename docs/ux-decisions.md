@@ -427,3 +427,53 @@ limitation). [UX agent]
   selected again (switching away and back, or re-clicking its row). Marking sends no toast,
   sound or window-attention request; an in-place agent exiting keeps the mark. Not saved in
   tabs.json. [pipeline]
+
+## Command palette
+
+- **Look**: a window-wide overlay centered at the top of the content, just under the title
+  bar, over sidebar and terminal, no dimmed backdrop (VS Code, Windows Terminal); a fixed
+  width that shrinks with a narrow window, about ten rows, then it scrolls. Built from the
+  branch picker's searchable list (field on top, muted section headers), not a new widget.
+  Action rows: the Keyboard page's label, the bound keys as chips on the right (none shown
+  when unbound). Tab rows: the launcher icon, the sidebar name, the group muted, a still
+  attention triangle when the tab needs attention (never a spinner: the palette doesn't
+  animate), and the selected tab checked like the current branch. Field placeholder "Search
+  actions and tabs"; no result: "No action or tab matches." With no tab, the Tabs section is
+  just absent. Its own entity, nothing redrawn while it sits open. [UX agent]
+- **One list, no prefix modes**: an empty query shows two sections, Tabs (sidebar order,
+  collapsed-group tabs included) then Actions (Keyboard page order); a typed query shows one
+  flat list ranked by match score, ties tabs first, so Enter always runs the best match.
+  Rejected: VS Code's ">" prefix (hidden, and the spec asks for one palette for both). [UX agent]
+- **Which actions**: those a user would pick from a list, hidden (not greyed) when they can't
+  apply now, as VS Code hides commands whose condition fails; the Keyboard page stays the full
+  list. Left out for good: Copy/Paste "or send" variants (duplicates of Copy and Paste),
+  Close find, Select tab 1-9 (the tabs are listed by name). Terminal actions only while the
+  selected tab's terminal shows (not on Settings, Git or the empty state); Copy only with a
+  selection, Allow/Deny clipboard only while a write is held, Paste not on an exited tab;
+  explorer and Git rows only while those features are on. Rename tab is listed: it shows the
+  sidebar if hidden and starts the rename on the selected tab's row. Labels are the Keyboard
+  page's, one vocabulary. [UX agent]
+- **Running and focus**: the palette closes first and the keyboard goes back to what had it
+  (terminal, page, viewer, sidebar field with its query untouched), then the action runs
+  there; a terminal action focuses the selected tab's terminal first. Choosing a tab selects
+  it like a sidebar click (leaving Settings or Git, revealing it from a collapsed group or a
+  search), keyboard on its terminal. Esc and a click outside close it, keyboard back as
+  before. A rename it started gives the keyboard back the same way. Opening it closes another
+  open popup (branch picker, history popup); a dialog keeps the keyboard, so it can't open
+  over one. [UX agent]
+- **Key**: Ctrl+Shift+P (Cmd+Shift+P on macOS, like the Git key), a rebindable Workspace
+  action, "Command palette" on the Keyboard page, so it works from the terminal, pages and
+  sidebar; the same key closes it (as Ctrl+Shift+G toggles its page). The muscle memory of VS
+  Code and Windows Terminal, and Ctrl+Shift+letter is the app's own range. No title-bar
+  button: five already sit there, and the key is the feature. [UX agent]
+- **Keys inside**: Up/Down move as in the branch picker, PageUp/PageDown by a page,
+  Home/End stay in the field, Enter runs, Esc closes, Tab does nothing (focus stays in the
+  palette). Hover highlights, a click runs. The query starts empty at each opening, like VS
+  Code and like leaving the sidebar search. [UX agent]
+- **Matching**: case-insensitive subsequence, scored for word starts, consecutive runs and a
+  prefix; space-separated terms each match, in any order (as sidebar search). Actions match
+  their label and their settings-file name (so `ToggleExplorer` finds it); tabs their name and
+  group, not folder or branch (a subsequence over a path matches nearly anything; sidebar
+  search covers them). Shortcuts never match (`ctrl` would match every row). Matched letters
+  in the label are drawn bold in the accent color; ties go to the shorter label, then list
+  order. The scorer is pure logic for workspace-model. [UX agent]
