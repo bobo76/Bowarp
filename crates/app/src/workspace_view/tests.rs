@@ -6,7 +6,7 @@ use workspace_model::RemoteHosts;
 
 /// Let the PTY reader finish before GPUI's deterministic executor polls the event receiver; a
 /// later wake from that thread fails the test.
-fn wait_for_exit(session: &term_core::Session) {
+pub(super) fn wait_for_exit(session: &term_core::Session) {
     let deadline = Instant::now() + Duration::from_secs(30);
     while !session.has_exited() {
         assert!(Instant::now() < deadline, "test child did not exit");
@@ -17,7 +17,7 @@ fn wait_for_exit(session: &term_core::Session) {
 #[test]
 fn default_bindings_name_workspace_actions() {
     let bindings = default_bindings();
-    assert_eq!(bindings.len(), 25);
+    assert_eq!(bindings.len(), 26);
     assert!(
         bindings
             .iter()
@@ -370,7 +370,7 @@ impl PanesHarness {
         self.widths()
     }
 
-    fn set_panes(&mut self, on: bool) {
+    pub(super) fn set_panes(&mut self, on: bool) {
         self.cx.update(|_, cx| {
             settings_file::update(cx, |settings| {
                 settings.file_panes = FeatureSwitch::new(on);
@@ -921,6 +921,61 @@ fn edits_typed_while_a_save_writes_stay_unsaved(cx: &mut gpui_kit::TestAppContex
     h.cx.run_until_parked();
     assert_eq!(std::fs::read_to_string(&h.file).unwrap(), "last");
     assert!(!h.cx.update(|_, cx| viewer.read(cx).is_dirty()));
+}
+
+#[gpui::test]
+fn saving_fixed_json_in_the_rendered_view_shows_it_pretty(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("viewer-json-save", cx);
+    let file = h.folder.join("data.json");
+    std::fs::write(&file, "{\"a\": 1,}").unwrap();
+    let workspace = h.workspace.clone();
+    h.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let id = workspace.tabs[0].id;
+            workspace.open_file_in(id, file.clone(), FilePlace::default(), window, cx);
+        });
+    });
+    h.cx.run_until_parked();
+    let viewer = h.state().2.expect("viewer").upgrade().unwrap();
+    let rendered = |h: &mut PanesHarness| {
+        h.cx.update(|_, cx| viewer.read(cx).rendered_json_for_test(cx))
+    };
+    assert!(
+        matches!(rendered(&mut h), Some(Err(_))),
+        "opens on the invalid JSON view"
+    );
+
+    // A save that leaves the JSON invalid replaces the error shown.
+    h.cx.update(|window, cx| {
+        viewer.update(cx, |viewer, cx| {
+            viewer.edit_for_test("{\"a\": 1,\n}", window, cx)
+        })
+    });
+    h.cx.update(|window, cx| viewer.update(cx, |viewer, cx| viewer.save_for_test(window, cx)));
+    h.cx.run_until_parked();
+    let Some(Err(err)) = rendered(&mut h) else {
+        panic!("still the invalid JSON view");
+    };
+    assert!(err.contains("2"), "the error of the saved text: {err}");
+
+    // The invalid view shows the editor: fix the text there and save.
+    h.cx.update(|window, _| window.activate_window());
+    h.cx.update(|window, cx| {
+        viewer.update(cx, |viewer, cx| viewer.focus_editor_for_test(window, cx))
+    });
+    h.cx.update(|window, cx| {
+        viewer.update(cx, |viewer, cx| {
+            viewer.edit_for_test("{\"a\": 1}", window, cx)
+        })
+    });
+    h.cx.update(|window, cx| viewer.update(cx, |viewer, cx| viewer.save_for_test(window, cx)));
+    h.cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "{\"a\": 1}");
+    assert_eq!(rendered(&mut h), Some(Ok("{\n  \"a\": 1\n}".to_owned())));
+    assert!(
+        h.cx.update(|window, cx| viewer.read(cx).pretty_json_focused_for_test(window, cx)),
+        "the pretty view takes the keyboard from the raw editor"
+    );
 }
 
 #[gpui::test]
@@ -1574,6 +1629,36 @@ fn settings_page_hides_the_viewer_and_opening_a_file_shows_the_tab(
     assert_eq!(shown(&mut h), (false, true), "the file opens in sight");
 }
 
+/// A reveal outside the explorer's folder is resolved off the UI thread; the workspace turns
+/// the explorer's `RevealOutside` event into a toast, and a reveal inside shows none.
+#[gpui::test]
+fn revealing_outside_the_explorer_folder_toasts(cx: &mut gpui_kit::TestAppContext) {
+    let mut h = PanesHarness::new("reveal-toast", cx);
+    let inside = h.folder.join("inside");
+    let outside =
+        std::env::temp_dir().join(format!("agentws-reveal-toast-out-{}", std::process::id()));
+    std::fs::create_dir_all(&inside).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    h.toggle_explorer();
+    h.cx.run_until_parked();
+    let workspace = h.workspace.clone();
+    let reveal = |h: &mut PanesHarness, folder: PathBuf| {
+        h.cx.update(|_, cx| {
+            let explorer = workspace.read(cx).explorer.clone();
+            explorer.update(cx, |explorer, cx| explorer.reveal(folder, cx));
+        });
+        h.cx.run_until_parked();
+        h.cx.update(|window, cx| window.notifications(cx).len())
+    };
+    assert_eq!(reveal(&mut h, inside), 0, "inside the root: no toast");
+    assert_eq!(
+        reveal(&mut h, outside.clone()),
+        1,
+        "outside the root: one toast"
+    );
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
 #[gpui::test]
 fn settings_page_hides_the_explorer_and_keeps_it_as_it_was(cx: &mut gpui_kit::TestAppContext) {
     let mut h = PanesHarness::new("settings-explorer", cx);
@@ -1585,7 +1670,7 @@ fn settings_page_hides_the_explorer_and_keeps_it_as_it_was(cx: &mut gpui_kit::Te
     let workspace = h.workspace.clone();
     h.cx.update(|_, cx| {
         let explorer = workspace.read(cx).explorer.clone();
-        assert!(explorer.update(cx, |explorer, cx| explorer.reveal(&sub, cx)));
+        explorer.update(cx, |explorer, cx| explorer.reveal(sub.clone(), cx));
     });
     // Folders are read off the UI thread.
     h.cx.run_until_parked();
@@ -1697,7 +1782,7 @@ fn explorer_dims_what_git_ignores_until_it_hides(cx: &mut gpui_kit::TestAppConte
     let workspace = h.workspace.clone();
     h.cx.update(|_, cx| {
         let explorer = workspace.read(cx).explorer.clone();
-        assert!(explorer.update(cx, |explorer, cx| explorer.reveal(&debug, cx)));
+        explorer.update(cx, |explorer, cx| explorer.reveal(debug.clone(), cx));
     });
     assert_eq!(
         dimmed(&mut h),

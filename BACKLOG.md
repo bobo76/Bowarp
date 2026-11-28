@@ -10,6 +10,34 @@ still to do (Windows included), not what was already tested.
 
 Built with automated coverage on Linux; the manual checks below are still to do.
 
+- File explorer loading (Windows, Linux): expand a folder of 50,000 entries and a folder on a
+  slow network share or a WSL path (`\\wsl.localhost\...` from Windows): after a moment a
+  muted italic "Loading…" row shows under it until the entries come, and the window (terminal,
+  sidebar) stays responsive meanwhile; a fast local folder shows no row (no flash). Collapse
+  the folder while it loads: the row goes. A watched folder that changes keeps its entries
+  while read again. Reveal a folder from a Markdown link in the viewer on a slow share: the
+  tree expands and selects it once resolved; a folder outside the tree says so in a toast.
+- Command palette (Windows, Linux): Ctrl+Shift+P opens it under the title bar, centered over
+  the sidebar and terminal, about ten rows tall, scrolling past that; a narrow window shrinks
+  it. Tab rows show the sidebar's icon, the name, the group muted, the triangle on a tab
+  needing attention, the check on the selected tab; action rows the Keyboard page label and
+  the key chips. Typing highlights the matched letters bold in the accent color (dark and light
+  themes). Hover highlights a row and a click runs it; a click outside closes it with the
+  keyboard back where it was (the terminal, the sidebar's search field with its query, the
+  file viewer, a page). From the Git page with the branch picker open and from a shell tab
+  with the history popup open, opening the palette closes them. Run Copy (with a selection),
+  Paste, Find, Allow / Deny clipboard write (with a held OSC 52 write) and Full screen from
+  it. Rename tab with the sidebar hidden and with the tab in a collapsed group: the name
+  editor shows in its row, Enter or Esc give the keyboard back. Switch to another app and back
+  while it is open: it stays, the keyboard still in it. A screen reader reads each row's
+  name or label. Tab menu commands from it, on a pinned, a grouped, a remote (Reconnect), an
+  exited (Restart) and an idle agent tab (Mark as ready for review): each listed only when the
+  tab menu offers it, with the menu's label; Copy branch name / pane title / working directory
+  fill the clipboard; New group with tab with the sidebar hidden edits the group's name, Enter
+  or Esc give the keyboard back; Close other tabs / below on a busy tab asks first.
+- File viewer, rendered JSON (Windows, Linux): open a `.json` file with a syntax error, fix it
+  in the editor under "Not valid JSON" and save with Ctrl+S: the pretty-printed view replaces
+  the error at once.
 - Interrupting Claude Code (Windows, Linux), in a spawned Claude Code tab and with `claude`
   run in place in a bash tab: Esc and Ctrl+C mid-thinking and during `Bash(sleep 20)`, and
   Esc on a permission prompt, turn the tab Idle at once, with no toast, sound, taskbar flash
@@ -432,6 +460,22 @@ behavior"); items below name their switch where they need one.
 
 ### General
 
+- Cache the active TerminalView (`.cached(...)`) so sidebar animation frames and other
+  WorkspaceView re-renders don't re-render the terminal; every input the view shows (focus,
+  resize, selection, session wakeup) must notify it; check with Xvfb.
+- File explorer drag and drop: drag a file or folder onto another folder (or a root) to move
+  it there, with the drop target highlighted while hovered; a name clash asks before
+  replacing, and a folder can't be dropped into itself or its children. Dropping onto the
+  terminal types the quoted path (`file_tree::quote_path`) instead. Files dropped from the
+  system file manager onto a folder are copied there. The tree and an open viewer follow the
+  moved file; moves run in the background like Delete.
+- OpenAI Codex CLI as an agent like Claude Code and Copilot CLI (the other agents are under
+  "More agents" below): found on `PATH` with the id `codex`, an icon and a `+` menu entry, a
+  launch arguments setting, restored from `tabs.json`, and typed `codex` running in place in
+  shell tabs. Agent status (Working / Waiting / Ready for review) from Codex's hooks or its
+  `notify` program (turn complete only; look for newer hooks) through `agentws-hook`, set per
+  tab and never written into the user's `~/.codex/config.toml`; OSC 9;4 progress or the title
+  where events are missing, the gaps listed in docs/known-limitations.md.
 - Agent status switch for agent tabs, "Agent status" (on), the parent of "Agent status for
   agents typed at the prompt" (shown disabled under it). Off: new Claude Code and Copilot
   tabs start without the generated `--settings` hooks and the plugin, and show "Recent
@@ -465,7 +509,6 @@ its items), regrouped into steps, in order:
   a max width on text inputs so the Font family field stays inside the content column.
 - "Hold Shift to select" hint (#19): on the first drag in a mouse-reporting tab per run, an
   info toast "Hold Shift to select text". One flag.
-
 - Hiding the sidebar (Ctrl+Shift+B) while the search field or a tab name editor has the
   keyboard leaves focus on an element no longer drawn (only the tab list itself hands the
   keyboard back, `toggle_sidebar` checks `is_focused`): check the whole sidebar
@@ -483,10 +526,6 @@ its items), regrouped into steps, in order:
   Switch "Long-command completion status" (Notifications page, on): off means no Done/failed
   marks or notifications; command tracking stays for busy-close protection and the threshold
   setting is kept.
-- Command palette: Ctrl+Shift+P opens a fuzzy search over every action (the ones with
-  shortcuts and the menu-only ones such as Duplicate, Move to group or Copy branch), showing
-  each one's shortcut, plus the tabs by name ("go to tab"). Enter runs the action on the
-  selected tab.
 - File viewer search and replace: the rendered Markdown view's Ctrl+F bar
   (`file_viewer/search.rs`) also in the raw/source editor and rendered JSON (a switch between
   two views that search keeps the bar and re-runs the query, docs/ux-decisions.md "File viewer
@@ -496,13 +535,6 @@ its items), regrouped into steps, in order:
 - File viewer close shortcut: Ctrl+Shift+X closes the selected tab's file viewer from
   either the terminal or the viewer, using the same unsaved-edit confirmation as its close
   button. Return focus to the terminal after closing; do nothing when no viewer is open.
-- File viewer: the rendered JSON view ("Not valid JSON") is only worked out when the file
-  opens, so it stays stale after the file is fixed and saved in the viewer.
-- Command history with zsh-autosuggestions (likely bug, unverified): Enter on a HISTORY row
-  sends Ctrl+E, which the plugin binds to accept the grey suggestion, but the reported line
-  (`$BUFFER`, `.zshenv` `__agentws_report_line`) excludes it, so the Backspaces leave the
-  accepted rest in front of the new command. Send a key that doesn't accept it, or clear
-  `POSTDISPLAY` first.
 - Zoom with Ctrl+scroll, like Windows Terminal: Ctrl+wheel up / down over the terminal makes
   the font bigger / smaller one point per notch (clamped, e.g. 6-48 pt), also Ctrl+= / Ctrl+-
   and Ctrl+0 to reset. Build on the existing terminal font-size setting, re-measuring cells
@@ -512,15 +544,6 @@ its items), regrouped into steps, in order:
   saved (Ctrl+0 and a restart go back to the settings size). Ctrl+wheel is never sent to the
   program, even with mouse reporting on.
 - New-tab folder picker (currently the selected tab's folder).
-- File explorer: read folders off the UI thread (a "Loading..." row, results applied per
-  root) so a folder with tens of thousands of entries or a slow network mount doesn't stall
-  the window; Delete already runs in the background.
-- File explorer drag and drop: drag a file or folder onto another folder (or a root) to move
-  it there, with the drop target highlighted while hovered; a name clash asks before
-  replacing, and a folder can't be dropped into itself or its children. Dropping onto the
-  terminal types the quoted path (`file_tree::quote_path`) instead. Files dropped from the
-  system file manager onto a folder are copied there. The tree and an open viewer follow the
-  moved file; moves run in the background like Delete.
 - Sidebar search: the filter/sort button from the
   [reference screenshot](docs/ui-reference/sidebar-hover-card.png).
 - Configurable tab background color: a color picked per tab from the tab menu (a small
@@ -546,9 +569,7 @@ its items), regrouped into steps, in order:
 - Report drags that leave the terminal area (GPUI only delivers moves while hovered).
 - Working directory from OSC 7 (only useful for remote shells): `alacritty_terminal` does not
   parse it, but the pty reader wrapper (`term-core/src/prompt.rs`) could find it.
-- Cache the active TerminalView (`.cached(...)`) so sidebar animation frames and other
-  WorkspaceView re-renders don't re-render the terminal; every input the view shows (focus,
-  resize, selection, session wakeup) must notify it; check with Xvfb.
+
 - Dependency updates (checked 2026-10-20, toolchain 1.99.1):
   - Still behind (major versions): `gpui-kit`, `windows-registry`, `parking_lot` 0.13,
     `generic-array`.
@@ -591,19 +612,18 @@ its items), regrouped into steps, in order:
      command-block metadata recorded).
      Not planned from the screenshot: the separate input box with the folder chip (the prompt is
      the shell's own, in the grid) and the panel's "Configure" button.
-- More agents: OpenCode, OpenAI Codex CLI and Gemini CLI (plus Antigravity's CLI if it ships
-  as its own program), each integrated like Claude Code / Copilot CLI today. One agent per
-  step, each tested; add them to FEATURES.md when picked.
-  - Launcher: found on `PATH` (`launcher.rs`) with a stable id (`opencode`, `codex`,
-    `gemini`), an icon in `LauncherIcon`, a `+` menu entry, a launch arguments setting, and
-    restored from `tabs.json`.
+- More agents: OpenCode and Gemini CLI (plus Antigravity's CLI if it ships as its own program),
+  each integrated like Claude Code / Copilot CLI today (Codex is its own item above). One agent
+  per step, each tested; add them to FEATURES.md when picked.
+  - Launcher: found on `PATH` (`launcher.rs`) with a stable id (`opencode`, `gemini`), an icon
+    in `LauncherIcon`, a `+` menu entry, a launch arguments setting, and restored from
+    `tabs.json`.
   - Agent status: find each CLI's hook or event mechanism and map it to Working / Waiting /
     Ready for review through `agentws-hook` and the `HookServer`, set per tab (like Copilot's
     `--plugin-dir`), never written into the user's own config. To check against the installed
-    versions: OpenCode plugins (session idle, permission events), Codex's `notify` program
-    (turn complete only; look for newer hooks), Gemini CLI hooks. Where events are missing,
-    fall back to OSC 9;4 progress or the title, like Copilot, and list the gaps in
-    docs/known-limitations.md.
+    versions: OpenCode plugins (session idle, permission events), Gemini CLI hooks. Where
+    events are missing, fall back to OSC 9;4 progress or the title, like Copilot, and list the
+    gaps in docs/known-limitations.md.
 - Idle redraw after tab search (likely bug): once the "Search tabs..." field has had the
   keyboard, the idle window keeps redrawing (about 22 CPU ticks/s in Xvfb, even after going
   back to the terminal; a fresh start idles at 0-2). Find what keeps notifying (cursor blink of

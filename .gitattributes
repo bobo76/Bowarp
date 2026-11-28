@@ -1,2 +1,3 @@
 # Run by bash and zsh inside WSL, which reject CRLF line endings.
 crates/app/shell-integration/** text eol=lf
+scripts/*.sh text eol=lf

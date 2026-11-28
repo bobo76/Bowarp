@@ -114,6 +114,7 @@ and **Check server**.
 | F2 (in the tab list) | Rename the selected tab; the list gets the keyboard back afterwards. In the terminal, F2 goes to the program |
 | Ctrl+Shift+\| | Hide or show the file explorer (also the title bar button; the key that types `\|`) |
 | Ctrl+Shift+G | Show the Git page on the selected tab's repository; again, back to the tab (Cmd+Shift+G on macOS; also the title bar button) |
+| Ctrl+Shift+P | Command palette: run an action or go to a tab by name (Cmd+Shift+P on macOS); again, close it (see Command palette) |
 | Ctrl+Shift+A | Go to the next tab needing attention; with none, the next one that is Ready for review |
 | F11 | Full screen on or off, also from a dialog (F11 is not sent to the program; on Linux the window manager applies it). Quitting in full screen starts maximized next time |
 
@@ -478,6 +479,33 @@ Close (Enter) goes ahead, Cancel (Escape) keeps everything open. Idle prompts, i
 (also one running in place in a shell tab) and exited programs close without a question. The
 question is a safeguard, not a notification: no setting turns it off.
 
+## Command palette
+
+Ctrl+Shift+P (Cmd+Shift+P on macOS) opens the command palette under the title bar, over the
+sidebar and the terminal, from anywhere in the window but a dialog; the same key closes it.
+With nothing typed it lists the tabs (sidebar order, the selected one checked, a triangle on
+those needing attention) and then the actions of the Keyboard page with their key. Typing
+keeps the rows matching every word typed, in any order, as letters in order but not
+necessarily together ("nt" finds "New tab"), best match first: a tab by its name or group, an
+action by its label or its settings-file name (`ToggleExplorer`). Matched letters show bold.
+Actions that can't apply are left out: the terminal's while Settings, Git or no tab shows,
+Copy without a selection, Paste on an exited tab, Allow / Deny clipboard write without a held
+write, the explorer and Git rows while those features are off. After the actions come the
+commands the selected tab's menu offers now, with the menu's labels (Pin tab or Unpin tab,
+"Move to group: Backend" for each other group, New group with tab, Remove from group, Copy
+branch name, Restart, Mark as ready for review, Close other tabs, ...); Duplicate, Rename and
+Close tab are among the actions already.
+
+Up / Down, PageUp / PageDown move the selection; Enter or a click runs it. The palette closes
+first and the keyboard goes back to what had it (the terminal, a page, the sidebar's search
+field), where the action runs; a terminal action runs on the selected tab's terminal. A tab
+is selected as a sidebar click would, keyboard on its terminal. A tab menu command runs as from
+the tab menu, with the same questions (Close other tabs on a busy tab). Rename tab and New
+group with tab show the sidebar if hidden and edit the name there. Esc or a click outside
+closes the palette with the keyboard back where it was. A dialog a shortcut opens over it
+(Ctrl+Shift+W on a busy tab) leaves the palette open, and the keyboard returns to its field
+when the dialog closes.
+
 ## Search and attention
 
 The "Search tabs..." field above the list (Ctrl+Shift+S) keeps the tabs whose name, title,
@@ -541,6 +569,8 @@ follows tab switches and `cd` (off Linux, in bash, zsh and PowerShell tabs only:
 reports the folder at each prompt). Folders come first, then files, sorted by name, dotfiles
 included. Click a folder to expand or collapse it (each root keeps its own expanded folders);
 click a file to open it in the file viewer. Expanded folders refresh when their content changes.
+Folders are read in the background: one that takes a moment (a large folder, a network share
+or a WSL path) shows a "Loading…" row until its entries come.
 In a git repository, entries git ignores (such as `target/` or `*.log` in `.gitignore`) and the
 `.git` folder are dimmed, as is everything inside an ignored folder; they dim a moment after
 the folder shows, once git answers. The order doesn't change, and nothing is dimmed outside a
@@ -580,7 +610,8 @@ Markdown, JSON and SVG have two views, picked in the panel's header:
   panel (folders in the explorer, web links in the browser); JSON laid out one member per
   line, colored, with fold arrows by the line numbers (hover them) to collapse an object or
   array. Keys keep their order and values stay as written. JSON that doesn't parse shows the
-  error's line and column above the source. SVG drawn as an image.
+  error's line and column above the source, editable: once fixed and saved, it is laid out.
+  SVG drawn as an image.
 - **Raw**: the file as written, colored and editable.
 
 Other files open in the raw view only, colored for JSON, JavaScript, TypeScript (and TSX),
@@ -914,7 +945,8 @@ adds Shift: `ctrl-V` is `ctrl-shift-v`); a space separates the keystrokes of a s
 `AllowClipboard`, `DenyClipboard`, `SelectAll`, `ClearScrollback` (in the terminal; the last
 two have no default key); `NewTab`, `DuplicateTab`, `CloseTab`, `NextTab`, `PreviousTab`,
 `SelectTab1` to
-`SelectTab9`, `ToggleSidebar`, `ToggleExplorer`, `SearchTabs`, `NextAttention`,
+`SelectTab9`, `ToggleSidebar`, `ToggleExplorer`, `ToggleGitPage`, `ToggleCommandPalette`,
+`SearchTabs`, `NextAttention`,
 `ToggleFullScreen`, `TogglePerformanceReadout` (anywhere in the window; the last has no
 default key); `RenameTab` (only while the tab list has the
 keyboard). `terminal::Paste` and `workspace::NewTab` also

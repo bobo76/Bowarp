@@ -73,7 +73,7 @@ use crate::terminal_element::{TerminalElement, to_hsla};
 use crate::terminal_size;
 use crate::workspace_view::CloseTab;
 
-const KEY_CONTEXT: &str = "Terminal";
+pub(crate) const KEY_CONTEXT: &str = "Terminal";
 
 /// How long after its last output a session without status hooks still counts as active.
 const ACTIVITY_WINDOW: Duration = Duration::from_secs(2);

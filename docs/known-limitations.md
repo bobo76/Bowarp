@@ -4,6 +4,9 @@ How built features behave at their edges, decided on purpose or accepted for now
 to do is in [BACKLOG.md](../BACKLOG.md); the target spec is [FEATURES.md](../FEATURES.md). Remove an
 entry when the limitation is lifted.
 
+- The command palette's rows are read when it opens: a tab renamed, needing attention or
+  closed meanwhile, or a selection made in the terminal, shows as it was until it is opened
+  again. Action rows show an action's first key only, as tooltips and menus do.
 - Busy-close warnings know only what the shell integration marks and agent status report:
   a tab counts as busy while a command started at its prompt runs (OSC 133 `C` without `D`)
   or its agent is Working or Waiting. Never busy: cmd tabs (no `C` mark), shells without the
@@ -241,6 +244,10 @@ entry when the limitation is lifted.
   asks, and Resume restarts it (the new one, still empty, is dropped). The bar has no keyboard
   shortcut. The conversation is saved with the tab's next layout change, last command or the
   window closing, so after a crash an earlier conversation may be offered. Copilot CLI tabs can't resume.
+- File explorer loading: the "Loading…" row shows only for a folder's first read (expanded,
+  or shown after another root), 300 ms after it starts. A folder read again after a change keeps
+  showing its old entries, with no sign of the read, until the new ones come. A read is never
+  given up: a folder on a share that stopped answering shows "Loading…" until it is collapsed.
 - File explorer colors of changed files: git is asked again when an open folder's entries or
   files change, or the tab's folder changes; a commit, checkout or stash made while nothing
   in the open folders is written shows once something is, or the tab is selected again. A file

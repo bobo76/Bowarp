@@ -54,7 +54,7 @@ impl SpinnerClock {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 impl SpinnerClock {
     /// Whether a tick is scheduled, i.e. the last frame drew a turning spinner.
     pub(super) fn ticking(&self) -> bool {

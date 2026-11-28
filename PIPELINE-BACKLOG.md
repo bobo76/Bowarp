@@ -1,12 +1,12 @@
 # Pipeline: next BACKLOG.md step → Rust review → verify & fix
 
 ## Context
-Each run takes the first item under "Next steps" in `BACKLOG.md` (or under "## Backlog" when there is no "Next steps") and runs three agents in turn: implement and commit; review with the Rust checklist and the FM IPL rules into `REVIEW.md`; verify the findings, fix what's worth it and commit. Each agent logs its begin and end and writes a retrospective on the pipeline. UX/UI questions go to a UX/UI agent, whose decisions are recorded in `docs/ux-decisions.md`. A run's commits (a plan decision, the step, the review fixes, the docs update) are squashed into one and pushed. Runs follow one another until the list is empty (see "Loop").
+Each run takes the first item under "Next steps" in `BACKLOG.md` (or under "## Backlog" when there is no "Next steps") and runs three agents in turn: implement and commit; review with the Rust checklist and the FM IPL rules into `REVIEW.md`; verify the findings, fix what's worth it and commit. Each agent logs its begin and end and writes a retrospective on the pipeline. UX/UI questions go to a UX/UI agent, whose decisions are recorded in `docs/ux-decisions.md`. A run's commits (a plan decision, the step, the review fixes, the docs update) are squashed into one and pushed. Each run works on its own branch `backlog-<slug>`, stacked on the previous run's branch, and opens an auto-merging PR to `main`; the next run starts without waiting for CI and checks the previous run's CI once its own PR is open (see "Branches and PRs"). Runs follow one another until the list is empty (see "Loop").
 
 Project rules (the check, where `cargo` is, BACKLOG/CHANGELOG conventions, UI-thread rules) are in `CLAUDE.md` and `crates/app/CLAUDE.md`, which every agent loads; this plan doesn't repeat them. Project facts (toolchain, library behaviour, test harness) are in project memory (see "Project memory").
 
 ## Pipeline files (`pipeline/`, git-ignored)
-- `pipeline/log.txt`: append-only (`>>`, never edit earlier lines), one line per event across all runs: `<date -Iseconds> | <slug> | <agent> | <event> | <text>`. Events: `begin`, `end` (text says the outcome, e.g. `committed 8b77458, 109 tests` or `stopped: <reason>`), `usage`, `docs`, `split`, `restart`, `rebase`, `ci`, `ux`, `bump`; each is described where it is used.
+- `pipeline/log.txt`: append-only (`>>`, never edit earlier lines), one line per event across all runs: `<date -Iseconds> | <slug> | <agent> | <event> | <text>`. Events: `begin`, `end` (text says the outcome, e.g. `committed 8b77458, 109 tests` or `stopped: <reason>`), `usage`, `docs`, `split`, `restart`, `merge`, `pr`, `ci`, `ci-fix`, `ux`, `bump`; each is described where it is used.
 - `pipeline/retros/<slug>/`: the run's retros.
 - `pipeline/suggestions.md`: retro "What to change" items, one line each: `<suggestion> | runs: <slug>, <slug> | open|applied|rejected: <reason>`.
 - `pipeline/tools/`: the Xvfb harness for driving the app. Agents use it as is and extend a script rather than write a one-off; usage and limits are in the Xvfb memory entry.
@@ -32,15 +32,15 @@ Retros are about **the pipeline, not the step**: how to make the next run faster
 - **Step notes**: a few lines, only when they affect the pipeline. Product choices and untested items go in `BACKLOG.md` and the final report.
 
 ## Step 0 — me, before any agent
-1. **Resume check, first:** a `pipeline | begin` line with no matching `pipeline | end` means the last run was interrupted. Take the slug and base from that line (agent 1's commit may already have removed the step from `BACKLOG.md`). Find the last agent with a `begin` and no `end`, and check git log, the working tree and `pipeline/retros/<slug>/`:
+1. **Resume check, first:** a `pipeline | begin` line with no matching `pipeline | end` means the last run was interrupted. Check out its branch `backlog-<slug>` and take the slug and base from that line (agent 1's commit may already have removed the step from `BACKLOG.md`). Find the last agent with a `begin` and no `end`, and check git log, the working tree and `pipeline/retros/<slug>/`:
    - Its commit exists (agent 2: `REVIEW.md` is newer than its `begin` and its first line names this slug): run its gate, append `end | recovered: <outcome>`, continue with the next agent.
    - Uncommitted changes from it: ask whether to keep them (relaunch the agent to finish and commit) or discard them and rerun.
    - Nothing usable: append `pipeline | restart | <what was interrupted>` and rerun that agent.
-   In every case skip the rest of Step 0; the gate covers the baseline.
+   In every case skip the rest of Step 0; the gate covers the baseline. A run whose PR is open (`pr` line) but whose previous-run CI check has no `ci` or `ci-fix` line: do that check first (see "Branches and PRs").
 2. **Dirty tree:** ask whether to commit the changes (with which message) or abort, before any commit of the run, so a split never sweeps the user's `BACKLOG.md` edits in.
 3. **The step:** the first item (see Context); derive a short slug (e.g. `m2-part-e`). Nothing left: stop and report. Plainly not doable on this machine: mark it so (see "Loop") without launching an agent.
 4. **Baseline:** `cargo build` and `cargo test`. Red: stop and report.
-5. **Record the base:** `git rev-parse HEAD`, then append `pipeline | begin | <step text> (base <sha>)` before any commit of this run.
+5. **Branch and base:** `git switch -c backlog-<slug>` from the current HEAD (the previous run's branch, or the branch the launch started on for the first run; the working tree comes along). Then `git rev-parse HEAD` and append `pipeline | begin | <step text> (branch backlog-<slug>, base <sha>)` before any commit of this run.
 6. **Step size:** if the step bundles features that could ship alone, or would likely add more than ~1 500 lines, split it in `BACKLOG.md` into ordered sub-steps that each stand alone and can be tested, commit that (the run's plan decision commit), take the first sub-step, and append `pipeline | split | <first sub-step>` (the slug stays).
 7. **UX/UI pre-check** (steps with UI): list the questions the step text, `FEATURES.md` and `docs/ux-decisions.md` leave open: where a control goes, its look and shortcut, edge cases, and unspecified behaviour (other keys a new focus target receives, how each exit path ends, edge states such as the Settings page shown). Run the UX/UI agent on them (see "UX/UI questions"; minor ones I decide) and pass its decisions to agent 1. In its prompt:
    - ask each decision to name the data it needs and whether the app can read it today (e.g. "exit code: the `D` mark carries none"), so new plumbing shows before agent 1 builds;
@@ -74,7 +74,7 @@ Prompt contents:
   - for a field added to a view-model struct, the existing test that builds it and whether the field is asserted.
 - Not doable or not checkable here: stop before committing, revert its own changes, give the reason (see "Loop").
 - Rules beyond `CLAUDE.md`: no `to_owned()` of text handed to a background task (move an `Arc` or cheap handle in); each new function one concern and ~15 lines (the FM IPL pass flags longer ones).
-- Verify: clippy before the full test run (a lint-forced refactor after it costs a rerun). With UI: the touched crate's tests first, drive the app with `pipeline/tools/` (never set up a display by hand; say up front what the harness can't drive), then the full suite once.
+- Verify: clippy before the full test run (a lint-forced refactor after it costs a rerun). A popup or overlay: also test a dialog opened by a shortcut over it (where the keyboard goes when it closes). A change that replaces or hides a widget that can hold the keyboard: test where the keyboard goes. With UI: the touched crate's tests first, drive the app with `pipeline/tools/` (never set up a display by hand; say up front what the harness can't drive), then the full suite once.
 - Docs: remove the step from `BACKLOG.md` and add the checks the harness couldn't drive under "Fixed, not tested yet"; new limitations go to `docs/known-limitations.md`; update `README.md` where it describes changed behaviour, and grep README, docs and code comments for stale wording.
 - Commit code and those docs with an imperative summary of the step; write `pipeline/retros/<slug>/1-implement.md`.
 
@@ -122,17 +122,17 @@ Then I append `<agent> | usage | <tokens> tokens, <tool uses> tool uses, <durati
   - `docs/ux-decisions.md`: the UX/UI agent's entries of this run.
 - **Squash and push** (`<base>..HEAD`):
   - Every commit there must belong to this run; another one (the user's) mid-run: stop and ask.
-  - `git fetch origin`; if the remote branch moved, `git rebase origin/<branch>` (conflicts: keep both sides, the user's `BACKLOG.md` edits win minus the step just done), set `<base>` to `origin/<branch>`, append `pipeline | rebase | new base <sha>` and re-run the check.
   - `CHANGELOG.md`: add the step's user-visible changes under `## Unreleased`, in the file's style (short bullets starting with a verb, wrapped near 90 columns, settings and shortcuts as the user sees them, no paths or step names; behaviour changes to existing paths too). Nothing for a change no user would notice.
   - `git reset --soft <base>`, `git add CHANGELOG.md`, commit with agent 1's message plus a short body listing the review fixes; re-run the check.
-  - `git push origin <branch>` (`-u` without upstream). Never force-push; rejected: stop and report.
+  - `git push -u origin backlog-<slug>`. Never force-push; rejected: stop and report.
   - No version bump in a run: one bump closes the loop (see "Version bump at the end").
-  - **CI**: workflows don't run on branch pushes: `gh workflow run ubuntu.yml --ref <branch>` and `windows.yml`, find each run with `gh run list --workflow <file> --branch <branch> --limit 1 --json databaseId,headSha` (`headSha` = the squashed commit), `gh run watch <id> --exit-status` in the background. Append `pipeline | ci | ubuntu <conclusion>, windows <conclusion>`. Any red (Ubuntu's Clippy job included): stop the loop, append `pipeline | end | stopped: CI <workflow> failed (<run url>)`, report the failing job.
+  - **PR**: `gh pr create --base main --head backlog-<slug>` with agent 1's summary as title and the commit body plus the PR attribution line as body, then `gh pr merge <n> --auto --merge`. Append `pipeline | pr | #<n> <url>`. Don't wait for its CI: the next run checks it (see "Branches and PRs").
+  - **Previous run's CI**: now check the previous run's PR as in "Branches and PRs".
 - Append `pipeline | end | <squashed sha> pushed, <test count>` (counted with the toolchain memory's command on the teed output).
-- Report: build status, the pushed commit, test count, `REVIEW.md` summary (confirmed, fixed, skipped), each agent's tokens and duration, the top retro suggestions, links to the retros.
+- Report: build status, the pushed commit and its PR, the previous PR's CI outcome, test count, `REVIEW.md` summary (confirmed, fixed, skipped), each agent's tokens and duration, the top retro suggestions, links to the retros.
 
 ## Verification
-- Every gate passed (logged); the check and both CI workflows are green on the squashed commit (`ci` line).
+- Every gate passed (logged); the check is green on the squashed commit; its PR is open with auto-merge on (`pr` line); the previous run's PR has a `ci` line (green) or a `ci-fix` line (fixed in this branch).
 - `git log <base>..HEAD` shows one commit, and `git status -sb` shows the branch not ahead of its upstream.
 - `CHANGELOG.md` lists the step under Unreleased (unless nothing user-visible changed).
 - `REVIEW.md` has a verdict and a status on every finding.
@@ -142,13 +142,22 @@ Then I append `<agent> | usage | <tokens> tokens, <tool uses> tool uses, <durati
 
 ## After verification — memory and pipeline (me)
 - **Project memory:** save the library/platform facts and harness limits the run confirmed (from reports and retros). Update an entry rather than duplicate it, fix or delete entries the run proved wrong, keep `MEMORY.md` in sync. Skip when nothing new was learned.
-- **Suggestions:** merge the retros' "What to change" items into `pipeline/suggestions.md` (add the slug to a matching line's runs, or add an `open` line). Apply every `open` one with 2+ runs to this plan or `pipeline/tools/` and mark it `applied`, or `rejected: <reason>`; apply a single-run one at once only when it is a clear win (a missing prompt fact, a broken command). If `PIPELINE-BACKLOG.md` changed, commit it alone ("Update pipeline backlog after <slug>") and push it.
+- **Suggestions:** merge the retros' "What to change" items into `pipeline/suggestions.md` (add the slug to a matching line's runs, or add an `open` line). Apply every `open` one with 2+ runs to this plan or `pipeline/tools/` and mark it `applied`, or `rejected: <reason>`; apply a single-run one at once only when it is a clear win (a missing prompt fact, a broken command). If `PIPELINE-BACKLOG.md` changed, commit it alone ("Update pipeline backlog after <slug>") without pushing: the next run's branch carries it into its PR (after the last run, the bump branch or a branch of its own, see "Version bump at the end"). Never push onto a branch whose PR may already have merged.
 - Append `pipeline | docs | FEATURES: <changes or "no changes">, memory: <entries or "none">, plan: <suggestions applied or "none">`.
 
-## Loop until BACKLOG.md is done
-After Verification and the memory step, start the next run from Step 0 without waiting for the user, until the list is empty. Then append `all | pipeline | end | plan done, <runs> runs, <test count>` and give a final report: one line per run (slug, commit, test count, findings fixed/skipped, tokens, duration), the steps marked not doable with reasons, the suggestions applied or rejected during the loop, and the version bump (or why there was none). Each run still gives its own short report and memory update, so a later stop loses nothing.
+## Branches and PRs
+Branches are stacked: `backlog-<slug-2>` starts from `backlog-<slug-1>`, so every PR targets `main` and also carries the earlier runs' commits not merged yet. A PR merges once its required checks pass (`--auto --merge`, needs "Allow auto-merge" in the repo settings); merging a later PR also merges the earlier commits it carries, and GitHub then shows the earlier PR as merged.
 
-**Step not doable** (needs Windows, a real device, a decision the plan doesn't give), seen in Step 0 or reported by agent 1 (which reverts its own uncommitted changes): move the step to a "Not doable yet" section in `BACKLOG.md` (after "Next steps", created if missing) with a one-line reason, commit it alone "Mark <step> as not doable yet" (squashing in this run's split commit, if any), push, append `pipeline | end | not doable: <reason>` and start the next run.
+**Previous run's CI** (once this run's PR is open; at the end of the loop, for the last PR):
+- `gh pr checks <previous n> --watch --required` (waits only while it still runs). The PR's required checks are the CI: no `gh workflow run`. A docs-only PR skips the build jobs.
+- Green, or already merged: append `pipeline | ci | <previous slug> #<n> green`.
+- Red: name the failing job and test (`gh run view <id> --log-failed`), fix it on the **current** branch (it contains the previous run's code; never on the previous branch, which this one is stacked on), run the check, commit "Fix CI for <previous slug>", push, append `pipeline | ci-fix | <previous slug> #<n>: <job> -> <sha>`, and comment on the previous PR "CI fix in #<current n>". The current PR's CI now covers the fix, and the next run checks it. A fix that needs a design choice, or a second red on the same failure: stop the loop and report.
+- The PR reports a conflict with `main` (another PR merged meanwhile): `git fetch origin && git merge origin/main` on the current branch (no rebase, no force-push; the user's `BACKLOG.md` edits win minus the steps done), run the check, push, append `pipeline | merge | origin/main <sha>`.
+
+## Loop until BACKLOG.md is done
+After Verification and the memory step, start the next run from Step 0 without waiting for the user or the CI, until the list is empty. Then check the last PR's CI (see "Branches and PRs"; a red one is fixed on its own branch, which nothing is stacked on, and checked again), then append `all | pipeline | end | plan done, <runs> runs, <test count>` and give a final report: one line per run (slug, commit, test count, findings fixed/skipped, tokens, duration), the steps marked not doable with reasons, the suggestions applied or rejected during the loop, and the version bump (or why there was none). Each run still gives its own short report and memory update, so a later stop loses nothing.
+
+**Step not doable** (needs Windows, a real device, a decision the plan doesn't give), seen in Step 0 or reported by agent 1 (which reverts its own uncommitted changes): move the step to a "Not doable yet" section in `BACKLOG.md` (after "Next steps", created if missing) with a one-line reason, commit it alone "Mark <step> as not doable yet" (squashing in this run's split commit, if any), push it on `backlog-<slug>` and open its PR as in "Squash and push", append `pipeline | end | not doable: <reason>` and start the next run (stacked on it, as usual).
 
 The loop stops on anything else that stops a run: a red baseline, gate or CI, a failed Verification check, uncommitted changes Step 0 can't explain, or a design choice or UX/UI question that needs the user. I report why and which steps are left.
 
@@ -156,6 +165,6 @@ The loop stops on anything else that stops a run: a red baseline, gate or CI, a 
 One bump covers all the runs of a launch ("do the next 3 items", "until BACKLOG.md is done"), after the last run's memory step and before the final report:
 - **When:** the launch asked for a number of runs or for the whole list, and the loop reached it: bump without asking. In any other case (the launch didn't say, the loop stopped early, usage limits cut it): ask the user "Bump the version for these <n> runs?" (Yes patch / Yes minor / No) and wait. No bump when no run pushed a user-visible change (`## Unreleased` empty), or when the user says No.
 - **Level:** `patch`; `minor` when a run finished a milestone (M2 done -> `0.2.0`).
-- **How:** `git fetch origin` (rebase as in "Squash and push" if the branch moved); `scripts/bump-version.sh [minor]` on a clean tree (it refuses a dirty `Cargo.toml`; it prints the new version); in `CHANGELOG.md` move the Unreleased items into a new `## <version>` section just below `## Unreleased`, leaving Unreleased empty; commit `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md` as "Bump version to <version>"; run the check; push; run both CI workflows on it as in "Squash and push".
-- Append `all | pipeline | bump | <version> (<sha>), CI ubuntu <conclusion>, windows <conclusion>`, or `all | pipeline | bump | skipped: <reason>`.
-- Merging to `main`, the `v<version>` tag and the GitHub release follow `RELEASE.md` and are not part of the pipeline: I name them in the final report as the next step.
+- **How:** once the last PR's CI is green, `git switch -c backlog-v<version>` from the last run's branch (it carries any unpushed `PIPELINE-BACKLOG.md` commit); `scripts/bump-version.sh [minor]` on a clean tree (it refuses a dirty `Cargo.toml`; it prints the new version); in `CHANGELOG.md` move the Unreleased items into a new `## <version>` section just below `## Unreleased`, leaving Unreleased empty; commit `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md` as "Bump version to <version>"; run the check; push; open its PR with auto-merge as in "Squash and push" and wait for its checks (`gh pr checks <n> --watch --required`). No bump but an unpushed `PIPELINE-BACKLOG.md` commit: push it the same way on `backlog-pipeline-<last slug>`.
+- Append `all | pipeline | bump | <version> (<sha>), PR #<n> <conclusion>`, or `all | pipeline | bump | skipped: <reason>`.
+- The `v<version>` tag and the GitHub release follow `RELEASE.md` and are not part of the pipeline: I name them in the final report as the next step, once the bump PR has merged to `main`.

@@ -24,8 +24,8 @@ use gpui_kit::{
 use notify::event::ModifyKind;
 use notify::{Event, EventKind};
 use workspace_model::file_tree::{
-    self, DirEntry, EntryKind, ExpandedFolders, FileKind, TreeRow, entry_folder, entry_name,
-    parent_folder, relative_path, validate_name, without_verbatim_prefix,
+    self, DirEntry, EntryKind, ExpandedFolders, FileKind, FirstReads, TreeRow, entry_folder,
+    entry_name, parent_folder, relative_path, validate_name, without_verbatim_prefix,
 };
 use workspace_model::{FileChange, changed_files, ignored_names};
 
@@ -43,6 +43,9 @@ const ROW_HEIGHT: f32 = 24.;
 /// How long the explorer waits after a change before asking git what changed, gathering a
 /// burst of writes into one `git status`.
 const CHANGES_PAUSE: Duration = Duration::from_millis(300);
+/// How long a folder's first read runs before a "Loading…" row stands in for its entries, so
+/// a fast read shows no flash.
+const LOADING_DELAY: Duration = Duration::from_millis(300);
 const INDENT: f32 = 14.;
 const ROW_LEFT_PADDING: f32 = 6.;
 
@@ -64,6 +67,8 @@ pub enum ExplorerEvent {
     EditEnded,
     /// Show the file in the viewer.
     OpenFile(PathBuf),
+    /// A folder asked to be revealed is not under the root shown.
+    RevealOutside(PathBuf),
 }
 
 /// What an entry's context menu does.
@@ -98,12 +103,13 @@ struct NameEdit {
     _events: Subscription,
 }
 
-/// One row of the list: an entry (dimmed when git ignores it), the new-file editor, or a
-/// folder's read error.
+/// One row of the list: an entry (dimmed when git ignores it), the new-file editor, a
+/// folder's read error, or the stand-in for the entries of a folder whose first read is slow.
 enum ListRow {
     Entry { row: TreeRow, ignored: bool },
     NewFile { depth: usize },
     Error { depth: usize, message: String },
+    Loading { depth: usize },
 }
 
 pub struct FileExplorer {
@@ -116,6 +122,15 @@ pub struct FileExplorer {
     listings: HashMap<PathBuf, Listing>,
     /// The folder reads running off the UI thread: replacing or dropping a task cancels it.
     reads: HashMap<PathBuf, Task<()>>,
+    /// The folders of `reads` read for the first time, each with the timer showing its
+    /// "Loading…" row; kept for the open folders only, like `reads`.
+    first_reads: FirstReads<Task<()>>,
+    /// The reveal waiting for the real paths of its folder and the root; a newer reveal or
+    /// another root drops (cancels) it.
+    reveal: Option<Task<()>>,
+    /// Tests hold folder reads back this long, to see what shows while they run.
+    #[cfg(test)]
+    read_delay: Option<Duration>,
     /// The names git ignores in each open folder, as of git's last answer; a folder outside a
     /// repository (or whose check failed) has none.
     ignored: HashMap<PathBuf, HashSet<String>>,
@@ -198,6 +213,10 @@ impl FileExplorer {
             expanded: ExpandedFolders::default(),
             listings: HashMap::new(),
             reads: HashMap::new(),
+            first_reads: FirstReads::default(),
+            reveal: None,
+            #[cfg(test)]
+            read_delay: None,
             ignored: HashMap::new(),
             unchecked: HashSet::new(),
             ignore_checks: HashMap::new(),
@@ -292,32 +311,63 @@ impl FileExplorer {
         // Folders left unwatched may have changed meanwhile.
         self.listings.clear();
         self.reads.clear();
+        self.first_reads.clear();
+        self.reveal = None;
         self.drop_git_answers();
         self.refresh(cx);
     }
 
     /// Show `folder` in the tree, expanded and selected, with the folders down to it
-    /// expanded. `false` when it is not under the root shown.
-    pub fn reveal(&mut self, folder: &Path, cx: &mut Context<Self>) -> bool {
+    /// expanded, once the real paths of both are known: they are read off the UI thread, as a
+    /// link may hold `..` and the tab's folder be a symlink on a slow mount. Emits
+    /// `RevealOutside` when it is not under the root shown.
+    pub fn reveal(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
         let Some(root) = self.root.clone() else {
-            return false;
+            cx.emit(ExplorerEvent::RevealOutside(folder));
+            return;
         };
-        // Both real paths, as a link may hold `..` and the tab's folder a symlink.
-        let (Ok(real_folder), Ok(real_root)) = (fs::canonicalize(folder), fs::canonicalize(&root))
-        else {
-            return false;
+        let task = cx.spawn(async move |this, cx| {
+            let (asked, asked_root) = (folder.clone(), root.clone());
+            let relative = cx
+                .background_spawn(async move { real_relative_path(&asked, &asked_root) })
+                .await;
+            let _ = this.update(cx, |explorer, cx| {
+                explorer.apply_reveal(&root, folder, relative, cx)
+            });
+        });
+        self.reveal = Some(task);
+    }
+
+    /// The real paths of a reveal are known: `relative` is the folder's path under `root`, or
+    /// `None` when it is not under it. `set_root` drops the task when another root shows
+    /// meanwhile; the root is checked again in case a caller replaces the tree some other way.
+    fn apply_reveal(
+        &mut self,
+        root: &Path,
+        folder: PathBuf,
+        relative: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        self.reveal = None;
+        if self.root.as_deref() != Some(root) {
+            return;
+        }
+        let Some(relative) = relative else {
+            cx.emit(ExplorerEvent::RevealOutside(folder));
+            return;
         };
-        let Ok(relative) = real_folder.strip_prefix(&real_root) else {
-            return false;
-        };
-        let mut current = root.clone();
+        self.selected = Some(self.expand_down_to(root, &relative));
+        self.refresh(cx);
+    }
+
+    /// Expand the folders from `root` down to `relative` under it, which is returned whole.
+    fn expand_down_to(&mut self, root: &Path, relative: &Path) -> PathBuf {
+        let mut current = root.to_path_buf();
         for part in relative.components() {
             current.push(part);
-            self.expanded.expand(&root, &current);
+            self.expanded.expand(root, &current);
         }
-        self.selected = Some(current);
-        self.refresh(cx);
-        true
+        current
     }
 
     /// Start reading the expanded folders not read yet (each read refreshes again, showing the
@@ -348,6 +398,7 @@ impl FileExplorer {
         // Unwatched folders may change: read them again when they are shown again.
         self.listings.retain(|folder, _| open.contains(folder));
         self.reads.retain(|folder, _| open.contains(folder));
+        self.first_reads.retain(|folder| open.contains(folder));
         self.ignored.retain(|folder, _| open.contains(folder));
         self.ignore_checks.retain(|folder, _| open.contains(folder));
         let unchecked = std::mem::take(&mut self.unchecked);
@@ -393,12 +444,28 @@ impl FileExplorer {
         }
     }
 
+    /// Time `folder`'s read for its "Loading…" row if nothing of it shows yet.
+    fn start_first_read(&mut self, folder: &Path, cx: &mut Context<Self>) {
+        if self.listings.contains_key(folder) || self.first_reads.is_pending(folder) {
+            return;
+        }
+        let timer = self.loading_timer(folder.to_path_buf(), cx);
+        self.first_reads.start(folder.to_path_buf(), timer);
+    }
+
     /// Read `folder` (again) off the UI thread, where a network or WSL folder could freeze the
     /// window, replacing (cancelling) a read still running.
     fn read_listing(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
+        self.start_first_read(&folder, cx);
         let path = folder.clone();
         let resolve = self.watches.needs_real_path(&folder);
+        #[cfg(test)]
+        let delay = self.read_delay;
         let task = cx.spawn(async move |this, cx| {
+            #[cfg(test)]
+            if let Some(delay) = delay {
+                cx.background_executor().timer(delay).await;
+            }
             if resolve {
                 // Watched before it is read, so a change made after the read is reported.
                 let asked = path.clone();
@@ -423,12 +490,32 @@ impl FileExplorer {
     /// (a `.gitignore` change asks again for every folder).
     fn set_listing(&mut self, folder: PathBuf, listing: Listing, cx: &mut Context<Self>) {
         self.reads.remove(&folder);
+        self.first_reads.finish(&folder);
         if self.listings.get(&folder) == Some(&listing) {
             return;
         }
         self.listings.insert(folder.clone(), listing);
         self.unchecked.insert(folder);
         self.refresh(cx);
+    }
+
+    /// Wait `LOADING_DELAY`, then show `folder`'s "Loading…" row if its first read still runs.
+    /// Dropping the task (the read ended, the folder closed) cancels it.
+    fn loading_timer(&self, folder: PathBuf, cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(LOADING_DELAY).await;
+            let _ = this.update(cx, |explorer, cx| explorer.show_loading(&folder, cx));
+        })
+    }
+
+    fn show_loading(&mut self, folder: &Path, cx: &mut Context<Self>) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+        if self.first_reads.show_loading(folder) {
+            self.rebuild_rows(&root);
+            cx.notify();
+        }
     }
 
     /// Ask git off the UI thread which entries of `folder`'s listing it ignores, replacing
@@ -468,9 +555,14 @@ impl FileExplorer {
         } else {
             self.ignored.insert(folder, ignored);
         }
-        let rows = self.tree_rows(&root);
-        self.rows = self.list_rows(rows).into();
+        self.rebuild_rows(&root);
         cx.notify();
+    }
+
+    /// The rows again from the current state, without starting reads or asking git.
+    fn rebuild_rows(&mut self, root: &Path) {
+        let rows = self.tree_rows(root);
+        self.rows = self.list_rows(rows).into();
     }
 
     fn tree_rows(&mut self, root: &Path) -> Vec<TreeRow> {
@@ -483,7 +575,8 @@ impl FileExplorer {
         })
     }
 
-    /// The tree rows with the new-file editor and read errors placed under their folder.
+    /// The tree rows with the new-file editor, read errors and "Loading…" rows placed under
+    /// their folder.
     fn list_rows(&self, rows: Vec<TreeRow>) -> Vec<ListRow> {
         let new_file_in = match &self.editing {
             Some(NameEdit {
@@ -502,9 +595,13 @@ impl FileExplorer {
                 .flatten()
                 .and_then(|listing| listing.as_ref().err().cloned());
             let new_file = row.expanded && new_file_in.as_ref() == Some(&row.path);
+            let loading = row.expanded && self.first_reads.is_loading(&row.path);
             list.push(ListRow::Entry { row, ignored });
             if new_file {
                 list.push(ListRow::NewFile { depth });
+            }
+            if loading {
+                list.push(ListRow::Loading { depth });
             }
             if let Some(message) = error {
                 list.push(ListRow::Error { depth, message });
@@ -839,18 +936,12 @@ impl FileExplorer {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
         match &self.rows[index] {
-            ListRow::Error { depth, message } => div()
-                .h(px(ROW_HEIGHT))
-                .bg(crate::window_background::panel_background(
-                    theme.sidebar,
-                    cx,
-                ))
-                .flex()
-                .items_center()
-                .pl(row_indent(*depth) + px(INDENT + 4.))
-                .text_xs()
-                .text_color(muted)
+            ListRow::Error { depth, message } => note_row(*depth, cx)
                 .child(format!("Can't read: {message}"))
+                .into_any_element(),
+            ListRow::Loading { depth } => note_row(*depth, cx)
+                .italic()
+                .child("Loading…")
                 .into_any_element(),
             ListRow::NewFile { depth } => self
                 .row_shell(*depth, cx)
@@ -1270,6 +1361,33 @@ fn copy_text(text: String, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(text));
 }
 
+/// A muted line of text in place of a folder's entries, at their indent.
+fn note_row(depth: usize, cx: &App) -> gpui_kit::Div {
+    let theme = cx.theme();
+    div()
+        .h(px(ROW_HEIGHT))
+        .bg(crate::window_background::panel_background(
+            theme.sidebar,
+            cx,
+        ))
+        .flex()
+        .items_center()
+        .pl(row_indent(depth) + px(INDENT + 4.))
+        .text_xs()
+        .text_color(theme.muted_foreground)
+}
+
+/// `folder`'s path under `root`, both with links resolved; `None` when it isn't under it or
+/// either can't be resolved.
+fn real_relative_path(folder: &Path, root: &Path) -> Option<PathBuf> {
+    let real_folder = fs::canonicalize(folder).ok()?;
+    let real_root = fs::canonicalize(root).ok()?;
+    real_folder
+        .strip_prefix(&real_root)
+        .ok()
+        .map(Path::to_path_buf)
+}
+
 fn row_indent(depth: usize) -> gpui_kit::Pixels {
     px(ROW_LEFT_PADDING + depth as f32 * INDENT)
 }
@@ -1319,15 +1437,14 @@ mod tests {
     use super::*;
     use notify::event::DataChange;
 
-    #[gpui::test]
-    fn new_and_renamed_files_are_made_off_the_ui_thread(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{Focusable, VisualTestContext};
+
+    /// An explorer in a window of its own (no root yet).
+    fn open_explorer(
+        cx: &mut gpui_kit::TestAppContext,
+    ) -> (Entity<FileExplorer>, VisualTestContext) {
         use gpui_kit::component::Root;
 
-        let folder =
-            std::env::temp_dir().join(format!("agentws-explorer-edit-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&folder);
-        fs::create_dir_all(&folder).unwrap();
-        fs::write(folder.join("a.txt"), "a").unwrap();
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::settings_file::init_in_memory(cx);
@@ -1338,8 +1455,287 @@ mod tests {
             explorer = Some(view.clone());
             Root::new(view, window, cx)
         });
-        let explorer = explorer.unwrap();
-        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+        (
+            explorer.unwrap(),
+            VisualTestContext::from_window(window.into(), cx),
+        )
+    }
+
+    /// A new empty temp folder named after `name`.
+    fn temp_folder(name: &str) -> PathBuf {
+        let folder = std::env::temp_dir().join(format!(
+            "agentws-explorer-{name}-{}-{}",
+            std::process::id(),
+            agent_status::now_micros()
+        ));
+        fs::create_dir_all(&folder).unwrap();
+        folder
+    }
+
+    /// The rows as text: entry names, `Loading…`, `<new file>` or `<error>`.
+    fn rows(explorer: &Entity<FileExplorer>, cx: &mut VisualTestContext) -> Vec<String> {
+        explorer.read_with(cx, |explorer, _| {
+            let text = |row: &ListRow| match row {
+                ListRow::Entry { row, .. } => row.name.clone(),
+                ListRow::NewFile { .. } => "<new file>".into(),
+                ListRow::Error { .. } => "<error>".into(),
+                ListRow::Loading { .. } => "Loading…".into(),
+            };
+            explorer.rows.iter().map(text).collect()
+        })
+    }
+
+    const HELD_READ: Duration = Duration::from_secs(2);
+
+    /// Show `root` with folder reads held back `HELD_READ`.
+    fn show_held(explorer: &Entity<FileExplorer>, root: &Path, cx: &mut VisualTestContext) {
+        explorer.update(cx, |explorer, cx| {
+            explorer.read_delay = Some(HELD_READ);
+            explorer.set_root(Some(root.to_path_buf()), CdAvailability::Unavailable, cx);
+        });
+    }
+
+    fn advance(cx: &mut VisualTestContext, by: Duration) {
+        cx.executor().advance_clock(by);
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn a_slow_first_read_shows_loading_until_its_entries_come(cx: &mut gpui_kit::TestAppContext) {
+        let folder = temp_folder("loading");
+        fs::write(folder.join("a.txt"), "a").unwrap();
+        let name = entry_name(&folder);
+        let (explorer, mut cx) = open_explorer(cx);
+        show_held(&explorer, &folder, &mut cx);
+        cx.run_until_parked();
+        assert_eq!(
+            rows(&explorer, &mut cx),
+            std::slice::from_ref(&name),
+            "no row before the delay"
+        );
+        advance(&mut cx, LOADING_DELAY);
+        assert_eq!(rows(&explorer, &mut cx), [name.clone(), "Loading…".into()]);
+        advance(&mut cx, HELD_READ);
+        assert_eq!(rows(&explorer, &mut cx), [name.clone(), "a.txt".into()]);
+        explorer.read_with(&cx, |explorer, _| {
+            assert!(!explorer.first_reads.is_pending(&folder))
+        });
+
+        // A folder read again keeps showing what it held.
+        explorer.update(&mut cx, |explorer, cx| {
+            explorer.reread([folder.clone()].into(), &[], cx)
+        });
+        advance(&mut cx, LOADING_DELAY);
+        assert_eq!(rows(&explorer, &mut cx), [name, "a.txt".into()]);
+        let _ = fs::remove_dir_all(&folder);
+    }
+
+    #[gpui::test]
+    fn a_fast_first_read_never_shows_loading(cx: &mut gpui_kit::TestAppContext) {
+        let folder = temp_folder("fast");
+        fs::write(folder.join("a.txt"), "a").unwrap();
+        let (explorer, mut cx) = open_explorer(cx);
+        explorer.update(&mut cx, |explorer, cx| {
+            explorer.set_root(Some(folder.clone()), CdAvailability::Unavailable, cx)
+        });
+        cx.run_until_parked();
+        let notified = Rc::new(std::cell::Cell::new(0));
+        let counter = notified.clone();
+        cx.update(|_, cx| {
+            cx.observe(&explorer, move |_, _| counter.set(counter.get() + 1))
+                .detach()
+        });
+        advance(&mut cx, LOADING_DELAY * 2);
+        assert_eq!(
+            rows(&explorer, &mut cx),
+            [entry_name(&folder), "a.txt".into()]
+        );
+        assert_eq!(notified.get(), 0, "the dropped timer redraws nothing");
+        let _ = fs::remove_dir_all(&folder);
+    }
+
+    #[gpui::test]
+    fn collapsing_a_loading_folder_or_changing_root_drops_its_row(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let folder = temp_folder("collapse");
+        let sub = folder.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let (explorer, mut cx) = open_explorer(cx);
+        show_held(&explorer, &folder, &mut cx);
+        advance(&mut cx, HELD_READ);
+        let sub_row = TreeRow {
+            path: sub.clone(),
+            name: "sub".into(),
+            depth: 1,
+            kind: EntryKind::Folder,
+            expanded: false,
+        };
+        let click = |cx: &mut VisualTestContext| {
+            explorer.update(cx, |explorer, cx| explorer.click(sub_row.clone(), cx))
+        };
+        click(&mut cx);
+        advance(&mut cx, LOADING_DELAY);
+        let name = entry_name(&folder);
+        assert_eq!(
+            rows(&explorer, &mut cx),
+            [name.clone(), "sub".into(), "Loading…".into()]
+        );
+        click(&mut cx);
+        assert_eq!(rows(&explorer, &mut cx), [name.clone(), "sub".into()]);
+        explorer.read_with(&cx, |explorer, _| {
+            assert!(!explorer.first_reads.is_pending(&sub))
+        });
+
+        // Another root drops the pending first read of the one before.
+        click(&mut cx);
+        let other = temp_folder("collapse-other");
+        explorer.update(&mut cx, |explorer, cx| {
+            explorer.set_root(Some(other.clone()), CdAvailability::Unavailable, cx)
+        });
+        explorer.read_with(&cx, |explorer, _| {
+            assert!(!explorer.first_reads.is_pending(&sub))
+        });
+        advance(&mut cx, HELD_READ);
+        assert_eq!(rows(&explorer, &mut cx), [entry_name(&other)]);
+        let _ = fs::remove_dir_all(&folder);
+        let _ = fs::remove_dir_all(&other);
+    }
+
+    #[gpui::test]
+    fn the_name_editor_keeps_the_keyboard_while_its_folder_loads(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let folder = temp_folder("loading-focus");
+        let sub = folder.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("a.txt"), "a").unwrap();
+        let (explorer, mut cx) = open_explorer(cx);
+        show_held(&explorer, &folder, &mut cx);
+        advance(&mut cx, HELD_READ);
+        cx.update(|window, cx| {
+            explorer.update(cx, |explorer, cx| {
+                explorer.start_edit(EditTarget::NewFile(sub.clone()), window, cx)
+            })
+        });
+        let editor_focused = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                let input = explorer.read(cx).editing.as_ref().unwrap().input.clone();
+                input.read(cx).focus_handle(cx).is_focused(window)
+            })
+        };
+        assert!(editor_focused(&mut cx));
+        advance(&mut cx, LOADING_DELAY);
+        let name = entry_name(&folder);
+        assert_eq!(
+            rows(&explorer, &mut cx),
+            [
+                name.clone(),
+                "sub".into(),
+                "<new file>".into(),
+                "Loading…".into()
+            ]
+        );
+        assert!(
+            editor_focused(&mut cx),
+            "the Loading… row leaves the keyboard"
+        );
+        advance(&mut cx, HELD_READ);
+        assert_eq!(
+            rows(&explorer, &mut cx),
+            [name, "sub".into(), "<new file>".into(), "a.txt".into()]
+        );
+        assert!(editor_focused(&mut cx), "the entries replacing it too");
+        let _ = fs::remove_dir_all(&folder);
+    }
+
+    /// The folders `RevealOutside` reported.
+    fn outside_reveals(
+        explorer: &Entity<FileExplorer>,
+        cx: &mut VisualTestContext,
+    ) -> Rc<std::cell::RefCell<Vec<PathBuf>>> {
+        let outside = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = outside.clone();
+        cx.update(|_, cx| {
+            cx.subscribe(explorer, move |_, event: &ExplorerEvent, _| {
+                if let ExplorerEvent::RevealOutside(folder) = event {
+                    seen.borrow_mut().push(folder.clone());
+                }
+            })
+            .detach()
+        });
+        outside
+    }
+
+    #[gpui::test]
+    fn reveal_resolves_paths_off_the_ui_thread(cx: &mut gpui_kit::TestAppContext) {
+        let folder = temp_folder("reveal");
+        let deep = folder.join("a").join("b");
+        fs::create_dir_all(&deep).unwrap();
+        let outside_folder = temp_folder("reveal-outside");
+        let (explorer, mut cx) = open_explorer(cx);
+        let outside = outside_reveals(&explorer, &mut cx);
+        explorer.update(&mut cx, |explorer, cx| {
+            explorer.set_root(Some(folder.clone()), CdAvailability::Unavailable, cx);
+            // Through `..`, which only the real paths resolve.
+            explorer.reveal(deep.join("..").join("b"), cx);
+            assert_eq!(explorer.selected, None, "applied once the paths are known");
+        });
+        cx.run_until_parked();
+        let (_, expanded) = explorer.read_with(&cx, |explorer, _| explorer.expanded_for_test());
+        assert!(expanded.contains(&deep), "{expanded:?}");
+        explorer.read_with(&cx, |explorer, _| {
+            assert_eq!(explorer.selected.as_ref(), Some(&deep))
+        });
+
+        explorer.update(&mut cx, |explorer, cx| {
+            explorer.reveal(outside_folder.clone(), cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(*outside.borrow(), std::slice::from_ref(&outside_folder));
+        let _ = fs::remove_dir_all(&folder);
+        let _ = fs::remove_dir_all(&outside_folder);
+    }
+
+    #[gpui::test]
+    fn a_reveal_is_dropped_when_the_root_changes(cx: &mut gpui_kit::TestAppContext) {
+        let folder = temp_folder("reveal-stale");
+        let sub = folder.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let other = temp_folder("reveal-stale-other");
+        let (explorer, mut cx) = open_explorer(cx);
+        let outside = outside_reveals(&explorer, &mut cx);
+        explorer.update(&mut cx, |explorer, cx| {
+            explorer.set_root(Some(folder.clone()), CdAvailability::Unavailable, cx);
+            explorer.reveal(sub.clone(), cx);
+            explorer.set_root(Some(other.clone()), CdAvailability::Unavailable, cx);
+        });
+        cx.run_until_parked();
+        explorer.read_with(&cx, |explorer, _| {
+            assert_eq!(explorer.selected, None);
+            assert!(explorer.reveal.is_none());
+        });
+        assert!(
+            outside.borrow().is_empty(),
+            "no message for a dropped reveal"
+        );
+        // Back on the first root, the folder was never expanded.
+        explorer.update(&mut cx, |explorer, cx| {
+            explorer.set_root(Some(folder.clone()), CdAvailability::Unavailable, cx)
+        });
+        cx.run_until_parked();
+        let (_, expanded) = explorer.read_with(&cx, |explorer, _| explorer.expanded_for_test());
+        assert!(!expanded.contains(&sub), "{expanded:?}");
+        let _ = fs::remove_dir_all(&folder);
+        let _ = fs::remove_dir_all(&other);
+    }
+
+    #[gpui::test]
+    fn new_and_renamed_files_are_made_off_the_ui_thread(cx: &mut gpui_kit::TestAppContext) {
+        let folder = temp_folder("edit");
+        fs::write(folder.join("a.txt"), "a").unwrap();
+        let (explorer, mut cx) = open_explorer(cx);
         explorer.update(&mut cx, |explorer, cx| {
             explorer.set_root(Some(folder.clone()), CdAvailability::Unavailable, cx)
         });

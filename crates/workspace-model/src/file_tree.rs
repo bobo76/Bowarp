@@ -522,5 +522,65 @@ fn validate_name_for(name: &str, platform: Platform) -> Result<&str, NameError> 
     Ok(name)
 }
 
+/// The folders being read for the first time, so nothing of them shows yet. Each holds the
+/// timer `T` that shows a "Loading…" row if its read is slow; once the timer has fired the
+/// row shows until the read ends. A folder read again keeps showing what it held, so it is
+/// never here.
+#[derive(Debug)]
+pub struct FirstReads<T> {
+    pending: HashMap<PathBuf, Option<T>>,
+}
+
+impl<T> Default for FirstReads<T> {
+    fn default() -> Self {
+        Self {
+            pending: HashMap::new(),
+        }
+    }
+}
+
+impl<T> FirstReads<T> {
+    /// Whether `folder`'s first read is still running.
+    pub fn is_pending(&self, folder: &Path) -> bool {
+        self.pending.contains_key(folder)
+    }
+
+    /// `folder`'s first read started, with `timer` running until the row shows.
+    pub fn start(&mut self, folder: PathBuf, timer: T) {
+        self.pending.insert(folder, Some(timer));
+    }
+
+    /// The timer of `folder` fired: show its row. `true` when that changes what is shown
+    /// (its read is still running and the row was not shown yet).
+    pub fn show_loading(&mut self, folder: &Path) -> bool {
+        match self.pending.get_mut(folder) {
+            Some(timer @ Some(_)) => {
+                *timer = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `folder` shows its "Loading…" row.
+    pub fn is_loading(&self, folder: &Path) -> bool {
+        matches!(self.pending.get(folder), Some(None))
+    }
+
+    /// `folder`'s read ended (its timer, if still running, is dropped).
+    pub fn finish(&mut self, folder: &Path) {
+        self.pending.remove(folder);
+    }
+
+    /// Forget the folders `keep` refuses, as a collapsed folder's read is dropped.
+    pub fn retain(&mut self, keep: impl Fn(&Path) -> bool) {
+        self.pending.retain(|folder, _| keep(folder));
+    }
+
+    pub fn clear(&mut self) {
+        self.pending.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests;
